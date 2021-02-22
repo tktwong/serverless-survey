@@ -1,0 +1,91 @@
+service: stairs
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '2'
+
+plugins:
+  - serverless-step-functions 
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: dev
+  region: us-east-1
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+      Resource:
+        - !Join [ '/', [!GetAtt ReportsBucket.Arn, '*'] ]
+    - Effect: "Allow"
+      Action:
+        - "ses:SendBulkTemplatedEmail"
+        - "ses:SendBulkEmail"
+        - "ses:SendTemplatedEmail"
+        - "ses:sendEmail"
+      Resource: "*" 
+
+  environment:
+    REPORTSBUCKET: !Ref ReportsBucket
+    EMAILTEMPLATE: !Ref EmailTemplate
+    FROMEMAIL: test@test.com
+
+
+functions:
+  verifyParams:
+    handler: src/lambdas/VerifyParams.handler
+  generateReport:
+    handler: src/lambdas/GenerateReport.handler
+  sendEmail:
+    handler: src/lambdas/SendEmail.handler
+
+
+stepFunctions:
+  stateMachines:
+    automatedReportingStepFunction:
+      events:
+        - schedule:
+            rate: rate(10 minutes)
+            enabled: false
+      name: automatedReportingStateMachine
+      definition:
+        Comment: "Automated reporting workflow."
+        StartAt: VerifyParams
+        States:
+          VerifyParams:
+            Type: Task
+            Resource: !GetAtt verifyParams.Arn
+            Next: GenerateReport
+          GenerateReport:
+            Type: Task
+            Resource: !GetAtt generateReport.Arn
+            Next: SendEmail
+          SendEmail:
+            Type: Task
+            Resource: !GetAtt sendEmail.Arn
+            End: true
+
+
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    ReportsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: broswen-archived-reports
+    EmailTemplate:
+      Type: AWS::SES::Template
+      Properties:
+        Template:
+            HtmlPart: "{{content}}"
+            SubjectPart: Automated Report
+            TemplateName: StairsTemplate
+            TextPart: "{{content}}"

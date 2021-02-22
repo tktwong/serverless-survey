@@ -1,0 +1,79 @@
+org: krampusnuggets
+app: mother-ship
+# NOTE: update this with your service name
+service: mother-ship-backend
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  MotherShipTable: ${self:custom.stage}-mother-ship
+  tableThroughputs:
+    prod: 1
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  serverless-offline:
+    port: 4000
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-west-2
+  environment:
+    MotherShipTable: ${self:custom.MotherShipTable}
+  
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStream
+      
+      Resource:
+        - "Fn::GetAtt": [ MotherShipTable, Arn ]
+
+functions:
+  graphql:
+    handler: src/graphql.graphqlHandler
+    environment:
+      SLS_DEBUG: true
+    events:
+      - http:
+          path: graphql
+          method: post 
+          cors: true 
+          integration: lambda-proxy
+
+      - http:
+          path: graphql
+          method: get 
+          cors: true
+          integration: lambda-proxy
+
+resources:
+  # DynamoDB
+  - ${file(resources/msConfigs/mother-ship-table.yml)}
+  # Cognito Userpool
+  - ${file(resources/msConfigs/mother-ship-user-pool.yml)}
+  # Cognito Identity Pool
+  - ${file(resources/msConfigs/mother-ship-identity-pool.yml)}
+  # S3 Bucket
+  - ${file(resources/msConfigs/mother-ship-bucket.yml)}

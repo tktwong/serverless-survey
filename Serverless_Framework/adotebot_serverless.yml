@@ -1,0 +1,84 @@
+service:
+  name: adotebot
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  profile: serverless
+  environment:
+    DYNAMODB_TABLE: ${file(./env.yml):DYNAMODB_TABLE}
+    TWITTER_CONSUMER_KEY: ${file(./env.yml):TWITTER_CONSUMER_KEY}
+    TWITTER_CONSUMER_SECRET: ${file(./env.yml):TWITTER_CONSUMER_SECRET}
+    TWITTER_ACCESS_TOKEN: ${file(./env.yml):TWITTER_ACCESS_TOKEN}
+    TWITTER_ACCESS_TOKEN_SECRET: ${file(./env.yml):TWITTER_ACCESS_TOKEN_SECRET}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:Query
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+
+functions:
+  api:
+    handler: src/api.handler
+    description: API to get tweets and update their review status
+    events:
+      - http:
+          path: tweets
+          method: get
+          cors: true
+      - http:
+          path: tweets/{id}
+          method: put
+          cors: true
+  collectTweets:
+    handler: src/collectTweets.handler
+    description: Collect Tweets about pets up for adoption and save them to DynamoDB
+    events:
+      - schedule: rate(1 hour)
+  retweetApproved:
+    handler: src/retweetApproved.handler
+    description: Retweet approved messages about pets up for adoption
+    events:
+      - schedule: cron(0/30 12-0 * * ? *)
+
+resources:
+  Resources:
+    CollectedTweetsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(./env.yml):DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: created_at
+            AttributeType: S
+          - AttributeName: review_status
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: ReviewStatusIndex
+            KeySchema:
+              - AttributeName: review_status
+                KeyType: HASH
+              - AttributeName: created_at
+                KeyType: RANGE
+            Projection:
+              ProjectionType: KEYS_ONLY
+            ProvisionedThroughput:
+              ReadCapacityUnits: 2
+              WriteCapacityUnits: 2
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

@@ -1,0 +1,326 @@
+service:
+  name: serverless-inventory-app
+
+plugins:
+  - serverless-webpack
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+  - serverless-plugin-canary-deployments
+  - serverless-iam-roles-per-function
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-plugin-tracing
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-west-2'}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  environment:
+    CATEGORIES_TABLE: Categories-${self:provider.stage}
+    PRODUCTS_TABLE: Products-${self:provider.stage}
+    PRODUCT_ID_INDEX: ProductIdIndex
+    CATEGORY_ID_INDEX: CategoryIdIndex
+    PRODUCTS_S3_BUCKET: serverless-backoffice-products-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+    THUMBNAILS_S3_BUCKET: serverless-backoffice-thumbnail-${self:provider.stage}
+
+custom:
+  serverless-offline:
+    port: 3003
+
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: BackOffice API
+        description: Serverless application for inventory management
+    models:
+      - name: CategoryRequest
+        contentType: application/json
+        schema: ${file(models/create-category-request.json)}
+      - name: ProductRequest
+        contentType: application/json
+        schema: ${file(models/create-product-request.json)}
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetCategories:
+    handler: src/lambda/http/getCategories.handler
+    events:
+      - http:
+          method: get
+          path: categories
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+
+
+  CreateCategory:
+    handler: src/lambda/http/createCategory.handler
+    events:
+      - http:
+          method: post
+          path: categories
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new category
+            description: Create a new inventory category
+            requestModels:
+              'application/json': CategoryRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+
+  UpdateCategory:
+    handler: src/lambda/http/updateCategory.handler
+    events:
+      - http:
+          method: patch
+          path: categories/{categoryId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+  
+  DeleteCategory:
+    handler: src/lambda/http/deleteCategory.handler
+    events:
+      - http:
+          method: delete
+          path: categories/{categoryId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+
+
+    # deploymentSettings:
+    #   type: Linear10PercentEvery1Minute
+    #   alias: Live
+
+  GetProducts:
+    handler: src/lambda/http/getProductsByCategory.handler
+    events:
+      - http:
+          method: get
+          path: categories/{categoryId}/products
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}/index/${self:provider.environment.CATEGORY_ID_INDEX}
+
+  CreateProduct:
+    handler: src/lambda/http/createProduct.handler
+    events:
+      - http:
+          method: post
+          authorizer: Auth
+          path: categories/{categoryId}/products
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new product
+            description: Add a new product to the inventory
+            requestModels:
+              'application/json': ProductRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.PRODUCTS_S3_BUCKET}/*
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+  
+  UpdateProduct:
+    handler: src/lambda/http/updateProduct.handler
+    events:
+      - http:
+          method: patch
+          authorizer: Auth
+          path: categories/{categoryId}/products/{productId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+  
+  DeleteProduct:
+    handler: src/lambda/http/deleteProduct.handler
+    events:
+      - http:
+          method: delete
+          path: categories/{categoryId}/products/{productId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+
+  GetAllProducts:
+    handler: src/lambda/http/getAllProducts.handler
+    events:
+      - http:
+          method: get
+          path: products
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+
+ 
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    CategoriesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId    # partitionKey
+            AttributeType: S
+          - AttributeName: categoryId  # sortKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: categoryId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.CATEGORIES_TABLE}
+
+    ProductsDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId   # partitionKey
+            AttributeType: S
+          - AttributeName: categoryId  # sortKey
+            AttributeType: S
+          - AttributeName: productId   # indexKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: productId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.PRODUCTS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.PRODUCT_ID_INDEX}
+            KeySchema:
+            - AttributeName: productId  # partitionKey
+              KeyType: HASH
+            - AttributeName: categoryId # indexKey
+              KeyType: RANGE
+            Projection:
+              ProjectionType: ALL # What attributes will be copied to an index
+          - IndexName: ${self:provider.environment.CATEGORY_ID_INDEX}
+            KeySchema:
+            - AttributeName: userId #  partitionKey
+              KeyType: HASH
+            - AttributeName: categoryId  # indexKey
+              KeyType: RANGE
+            Projection:
+              ProjectionType: ALL # What attributes will be copied to an index
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.PRODUCTS_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.PRODUCTS_S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket

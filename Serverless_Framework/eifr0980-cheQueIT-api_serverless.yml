@@ -1,0 +1,220 @@
+service: cheques-api
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  tableName: ${self:custom.stage}-cheques
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-central-1
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName: ${self:custom.tableName}
+    stripeSecretKey: ${env:STRIPE_SECRET_KEY}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - "Fn::GetAtt": [ChequesTable, Arn]
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /cheques
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  create:
+    handler: functions/create.main
+    events:
+      - http:
+          path: cheque
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /cheques
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  createBulk:
+    handler: functions/createBulk.main
+    events:
+      - http:
+          path: cheques
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  get:
+    # Defines an HTTP API endpoint that calls the main function in get.js
+    # - path: url path is /cheques/{id}
+    # - method: GET request
+    handler: functions/get.main
+    events:
+      - http:
+          path: cheques/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  list:
+    # Defines an HTTP API endpoint that calls the main function in list.js
+    # - path: url path is /cheques
+    # - method: GET request
+    handler: functions/list.main
+    events:
+      - http:
+          path: cheques
+          method: get
+          cors: true
+          authorizer: aws_iam
+  update:
+    # Defines an HTTP API endpoint that calls the main function in update.js
+    # - path: url path is /cheques/{id}
+    # - method: PUT request
+    handler: functions/update.main
+    events:
+      - http:
+          path: cheques/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  delete:
+    # Defines an HTTP API endpoint that calls the main function in delete.js
+    # - path: url path is /cheques/{id}
+    # - method: DELETE request
+    handler: functions/delete.main
+    events:
+      - http:
+          path: cheques/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+  totalAmount:
+    # Defines an HTTP API endpoint that calls the main function in totalAmount.js
+    # - path: url path is /totalAmount
+    # - method: GET request
+    handler: functions/dashboard/totalAmount.main
+    events:
+      - http:
+          path: totalAmount
+          method: get
+          cors: true
+          authorizer: aws_iam
+  monthlyAmount:
+    # Defines an HTTP API endpoint that calls the main function in monthlyAmount.js
+    # - path: url path is /monthlyAmount
+    # - method: GET request
+    handler: functions/dashboard/monthlyAmount.main
+    events:
+      - http:
+          path: monthlyAmount
+          method: get
+          cors: true
+          authorizer: aws_iam
+  countPostdated:
+    # Defines an HTTP API endpoint that calls the main function in countPostdated.js
+    # - path: url path is /countPostdated
+    # - method: GET request
+    handler: functions/dashboard/countPostdated.main
+    events:
+      - http:
+          path: countPostdated
+          method: get
+          cors: true
+          authorizer: aws_iam
+  numOfCheques:
+    # Defines an HTTP API endpoint that calls the main function in numOfCheques.js
+    # - path: url path is /numOfCheques
+    # - method: GET request
+    handler: functions/dashboard/numOfCheques.main
+    events:
+      - http:
+          path: numOfCheques
+          method: get
+          cors: true
+          authorizer: aws_iam
+  countByMonth:
+    # Defines an HTTP API endpoint that calls the main function in countByMonth.js
+    # - path: url path is /countByMonth
+    # - method: GET request
+    handler: functions/dashboard/countByMonth.main
+    events:
+      - http:
+          path: countByMonth
+          method: get
+          cors: true
+          authorizer: aws_iam
+  sumByMonth:
+    # Defines an HTTP API endpoint that calls the main function in countByMonth.js
+    # - path: url path is /sumByMonth
+    # - method: GET request
+    handler: functions/dashboard/sumByMonth.main
+    events:
+      - http:
+          path: sumByMonth
+          method: get
+          cors: true
+          authorizer: aws_iam
+  groupByCategory:
+    # Defines an HTTP API endpoint that calls the main function in groupByCategory.js
+    # - path: url path is /groupByCategory
+    # - method: GET request
+    handler: functions/dashboard/groupByCategory.main
+    events:
+      - http:
+          path: groupByCategory
+          method: get
+          cors: true
+          authorizer: aws_iam
+  billing:
+    # Defines an HTTP API endpoint that calls the main function in billing.js
+    # - path: url path is /billing
+    # - method: POST request
+    handler: functions/billing.main
+    events:
+      - http:
+          path: billing
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  - ${file(resources/s3-bucket.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

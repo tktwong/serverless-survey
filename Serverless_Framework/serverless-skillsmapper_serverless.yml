@@ -1,0 +1,312 @@
+service: ${self:custom.skillsmapper.name}-pipeline
+
+frameworkVersion: ">=1.0.0 <2.0.0"
+
+plugins:
+  - serverless-step-functions
+
+custom:
+  skillsmapper: ${file(../skillsmapper.yml)}
+  private: ${file(../private.yml)}
+  events: ${file(../events.yml)}
+  tables: ${file(../tables.yml)}
+  queues: ${file(../queues.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ${self:custom.private.region}
+  environment:
+    NEO4J_URL: ${self:custom.private.neo4j-url}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+       - "ses:*"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+       - "sns:Publish"
+      Resource:
+       - "Ref" : "MessageReceived"
+    - Effect: Allow
+      Action:
+       - "sqs:*"
+      Resource:
+       - arn:aws:sqs:*:*:${self:custom.skillsmapper.name}-${self:custom.queues.batch-message-queue}
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:dynamodb:"
+            - Ref: "AWS::Region"
+            - ":"
+            - Ref: "AWS::AccountId"
+            - ":"
+            - "table/"
+            - ${self:custom.skillsmapper.name}
+            - "-"
+            - ${self:custom.tables.messages-received}
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:dynamodb:"
+            - Ref: "AWS::Region"
+            - ":"
+            - Ref: "AWS::AccountId"
+            - ":"
+            - "table/"
+            - ${self:custom.tables.messages-with-time}
+    - Effect: "Allow"
+      Action:
+        - "states:StartExecution"
+      Resource:
+        - ${self:resources.Outputs.EmailStateMachine.Value}
+
+
+functions:
+  processEmail:
+    handler: processEmail.processEmail
+    environment:
+      STATEMACHINE_ARN: ${self:resources.Outputs.EmailStateMachine.Value}
+    events:
+      - sns:
+          arn:
+            Fn::Join:
+              - ""
+              - - "arn:aws:sns:"
+                - Ref: "AWS::Region"
+                - ":"
+                - Ref: "AWS::AccountId"
+                - ":"
+                - ${self:custom.skillsmapper.name}
+                - "-"
+                - ${self:custom.events.new-email}
+          topicName: ${self:custom.skillsmapper.name}-${self:custom.events.new-email}
+  storeMessage:
+    handler: storeMessage.storeMessage
+    environment:
+      MESSAGES_RECEIVED_TABLE: ${self:custom.skillsmapper.name}-${self:custom.tables.messages-received}
+  storeFact:
+    handler: storeFact.storeFact
+    timeout: 10
+  validateTags:
+    handler: validateTags.validateTags
+  storeTagValidity:
+    handler: storeTagValidity.storeTagValidity
+  retrieveTagDescription:
+    handler: retrieveTagDescription.retrieveTagDescription
+  sendConfirmation:
+    handler: sendConfirmation.sendConfirmation
+  checkPhoto:
+    handler: checkPhoto.checkPhoto
+  checkDetails:
+    handler: checkDetails.checkDetails
+  retrieveEbiPhoto:
+    handler: retrieveEbiPhoto.retrieveEbiPhoto
+  storePhotoUrl:
+    handler: storePhotoUrl.storePhotoUrl
+  findPersonPage:
+    handler: findPersonPage.findPersonPage
+  retrieveDetails:
+    handler: retrieveDetails.retrieveDetails
+  storeDetails:
+    handler: storeDetails.storeDetails
+  repopulateFromTable:
+    handler: repopulateFromTable.repopulateFromTable
+    timeout: 300
+    environment:
+      MESSAGES_BACKUP_TABLE: ${self:custom.tables.messages-with-time}
+      BATCH_MESSAGE_QUEUE_URL: https://${self:custom.private.region}.queue.amazonaws.com/${self:custom.private.account-id}/${self:custom.skillsmapper.name}-${self:custom.queues.batch-message-queue}
+  processBatchedMessage:
+    handler: processBatchedMessage.processBatchedMessage
+    environment:
+      BATCH_MESSAGE_QUEUE_URL: https://${self:custom.private.region}.queue.amazonaws.com/${self:custom.private.account-id}/${self:custom.skillsmapper.name}-${self:custom.queues.batch-message-queue}
+      STATEMACHINE_ARN: ${self:resources.Outputs.EmailStateMachine.Value}
+stepFunctions:
+  stateMachines:
+    EmailStateMachine:
+      name: EmailStateMachine
+      definition:
+        StartAt: Store
+        States:
+          Store:
+            Type: Parallel
+            Next: ProcessBatchedMessage
+            Branches:
+              - StartAt: StoreMessage
+                States:
+                  StoreMessage:
+                    Type: Task
+                    Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-storeMessage"
+                    InputPath: "$.message"
+                    ResultPath: "$.result"
+                    OutputPath: "$"
+                    End: true
+              - StartAt: StoreFact
+                States:
+                  StoreFact:
+                    Type: Task
+                    Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-storeFact"
+                    InputPath: "$.message"
+                    ResultPath: "$.result"
+                    OutputPath: "$.result"
+                    Next: Process
+                  Process:
+                    Type: Parallel
+                    End: true
+                    Branches:
+                      - StartAt: UnknownTagCheck
+                        States:
+                          UnknownTagCheck:
+                            Type: Choice
+                            Choices:
+                            - Variable: "$.unknownTagCount"
+                              NumericGreaterThan: 0
+                              Next: ValidateTags
+                            Default: FinishedTags
+                          ValidateTags:
+                            Type: Task
+                            Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-validateTags"
+                            Next: StoreTagValidity
+                          StoreTagValidity:
+                            Type: Task
+                            Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-storeTagValidity"
+                            Next: FinishedTags
+                          FinishedTags:
+                            Type: Pass
+                            End: true
+                      - StartAt: SendConfirmation
+                        States:
+                          SendConfirmation:
+                            Type: Task
+                            Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-sendConfirmation"
+                            End: true
+                      - StartAt: CheckDetails
+                        States:
+                          CheckDetails:
+                            Type: Task
+                            Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-checkDetails"
+                            Next: MissingInfoCheck
+                          MissingInfoCheck:
+                            Type: Choice
+                            Choices:
+                              - Or:
+                                - Variable: "$.hasPhoto"
+                                  BooleanEquals: false
+                                - Variable: "$.hasName"
+                                  BooleanEquals: false
+                                Next: FindPersonPage
+                            Default: FinishedInfo
+                          FinishedInfo:
+                            Type: Pass
+                            End: true
+                          FindPersonPage:
+                            Type: Task
+                            Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-findPersonPage"
+                            Next: RetrieveMissingInfo
+                          RetrieveMissingInfo:
+                            Type: Parallel
+                            End: true
+                            Branches:
+                              - StartAt: MissingDetailsCheck
+                                States:
+                                  MissingDetailsCheck:
+                                    Type: Choice
+                                    Choices:
+                                    - Variable: "$.hasName"
+                                      BooleanEquals: false
+                                      Next: RetrieveDetails
+                                    Default: FinishedDetails
+                                  RetrieveDetails:
+                                    Type: Task
+                                    Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-retrieveDetails"
+                                    Next: DetailsToStoreCheck
+                                  DetailsToStoreCheck:
+                                    Type: Choice
+                                    Choices:
+                                    - Variable: "$.nameRetrieved"
+                                      BooleanEquals: true
+                                      Next: StoreDetails
+                                    Default:
+                                      FinishedDetails
+                                  StoreDetails:
+                                    Type: Task
+                                    Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-storeDetails"
+                                    Next: FinishedDetails
+                                  FinishedDetails:
+                                    Type: Pass
+                                    End: true
+                              - StartAt: MissingPhotoCheck
+                                States:
+                                  MissingPhotoCheck:
+                                    Type: Choice
+                                    Choices:
+                                    - Variable: "$.hasPhoto"
+                                      BooleanEquals: false
+                                      Next: RetrieveEbiPhoto
+                                    Default: FinishedPhoto
+                                  RetrieveEbiPhoto:
+                                    Type: Task
+                                    Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-retrieveEbiPhoto"
+                                    Next: PhotoToStoreCheck
+                                  PhotoToStoreCheck:
+                                    Type: Choice
+                                    Choices:
+                                    - Variable: "$.photoRetrieved"
+                                      BooleanEquals: true
+                                      Next: StorePhotoUrl
+                                    Default:
+                                      FinishedPhoto
+                                  StorePhotoUrl:
+                                    Type: Task
+                                    Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-storePhotoUrl"
+                                    Next: FinishedPhoto
+                                  FinishedPhoto:
+                                    Type: Pass
+                                    End: true
+          ProcessBatchedMessage:
+            Type: Task
+            End: true
+            Resource: "arn:aws:lambda:${self:custom.private.region}:${self:custom.private.account-id}:function:${self:service}-${opt:stage}-processBatchedMessage"
+
+resources:
+  Resources:
+    NewEmail:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.skillsmapper.name}-${self:custom.events.new-email}
+    MessageReceived:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.skillsmapper.name}-${self:custom.events.message-received}
+    BatchMessagesQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.skillsmapper.name}-${self:custom.queues.batch-message-queue}
+    MessagesReceivedDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.skillsmapper.name}-${self:custom.tables.messages-received}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+  Outputs:
+    EmailStateMachine:
+      Description: The ARN of the test state machine
+      Value:
+        Ref: EmailStateMachine

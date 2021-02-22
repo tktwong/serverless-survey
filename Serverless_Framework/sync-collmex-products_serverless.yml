@@ -1,0 +1,60 @@
+service:
+  name: sync-collmex-products
+
+package:
+  individually: true
+  exclude:
+    - '**/**'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stackName: ${self:service.name}-stack
+  stage: ${opt:stage, 'prod'}
+  region: eu-central-1
+  deploymentBucket:
+    name: kaskadi-serverless-deployment-bucket
+  stackTags: 
+    app: kaskadi
+  tags:
+    app: kaskadi
+    service: ${self:service.name}
+    logical-unit: products
+    type: schedule
+
+layers:
+  SyncCollmexProductsLayer:
+    path: layer
+    name: ${self:service.name}-layer
+    description: Layer for ${self:service.name}
+    compatibleRuntimes:
+      - nodejs10.x
+      - nodejs12.x
+    licenseInfo: MIT
+    package:
+      include:
+        - '**/**'
+
+functions:
+  SyncCollmexProducts:
+    handler: sync-collmex-products.handler
+    name: ${self:service.name}
+    timeout: 60
+    layers:
+      - { Ref: SyncCollmexProductsLayerLambdaLayer}
+    package:
+      include:
+        - 'sync-collmex-products.js'
+        - 'helpers/**'
+        - 'data/**'
+    events:
+      - schedule:
+          rate: cron(0 7 ? * * *)
+          enabled: true
+    environment:
+      CMX_CLIENT_USER: ${env:CMX_CLIENT_USER}
+      CMX_CLIENT_PWD: ${env:CMX_CLIENT_PWD}
+      CMX_CUST_ID: ${env:CMX_CUST_ID}
+      ES_ID: ${env:ES_ID}
+      ES_SECRET: ${env:ES_SECRET}
+      ES_ENDPOINT: ${env:ES_ENDPOINT}

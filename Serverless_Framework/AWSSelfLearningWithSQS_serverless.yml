@@ -1,0 +1,164 @@
+service: AWSSelfLearning
+
+provider:
+  name: aws
+  runtime: java8
+  region: ap-southeast-2
+  versionFunctions: false
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject
+        - s3:ListBucket
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource:
+        "Fn::GetAtt":
+          - BillingRecurringPayments
+          - Arn
+
+package:
+  artifact: build/libs/AWSSelfLearning.jar
+
+functions:
+  Lambda1:
+    handler: lambda.Lambda1::handleRequest
+    timeout: 900
+    reservedConcurrency: 100
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - LambdaTestQueue
+              - Arn
+          batchSize: 1
+
+  Lambda2:
+    handler: lambda.Lambda2::handleRequest
+    timeout: 900
+    reservedConcurrency: 100
+
+  Lambda3:
+    handler: lambda.Lambda3::handleRequest
+    timeout: 900
+    reservedConcurrency: 100  #ReservedConcurrentExecutions(AWS)
+    events:
+      - schedule: cron(0 9 ? * 2#1 *) #cron(0/1 * ? * MON-FRI *)
+#      - cloudwatchEvent:
+#          name: 'cloudwatch-event-trigger-lambda2'
+#          event:
+#            source:
+#              - 'aws.events'
+#            detail:
+#              state:
+#                - pending
+
+resources:
+  Resources:
+    LambdaTestQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: sqs-lambda1-message-queue
+        VisibilityTimeout: 900
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt
+            - FailedQueue
+            - Arn
+          maxReceiveCount: 3
+#        KmsMasterKeyId: ded05a6e-2173-4a8a-aa9a-5a23e8d579fd
+
+    FailedQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: sqs-lambda1-message-failed-queue
+        MessageRetentionPeriod: 1209600 #过期->消失
+
+    S3FromLambda1Cache:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: "lambda1s3"
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+                - PUT
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+
+    S3FromLambda2Cache:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: "lambda2s3"
+        CorsConfiguration:  #描述用于 Amazon S3 存储桶中对象的跨源访问配置
+          CorsRules:
+            - AllowedMethods:
+                - GET
+                - PUT
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+
+    BillingRecurringPayments:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: billingRecurringPayments
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: N
+          - AttributeName: invoice_number
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: invoice_number_index
+            KeySchema:
+              - AttributeName: invoice_number
+                KeyType: HASH
+            Projection:
+              ProjectionType: KEYS_ONLY
+
+
+#    BillingEmailSecurityGroup:
+#      Type: AWS::EC2::SecurityGroup
+#      Properties:
+#        GroupDescription: Billing Email Security Group
+#        VpcId: vpc-2c77704b
+#        SecurityGroupIngress:
+#          - IpProtocol: tcp
+#            CidrIp: 0.0.0.0/0
+#            FromPort: 5432
+#            ToPort: 5432
+#
+#    RDSInstance:
+#      Type: AWS::RDS::DBInstance
+#      Properties:
+#        DBInstanceIdentifier: billing-EmailMessage
+#        DBName: billing
+#        Port: 5432
+#        Engine: postgres
+#        DBInstanceClass: db.m4.large
+#        AllocatedStorage: 20
+#        MonitoringInterval: 0
+#        MasterUsername: "postgres"
+#        MasterUserPassword: "qazwsxedc123"
+#        VPCSecurityGroups:
+#          - !GetAtt BillingEmailSecurityGroup.GroupId
+#        Tags:
+#          - Key: Name
+#            Value: billing-notification-billing-instance-test

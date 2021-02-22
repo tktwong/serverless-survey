@@ -1,0 +1,119 @@
+service:
+  name: ebooks-service
+
+plugins:
+  - serverless-bundle
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 256
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  environment:
+    EBOOKS_TABLE_NAME: ${self:custom.EbooksTable.name}
+    LIBRARY_TABLE_NAME: ${self:custom.LibraryTable.name}
+    EBOOKS_BUCKET_NAME: ${self:custom.EbooksBucket.name}
+  iamRoleStatements:
+    - ${file(iam/EbooksTableIAM.yml):EbooksTableIAM}
+    - ${file(iam/EbooksBucketIAM.yml):EbooksBucketIAM}
+    - ${file(iam/LibraryTableIAM.yml):LibraryTableIAM}
+
+resources:
+  Resources:
+    EbooksTable: ${file(resources/EbooksTable.yml):EbooksTable}
+    LibraryTable: ${file(resources/LibraryTable.yml):LibraryTable}
+    EbooksBucket: ${file(resources/EbooksBucket.yml):EbooksBucket}
+    EbooksBucketPolicy: ${file(resources/EbooksBucket.yml):EbooksBucketPolicy}
+
+functions:
+  insertEbook:
+    handler: src/handlers/insertEbook.handler
+    events:
+      - http:
+          method: POST
+          path: /ebook
+          cors: true
+          authorizer: ${self:custom.authorizer}
+  
+  saveEbook:
+    handler: src/handlers/saveEbook.handler
+    events:
+      - http:
+          method: POST
+          path: /mylibrary
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  getEbooks:
+    handler: src/handlers/getEbooks.handler
+    events:
+      - http:
+          method: GET
+          path: /ebooks
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  getEbooksFromLibrary:
+    handler: src/handlers/getEbooksFromLibrary.handler
+    events:
+      - http:
+          method: GET
+          path: /mylibrary
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  deleteEbooksFromLibrary:
+    handler: src/handlers/deleteEbooksFromLibrary.handler
+    events:
+      - http:
+          method: DELETE
+          path: /mylibrary/{id}
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  # getEbook:
+  #   handler: src/handlers/getEbook.handler
+  #   events:
+  #     - http:
+  #         method: GET
+  #         path: /ebook/{id}
+  #         cors: true
+  # authorizer: ${self:custom.authorizer}
+
+  # placeBid:
+  #   handler: src/handlers/placeBid.handler
+  #   events:
+  #     - http:
+  #         method: PATCH
+  #         path: auction/{id}/bid
+  #         cors: true
+  #         authorizer: ${self:custom.authorizer}
+
+  # uploadAuctionPicture:
+  #   handler: src/handlers/uploadAuctionPicture.handler
+  #   events:
+  #     - http:
+  #         method: PATCH
+  #         path: auction/{id}/picture
+  #         cors: true
+  #         authorizer: ${self:custom.authorizer}
+
+  # processAuctions:
+  #   handler: src/handlers/processAuctions.handler
+  #   events:
+  #     - schedule: rate(1 minute)
+
+custom:
+  authorizer: arn:aws:lambda:us-east-1:543458641658:function:auth-service-dev-auth
+  EbooksTable:
+    name: !Ref EbooksTable
+    arn: !GetAtt EbooksTable.Arn
+  EbooksBucket:
+    name: ebooks-bucket-iitcacw-jjhdyvuf-${self:provider.stage}
+  LibraryTable:
+    name: !Ref LibraryTable
+    arn: !GetAtt LibraryTable.Arn
+  bundle:
+    linting: false

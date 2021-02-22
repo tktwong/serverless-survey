@@ -1,0 +1,288 @@
+service: cognito-auth
+
+provider:
+  name: aws
+  runtime: python3.7
+  memorySize: 2048
+  timeout: 30
+  stage: ${opt:stage}
+  stackName: ${self:custom.service.label}
+  apiName: ${self:custom.service.label}
+  region: ${opt:region, 'us-east-1'}
+  role: LambdaRole
+  versionFunctions: false
+
+plugins:
+  - serverless-python-requirements
+  - serverless-stack-output-plugin
+
+package:
+  individually: true
+
+custom:
+  infStackName: ${cf:lod-root.InfrastructureStackName}
+  service:
+    label: ${env:STACK_NAME}
+  webpack:
+    includeModules: false
+
+functions:
+
+  # main function that will handle all of our Cognito triggers
+  AuthHandler:
+    handler: auth/auth.handler
+    events:
+      - cognitoUserPool:
+          pool: UserPool
+          trigger: PreAuthentication
+      - cognitoUserPool:
+          pool: UserPool
+          trigger: PreSignUp
+      - cognitoUserPool:
+          pool: UserPool
+          trigger: PostConfirmation
+      - cognitoUserPool:
+          pool: UserPool
+          trigger: PostAuthentication
+
+resources:
+
+  Resources:
+
+    ######################################################################
+    ## CloudWatch                                                       ##
+    ## ---------------------------------------------------------------- ##
+    ## Overrides CloudWatch log groups for the Lambda functions         ##
+    ######################################################################
+
+    AuthHandlerLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: 7
+
+    ######################################################################
+    ## IAM Roles                                                        ##
+    ## ---------------------------------------------------------------- ##
+    ## Overrides CloudWatch log groups for the Lambda functions         ##
+    ######################################################################
+
+    # default Lambda execution role
+    LambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.service.label}-lambda-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:custom.service.label}-lambda-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ses:SendEmail
+                    - ses:SendRawEmail
+                  Resource: "*"
+                - Effect: Allow
+                  Action:
+                    - logs:*
+                  Resource: "*"
+
+    # cognito idp role for authenticated users
+    IdentityPoolAuthRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Federated:
+                  - cognito-identity.amazonaws.com
+              Action:
+                - sts:AssumeRoleWithWebIdentity
+              Condition:
+                StringEquals:
+                  cognito-identity.amazonaws.com:aud: !Ref IdentityPool
+                ForAnyValue:StringLike:
+                  cognito-identity.amazonaws.com:amr: authenticated
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AWSIoTDataAccess
+        Path: /
+        # TODO: add your policies here
+#        Policies:
+#          - PolicyName: invoke-appsync
+#            PolicyDocument:
+#              Version: '2012-10-17'
+#              Statement:
+#                - Effect: Allow
+#                  Action:
+#                    - appsync:GraphQL
+#                  Resource: "*"
+
+    # cognito idp role for unauthenticated users
+    IdentityPoolUnAuthRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Federated:
+                  - cognito-identity.amazonaws.com
+                Service:
+                  - appsync.amazonaws.com
+              Action:
+                - sts:AssumeRoleWithWebIdentity
+              Condition:
+                StringEquals:
+                  cognito-identity.amazonaws.com:aud: !Ref IdentityPool
+                ForAnyValue:StringLike:
+                  cognito-identity.amazonaws.com:amr: unauthenticated
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AWSIoTDataAccess
+        Path: /
+        # TODO: add your policies here
+#        Policies:
+#          - PolicyName: invoke-appsync
+#            PolicyDocument:
+#              Version: '2012-10-17'
+#              Statement:
+#                - Effect: Allow
+#                  Action:
+#                    - appsync:GraphQL
+#                  Resource: "*"
+
+    ######################################################################
+    ## Cognito                                                          ##
+    ## ---------------------------------------------------------------- ##
+    ## Contains the Cognito Identity service configuration              ##
+    ######################################################################
+
+    CognitoUserPoolUserPool:
+      Type: AWS::Cognito::UserPool
+      DeletionPolicy: Retain
+      Properties:
+        UserPoolName: user-pool # TODO: change name
+        AliasAttributes:
+          - phone_number
+          - email
+          - preferred_username
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: false
+          InviteMessageTemplate:
+            EmailSubject: 'New Account'
+            EmailMessage: >
+              Welcome to our online portal. You are receiving this email because a new account has
+              been set up for you. Your temporary username is {username} and temporary password is {####}.
+
+              You will be prompted to change your password after login.
+            SMSMessage: "Welcome to our online portal. Your temporary username is {username} and temporary password is {####}"
+          UnusedAccountValidityDays: 14
+        AutoVerifiedAttributes:
+          - email
+          - phone_number
+        EmailConfiguration:
+          ReplyToEmailAddress: no-reply@example.com
+          SourceArn: ${opt:sesArn}
+        EmailVerificationMessage: >
+          Your verification code is {####}. Copy and paste this code into the validation field.
+        EmailVerificationSubject: Verify Your Email
+        MfaConfiguration: OPTIONAL
+        SmsAuthenticationMessage: "Your authentication code is {####}"
+        SmsConfiguration:
+          ExternalId: ${self:custom.service.label}-external
+          SnsCallerArn:
+            Fn::GetAtt: CognitoSNSCallerRole.Arn
+        SmsVerificationMessage: "Your verification code is {####}"
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireNumbers: true
+            RequireSymbols: true
+            RequireUppercase: true
+        Schema:
+          - Name: given_name
+            Mutable: true
+            Required: true
+          - Name: family_name
+            Mutable: true
+            Required: true
+          - Name: email
+            Mutable: true
+            Required: true
+          - Name: phone_number
+            Mutable: true
+
+    # user pool client
+    UserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: user-pool-client
+        ExplicitAuthFlows:
+          - USER_PASSWORD_AUTH
+        GenerateSecret: false
+        RefreshTokenValidity: 200
+        UserPoolId:
+          Ref: CognitoUserPoolUserPool
+        WriteAttributes:
+          - given_name
+          - family_name
+          - email
+          - phone_number
+
+    # identity pool
+    IdentityPool:
+      Type: AWS::Cognito::IdentityPool
+      Properties:
+        IdentityPoolName: identity_pool
+        AllowUnauthenticatedIdentities: true
+        CognitoIdentityProviders:
+          - ClientId:
+              Ref: UserPoolClient
+            ProviderName:
+              Fn::GetAtt: CognitoUserPoolUserPool.ProviderName
+
+    # attach the auth/unauth roles to the identity pool
+    IdentityPoolRoleAttachment:
+      Type: AWS::Cognito::IdentityPoolRoleAttachment
+      Properties:
+        IdentityPoolId: !Ref IdentityPool
+        Roles:
+          authenticated: !GetAtt IdentityPoolAuthRole.Arn
+          unauthenticated: !GetAtt IdentityPoolUnAuthRole.Arn
+
+  Outputs:
+
+    CognitoUserPoolId:
+      Value:
+        Ref: CognitoUserPoolUserPool
+      Export:
+        Name: ${self:custom.service.label}-CognitoUserPoolId
+
+    CognitoUserPoolArn:
+      Value:
+        Fn::GetAtt: CognitoUserPoolUserPool.Arn
+      Export:
+        Name: ${self:custom.service.label}-CognitoUserPoolArn
+
+    CognitoIdentityPoolId:
+      Value:
+        Ref: IdentityPool
+      Export:
+        Name: ${self:custom.service.label}-CognitoIdentityPoolId
+
+    CognitoWebClientId:
+      Value:
+        Ref: UserPoolClient
+      Export:
+        Name: ${self:custom.service.label}-CognitoWebClientId

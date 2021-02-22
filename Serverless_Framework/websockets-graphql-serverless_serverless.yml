@@ -1,0 +1,79 @@
+service: graphql-api
+
+plugins:
+  - serverless-layers
+  - serverless-prune-plugin
+  - serverless-plugin-parcel
+  - serverless-offline
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  activityTable: ${self:custom.stage}-activityTable
+  serverless-layers:
+    - common:
+        dependenciesPath: ./package.json
+        layersDeploymentBucket: "${self:service.name}-${self:custom.stage}-node-modules"
+        packageManager: "yarn"
+  prune:
+    automatic: true
+    number: 1
+  parcel:
+    target: node
+    cache: false
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  logRetentionInDays: 14
+  memorySize: 512
+  apiGateway:
+    shouldStartNameWithService: true
+  environment:
+    NODE_ENV: production
+    activityTable: ${self:custom.activityTable}
+    websocketEndpoint: https://ga6eq542y6.execute-api.us-east-1.amazonaws.com/prod
+  iamManagedPolicies:
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+      Resource:
+        - "Fn::GetAtt": [ActivityTable, Arn]
+
+functions:
+  connection:
+    handler: src/handlers/connectionHandler.handler
+    events:
+      - websocket:
+          route: $connect
+  graphQL:
+    handler: src/handlers/graphqlHandler.handler
+    events:
+      - http:
+          path: /graphql
+          method: post
+          cors: true
+      - websocket:
+          route: $default
+  activityStreamHandler:
+    handler: src/handlers/activityStreamHandler.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [ActivityTable, StreamArn]
+          batchSize: 10
+          startingPosition: LATEST
+
+resources:
+  - ${file(resources/dynamodb.yml)}

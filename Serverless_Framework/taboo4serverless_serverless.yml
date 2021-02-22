@@ -1,0 +1,185 @@
+
+service: taboo4
+
+plugins:
+  - serverless-offline
+
+package:
+  exclude:
+    - "testdata/**"
+    - "**/*.spec.js"
+    - "README.adoc"
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  memorySize: 256
+  timeout: 30
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-central-1'}
+  stackName: ${self:service}-${self:provider.stage}
+  tags:
+    app: "taboo4"
+
+  environment:
+    DYNAMODB_TABLE: ${self:provider.stackName}
+    UPLOAD_BUCKET: com.sothawo.${self:provider.stackName}.upload
+
+  apiKeys:
+    - ${self:provider.stackName}
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 100
+      rateLimit:  50
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::${self:provider.environment.UPLOAD_BUCKET}/*"
+
+functions:
+  config:
+    handler: aws/config.handler
+    events:
+      - http:
+          path: config
+          method: get
+          cors: true
+          private: true
+  dumpevents:
+    handler: aws/dumpevent.handler
+    events:
+      - http:
+          path: dumpevent
+          method: get
+          cors: true
+          private: true
+      - http:
+          path: dumpevent
+          method: post
+          cors: true
+          private: true
+  postBookmark:
+    handler: aws/bookmark_post.handler
+    events:
+      - http:
+          path: bookmark
+          method: post
+          cors: true
+          private: true
+  postBookmarks:
+    handler: aws/bookmarks_post.handler
+    events:
+      - http:
+          path: bookmarks
+          method: post
+          cors: true
+          private: true
+  getBookmark:
+    handler: aws/bookmark_get.handler
+    events:
+      - http:
+          path: bookmark/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          private: true
+  deleteBookmark:
+    handler: aws/bookmark_delete.handler
+    events:
+      - http:
+          path: bookmark/{id}
+          method: delete
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          private: true
+  getBookmarks:
+    handler: aws/bookmarks_get.handler
+    events:
+      - http:
+          path: bookmarks
+          method: get
+          cors: true
+          private: true
+  getBookmarksByTags:
+    handler: aws/bookmarksquery_post.handler
+    events:
+      - http:
+          path: bookmarks/query
+          method: post
+          cors: true
+          private: true
+  getTags:
+    handler: aws/tags_get.handler
+    events:
+      - http:
+          path: tags
+          method: get
+          cors: true
+          private: true
+  postTitle:
+    handler: aws/title_post.handler
+    events:
+      - http:
+          path: title
+          method: post
+          cors: true
+          private: true
+  bookmarksFromBucket:
+    handler: aws/bookmarks_bucket.handler
+    timeout: 600
+    events:
+      - s3: ${self:provider.environment.UPLOAD_BUCKET}
+  createTable:
+    handler: aws/dynamodb_createtable.handler
+  deleteTable:
+    handler: aws/dynamodb_deletetable.handler
+
+resources:
+  Resources:
+    Taboo4DynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+#      DeletionPolicy: Retain
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: partition
+            AttributeType: S
+          -
+            AttributeName: sort
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: partition
+            KeyType: HASH
+          -
+            AttributeName: sort
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        # alternative to billing is to set the throughput
+#        ProvisionedThroughput:
+#          ReadCapacityUnits: 10
+#          WriteCapacityUnits: 10
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

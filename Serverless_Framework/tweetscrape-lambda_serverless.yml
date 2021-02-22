@@ -1,0 +1,1189 @@
+service: tweetscraper
+
+plugins:
+    - serverless-plugin-ifelse
+    - serverless-offline
+    - serverless-iam-roles-per-function
+    - serverless-s3-remover
+    - aws-amplify-serverless-plugin
+    - serverless-s3-sync
+    - serverless-scriptable-plugin
+
+custom:
+    is_local: ${env:IS_LOCAL, ""}
+    is_offline: ${env:IS_OFFLINE, ""}
+    serverless-offline:
+        host: 0.0.0.0
+    remover:
+        prompt: true
+        buckets:
+            - ${self:custom.TweetBucket}
+            - ${self:custom.WebappBucket}
+            - ${self:custom.AdminBucket}
+    ServiceName: tweetscraper
+    AccountId:
+        Ref: "AWS::AccountId"
+    TweetBucket: ${self:custom.ServiceName}-${self:provider.stage}-${self:provider.region}-bucket
+    WebappBucket: ${self:custom.ServiceName}-${self:provider.stage}-${self:provider.region}-webapp
+    AdminBucket: ${self:custom.ServiceName}-${self:provider.stage}-${self:provider.region}-admin
+    TweetModificationTable: ${self:custom.ServiceName}-${self:provider.stage}-${self:provider.region}-modification
+    SubmissionQueue: ${self:custom.ServiceName}-${self:provider.stage}-submissions
+    WebArchiveQueue: ${self:custom.ServiceName}-${self:provider.stage}-webarchive
+    ScrapeQueue: ${self:custom.ServiceName}-${self:provider.stage}-queue
+    ScrapeSearch: ${self:custom.ServiceName}-${self:provider.stage}-search
+    ScrapeThrottleTTL: 1800
+    ESEndPoint:
+        Fn::GetAtt:
+            - ElasticSearchInstance
+            - DomainEndpoint
+    ESRegion:
+        Ref: "AWS::Region"
+    ESScrollLimit: 25
+    ESScrollTimeout: 3m
+    local: ${file(./local-env.yml)}
+    apiPath: api
+    profiles:
+        dev: default
+        test: default
+        prod: verifiedbullies
+    ESEBSOptions:
+        dev:
+            EBSEnabled: true
+            VolumeType: gp2
+            VolumeSize: 10
+        test:
+            EBSEnabled: true
+            VolumeType: gp2
+            VolumeSize: 10
+        prod:
+            EBSEnabled: true
+            VolumeType: gp2
+            VolumeSize: 60
+    ESClusterConfig:
+        dev:
+            InstanceType: t2.small.elasticsearch
+            InstanceCount: 1
+            DedicatedMasterEnabled: false
+            ZoneAwarenessEnabled: false
+        test:
+            InstanceType: t2.small.elasticsearch
+            InstanceCount: 1
+            DedicatedMasterEnabled: false
+            ZoneAwarenessEnabled: false
+        prod:
+            InstanceType: m4.large.elasticsearch
+            InstanceCount: 2
+            DedicatedMasterEnabled: false
+            ZoneAwarenessEnabled: true
+    s3Sync:
+        -   bucketName: ${self:custom.WebappBucket}
+            localDir: app/site/dist
+        -   bucketName: ${self:custom.AdminBucket}
+            localDir: app/admin/dist
+    amplify:
+        -   filename: app/awsconfiguration.json
+            type: native
+            appClient: CognitoUserPoolClient
+    serverlessIfElse:
+        -   If: '"x${self:custom.is_local}" == "x" && "x${self:custom.is_offline}" == "x"'
+            Set:
+                provider.environment.ELASTIC_HOST: ${self:custom.ESEndPoint}
+                provider.environment.ELASTIC_REGION: ${self:custom.ESRegion}
+                provider.environment.SCRAPE_LIMIT: ${self:custom.ScrapeThrottleTTL}
+                provider.environment.ACCOUNT_ID: ${self:custom.AccountId}
+                provider.environment.SEARCH_LIMIT: ${self:custom.ESScrollLimit}
+                provider.environment.SCROLL_TIMEOUT: ${self:custom.ESScrollTimeout}
+    scriptHooks:
+        before:package:initialize:
+            -   cd app/chrome/ &&
+                rm -rf dist/ &&
+                git checkout tags/v1.11.2 &&
+                npm pack &&
+                mkdir -p dist/nodejs/node_modules/chrome-aws-lambda &&
+                tar --directory dist/nodejs/node_modules/chrome-aws-lambda/ --extract --file chrome-aws-lambda-*.tgz --strip-components=1 &&
+                rm -f chrome-aws-lambda-*.tgz
+        after:deploy:deploy:
+            - serverless s3sync -r ${self:provider.region} -s ${self:provider.stage}
+        before:s3sync:sync:
+            - node ./app/writeSchemaToEnv.js > app/site/.env
+            - cd app/site/ && npm run build:production
+            - node ./app/writeSchemaToEnv.js > app/admin/.env
+            - cd app/admin/ && npm run build:production
+
+package:
+    exclude:
+        - node_modules/aws-sdk/**
+        - app/**
+        - .git/**
+
+provider:
+    name: aws
+    stage: ${opt:stage, 'dev'}
+    region: ${opt:region, 'us-west-2'}
+    runtime: nodejs8.10
+    memorySize: 128
+    profile: ${self:custom.profiles.${self:provider.stage}}
+    environment:
+        INDEX_NAME: ${self:custom.ScrapeSearch}-index
+        S3_SAVE_BUCKET: ${self:custom.TweetBucket}
+        SUBMIT_QUEUE: ${self:custom.SubmissionQueue}
+        SCRAPE_QUEUE: ${self:custom.ScrapeQueue}
+        WEBARCHIVE_QUEUE: ${self:custom.WebArchiveQueue}
+        MODIFICATION_TABLE: ${self:custom.TweetModificationTable}
+        ELASTIC_HOST: ${self:custom.local.ESEndPoint, self:custom.ESEndPoint}
+        ELASTIC_REGION: ${self:custom.local.ESRegion, self:custom.ESRegion}
+        SCRAPE_LIMIT: ${self:custom.local.ScrapeThrottleTTL, self:custom.ScrapeThrottleTTL}
+        ACCOUNT_ID: ${self:custom.local.AccountId, self:custom.AccountId}
+        SEARCH_LIMIT: ${self:custom.local.ESScrollLimit, self:custom.ESScrollLimit}
+        SCROLL_TIMEOUT: ${self:custom.local.ESScrollTimeout, self:custom.ESScrollTimeout}
+        EMAILOCTOPUS_API_KEY: 96c4e5f6-2ee4-11e7-b170-0244cade5e89
+        # EMAILOCTOPUS_LIST_ID: verifiedbullies
+        EMAILOCTOPUS_LIST_ID: 2f75304f-33ea-11e9-a3c9-06b79b628af2
+        EMAILOCTOPUS_API_URL: https://emailoctopus.com/api/1.5/lists
+
+layers:
+    chrome:
+        path: app/chrome/dist
+
+functions:
+    initialize:
+        handler: src/handlers/initialize.main
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    ## i'm not sure how this actually allows index creation but it seems to
+                    - "es:ESHttpHead"
+                    - "es:ESHttpPut"
+                Resource: arn:aws:es:*:*:domain/${self:custom.ScrapeSearch}
+
+    index:
+        handler: src/handlers/test.hello
+        events:
+            - http:
+                method: GET
+                path: ${self:custom.apiPath}/hello
+                cors: true
+                # authorizer:
+                #     type: COGNITO_USER_POOLS
+                #     authorizerId:
+                #         Ref: ApiGatewayAuthorizer
+
+    # logevent:
+    #     handler: src/handlers/test.logevent
+    #     reservedConcurrency: 3
+    #     timeout: 60
+    #     events:
+    #         - stream:
+    #             type: dynamodb
+    #             batchSize: 100
+    #             startingPosition: LATEST
+    #             arn:
+    #                 Fn::GetAtt:
+    #                     - TweetModificationDynamoTable
+    #                     - StreamArn
+    #         #### THIS IS LAME AS FUCK SERVERLESS... CONFIGURED DOWN BELOW
+    #         # - s3:
+    #         #     event: s3:ObjectCreated:*
+    #         #     bucket: ${self:custom.TweetBucket}
+    #         #     rules:
+    #         #         - suffix: .json
+
+    tweetmodification:
+        handler: src/handlers/tweet.modify
+        reservedConcurrency: 3
+        events:
+            - stream:
+                type: dynamodb
+                batchSize: 100
+                startingPosition: LATEST
+                arn:
+                    Fn::GetAtt:
+                        - TweetModificationDynamoTable
+                        - StreamArn
+            #### THIS IS LAME AS FUCK SERVERLESS... CONFIGURED DOWN BELOW
+            # - s3:
+            #     event: s3:ObjectCreated:*
+            #     bucket: ${self:custom.TweetBucket}
+            #     rules:
+            #         - suffix: .json
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - "es:ESHttpPost"
+                Resource: arn:aws:es:*:*:domain/${self:custom.ScrapeSearch}
+            -   Effect: Allow
+                Action:
+                    - sqs:GetQueueUrl
+                    - sqs:SendMessage
+                Resource:
+                    - arn:aws:sqs:*:*:${self:custom.WebArchiveQueue}
+            -   Effect: Allow
+                Action:
+                    - s3:getObject
+                Resource:
+                    - arn:aws:s3:::${self:custom.TweetBucket}/*
+                    - arn:aws:s3:::${self:custom.TweetBucket}
+
+    webarchive:
+        handler: src/handlers/webarchive.main
+        reservedConcurrency: 1
+        timeout: 60
+        events:
+            - sqs:
+                arn:
+                    Fn::GetAtt:
+                        - WebArchiveQueue
+                        - Arn
+                batchSize: 1
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - sqs:ReceiveMessage
+                    - sqs:ReceiveMessageBatch
+                    - sqs:DeleteMessage
+                    - sqs:GetQueueAttributes
+                Resource:
+                    - arn:aws:sqs:*:*:${self:custom.WebArchiveQueue}
+            -   Effect: Allow
+                Action:
+                    - dynamodb:*
+                Resource:
+                    - arn:aws:dynamodb:*:*:table/${self:custom.TweetModificationTable}
+
+    scrape:
+        handler: src/handlers/scrape.main
+        reservedConcurrency: 3
+        timeout: 180
+        memorySize: 1536
+        layers:
+            - Ref: ChromeLambdaLayer
+        events:
+            - sqs:
+                arn:
+                    Fn::GetAtt:
+                        - ScrapeQueue
+                        - Arn
+                batchSize: 10
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - "es:ESHttpHead"
+                    - "es:ESHttpGet"
+                Resource: arn:aws:es:*:*:domain/${self:custom.ScrapeSearch}
+            -   Effect: Allow
+                Action:
+                    - sqs:ReceiveMessage
+                    - sqs:DeleteMessage
+                    - sqs:GetQueueAttributes
+                Resource:
+                    - arn:aws:sqs:*:*:${self:custom.ScrapeQueue}
+            -   Effect: Allow
+                Action:
+                    - s3:PutObject
+                    - s3:PutObjectAcl
+                Resource:
+                    - arn:aws:s3:::${self:custom.TweetBucket}/*
+                    - arn:aws:s3:::${self:custom.TweetBucket}
+
+    enqueue:
+        handler: src/handlers/enqueue.main
+        events:
+            - http:
+                method: POST
+                path: ${self:custom.apiPath}/enqueue
+                cors: true
+                authorizer:
+                    type: COGNITO_USER_POOLS
+                    authorizerId:
+                        Ref: ApiGatewayAuthorizer
+                request:
+                    parameters:
+                        querystrings:
+                            tweet: false
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - sqs:SendMessage
+                    - sqs:SendMessageBatch
+                    - sqs:GetQueueUrl
+                    # - sqs:GetQueueAttributes
+                Resource:
+                    - arn:aws:sqs:*:*:${self:custom.ScrapeQueue}
+
+    search:
+        handler:  src/handlers/search.main
+        events:
+            - http:
+                method: GET
+                path: ${self:custom.apiPath}/search
+                cors: true
+                request:
+                    parameters:
+                        querystrings:
+                            q: false
+                            scroll_id: false
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - "es:ESHttpGet"
+                    - "es:ESHttpPost"
+                Resource: arn:aws:es:*:*:domain/${self:custom.ScrapeSearch}
+
+    stop_scroll:
+        handler:  src/handlers/search.stop
+        events:
+            - http:
+                method: DELETE
+                path: ${self:custom.apiPath}/search
+                cors: true
+                request:
+                    parameters:
+                        querystrings:
+                            scroll_id: true
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - "es:ESHttpDelete"
+                Resource: arn:aws:es:*:*:domain/${self:custom.ScrapeSearch}
+
+    submit:
+        # public, must have lots of sanity checking ... maybe isomorphic-ish to prevent scripting?
+        handler: src/handlers/submit.main
+        events:
+            - http:
+                method: POST
+                path: ${self:custom.apiPath}/submit
+                cors: true
+                request:
+                    headers:
+                        Content-Type: application/json
+                    parameters:
+                        querystrings:
+                            tweet: true
+            - http:
+                method: GET
+                path: ${self:custom.apiPath}/submit
+                cors: true
+                request:
+                    headers:
+                        Content-Type: application/json
+                    parameters:
+                        querystrings:
+                            tweet: true
+            - http:
+                method: GET
+                path: ${self:custom.apiPath}/submit/{tweet+}
+                cors: true
+                request:
+                    headers:
+                        Content-Type: application/json
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - sqs:SendMessage
+                    - sqs:SendMessageBatch
+                    - sqs:GetQueueUrl
+                    # - sqs:GetQueueAttributes
+                Resource:
+                    - arn:aws:sqs:*:*:${self:custom.SubmissionQueue}
+
+    submissions:
+        handler: src/handlers/submissions.main
+        events:
+            - http:
+                method: GET
+                path: ${self:custom.apiPath}/submissions
+                cors: true
+                authorizer:
+                    type: COGNITO_USER_POOLS
+                    authorizerId:
+                        Ref: ApiGatewayAuthorizer
+                request:
+                    headers:
+                        Content-Type: application/json
+                    parameters:
+                        querystrings:
+                            limit: false
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - sqs:GetQueueUrl
+                    - sqs:ReceiveMessage
+                    - sqs:ReceiveMessageBatch
+                    - sqs:DeleteMessage
+                    - sqs:DeleteMessageBatch
+                    # - sqs:GetQueueAttributes
+                Resource:
+                    - arn:aws:sqs:*:*:${self:custom.SubmissionQueue}
+
+    deleteSubmissions:
+        handler: src/handlers/deleteSubmissions.main
+        events:
+            - http:
+                method: DELETE
+                path: ${self:custom.apiPath}/submissions
+                cors: true
+                authorizer:
+                    type: COGNITO_USER_POOLS
+                    authorizerId:
+                        Ref: ApiGatewayAuthorizer
+                request:
+                    headers:
+                        Content-Type: application/json
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - sqs:GetQueueUrl
+                    - sqs:DeleteMessage
+                    - sqs:DeleteMessageBatch
+                    # - sqs:GetQueueAttributes
+                Resource:
+                    - arn:aws:sqs:*:*:${self:custom.SubmissionQueue}
+
+    taxonomyPost:
+        handler: src/handlers/taxonomy.post
+        events:
+            - http:
+                method: POST
+                path: ${self:custom.apiPath}/taxonomy/{tweet_id}
+                cors: true
+                authorizer:
+                    type: COGNITO_USER_POOLS
+                    authorizerId:
+                        Ref: ApiGatewayAuthorizer
+                request:
+                    headers:
+                        Content-Type: application/json
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - dynamodb:*
+                Resource:
+                    - arn:aws:dynamodb:*:*:table/${self:custom.TweetModificationTable}
+    taxonomyPut:
+        handler: src/handlers/taxonomy.post
+        events:
+            - http:
+                method: PUT
+                path: ${self:custom.apiPath}/taxonomy/{tweet_id}
+                cors: true
+                authorizer:
+                    type: COGNITO_USER_POOLS
+                    authorizerId:
+                        Ref: ApiGatewayAuthorizer
+                request:
+                    headers:
+                        Content-Type: application/json
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - dynamodb:*
+                Resource:
+                    - arn:aws:dynamodb:*:*:table/${self:custom.TweetModificationTable}
+    taxonomyPatch:
+        handler: src/handlers/taxonomy.post
+        events:
+            - http:
+                method: PATCH
+                path: ${self:custom.apiPath}/taxonomy/{tweet_id}
+                cors: true
+                authorizer:
+                    type: COGNITO_USER_POOLS
+                    authorizerId:
+                        Ref: ApiGatewayAuthorizer
+                request:
+                    headers:
+                        Content-Type: application/json
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - dynamodb:*
+                Resource:
+                    - arn:aws:dynamodb:*:*:table/${self:custom.TweetModificationTable}
+    taxonomyDelete:
+        handler: src/handlers/taxonomy.post
+        events:
+            - http:
+                method: DELETE
+                path: ${self:custom.apiPath}/taxonomy/{tweet_id}
+                cors: true
+                authorizer:
+                    type: COGNITO_USER_POOLS
+                    authorizerId:
+                        Ref: ApiGatewayAuthorizer
+                request:
+                    headers:
+                        Content-Type: application/json
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - dynamodb:*
+                Resource:
+                    - arn:aws:dynamodb:*:*:table/${self:custom.TweetModificationTable}
+
+    email:
+        handler: src/handlers/marketing.email
+        events:
+            - http:
+                method: POST
+                path: ${self:custom.apiPath}/email
+                cors: true
+                request:
+                    headers:
+                        Content-Type: application/json
+
+    tweet:
+        handler:  src/handlers/gettweet.main
+        events:
+            - http:
+                method: GET
+                path: ${self:custom.apiPath}/tweet/{tweet_id}
+                cors: true
+        iamRoleStatements:
+            -   Effect: Allow
+                Action:
+                    - "es:ESHttpGet"
+                Resource: arn:aws:es:*:*:domain/${self:custom.ScrapeSearch}
+
+resources:
+    Resources:
+        ScrapeQueue:
+            Type: AWS::SQS::Queue
+            Properties:
+                QueueName: ${self:custom.ScrapeQueue}
+                VisibilityTimeout: 180
+                MessageRetentionPeriod: 345600
+        SubmissionQueue:
+            Type: AWS::SQS::Queue
+            Properties:
+                QueueName: ${self:custom.SubmissionQueue}
+                VisibilityTimeout: 900
+                MessageRetentionPeriod: 1209600
+        WebArchiveQueue:
+            Type: AWS::SQS::Queue
+            Properties:
+                QueueName: ${self:custom.WebArchiveQueue}
+                VisibilityTimeout: 3600
+                MessageRetentionPeriod: 1209600
+
+        TweetImageBucket:
+            Type: AWS::S3::Bucket
+            DependsOn:
+                - TweetmodificationLambdaFunction
+            Properties:
+                BucketName: ${self:custom.TweetBucket}
+                VersioningConfiguration:
+                    Status: Enabled
+                CorsConfiguration:
+                    CorsRules:
+                        -   AllowedOrigins:
+                                - '*' # this needs to be set to some sort of domnainy thing
+                            AllowedHeaders:
+                                - '*'
+                            AllowedMethods:
+                                - GET
+                                - PUT
+                                - POST
+                                - DELETE
+                                - HEAD
+                            MaxAge: 3000
+                NotificationConfiguration:
+                    LambdaConfigurations:
+                        -   Event: s3:ObjectCreated:*
+                            Function:
+                                Fn::GetAtt:
+                                  - TweetmodificationLambdaFunction
+                                  - Arn
+                            Filter:
+                                S3Key:
+                                    Rules:
+                                        -   Name: suffix
+                                            Value: ".json"
+        TweetImageBucketPolicy:
+            Type: AWS::S3::BucketPolicy
+            Properties:
+                Bucket:
+                    Ref: TweetImageBucket
+                PolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                        -   Effect: Allow
+                            Action: "s3:*"
+                            Resource: "arn:aws:s3:::${self:custom.TweetBucket}"
+                            Principal:
+                                AWS:
+                                    Fn::Join:
+                                        - ":"
+                                        -   - "arn:aws:iam:"
+                                            - Ref: 'AWS::AccountId'
+                                            - "root"
+        TweetImageBucketLambdaPermissions:
+            Type: AWS::Lambda::Permission
+            DependsOn:
+                - TweetmodificationLambdaFunction
+            Properties:
+                FunctionName:
+                    Fn::GetAtt:
+                        - TweetmodificationLambdaFunction #### this will need to be our real function
+                        - Arn
+                Principal: s3.amazonaws.com
+                Action: lambda:InvokeFunction
+                SourceAccount:
+                    Ref: AWS::AccountId
+                SourceArn:
+                    Fn::GetAtt:
+                        - TweetImageBucket
+                        - Arn
+
+        ElasticSearchInstance:
+            Type: AWS::Elasticsearch::Domain
+            Properties:
+                DomainName: ${self:custom.ScrapeSearch}
+                EBSOptions: ${self:custom.ESEBSOptions.${self:provider.stage}}
+                ElasticsearchClusterConfig: ${self:custom.ESClusterConfig.${self:provider.stage}}
+                ElasticsearchVersion: 6.4
+                AccessPolicies:
+                    Version: "2012-10-17"
+                    Statement:
+                        -   Effect: Allow
+                            Action: "es:*"
+                            Resource:
+                                Fn::Join:
+                                    - ":"
+                                    -   - "arn:aws:es"
+                                        - Ref: 'AWS::Region'
+                                        - Ref: 'AWS::AccountId'
+                                        - "domain/${self:custom.ScrapeSearch}/*"
+                            Principal:
+                                AWS:
+                                    Fn::Join:
+                                        - ":"
+                                        -   - "arn:aws:iam:"
+                                            - Ref: 'AWS::AccountId'
+                                            - "root"
+                        -   Effect: Allow
+                            Action:
+                                - "es:ESHttpHead"
+                                - "es:ESHttpPut"
+                            Resource:
+                                Fn::Join:
+                                    - ":"
+                                    -   - "arn:aws:es"
+                                        - Ref: 'AWS::Region'
+                                        - Ref: 'AWS::AccountId'
+                                        - "domain/${self:custom.ScrapeSearch}/*"
+                            Principal:
+                                AWS:
+                                    Fn::GetAtt:
+                                        - InitializeIamRoleLambdaExecution # this is created by Serverless in the json file
+                                        - Arn
+                        -   Effect: Allow
+                            Action:
+                                - "es:ESHttpGet"
+                            Resource:
+                                Fn::Join:
+                                    - ":"
+                                    -   - "arn:aws:es"
+                                        - Ref: 'AWS::Region'
+                                        - Ref: 'AWS::AccountId'
+                                        - "domain/${self:custom.ScrapeSearch}/*"
+                            Principal:
+                                AWS:
+                                    Fn::GetAtt:
+                                        - TweetIamRoleLambdaExecution # this is created by Serverless in the json file
+                                        - Arn
+                        -   Effect: Allow
+                            Action:
+                                - "es:ESHttpGet"
+                                - "es:ESHttpPost"
+                            Resource:
+                                Fn::Join:
+                                    - ":"
+                                    -   - "arn:aws:es"
+                                        - Ref: 'AWS::Region'
+                                        - Ref: 'AWS::AccountId'
+                                        - "domain/${self:custom.ScrapeSearch}/*"
+                            Principal:
+                                AWS:
+                                    Fn::GetAtt:
+                                        - SearchIamRoleLambdaExecution # this is created by Serverless in the json file
+                                        - Arn
+                        -   Effect: Allow
+                            Action:
+                                - "es:ESHttpDelete"
+                            Resource:
+                                Fn::Join:
+                                    - ":"
+                                    -   - "arn:aws:es"
+                                        - Ref: 'AWS::Region'
+                                        - Ref: 'AWS::AccountId'
+                                        - "domain/${self:custom.ScrapeSearch}/*"
+                            Principal:
+                                AWS:
+                                    Fn::GetAtt:
+                                        - StopUnderscorescrollIamRoleLambdaExecution # this is created by Serverless in the json file
+                                        - Arn
+                        -   Effect: Allow
+                            Action:
+                                - "es:ESHttpGet"
+                                - "es:ESHttpPost"
+                            Resource:
+                                Fn::Join:
+                                    - ":"
+                                    -   - "arn:aws:es"
+                                        - Ref: 'AWS::Region'
+                                        - Ref: 'AWS::AccountId'
+                                        - "domain/${self:custom.ScrapeSearch}/*"
+                            Principal:
+                                AWS:
+                                    Fn::GetAtt:
+                                        - TweetmodificationIamRoleLambdaExecution # this is created by Serverless in the json file
+                                        - Arn
+                        -   Effect: Allow
+                            Action:
+                                - "es:ESHttpGet"
+                                - "es:ESHttpHead"
+                                - "es:ESHttpPost"
+                            Resource:
+                                Fn::Join:
+                                    - ":"
+                                    -   - "arn:aws:es"
+                                        - Ref: 'AWS::Region'
+                                        - Ref: 'AWS::AccountId'
+                                        - "domain/${self:custom.ScrapeSearch}/*"
+                            Principal:
+                                AWS:
+                                    Fn::GetAtt:
+                                        - ScrapeIamRoleLambdaExecution # this is created by Serverless in the json file
+                                        - Arn
+
+                    ### THIS IS TEMPORARY FOR DEV PURPOSES.. MUST REMOVE FOR PUBLIC DEPLOYMENT
+                        # -   Effect: Allow
+                        #     Action: "es:*"
+                        #     Resource:
+                        #         Fn::Join:
+                        #             - ":"
+                        #             -   - "arn:aws:es"
+                        #                 - Ref: 'AWS::Region'
+                        #                 - Ref: 'AWS::AccountId'
+                        #                 - "domain/${self:custom.ScrapeSearch}/*"
+                        #     Principal:
+                        #         AWS: '*'
+
+        TweetModificationDynamoTable:
+            Type: AWS::DynamoDB::Table
+            Properties:
+                TableName: ${self:custom.TweetModificationTable}
+                BillingMode: PAY_PER_REQUEST
+                AttributeDefinitions:
+                    -   AttributeName: TweetId
+                        AttributeType: N
+                    -   AttributeName: Timestamp
+                        AttributeType: N
+                    ### apparently this can only list keys
+                    # -   AttributeName: User
+                    #     AttributeType: S
+                    # -   AttributeName: Parent
+                    #     AttributeType: N
+                    # -   AttributeName: Action
+                    #     AttributeType: S
+                    # -   AttributeName: Field
+                    #     AttributeType: S
+                    # -   AttributeName: Content
+                    #     AttributeType: S
+                KeySchema:
+                    -   AttributeName: TweetId
+                        KeyType: "HASH"
+                    -   AttributeName: Timestamp
+                        KeyType: "RANGE"
+                # ProvisionedThroughput:
+                #     ReadCapacityUnits: 5
+                #     WriteCapacityUnits: 5
+                StreamSpecification:
+                    StreamViewType: NEW_IMAGE
+
+        ApiGatewayAuthorizer:
+            Type: AWS::ApiGateway::Authorizer
+            Properties:
+                Name: ${self:custom.ServiceName}-${self:provider.stage}-auth
+                AuthorizerResultTtlInSeconds: 900
+                IdentitySource: method.request.header.Authorization
+                Type: COGNITO_USER_POOLS
+                RestApiId:
+                    Ref: ApiGatewayRestApi
+                ProviderARNs:
+                    - Fn::GetAtt:
+                        - CognitoUserPool
+                        - Arn
+
+        CognitoUserPool:
+            Type: AWS::Cognito::UserPool
+            Properties:
+                UserPoolName: ${self:custom.ServiceName}-${self:provider.stage}-user-pool
+                UsernameAttributes:
+                    - email
+                AutoVerifiedAttributes:
+                    - email
+                Policies:
+                    PasswordPolicy:
+                        MinimumLength: 12
+                        RequireLowercase: true
+                        RequireNumbers: true
+                        RequireSymbols: true
+                        RequireUppercase: true
+                # MfaConfiguration: OPTIONAL
+                AdminCreateUserConfig:
+                    AllowAdminCreateUserOnly: true
+                    UnusedAccountValidityDays: 2
+
+        CognitoUserPoolClient:
+            Type: AWS::Cognito::UserPoolClient
+            Properties:
+                ClientName: ${self:custom.ServiceName}-${self:provider.stage}-user-pool-client
+                UserPoolId:
+                    Ref: CognitoUserPool
+                GenerateSecret: false
+                RefreshTokenValidity: 7
+                # might need this.. don't think so tho
+                # ExplicitAuthFlows:
+                #     - ADMIN_NO_SRP_AUTH
+
+    ### for cloudfront & s3 integration
+
+        S3OriginAccessIdentity:
+            Type: "AWS::CloudFront::CloudFrontOriginAccessIdentity"
+            Properties:
+                CloudFrontOriginAccessIdentityConfig:
+                    Comment: Serverless managed web app S3 bucket origin-access-identity
+
+        WebAppS3Bucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:custom.WebappBucket}
+                WebsiteConfiguration:
+                    IndexDocument: index.html
+                    ErrorDocument: error.html
+                VersioningConfiguration:
+                    Status: Enabled
+                CorsConfiguration:
+                    CorsRules:
+                        -   AllowedOrigins:
+                                - '*' # this needs to be set to some sort of domnainy thing
+                            AllowedHeaders:
+                                - '*'
+                            AllowedMethods:
+                                - GET
+                                - PUT
+                                - POST
+                                - DELETE
+                                - HEAD
+                            MaxAge: 3000
+        WebAppS3BucketPolicy:
+            Type: AWS::S3::BucketPolicy
+            Properties:
+                Bucket:
+                    Ref: WebAppS3Bucket
+                PolicyDocument:
+                    Statement:
+                        -   Sid: OAIGetObject
+                            Effect: Allow
+                            Principal:
+                                AWS:
+                                    Fn::Join:
+                                        - " "
+                                        -   - arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity
+                                            - Ref: S3OriginAccessIdentity
+                            Action:
+                                - s3:GetObject
+                            Resource:
+                                Fn::Join:
+                                - ''
+                                -   - 'arn:aws:s3:::'
+                                    - Ref: WebAppS3Bucket
+                                    - "/*"
+                        # -   Sid: AllowPublicRead
+                        #     Effect: Allow
+                        #     Principal:
+                        #         AWS: '*'
+                        #     Action:
+                        #         - s3:GetObject
+                        #     Resource:
+                        #         Fn::Join:
+                        #             - ''
+                        #             -   - 'arn:aws:s3:::'
+                        #                 - Ref: WebAppS3Bucket
+                        #                 - "/*"
+
+        AdminS3Bucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:custom.AdminBucket}
+                WebsiteConfiguration:
+                    IndexDocument: index.html
+                    ErrorDocument: error.html
+                VersioningConfiguration:
+                    Status: Enabled
+                CorsConfiguration:
+                    CorsRules:
+                        -   AllowedOrigins:
+                                - '*' # this needs to be set to some sort of domnainy thing
+                            AllowedHeaders:
+                                - '*'
+                            AllowedMethods:
+                                - GET
+                                - PUT
+                                - POST
+                                - DELETE
+                                - HEAD
+                            MaxAge: 3000
+        AdminS3BucketPolicy:
+            Type: AWS::S3::BucketPolicy
+            Properties:
+                Bucket:
+                    Ref: AdminS3Bucket
+                PolicyDocument:
+                    Statement:
+                        -   Sid: OAIGetObject
+                            Effect: Allow
+                            Principal:
+                                AWS:
+                                    Fn::Join:
+                                        - " "
+                                        -   - arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity
+                                            - Ref: S3OriginAccessIdentity
+                            Action:
+                                - s3:GetObject
+                            Resource:
+                                Fn::Join:
+                                    - ''
+                                    -   - 'arn:aws:s3:::'
+                                        - Ref: AdminS3Bucket
+                                        - "/*"
+                        # -   Sid: AllowPublicRead
+                        #     Effect: Allow
+                        #     Principal:
+                        #         AWS: '*'
+                        #     Action:
+                        #         - s3:GetObject
+                        #     Resource:
+                        #         Fn::Join:
+                        #             - ''
+                        #             -   - 'arn:aws:s3:::'
+                        #                 - Ref: AdminS3Bucket
+                        #                 - "/*"
+
+        ApiDistribution:
+            Type: AWS::CloudFront::Distribution
+            Properties:
+                DistributionConfig:
+                    Origins:
+                        -   Id: WebApp
+                            DomainName:
+                                Fn::GetAtt: [WebAppS3Bucket, DomainName]
+                            S3OriginConfig:
+                                OriginAccessIdentity:
+                                    Fn::Join:
+                                        - ''
+                                        -   - origin-access-identity/cloudfront/
+                                            - Ref: S3OriginAccessIdentity
+                                # CustomOriginConfig:
+                                #     HTTPPort: '80'
+                                #     HTTPSPort: '443'
+                                #     OriginProtocolPolicy: http-only
+                                #     OriginSSLProtocols: [ "TLSv1", "TLSv1.1", "TLSv1.2" ]
+                        -   Id: ApiGateway
+                            DomainName:
+                                Fn::Join:
+                                    - ""
+                                    -   - Ref: ApiGatewayRestApi
+                                        - ".execute-api."
+                                        - Ref: AWS::Region
+                                        - ".amazonaws.com"
+                            CustomOriginConfig:
+                                HTTPPort: '80'
+                                HTTPSPort: '443'
+                                OriginProtocolPolicy: https-only
+                                OriginSSLProtocols: [ "TLSv1", "TLSv1.1", "TLSv1.2" ]
+                            OriginPath: /${self:provider.stage}
+                    Enabled: true
+                    HttpVersion: http2
+                    Comment: ${self:provider.stage} - cdn for webapp
+                    # Aliases:
+                    #     - domain.tld # ???
+                    PriceClass: PriceClass_All
+                    DefaultRootObject: index.html
+                ## Since the Single Page App is taking care of the routing we need to make sure ever path is served with index.html
+                ## The only exception are files that actually exist e.h. app.js, reset.css
+                    CustomErrorResponses:
+                        -   ErrorCode: 403
+                            ResponseCode: 200
+                            ResponsePagePath: /index.html
+                    DefaultCacheBehavior:
+                        AllowedMethods: [GET, HEAD]
+                        ## The origin id defined above
+                        TargetOriginId: WebApp
+                        ## Defining if and how the QueryString and Cookies are forwarded to the origin which in this case is S3
+                        ForwardedValues:
+                            QueryString: false
+                            Cookies:
+                                Forward: none
+                        ## The protocol that users can use to access the files in the origin. To allow HTTP use `allow-all`
+                        ViewerProtocolPolicy: redirect-to-https
+                        DefaultTTL: 300
+                        MinTTL: 60
+                        MaxTTL: 3600
+                    CacheBehaviors:
+                        -   TargetOriginId: ApiGateway
+                            PathPattern: ${self:custom.apiPath}/search
+                            AllowedMethods: [HEAD, DELETE, POST, GET, OPTIONS, PUT, PATCH]
+                            CachedMethods: [GET, HEAD]
+                            ForwardedValues:
+                                QueryString: true
+                                Headers:
+                                    - Accept
+                                    - Referer
+                                    - Authorization
+                                    - Content-Type
+                                Cookies:
+                                    Forward: all
+                            MinTTL: '0'
+                            DefaultTTL: '60'
+                            ViewerProtocolPolicy: https-only
+                        -   TargetOriginId: ApiGateway
+                            PathPattern: ${self:custom.apiPath}/submit
+                            AllowedMethods: [HEAD, DELETE, POST, GET, OPTIONS, PUT, PATCH]
+                            ForwardedValues:
+                                QueryString: true
+                                Headers:
+                                    - Accept
+                                    - Referer
+                                    - Authorization
+                                    - Content-Type
+                                Cookies:
+                                    Forward: all
+                            MinTTL: '0'
+                            DefaultTTL: '0'
+                            ViewerProtocolPolicy: https-only
+                        -   TargetOriginId: ApiGateway
+                            PathPattern: ${self:custom.apiPath}/submit/*
+                            AllowedMethods: [HEAD, GET, OPTIONS]
+                            ForwardedValues:
+                                QueryString: true
+                                Headers:
+                                    - Accept
+                                    - Referer
+                                    - Authorization
+                                    - Content-Type
+                                Cookies:
+                                    Forward: all
+                            MinTTL: '0'
+                            DefaultTTL: '0'
+                            ViewerProtocolPolicy: https-only
+                        -   TargetOriginId: ApiGateway
+                            PathPattern: ${self:custom.apiPath}/email
+                            AllowedMethods: [HEAD, DELETE, POST, GET, OPTIONS, PUT, PATCH]
+                            ForwardedValues:
+                                QueryString: true
+                                Headers:
+                                    - Accept
+                                    - Referer
+                                    - Authorization
+                                    - Content-Type
+                                Cookies:
+                                    Forward: all
+                            MinTTL: '0'
+                            DefaultTTL: '0'
+                            ViewerProtocolPolicy: https-only
+                        -   TargetOriginId: ApiGateway
+                            PathPattern: ${self:custom.apiPath}/tweet/*
+                            AllowedMethods: [HEAD, GET, OPTIONS]
+                            ForwardedValues:
+                                QueryString: true
+                                Headers:
+                                    - Accept
+                                    - Referer
+                                    - Authorization
+                                    - Content-Type
+                                Cookies:
+                                    Forward: all
+                            MinTTL: '0'
+                            DefaultTTL: '60'
+                            ViewerProtocolPolicy: https-only
+
+        AdminDistribution:
+            Type: AWS::CloudFront::Distribution
+            Properties:
+                DistributionConfig:
+                    Origins:
+                        -   Id: Admin
+                            DomainName:
+                                Fn::GetAtt: [AdminS3Bucket, DomainName]
+                            S3OriginConfig:
+                                OriginAccessIdentity:
+                                    Fn::Join:
+                                        - ''
+                                        -   - origin-access-identity/cloudfront/
+                                            - Ref: S3OriginAccessIdentity
+                                # CustomOriginConfig:
+                                #     HTTPPort: '80'
+                                #     HTTPSPort: '443'
+                                #     OriginProtocolPolicy: http-only
+                                #     OriginSSLProtocols: [ "TLSv1", "TLSv1.1", "TLSv1.2" ]
+                        -   Id: ApiGateway
+                            DomainName:
+                                Fn::Join:
+                                    - ""
+                                    -   - Ref: ApiGatewayRestApi
+                                        - ".execute-api."
+                                        - Ref: AWS::Region
+                                        - ".amazonaws.com"
+                            CustomOriginConfig:
+                                HTTPPort: '80'
+                                HTTPSPort: '443'
+                                OriginProtocolPolicy: https-only
+                                OriginSSLProtocols: [ "TLSv1", "TLSv1.1", "TLSv1.2" ]
+                            OriginPath: /${self:provider.stage}
+                    Enabled: true
+                    HttpVersion: http2
+                    Comment: ${self:provider.stage} - cdn for admin
+                    # Aliases:
+                    #     - domain.tld # ???
+                    PriceClass: PriceClass_All
+                    DefaultRootObject: index.html
+                ## Since the Single Page App is taking care of the routing we need to make sure ever path is served with index.html
+                ## The only exception are files that actually exist e.h. app.js, reset.css
+                    CustomErrorResponses:
+                        -   ErrorCode: 403
+                            ResponseCode: 200
+                            ResponsePagePath: /index.html
+                    DefaultCacheBehavior:
+                        AllowedMethods: [GET, HEAD]
+                        ## The origin id defined above
+                        TargetOriginId: Admin
+                        ## Defining if and how the QueryString and Cookies are forwarded to the origin which in this case is S3
+                        ForwardedValues:
+                            QueryString: false
+                            Cookies:
+                                Forward: none
+                        ## The protocol that users can use to access the files in the origin. To allow HTTP use `allow-all`
+                        ViewerProtocolPolicy: redirect-to-https
+                        DefaultTTL: 60
+                        MinTTL: 0
+                        MaxTTL: 3600
+                    CacheBehaviors:
+                        -   TargetOriginId: ApiGateway
+                            PathPattern: ${self:custom.apiPath}/*
+                            AllowedMethods: [HEAD, DELETE, POST, GET, OPTIONS, PUT, PATCH]
+                            CachedMethods: [HEAD, GET, OPTIONS]
+                            ForwardedValues:
+                                QueryString: true
+                                Headers:
+                                    - Accept
+                                    - Referer
+                                    - Authorization
+                                    - Content-Type
+                                Cookies:
+                                    Forward: all
+                            MinTTL: '0'
+                            DefaultTTL: '0'
+                            ViewerProtocolPolicy: https-only

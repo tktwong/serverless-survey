@@ -1,0 +1,150 @@
+service: investments-tracker-api
+frameworkVersion: '1.65.0'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-1
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action  :
+        - "dynamodb:PutItem"
+        - "dynamodb:Query"
+      Resource:
+        Fn::GetAtt:
+          - InvestmentsTrackerDynamoDbTable
+          - Arn
+
+functions:
+  CreateBroker:
+    handler: broker.create
+    events:
+      - http:
+          path: broker
+          method: POST
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+            scopes:
+              - investments-tracker-api/API_ACCESS
+  GetBrokers:
+    handler: broker.get
+    events:
+      - http:
+          path: broker
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+            scopes:
+              - investments-tracker-api/API_ACCESS
+resources:
+  Resources:
+    InvestmentsTrackerUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: InvestmentsTrackerUserPool
+    InvestmentsTrackerUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        AllowedOAuthFlows:
+          - code
+        AllowedOAuthFlowsUserPoolClient: true
+        AllowedOAuthScopes:
+          - email
+          - openid
+          - profile
+          - investments-tracker-api/API_ACCESS
+        CallbackURLs:
+          - https://localhost/callback
+        ClientName: Investments Tracker APP
+        GenerateSecret: true
+        LogoutURLs:
+          - https://localhost/logout
+        UserPoolId:
+          Ref: InvestmentsTrackerUserPool
+        SupportedIdentityProviders:
+          - Google
+    InvestmentsTrackerUserPoolDomain:
+      Type: AWS::Cognito::UserPoolDomain
+      Properties:
+        Domain: investments-tracker
+        UserPoolId:
+          Ref: InvestmentsTrackerUserPool
+    InvestmentsTrackerUserPoolIdentityProvider:
+      Type: AWS::Cognito::UserPoolIdentityProvider
+      Properties:
+        UserPoolId:
+          Ref: InvestmentsTrackerUserPool
+        ProviderName: Google
+        ProviderDetails:
+          client_id: ${ssm:/investments-tracker-api/identity-provider/google/client_id}
+          client_secret: ${ssm:/investments-tracker-api/identity-provider/google/client_secret~true}
+          authorize_scopes: "profile email openid"
+        ProviderType: "Google"
+        AttributeMapping:
+          email: "email"
+    UserPoolResourceServer:
+      Type: AWS::Cognito::UserPoolResourceServer
+      Properties:
+        Identifier: investments-tracker-api
+        Name: "investments tracker api"
+        Scopes:
+          - ScopeName: API_ACCESS
+            ScopeDescription: Access to Investments Tracker API.
+        UserPoolId:
+          Ref: InvestmentsTrackerUserPool
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: investments-tracker-api-${opt:stage, self:provider.stage, 'dev'}
+        Description: Investments Tracker API Gateway
+    ApiGatewayAuthorizer:
+      DependsOn: ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        AuthorizerResultTtlInSeconds: 300
+        IdentitySource: method.request.header.Authorization
+        Name: Cognito
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - {"Fn::GetAtt": ["InvestmentsTrackerUserPool", "Arn"]}
+    InvestmentsTrackerDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "InvestmentsTracker"
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        # Set the capacity to auto-scale
+        BillingMode: PAY_PER_REQUEST
+
+  Outputs:
+    InvestmentsTrackerUserPoolId:
+      Description: "Pool Id"
+      Value:
+        Ref: InvestmentsTrackerUserPool
+    InvestmentsTrackerAppClientId:
+      Description: "App Client Id"
+      Value:
+        Ref: InvestmentsTrackerUserPoolClient
+    InvestmentsTrackerDomain:
+      Description: "User Pool Domain"
+      Value:
+        Ref: InvestmentsTrackerUserPoolDomain
+    InvestmentsTrackerTable:
+      Value:
+        Ref: InvestmentsTrackerDynamoDbTable

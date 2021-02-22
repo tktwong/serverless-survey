@@ -1,0 +1,50 @@
+service:
+  name: shopify-serverless-seed
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  region: ${opt:region, 'eu-central-1'}
+  stage: ${opt:stage, 'dev'}
+  role: CompatLoggerRole
+  runtime: nodejs8.10
+  memorySize: ${opt:memorySize, '256'}
+
+functions:
+  app:
+    handler: src/handler.handler
+    events:
+      - http:
+          method: any
+          path: /{proxy+}
+
+resources:
+  Resources:
+    CompatLoggerRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: "${self:service}-${self:provider.stage}-${self:provider.region}-CompatLoggerRole"
+        Path: /
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+        - PolicyName: LambdaDefaultPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow # note that these rights are given in the default policy and are required if you want logs out of your lambda(s)
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: { "Fn::Join": [":", ["arn:aws:logs", { "Ref": "AWS::Region"}, { "Ref": "AWS::AccountId"}, "*" ] ] }

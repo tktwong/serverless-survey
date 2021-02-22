@@ -1,0 +1,63 @@
+service: ${opt:serviceName, 'lambda-sls-pattern'}
+
+frameworkVersion: "2"
+
+# you can add packaging information here
+package:
+  exclude:
+    - .idea/**
+    - README.md
+    - requirements.txt
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-west-1'}
+  stackName: ${self:custom.stackName.${self:provider.stage}}
+  deploymentBucket:
+    name: ${self:custom.deploymentBucket.${self.provider.stage}}
+
+  # you can define service wide environment variables here
+  environment:
+    # TODO: Edit `FIREHOSE_DELIVERY_STREAM_NAME`
+    FIREHOSE_DELIVERY_STREAM_NAME: FIREHOSE_DELIVERY_STREAM_NAME
+    REGION_NAME: ${self.provider.region}
+
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "firehose:PutRecord"
+      # TODO: Edit `FIREHOSE_DELIVERY_STREAM_NAME`
+      Resource: "arn:aws:firehose:*:*:deliverystream/FIREHOSE_DELIVERY_STREAM_NAME"
+
+custom:
+  stackName:
+    dev: "qt-allocations-handler-dev"
+    stage: "lambda-sls-pattern-staging"
+    prod-northcal: "qt-alloactions-handler-prod-northcal"
+    prod-oregon: "qt-allocations-handler-prod-oregon"
+  deploymentBucket:
+    # TODO: Find bucket names
+    dev: "DEV-BUCKET-NAME"
+    stage: "STAGE-BUCKET-NAME"
+    prod-northcal: "PROD-NORTHCAL-BUCKET-NAME"
+    prod-oregon: "PROD-OREGON-BUCKET-NAME"
+  upworkEnvironment:
+    dev: dev
+    stage: staging
+    prod-northcal: prod
+    prod-oregon: prod
+
+functions:
+  qtAllocationsHandler:
+    handler: src/lambda_handler.handle
+    name: qt-allocations-handler-${self:custom.upworkEnvironment.${self:provider.stage}}
+    description: Lambda function to put DynamoDB Stream Events to Firehose Delivery Stream for qt-allocations
+    events:
+      - stream:
+          arn: DYNAMODB_STREAM_ARN
+          batchSize: 20
+          startingPosition: LATEST
+          enabled: true

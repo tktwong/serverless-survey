@@ -1,0 +1,124 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: wedding
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '>=1.0.0 <2.0.0'
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-2
+  memorySize: 128
+
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'ses:SendEmail'
+      Resource: '*'
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+package:
+  exclude:
+    - client/**
+    - flow-typed/**
+    - __mocks__/**
+    - .circleci/**
+  # include:
+  #   - include-me.js
+  #   - include-me-dir/**
+
+functions:
+  sendEmail:
+    handler: handler.sendEmail
+    events:
+      - http:
+          path: api/rsvp
+          method: post
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    IPv4HostAliasRecord:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        HostedZoneName: ${self:custom.domainName.${opt:stage, 'dev'}}.
+        Name: ${self:custom.alias.${opt:stage, 'dev'}}.${self:custom.domainName.${opt:stage, 'dev'}}.
+        Type: A
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt: [ApiDistribution, DomainName]
+          HostedZoneId: Z2FDTNDATAQYW2
+    IPv6HostAliasRecord:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        HostedZoneName: ${self:custom.domainName.${opt:stage, 'dev'}}.
+        Name: ${self:custom.alias.${opt:stage, 'dev'}}.${self:custom.domainName.${opt:stage, 'dev'}}.
+        Type: AAAA
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt: [ApiDistribution, DomainName]
+          HostedZoneId: Z2FDTNDATAQYW2
+  Outputs:
+    ApiDistributionId:
+      Description: Api Distirbution Id
+      Value:
+        Ref: ApiDistribution
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"
+
+plugins:
+  - serverless-webpack
+  - fullstack-serverless
+  - serverless-offline
+  - serverless-cloudfront-invalidate
+  - serverless-print-dots
+
+custom:
+  alias:
+    dev: beta
+    prod: www
+  domainName:
+    dev: patrickandgrace.com
+    prod: patrickandgrace.com
+  certificate:
+    dev: arn:aws:acm:us-east-1:963777545862:certificate/ee3a5994-e3e5-41a5-8a25-1e3f5f883ae4
+    prod: arn:aws:acm:us-east-1:963777545862:certificate/ee3a5994-e3e5-41a5-8a25-1e3f5f883ae4
+  fullstack:
+    apiPath: api
+    bucketName: "${opt:stage, 'dev'}client"
+    certificate: ${self:custom.certificate.${opt:stage, 'dev'}}
+    clientCommand: npm run build
+    domain:
+      - ${self:custom.alias.${opt:stage, 'dev'}}.${self:custom.domainName.${opt:stage, 'dev'}}
+    distributionFolder: client/build
+    indexDocument: index.html
+    singlePageApp: true
+  serverless-offline:
+    port: 4000
+  cloudfrontInvalidate:
+    distributionIdKey: ApiDistributionId
+    items:
+      - '/*'

@@ -1,0 +1,51 @@
+service: right-or-not
+
+provider:
+  name: aws
+  runtime: ruby2.5
+  stage: prod
+  region: us-east-1
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: arn:aws:dynamodb:*:*:table/${self:custom.listsTableName}
+
+package:
+  exclude:
+    - .git
+    - .gitignore
+
+functions:
+  RightOrNot:
+    handler: handler.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+    environment:
+      STAGE: prod
+
+resources:
+  Resources:
+    HarmonicFields:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.listsTableName}
+        AttributeDefinitions:
+          - AttributeName: slug
+            AttributeType: S
+        KeySchema:
+          - AttributeName: slug
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+custom:
+  listsTableName: lists
+  dynamodb:
+    start:
+      migrate: true

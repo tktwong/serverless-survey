@@ -1,0 +1,252 @@
+# For full config options, check the docs:
+#    docs.serverless.com
+
+plugins:
+  - "@nw/serverless-webpack"
+  - "@nw/serverless-stream-plugin"
+
+service:  ${self:custom.serviceName}
+custom:
+  serviceName: nwSearch
+  webpackIncludeModules: true
+  tokenAuthorizer:
+      arn: ${file(properties.yml):custom-token-authorizer}
+      resultTtlInSeconds: 300
+  iamAuthorizer: ${file(properties.yml):custom-iam-authorizer}
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  timeout: 300
+  role: ${file(properties.yml):aws-lambda-role}
+  region: ${file(properties.yml):aws-region}
+  vpc:
+    securityGroupIds:
+      - ${file(properties.yml):aws-lambda-sg}
+    subnetIds:
+      - ${file(properties.yml):aws-lambda-subnet1}
+      - ${file(properties.yml):aws-lambda-subnet2}
+
+  environment:
+    STAGE: ${opt:stage}
+    SERVICE_NAME: ${self:custom.serviceName}
+    ES_URL: ${file(properties.yml):elastic-search-url}
+    ES_INDEX: ${file(properties.yml):elastic-search-index}
+    ES_TYPE: ${file(properties.yml):elastic-search-type}
+    LBES_INDEX: ${file(properties.yml):live-block-index}
+    LBES_TYPE: ${file(properties.yml):live-block-type}
+    INFO_LOG: ${file(properties.yml):information-log}
+    REGION: ${file(properties.yml):aws-region}
+    S3_BUCKET: nwsearch-${opt:stage}-essoldvehicles
+    S3_FILE: ${file(properties.yml):s3-file-name}
+
+resources:
+  Conditions:
+    ShouldCreateProxy:
+      Fn::Or:
+      - Fn::Equals: ["testdev", "${opt:stage}"]
+      - Fn::Equals: ["qa", "${opt:stage}"]
+      - Fn::Equals: ["test", "${opt:stage}"]
+      - Fn::Equals: ["uat", "${opt:stage}"]
+      - Fn::Equals: ["perf", "${opt:stage}"]
+      - Fn::Equals: ["preprod", "${opt:stage}"]
+      - Fn::Equals: ["prod", "${opt:stage}"]
+
+
+  Resources:
+    S3Assets:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "nwsearch-${opt:stage}-essoldvehicles"
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+                - HEAD
+              AllowedOrigins:
+                - "*"
+    Resource:
+      Type: AWS::ApiGateway::Resource
+      Condition: ShouldCreateProxy
+      Properties:
+        ParentId:
+          Fn::ImportValue: "${opt:stage}-nwApiGateway-api-resource"
+        RestApiId:
+          Fn::ImportValue: "${opt:stage}-nwApiGateway-restapi"
+        PathPart: search
+    Proxy:
+      Type: AWS::ApiGateway::Resource
+      Condition: ShouldCreateProxy
+      Properties:
+        ParentId:
+          Ref: Resource
+        RestApiId:
+          Fn::ImportValue: "${opt:stage}-nwApiGateway-restapi"
+        PathPart: "{proxy+}"
+    ProxyMethod:
+      Type: AWS::ApiGateway::Method
+      Condition: ShouldCreateProxy
+      Properties:
+        ResourceId:
+          Ref: Proxy
+        RestApiId:
+          Fn::ImportValue: "${opt:stage}-nwApiGateway-restapi"
+        HttpMethod: ANY
+        AuthorizationType: NONE
+        RequestParameters:
+          method.request.path.proxy: true
+        Integration:
+          Type: HTTP_PROXY
+          IntegrationHttpMethod: ANY
+          Uri:
+            Fn::Join:
+            - ''
+            - - "https://"
+              - Ref: ApiGatewayRestApi
+              - ".execute-api."
+              - Ref: AWS::Region
+              - ".amazonaws.com"
+              - "/${opt:stage}"
+              - "/api/search/{proxy}"
+          IntegrationResponses:
+            - StatusCode: 200
+          RequestParameters:
+            "integration.request.path.proxy": method.request.path.proxy
+
+functions:
+  healthCheck:
+    handler: handler._healthcheck
+    timeout: 10
+    tracing: false
+    events:
+      - http:
+          path: _health
+          method: get
+          # authorizer: "${self:custom.iamAuthorizer}" # Using AWS_IAM authorizer
+      - schedule: rate(1 minute)
+
+  searchIndex:
+    handler: handler.searchIndex
+    events:
+      - http:
+          path: api/search/index
+          method: get
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Pragma
+              - Cache-Control
+              - Expires
+            allowCredentials: false
+          authorizer: "${self:custom.tokenAuthorizer}"
+
+  autoSuggest:
+    handler: handler.autoSuggest
+    events:
+      - http:
+          path: api/search/autosuggest
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Pragma
+              - Cache-Control
+              - Expires
+            allowCredentials: false
+          # authorizer: "${self:custom.tokenAuthorizer}" # Using NW Token authorizer, typically for user facing endpoints
+  searchWordsCorrection:
+    handler: handler.searchWordsCorrection
+    events:
+      - http:
+          path: api/search/autocorrection
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Pragma
+              - Cache-Control
+              - Expires
+            allowCredentials: false
+          # authorizer: "${self:custom.tokenAuthorizer}" # Using NW Token authorizer, typically for user facing endpoints
+  secureSearchWordsCorrection:
+    handler: handler.secureSearchWordsCorrection
+    events:
+      - http:
+          path: api/search/secureAutocorrection
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Pragma
+              - Cache-Control
+              - Expires
+            allowCredentials: false
+            authorizer: "${self:custom.tokenAuthorizer}" # Using NW Token authorizer, typically for user facing endpoints
+  formBasedSearch:
+    handler: handler.formBasedSearch
+    events:
+      - http:
+          path: api/search/formsearch
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Pragma
+              - Cache-Control
+              - Expires
+            allowCredentials: false
+          # authorizer: "${self:custom.tokenAuthorizer}" # Using NW Token authorizer, typically for user facing endpoints
+  putIndex:
+    handler: handler.putIndex
+    memorySize: 3008
+    events:
+      - stream:
+          arn: ${file(properties.yml):kinesis-stream}
+          batchSize: 100
+          startingPosition: LATEST
+          enabled: true
+          # authorizer: "${self:custom.tokenAuthorizer}" # Using NW Token authorizer, typically for user facing endpoints
+  deleteIndex:
+    handler: handler.deleteIndex
+    memorySize: 3008
+    events:
+     # - schedule: rate(24 hours)
+     - stream:
+         arn: ${file(properties.yml):kinesis-stream}
+         batchSize: 100
+         startingPosition: LATEST
+         enabled: true

@@ -1,0 +1,103 @@
+service: service
+frameworkVersion: "2"
+provider:
+  name: aws
+  runtime: nodejs12.x
+  lambdaHashingVersion: 20201221
+  memorySize: 256
+  stage: dev
+  region: eu-west-1
+  environment:
+    JOB_TABLE: ${self:custom.tableName}
+    STAGE: ${opt:stage, self:provider.stage}
+    SERVICE_ENDPOINT: "https://gkesj8umfc.execute-api.eu-west-1.amazonaws.com/production/providers/"
+  apiGateway:
+    shouldStartNameWithService: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource:
+        - { "Fn::GetAtt": ["JobDynamoDBTable", "Arn"] }
+        - Fn::Join:
+            - ""
+            - - { "Fn::GetAtt": ["JobDynamoDBTable", "Arn"] }
+              - "/"
+              - "index/*"
+plugins:
+  - serverless-webpack
+  - serverless-localstack
+package:
+  individually: true
+functions:
+  complete:
+    handler: src/functions/complete/complete.handler
+    timeout: 30
+    events:
+      - http:
+          path: complete
+          method: post
+  webhook:
+    handler: src/functions/webhook/webhook.handler
+    timeout: 30
+    events:
+      - http:
+          path: webhook
+          method: post
+  processor:
+    handler: src/functions/processor/processor.handler
+    timeout: 30
+    events:
+      # will run every 1 mins on weekdays
+      - schedule: cron(0/1 * ? * MON-FRI *)
+custom:
+  tableName: "jobs"
+  defaultStage: local
+  profile: default
+  webpack:
+    webpackConfig: "webpack.config.js"
+    includeModules:
+      forceExclude:
+        - aws-sdk
+    excludeFiles: src/**/*.test.js
+  localstack:
+    host: http://localhost
+    endpointFile: localstack_endpoints.json
+    edgePort: 4566
+    stages:
+      - dev
+      - local
+    debug: true
+resources:
+  Resources:
+    JobDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: jobId
+            AttributeType: S
+          - AttributeName: providerId
+            AttributeType: S
+          - AttributeName: status
+            AttributeType: S
+        KeySchema:
+          - AttributeName: jobId
+            KeyType: HASH
+          - AttributeName: providerId
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
+        GlobalSecondaryIndexes:
+          - IndexName: StatusIndex
+            KeySchema:
+              - AttributeName: status
+                KeyType: HASH
+            Projection:
+              ProjectionType: "ALL"
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

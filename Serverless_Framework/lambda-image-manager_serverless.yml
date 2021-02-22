@@ -1,0 +1,82 @@
+
+service: lambda-image-resizer
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: prod
+  region: us-east-1
+  environment: ${file(./env/${opt:stage}.yml)}
+
+package:
+  artifact: dst.zip
+
+functions:
+  getImage:
+    handler: handlers.getImage
+    events:
+      - http:
+          path: getImage
+          method: get
+
+  uploadImage:
+    handler: handlers.uploadImage
+    events:
+      - http:
+          path: uploadImage
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    S3BucketToDashboard:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "${file(./env/${opt:stage}.yml):S3_BUCKET_NAME}"
+
+    S3IamPolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: S3BucketToDashboard-s3
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: s3:*
+              Resource: "arn:aws:s3:::${file(./env/${opt:stage}.yml):S3_BUCKET_NAME}/*"
+        Roles:
+          - Ref: IamRoleLambdaExecution
+
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "${file(./env/${opt:stage}.yml):DYNAMO_DB_TABLE_NAME}"
+        AttributeDefinitions:
+          - AttributeName: fileId
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: fileId
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: DynamoDbTable
+      Properties:
+        PolicyName: AmazonDynamoDBFullAccess
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [
+                "dynamodb:*"
+              ]
+              Resource: "arn:aws:dynamodb:*:*:table/${file(./env/${opt:stage}.yml):DYNAMO_DB_TABLE_NAME}"
+        Roles:
+          - Ref: IamRoleLambdaExecution

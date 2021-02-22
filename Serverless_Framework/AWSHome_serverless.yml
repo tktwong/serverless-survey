@@ -1,0 +1,109 @@
+service: awshome
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-west-2
+  stage: ${opt:stage, 'dev'}
+  environment:
+    SLS_STAGE: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/awshome-dev-recordstore"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/awshome-dev-iddispenser"
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-dynamodb-local
+  - serverless-bundle
+  - serverless-offline
+
+resources:
+  Resources:
+    recordStoreTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: awshome-${self:provider.stage}-recordstore
+        AttributeDefinitions:
+          - AttributeName: gid
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: gid
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    idDispenserTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: awshome-${self:provider.stage}-iddispenser
+        AttributeDefinitions:
+          - AttributeName: idtag
+            AttributeType: S
+        KeySchema:
+          - AttributeName: idtag
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+functions:
+  devices-journals-record-create:
+    handler: handlerDevicesJournalsRecords.create
+    events:
+      - http:
+          path: /api/devices/{did}/journals/{jid}/records/
+          method: post
+          request:
+            parameters:
+              paths:
+                - did: true
+                - jid: true
+  devices-journals-records-list:
+    handler: handlerDevicesJournalsRecords.list
+    events:
+      - http:
+          path: /api/devices/{did}/journals/{jid}/records/
+          method: get
+          request:
+            parameters:
+              paths:
+                - did: true
+                - jid: true
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+      dev:
+        sources:
+          - table: awshome-dev-recordstore
+            sources: [test/data/awshome-dev-recordstore.seed.json]
+          - table: awshome-dev-iddispenser
+            sources: [test/data/awshome-dev-iddispenser.seed.json]

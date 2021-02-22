@@ -1,0 +1,408 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: my-service
+plugins:
+  - serverless-aws-documentation
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-central-1
+  environment:
+    MONGO_URL: mongodb://root:root@cluster0-shard-00-00-shxrr.mongodb.net:27017,cluster0-shard-00-01-shxrr.mongodb.net:27017,cluster0-shard-00-02-shxrr.mongodb.net:27017/MyDatabase?ssl=true&replicaSet=Cluster0-shard-0&authSource=admin
+    MONGO_COLLECTION: ${self:custom.${self:provider.stage}.MONGO_COLLECTION}
+    MY_TABLE: report-table
+    REGION: eu-central-1
+    INSTANCE_ID: i-0f0db9ea60429396a
+    IMAGES_BUCKET: skimo-report-images
+    #CANDIDATE_EMAIL_TABLE: "candidate-email-${opt:stage, self:provider.stage}"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - "ec2:Start*"
+        - "ec2:Stop*"
+        - "s3:*"
+      Resource: "*"   
+
+custom:
+  dev:
+    MONGO_COLLECTION: test-report-collection
+  prod:
+    MONGO_COLLECTION: production-report-collection  
+  # You must have the documentation object
+  documentation:
+    # this is general info about the API
+    api:
+      info:
+        version: '1'
+        title: SkiMo Report Api
+        description: SkiMo Report Api Description
+        termsOfService: https://www.google.com
+        contact:
+          name: The contact person
+          url: https://www.serverless.com/framework
+          email: some-fake@email.com
+        license:
+          name: The license
+          url: https://www.github.com
+      tags:
+        -
+          name: Tag1
+          description: The first tag
+        -
+          name: Tag2
+          description: That other tag that we all love
+
+functions:
+##  start-ec2:
+##      handler: ec2_scheduler.start
+##      events:
+##      #questi orari sono da considerarsi GMT
+##      #in italia siamo GMT + 1
+##        - schedule: cron(0 5 * * ? *)
+##        - schedule: cron(0 11 * * ? *)
+##        - schedule: cron(0 15 * * ? *)
+##        - schedule: cron(0 19 * * ? *)
+##        - schedule: cron(30 21 * * ? *)
+##        - schedule: cron(0 23 * * ? *)
+##
+##  stop-ec2:
+##      handler: ec2_scheduler.stop
+##      events:
+##        - schedule: cron(5 5 * * ? *)
+##        - schedule: cron(5 11 * * ? *)
+##        - schedule: cron(5 15 * * ? *)
+##        - schedule: cron(5 19 * * ? *)
+##        - schedule: cron(35 21 * * ? *)
+##        - schedule: cron(5 23 * * ? *)
+
+  postReport:
+    handler: src/post.postReport
+    events:
+      - http:
+          path: report
+          method: post
+          cors: true
+
+  postImage:
+    handler: src/post.postImage
+    events:
+      - http:
+          path: images
+          method: post
+          cors: true          
+
+  get:
+    handler: src/get.get
+    events:
+      - http:
+          path: report
+          method: get
+          cors: true
+          documentation:
+            summary: Gets a simple message
+            tags:
+              - Tag1
+            description: >
+              Demonstrates a GET method. You can see query string parameters,
+              request headers, response body and response headers.
+            queryParams:
+              -
+                name: exclusiveStartKey
+                description: >
+                  Se indicato setta la chiave dalla quale iniziare la ricerca, ad esempio
+                  {
+                    "Id": "25124d60-c33c-11e7-b527-4fc63aada796",
+                    "Type": "ski-mountaineering",
+                    "Date": 1497132000000
+                  }
+              -
+                name: limit
+                description: >
+                  [String] Indica su quanti items deve essere svolta la query
+              -
+                name: fromDate
+                description: >
+                  [Timestamp] Definisce l'inizio dell'intervallo di tempo in cui effettuare la ricerca
+              -
+                name: toDate
+                description: >
+                  [Timestamp] Definisce la fine dell'intervallo di tempo in cui effettuare la ricerca
+              -
+                name: fromReadableDate
+                description: >
+                  [Data in formato gg/mm/aaaa] Definisce l'inizio dell'intervallo di tempo in cui effettuare la ricerca
+              -
+                name: toReadableDate
+                description: >
+                  [Data in formato gg/mm/aaaa] Definisce la fine dell'intervallo di tempo in cui effettuare la ricerca
+              -
+                name: fromStartingAltitude
+                description: >
+                  [Number] Definisce l'inizio dell'intervallo dell'altitudine di partenza
+              -
+                name: toStartingAltitude
+                description: >
+                  [Number] Definisce la fine dell'intervallo dell'altitudine di partenza
+              -
+                name: fromElevationGain
+                description: >
+                  [Number] Definisce l'inizio dell'intervallo per il dislivello
+              -
+                name: toElevationGain
+                description: >
+                  [Number] Definisce la fine dell'intervallo per il dislivello
+              -
+                name: grade
+                description: >
+                  [String] Definisce il livello di difficoltà da cercare
+                  valori accettati,
+                    MS
+                    MSA
+                    BS
+                    BSA
+                    OS
+                    OSA
+              -
+                name: region
+                description: >
+                  [String] Definisce la regione in cui effettuare la ricerca
+                  valori accettati,
+                    Abruzzo
+                    Alto Adige
+                    Altro
+                    Austria
+                    Basilicata
+                    Calabria
+                    Campania
+                    Canada
+                    Cile
+                    Cina
+                    Emilia Romagna
+                    Francia
+                    Friuli Venezia Giulia
+                    Germania
+                    Grecia
+                    Islanda
+                    Lazio
+                    Liguria
+                    Lombardia
+                    Marche
+                    Marocco
+                    Molise
+                    Norvegia
+                    Nuova Zelanda
+                    Piemonte
+                    Polonia
+                    Russia
+                    Sardegna
+                    Sicilia
+                    Slovacchia
+                    Slovenia
+                    Spagna
+                    Stati Uniti
+                    Svezia
+                    Svizzera
+                    Toscana
+                    Trentino
+                    Umbria
+                    Valle d'Aosta
+                    Veneto
+              -
+                name: uphillSide
+                description: >
+                  [String] Definisce il versante di SALITA
+                  valori accettati,
+                    Est
+                    Nord
+                    Nord-Est
+                    Nord-Ovest
+                    Ovest
+                    Sud
+                    Sud-Est
+                    Sud-Ovest
+                    Varia
+              -
+                name: downhillSide
+                description: >
+                  [String] Definisce il versante di DISCESA
+                  valori accettati,
+                    Est
+                    Nord
+                    Nord-Est
+                    Nord-Ovest
+                    Ovest
+                    Sud
+                    Sud-Est
+                    Sud-Ovest
+                    Varia
+              -
+                name: tripName
+                description: >
+                  Cerca la stringa inserita in nel parametro campo tripName
+              -
+                name: user
+                description: >
+                  Cerca i report dell'autore richiesto
+              -
+                name: target
+                description: >
+                  Cerca i report provenienti da un/a certo target/ sorgente
+              -
+                name: tripRate
+                description: >
+                  Cerca i report il cui rate corrisponde a quello indicato
+                  possibili valori,
+                    Buono
+                    Discreto
+                    Eccezionale
+                    Mediocre
+                    Ottimo
+                    Pessimo
+              -
+                name: snowRate
+                description: >
+                  Cerca i report il cui Snow-Rate corrisponde a quello indicato
+                  possibili valori,
+                    Accettabili
+                    Buone
+                    Discrete
+                    Eccellenti
+                    Mediocri
+                    Ottime
+                    Pessime      
+              -
+                name: startingFrom
+                description: >
+                  Cerca i report il cui punto di partenza contiene la stringa indicata
+
+
+  getLastReports:
+    handler: src/get.getLastReports
+    events:
+      - http:
+          path: report/getLastReports
+          method: get
+          cors: true          
+
+  update:
+    handler: src/update.update
+    events:
+      - http:
+          path: report/{id}
+          method: put
+          cors: true
+
+  delete:
+    handler: src/delete.delete
+    events:
+      - http:
+          path: report/{id}
+          method: delete
+          cors: true
+
+
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       description: "Description for the output"
+#       Value: "Some output value"
+
+##resources:
+##  Resources:
+##    MyDynamoDbTable:
+##      Type: 'AWS::DynamoDB::Table'
+##      Properties:
+##        AttributeDefinitions:
+##          -
+##            AttributeName: "Id"
+##            AttributeType: "S"
+##          -
+##            AttributeName: "Type"
+##            AttributeType: "S"            
+##          -
+##            AttributeName: "Date"
+##            AttributeType: "N"            
+##        KeySchema:
+###          -
+###            AttributeName: "Type"
+###            KeyType: "HASH"             
+##          -
+##            AttributeName: "Id"
+##            KeyType: "HASH"     
+###          -
+###            AttributeName: "Date"
+###            KeyType: "RANGE"                                            
+##        ProvisionedThroughput:
+##          ReadCapacityUnits: 1
+##          WriteCapacityUnits: 1
+##        GlobalSecondaryIndexes:
+##          - IndexName: ${self:provider.environment.MY_GSI}
+##            KeySchema:
+##              - AttributeName: "Type"
+##                KeyType: HASH
+##              - AttributeName: "Date"
+##                KeyType: RANGE                
+##            Projection:
+##              ProjectionType: ALL
+##            ProvisionedThroughput:
+##              ReadCapacityUnits: 1
+##              WriteCapacityUnits: 1
+##        TableName: ${self:provider.environment.MY_TABLE}

@@ -1,0 +1,73 @@
+service: typescript-rest-api
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-west-1
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:Scan
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/BlogPosts"
+package:
+  # Slower packaging, but smaller individual function sizes
+  # Turn off when having memory problems
+  individually: true
+
+functions:
+  getAllBlogPosts:
+    handler: src/getAllBlogPosts.handler
+    events:
+      - http:
+          path: items
+          method: get
+  getBlogPost:
+    handler: src/getBlogPost.handler
+    events:
+      - http:
+          path: items/{id}
+          method: get
+  deleteBlogPost:
+    handler: src/deleteBlogPost.handler
+    events:
+      - http:
+          path: items/{id}
+          method: delete
+  createBlogPost:
+    handler: src/createBlogPost.handler
+    events:
+      - http:
+          path: items
+          method: post
+  updateBlogPost:
+    handler: src/updateBlogPost.handler
+    events:
+      - http:
+          path: items/{id}
+          method: patch
+resources: # you can add CloudFormation resource templates here
+  Resources:
+    DDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: BlogPosts
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+custom:
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk

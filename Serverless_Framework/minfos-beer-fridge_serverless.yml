@@ -1,0 +1,79 @@
+service: minfos-beer-fridge
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: ap-southeast-2
+  apiKeys:
+    - name: mbf-device
+      value: ${ssm:/MinfosBeerFridge/ApiKeys/Client}
+      description: "For use by the MBF hardware for posting temperature data"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+      Resource: 'arn:aws:dynamodb:ap-southeast-2:*:*'
+
+functions:
+  submitTemperatures:
+    handler: handler.submitTemperatures
+    events:
+      - http:
+          path: temperature
+          method: post
+          private: true
+    alarms:
+      - minimumSubmissionsNotReceived
+
+custom:
+  alerts:
+    definitions:
+      minimumSubmissionsNotReceived:
+        metric: submissionsReceived
+        threshold: 20 # We expect at least 20 submissions in every datapoint
+        statistic: Sum
+        period: 60 # One datapoint every 1 minute
+        evaluationPeriods: 10 # Evaluate 10 datapoints
+        datapointsToAlarm: 5 # If we have not met or exceeded the threshold in 5 of those datapoints then go to alarm
+        comparisonOperator: LessThanThreshold
+        pattern: 'Temperatures were submitted successfully'
+    topics:
+      ok:
+        topic: ${self:service}-${self:provider.stage}-alerts-ok
+        notifications:
+          - protocol: sms
+            endpoint: ${ssm:/MinfosBeerFridge/PhoneNumber}
+      alarm:
+        topic: ${self:service}-${self:provider.stage}-alerts-alarm
+        notifications:
+          - protocol: sms
+            endpoint: ${ssm:/MinfosBeerFridge/PhoneNumber}
+      insufficientData:
+        topic: ${self:service}-${self:provider.stage}-alerts-insufficientData
+        notifications:
+          - protocol: sms
+            endpoint: ${ssm:/MinfosBeerFridge/PhoneNumber}
+
+resources:
+  Resources:
+    usersTable: 
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: MBF
+        AttributeDefinitions:
+          - AttributeName: Date
+            AttributeType: S
+          - AttributeName: TimeStamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Date
+            KeyType: HASH
+          - AttributeName: TimeStamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+plugins:
+  - serverless-plugin-aws-alerts

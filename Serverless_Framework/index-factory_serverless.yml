@@ -1,0 +1,170 @@
+service: index-factory
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+custom:
+  tableName: 'index-factory-table-${self:provider.stage}'
+  bucketNumberOfShares: 'index-factory-number-of-shares-bucket-${self:provider.stage}'
+  bucketDailyPrices: 'index-factory-daily-prices-bucket-${self:provider.stage}'
+  bucketDividends: 'index-factory-dividends-bucket-${self:provider.stage}'
+
+  wsgi:
+    app: src/app.handler
+    packRequirements: false
+
+  pythonRequirements:
+    dockerizePip: non-linux
+
+  dynamodb:
+    stages:
+      - local
+    start:
+      host: 127.0.0.1
+      port: 8000
+      migrate: true
+
+  s3:
+    host: 127.0.0.1
+    port: 8001
+    directory: /tmp
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: local
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - Fn::GetAtt: [IndexFactoryDynamoDBTable, Arn]
+
+  environment:
+    INDEX_FACTORY_TABLE: ${self:custom.tableName}
+    BUCKET_NUMBER_OF_SHARES: ${self:custom.bucketNumberOfShares}
+    BUCKET_DAILY_PRICES: ${self:custom.bucketDailyPrices}
+    BUCKET_DIVIDENDS: ${self:custom.bucketDividends}
+
+functions:
+  app:
+    handler: wsgi_handler.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+      - http: 'ANY {proxy+}'
+
+  handleDailyPrices:
+    handler: src/trigger.handle_daily_prices
+    events:
+      - s3: ${self:custom.bucketDailyPrices}
+        events:
+          - s3:ObjectCreated:Put
+
+  handleNumberOfShares:
+    handler: src/trigger.handle_number_of_shares
+    events:
+      - s3: ${self:custom.bucketNumberOfShares}
+        events:
+          - s3:ObjectCreated:Put
+
+  handleDividends:
+    handler: src/trigger.handle_dividends
+    events:
+      - s3: ${self:custom.bucketDividends}
+        events:
+          - s3:ObjectCreated:Put
+
+package:
+  individually: false
+  include:
+    - src/**
+
+resources:
+  ApiGatewayAuthorizer:
+    DependsOn:
+      - ApiGatewayRestApi
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: cognito-authorizer
+      IdentitySource: method.request.header.Authorization
+      RestApiId:
+        Ref: ApiGatewayRestApi
+      Type: COGNITO_USER_POOLS
+      ProviderARNs:
+        - Fn::GetAtt: [CognitoUserPool, Arn]
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      MfaConfiguration: OFF
+      UserPoolName: index-factory-user-pool
+      UsernameAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 6
+          RequireLowercase: False
+          RequireNumbers: True
+          RequireSymbols: False
+          RequireUppercase: True
+
+  Resources:
+
+    IndexFactoryDailyPricesS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketDailyPrices}
+
+    IndexFactoryNumberOfSharesS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketNumberOfShares}
+
+    IndexFactoryDividendsS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketDividends}
+
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: index-factory-user-pool-client
+        GenerateSecret: False
+        UserPoolId:
+          Ref: CognitoUserPool
+
+    IndexFactoryDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          -
+            AttributeName: partitionKey
+            AttributeType: S
+          -
+            AttributeName: sortKey
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: partitionKey
+            KeyType: HASH
+          -
+            AttributeName: sortKey
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+# - serverless-offline-dynamodb-streams
+plugins:
+  - serverless-dynamodb-local
+  - serverless-s3-local
+  - serverless-python-requirements
+  - serverless-wsgi
+  - serverless-offline # serverless-offline needs to be last in the list

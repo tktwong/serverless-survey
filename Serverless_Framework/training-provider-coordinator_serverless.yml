@@ -1,0 +1,114 @@
+service: training-provider-api
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  stage: dev
+  runtime: python3.8
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "s3:ListBucket"
+      Resource:
+        - "arn:aws:s3:::${self:custom.enrolmentAuthorizationBucket.${self:custom.stage}}"
+        - "arn:aws:s3:::${self:custom.courseBucket.${self:custom.stage}}"
+    - Effect: Allow
+      Action:
+        - "s3:GetObject"
+        - "s3:PutObject"
+        - "s3:DeleteObject"
+      Resource:
+        - "arn:aws:s3:::${self:custom.enrolmentAuthorizationBucket.${self:custom.stage}}/*"
+        - "arn:aws:s3:::${self:custom.courseBucket.${self:custom.stage}}/*"
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  enrolmentAuthorizationBucket:
+    dev: acwic-tp-enrolment-authorization-dev
+    prod: acwic-tp-enrolment-authorization
+  courseBucket:
+    dev: acwic-tp-course-dev
+    prod: acwic-tp-course
+  userBucket:
+    dev: acwic-employer-users-dev
+    prod: acwic-employer-users
+  enrolmentBucket:
+    dev: acwic-employer-enrolment-dev
+    prod: acwic-employer-enrolment
+  callbackBucket:
+    dev: acwic-employer-callback-dev
+    prod: acwic-employer-callback
+  StandardsBucket:
+    dev: acwic-employer-standards-dev
+    prod: acwic-employer-standards
+  studentBucket:
+    dev: acwic-employer-student-dev
+    prod: acwic-employer-student
+
+  pythonRequirements:
+    fileName: requirements/serverless.txt
+
+package:
+  individually: true  # serverless-python-requirements: different dependencies for each function
+
+functions:
+  admin:
+    handler: handler.handler
+    module: admin # location of the lambda function app
+    environment:
+      STAGE_PREFIX: /${self:custom.stage}
+      SERVICE_PREFIX: /admin
+      ENROLMENT_AUTHORISATION_BUCKET: ${self:custom.enrolmentAuthorizationBucket.${self:custom.stage}}
+      COURSE_BUCKET: ${self:custom.courseBucket.${self:custom.stage}}
+      USER_BUCKET: ${self:custom.userBucket.${self:custom.stage}}
+      ENROLMENT_BUCKET: ${self:custom.enrolmentBucket.${self:custom.stage}}
+      CALLBACK_BUCKET: ${self:custom.callbackBucket.${self:custom.stage}}
+      STANDARDS_BUCKET: ${self:custom.StandardsBucket.${self:custom.stage}}
+    events:
+      - http:
+          path: /admin/{proxy+}
+          method: ANY
+  catalogue:
+    handler: handler.handler
+    module: catalogue
+    environment:
+      STAGE_PREFIX: /${self:custom.stage}
+      SERVICE_PREFIX: /catalogue
+      ENROLMENT_AUTHORISATION_BUCKET: ${self:custom.enrolmentAuthorizationBucket.${self:custom.stage}}
+      COURSE_BUCKET: ${self:custom.courseBucket.${self:custom.stage}}
+      USER_BUCKET: ${self:custom.userBucket.${self:custom.stage}}
+    events:
+      - http:
+          path: /catalogue/{proxy+}
+          method: ANY
+  enrolment:
+    handler: handler.handler
+    module: enrolment
+    environment:
+      STAGE_PREFIX: /${self:custom.stage}
+      SERVICE_PREFIX: /enrolment
+      ENROLMENT_AUTHORISATION_BUCKET: ${self:custom.enrolmentAuthorizationBucket.${self:custom.stage}}
+      USER_BUCKET: ${self:custom.userBucket.${self:custom.stage}}
+      STUDENT_BUCKET: ${self:custom.studentBucket.${self:custom.stage}}
+      COURSE_BUCKET: ${self:custom.courseBucket.${self:custom.stage}}
+    events:
+      - http:
+          path: /enrolment/{proxy+}
+          method: ANY
+
+
+# CloudFormation resources
+resources:
+  Resources:
+    enrolmentAuthorizationBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.enrolmentAuthorizationBucket.${self:custom.stage}}
+    courseBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.courseBucket.${self:custom.stage}}

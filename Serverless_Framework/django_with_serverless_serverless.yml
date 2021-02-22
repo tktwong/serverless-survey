@@ -1,0 +1,134 @@
+service: django-with-serverless
+app: django-with-serverless
+org: hermannsw
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  envfile:
+    environment:
+      local: ${file(./env/local.yml)}
+      dev: ${file(./env/dev.yml)}
+  wsgi:
+    app: django_with_serverless.wsgi.application
+
+provider:
+  name: aws
+  runtime: python3.7
+
+  profile: ${opt:profile, 'default'}
+  # deploy時に--stageを指定しなかった場合、defaultStageとしてdevが指定される。
+  stage: ${opt:stage, 'local'}
+  region: ${opt:region, 'ap-southeast-2'}
+
+  # Optional VPC. But if you use VPC then both subproperties (securityGroupIds and subnetIds) are required
+  vpc:
+    securityGroupIds:
+      - ${self:custom.envfile.environment.${self:provider.stage}.SECURITY_GROUP_ID}
+    subnetIds:
+      - ${self:custom.envfile.environment.${self:provider.stage}.SUBNET_ID1}
+      - ${self:custom.envfile.environment.${self:provider.stage}.SUBNET_ID2}
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ec2:CreateNetworkInterface"
+        - "ec2:DescribeNetworkInterfaces"
+        - "ec2:DeleteNetworkInterface"
+        - "secretsmanager:GetSecretValue"
+      Resource:
+        - "*"
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.py
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.py
+#    - exclude-me-dir/**
+
+plugins:
+  - serverless-wsgi
+  - serverless-python-requirements
+
+functions:
+  api:
+    handler: wsgi_handler.handler
+    events:
+      - http: ANY /
+      - http: ANY {proxy+}
+    # provider.stageで指定されている環境用のymlを読み込む。
+    environment:
+      AWS_SECRET_NAME: ${self:custom.envfile.environment.${self:provider.stage}.AWS_SECRET_NAME}
+      AWS_REGION_NAME: ${self:custom.envfile.environment.${self:provider.stage}.AWS_REGION_NAME}
+#      AWS_STORAGE_BUCKET_NAME: ${self:custom.envfile.environment.${self:provider.stage}.AWS_STORAGE_BUCKET_NAME}
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - websocket: $connect
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+#      - alb:
+#          listenerArn: arn:aws:elasticloadbalancing:us-east-1:XXXXXX:listener/app/my-load-balancer/50dc6c495c0c9188/
+#          priority: 1
+#          conditions:
+#            host: example.com
+#            path: /hello
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

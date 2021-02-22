@@ -1,0 +1,97 @@
+service: bpn-terminal-api
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: eu-west-1
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName: bpn
+    stripeSecretKey: ${env:STRIPE_SECRET_KEY}
+
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:eu-west-1:*:*"
+
+functions:
+  create:
+    handler: services/bpn/create.main
+    events:
+      - http:
+          path: bpn/create
+          method: post
+          cors: true
+          authorizer: aws_iam
+  
+  get:
+    handler: services/bpn/get.main
+    events:
+      - http:
+          path: bpn/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  
+  list:
+    handler: services/bpn/list.main
+    events:
+      - http:
+          path: bpn
+          method: get
+          cors: true
+          authorizer: aws_iam
+  
+  update:
+    handler: services/bpn/update.main
+    events:
+      - http:
+          path: bpn/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  
+  delete:
+    handler: services/bpn/delete.main
+    events:
+      - http:
+          path: bpn/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  support:
+    handler: services/support/support.main
+    events:
+      - http:
+          path: support
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}

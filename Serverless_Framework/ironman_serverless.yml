@@ -1,0 +1,120 @@
+# NOTE: update this with your service name
+service: kmc
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  KMC_PRODUCT: ${self:custom.stage}-kmc-product
+  KMC_HISTORY: ${self:custom.stage}-kmc-history
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ap-southeast-1
+  # To load environment variables externally
+  # rename env.example to .env and uncomment
+  # the following line. Also, make sure to not
+  # commit your .env.
+  #
+  #environment:
+  #  SAMPLE_ENV_VAR: ${env:SAMPLE_ENV_VAR}
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    KMC_PRODUCT: ${self:custom.KMC_PRODUCT}
+    KMC_HISTORY: ${self:custom.KMC_HISTORY}
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ KMCProduct, Arn ]
+        - "Fn::GetAtt": [ KMCHistory, Arn ]
+
+functions:
+  addProduct:
+    handler: src/add-product.main
+    events:
+      - http:
+          path: products
+          method: post
+          cors: true
+
+  getProductById:
+    handler: src/get-product-by-id.main
+    events:
+      - http:
+          path: products/{id}
+          method: get
+          cors: true
+
+  getAllProducts:
+    handler: src/get-all-products.main
+    events:
+      - http:
+          path: products
+          method: get
+          cors: true
+          request:
+              template:
+                application/json: >
+                  {
+                    "isSold": "$input.params('isSold')"
+                  }
+
+  updateProduct:
+    handler: src/update-product.main
+    events:
+      - http:
+          path: products/{id}
+          method: put
+          cors: true
+
+  sellProduct:
+    handler: src/sell-product.main
+    events:
+      - http:
+          path: products/{id}/sell
+          method: post
+          cors: true
+
+  getHistory:
+    handler: src/get-history.main
+    events:
+      - http:
+          path: history/{id}
+          method: get
+          cors: true
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  - ${file(resources/s3-bucket.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

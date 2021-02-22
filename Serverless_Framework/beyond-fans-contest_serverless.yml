@@ -1,0 +1,69 @@
+# NOTE: update this with your service name
+service: beyond-partner-visits
+
+frameworkVersion: ">=1.0.0 <2.0.0"
+
+# Create an optimized package for our functions
+package:
+  individually: true
+  exclude:
+    - '**/*.test.js'
+    - 'tests'
+
+custom:
+  visitsTableName: ${self:service}-${opt:stage, self:provider.stage}
+  bundle:
+    linting: false # Disable serverless-bundle lint check during webpack build
+  enterprise:
+    collectLambdaLogs: false # Disable serverless dashboard reporting (https://github.com/serverless/serverless/issues/6454)
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ap-southeast-1
+  environment:
+    DYNAMODB_TABLE: ${self:custom.visitsTableName}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        Fn::GetAtt: [VisitsTable, Arn]
+
+resources:
+  Resources:
+    VisitsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.visitsTableName}
+        AttributeDefinitions:
+          - AttributeName: visitId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: visitId
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        # Set the capacity to auto-scale
+        BillingMode: PAY_PER_REQUEST
+
+functions:
+  create-visit:
+    handler: api/create-visit/index.default
+    events:
+      - http:
+          path: visit
+          method: post
+          cors: true

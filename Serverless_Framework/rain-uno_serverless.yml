@@ -1,0 +1,93 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: uno-api
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+plugins:
+  - serverless-dotenv-plugin
+
+custom:
+  DynamoDBCapacity:
+    production:
+      ReadCapacityUnits: 1
+      WriteCapacityUnits: 1
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: !GetAtt TableUsers.Arn
+
+layers:
+  modules:
+    path: layer
+    name: uno-modules-layer
+    description: "some-description"
+    compatibleRuntimes:
+      - nodejs8.10
+
+functions:
+  www:
+    handler: dist/lambda.handler
+    layers:
+      - {Ref: ModulesLambdaLayer}
+    events:
+      - http:
+          path: /
+          method: get
+      - http:
+          path: /{any+} # this matches any path, the token 'any' doesn't mean anything special
+          method: post
+    environment:
+      NODE_ENV: ${opt:stage}
+
+package:
+  include:
+    - dist/**
+  exclude:
+    - "*"
+    - www/**
+    - node_modules/**
+
+resources:
+  Resources:
+    TableUsers:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${env:USER_TABLE_NAME}
+        ProvisionedThroughput: ${self:custom.DynamoDBCapacity.${env:NODE_ENV}}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+    assets:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${env:BUCKET_NAME}
+        AccessControl: PublicRead
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - "*"
+              AllowedMethods:
+                - GET
+

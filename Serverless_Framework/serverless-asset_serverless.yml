@@ -1,0 +1,88 @@
+service: jeremie-asset-service
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+    packager: npm
+    # packagerOptions:
+    #   scripts:
+    #     - npm rebuild sharp --target=8.10 --target_arch=x64 --target_platform=linux 
+  environment: ${opt:stage, 'development'}
+  region: ${opt:region, 'eu-west-1'}
+  includeDependencies:
+    always:
+      - 'local/**'
+  documentation:
+    info:
+      Asset upload service
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${self:custom.region}
+  endpointType: REGIONAL
+  stage: ${opt:stage, 'development'}
+  timeout: 15
+  memorySize: 512
+  environment:
+    STACK: ${self:custom.environment}
+    DEFAULT_REGION: ${self:custom.region}
+    DYNAMODB_TABLE: ${self:service}
+    S3_BUCKET: ${self:service}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ec2:*"
+        - "s3:*"
+        - "dynamodb:*"
+      Resource:
+        - "*"
+
+package:
+  individually: true
+  excludeDevDependencies: false
+  exclude:
+    - .git/**
+
+resources:
+  Resources:
+    AssetTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+functions:
+  resize:
+    handler: src/functions/resize.handler
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_BUCKET}
+          event: s3:ObjectCreated:*
+  upload:
+    handler: src/functions/upload.handler
+    events:
+      - http:
+          path: /asset
+          method: post
+        documentation:
+          summary: "Upload a new asset"
+          description: "Upload a new asset"
+  metadata:
+    handler: src/functions/metadata.handler
+    events:
+      - http:
+          path: /metadata
+          method: post
+plugins:
+  - serverless-reqvalidator-plugin
+  - serverless-webpack

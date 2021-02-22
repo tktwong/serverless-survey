@@ -1,0 +1,82 @@
+service: business-api
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  mainTable: 'business-${self:provider.stage}'
+  dynamodb:
+    stages:
+      - dev
+    start:
+      migrate: true
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-west-2
+  profile: personal-serverless-deploy
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource:
+        - { "Fn::GetAtt": ["BusinessDynamoDBTable", "Arn" ] }
+  environment:
+    DYNAMODB_HOST: "http://localhost:8000"
+    DYNDAMODB_REGION: ${self:provider.region}
+    DYNAMODB_TABLE: ${self:custom.mainTable}
+
+functions:
+  app:
+    handler: src/index.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+resources:
+  Resources:
+    BusinessDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:custom.mainTable}
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        AttributeDefinitions:
+          -
+            AttributeName: partitionKey
+            AttributeType: S
+          -
+            AttributeName: sortKey
+            AttributeType: S
+          -
+            AttributeName: dataKey
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: partitionKey
+            KeyType: HASH
+          -
+            AttributeName: sortKey
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: globalSecondaryIndex-1
+            KeySchema:
+              - AttributeName: sortKey
+                KeyType: HASH
+              - AttributeName: dataKey
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: '1'
+              WriteCapacityUnits: '1'

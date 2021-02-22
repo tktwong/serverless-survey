@@ -1,0 +1,227 @@
+service: trialmonitor
+app: trialmonitor-app
+org: paulkamer
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-central-1
+  stage: ${opt:stage,'dev'}
+  cfnRole: 'arn:aws:iam::${self:custom.secrets.ACCOUNT_ID}:role/sls_cfn'
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+      Resource:
+        - 'arn:aws:ses:${self:provider.region}:${self:custom.secrets.ACCOUNT_ID}:identity/${self:custom.secrets.EMAIL_TO_ADDRESS}'
+        - 'arn:aws:ses:${self:provider.region}:${self:custom.secrets.ACCOUNT_ID}:identity/${self:custom.secrets.SES_FROM_IDENTITY}'
+
+  environment:
+    STAGE: ${self:provider.stage}
+    LOG_LEVEL: info
+    EMAIL_FROM_ADDRESS: ${self:custom.secrets.EMAIL_FROM_ADDRESS}
+    EMAIL_TO_ADDRESS: ${self:custom.secrets.EMAIL_TO_ADDRESS}
+    MONGO_ENDPOINT_URI: ${self:custom.secrets_${self:provider.stage}.MONGO_ENDPOINT_URI}
+    DB_TYPE: ${self:custom.secrets.DB_TYPE}
+    TRIALS_COLL: ${self:custom.secrets.TRIALS_COLL}
+    SEARCHES_COLL: ${self:custom.secrets.SEARCHES_COLL}
+    ACCESS_CONTROL_ALLOW_ORIGIN: ${self:custom.secrets.ACCESS_CONTROL_ALLOW_ORIGIN}
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-step-functions
+  - serverless-step-functions-offline
+
+package:
+  exclude:
+    - yarn.lock
+    - package.json
+    - README.md
+    - '*.code-workspace'
+    - .eslintcache
+    - prettier.config.js
+
+functions:
+  newTrialsChecker:
+    handler: src/functions/newTrialsChecker.handle
+    timeout: 10
+    onError: arn:aws:sns:${self:provider.region}:${self:custom.secrets.ACCOUNT_ID}:trialmonitor-lambda-dlq
+
+  outdatedTrialsChecker:
+    handler: src/functions/outdatedTrialsChecker.handle
+    onError: arn:aws:sns:${self:provider.region}:${self:custom.secrets.ACCOUNT_ID}:trialmonitor-lambda-dlq
+
+  trialUpdater:
+    handler: src/functions/trialUpdater.handle
+    timeout: 10
+    onError: arn:aws:sns:${self:provider.region}:${self:custom.secrets.ACCOUNT_ID}:trialmonitor-lambda-dlq
+
+  updatesNotifier:
+    handler: src/functions/updatesNotifier.handle
+    onError: arn:aws:sns:${self:provider.region}:${self:custom.secrets.ACCOUNT_ID}:trialmonitor-lambda-dlq
+
+  # trial API functions
+  fetchTrial:
+    handler: src/functions/api/trials.get
+    timeout: 10
+    events:
+      - http:
+          path: trials/{id}
+          cors: true
+          method: get
+          authorizer: aws_iam
+  listTrials:
+    handler: src/functions/api/trials.getAll
+    timeout: 10
+    events:
+      - http:
+          path: trials/all
+          cors: true
+          method: get
+          authorizer: aws_iam
+  createTrial:
+    handler: src/functions/api/trials.createTrial
+    timeout: 10
+    events:
+      - http:
+          path: trials
+          method: post
+          cors: true
+  updateTrial:
+    handler: src/functions/api/trials.updateTrial
+    timeout: 10
+    events:
+      - http:
+          path: trials/{id}
+          method: PUT
+          cors: true
+  deleteTrial:
+    handler: src/functions/api/trials.deleteTrial
+    timeout: 10
+    events:
+      - http:
+          path: trials
+          method: delete
+          cors: true
+
+  # trial searches API functions
+  listTrialSearches:
+    handler: src/functions/api/trialSearches.getAll
+    timeout: 10
+    events:
+      - http:
+          path: trial_search/all
+          cors: true
+          method: get
+          authorizer: aws_iam
+  createTrialSearch:
+    handler: src/functions/api/trialSearches.createTrialSearch
+    timeout: 10
+    events:
+      - http:
+          path: trial_search
+          method: post
+          cors: true
+          authorizer: aws_iam
+  deleteTrialSearch:
+    handler: src/functions/api/trialSearches.deleteTrialSearch
+    timeout: 10
+    events:
+      - http:
+          path: trial_search/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+          request:
+            parameters:
+              paths:
+                id: true
+
+stepFunctions:
+  stateMachines:
+    newTrialsChecker:
+      definition:
+        Comment: 'Check for new trials, based on search queries'
+        StartAt: runNewTrialsChecker
+        States:
+          runNewTrialsChecker:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [newTrialsChecker, Arn]
+            Next: notifyIfNecessary
+          notifyIfNecessary:
+            Type: Choice
+            Choices:
+              - Variable: $.results_length
+                NumericEquals: 0
+                Next: SucceedState
+            Default: prepareResultsForNotifier
+          prepareResultsForNotifier:
+            Type: Pass
+            OutputPath: $.results
+            Next: updatesNotifier
+          updatesNotifier:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [updatesNotifier, Arn]
+            End: true
+          SucceedState:
+            Type: Succeed
+      events:
+        - schedule:
+            rate: rate(1 day)
+            enabled: true
+
+    outdatedTrialsChecker:
+      definition:
+        Comment: 'Check for outdated trials'
+        StartAt: runOutdatedTrialsChecker
+        States:
+          runOutdatedTrialsChecker:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [outdatedTrialsChecker, Arn]
+            Next: checkIfTrialsNeedToBeUpdated
+          checkIfTrialsNeedToBeUpdated:
+            Type: Choice
+            Choices:
+              - Variable: $.results_length
+                NumericEquals: 0
+                Next: SucceedState
+            Default: updateTrial
+          updateTrial:
+            Type: Map
+            MaxConcurrency: 2
+            ItemsPath: $.results
+            Iterator:
+              StartAt: trialUpdater
+              States:
+                trialUpdater:
+                  Type: Task
+                  Resource:
+                    Fn::GetAtt: [trialUpdater, Arn]
+                  End: true
+            Next: updatesNotifier
+          updatesNotifier:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [updatesNotifier, Arn]
+            End: true
+          SucceedState:
+            Type: Succeed
+      events:
+        - http:
+            path: runOutdatedTrialsChecker
+            method: GET
+        - schedule:
+            rate: rate(6 hours)
+            enabled: true
+
+custom:
+  secrets: ${file(secrets.json)}
+  secrets_prod: ${file(secrets.json)}
+  secrets_dev: ${file(secrets_dev.json)}
+  stepFunctionsOffline:
+    runOutdatedTrialsChecker: outdatedTrialsChecker
+    updateTrial: trialUpdater

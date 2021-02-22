@@ -1,0 +1,158 @@
+service: ${self:custom.cfstack}-${self:custom.serviceName}
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-optimize
+  - serverless-pseudo-parameters
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  deploymentBucket:
+    name: source.apidashboard.sardius.com
+  deploymentPrefix: sardius-api
+  stackName: ${self:service}-${self:custom.stage}
+  region: ${self:custom.region}
+  stage: default
+  apiGateway:
+    restApiId:
+      'Fn::ImportValue': ${self:custom.cfstack}-services
+    restApiRootResourceId:
+      'Fn::ImportValue': ${self:custom.cfstack}-services-RootResourceId
+  environment:
+    cfstack: ${self:custom.cfstack}
+    serviceName: ${self:custom.serviceName}
+    stage: ${self:custom.cfstack}
+    region: ${self:custom.region}
+    logsBucket: ${self:custom.logsBucket}
+    edgeBucket: ${self:custom.edgeBucket}
+    RDS_PASSWORD: ${file(./config/${self:provider.stage}.yml):RDS_PASSWORD,'atSardius'}
+    RDS_USER: ${file(./config/${self:provider.stage}.yml):RDS_USER, 'master'}
+    RDS_HOST: ${file(./config/${self:provider.stage}.yml):RDS_HOST ,'localhost'}
+
+  vpc:
+    securityGroupIds:
+      - 'Fn::ImportValue': ${self:custom.cfstack}-vpc-SecurityGroupBackplane
+    subnetIds:
+      'Fn::Split':
+        - ','
+        - 'Fn::ImportValue': ${self:custom.cfstack}-vpc-ComputeSubnets
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource:
+        - arn:aws:s3:::${self:custom.logsBucket}
+        - arn:aws:s3:::${self:custom.edgeBucket}
+    - Effect: 'Allow'
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject
+      Resource:
+        - arn:aws:s3:::${self:custom.logsBucket}/*
+        - arn:aws:s3:::${self:custom.edgeBucket}/*
+    - Effect: 'Allow'
+      Action:
+        - 'secretsmanager:GetSecretValue'
+      Resource: 'arn:aws:secretsmanager:#{AWS::Region}:#{AWS::AccountId}:secret:*'
+
+custom:
+  stage: ${opt:stage, 'default'}
+  cfstack: ${opt:cfstack, 'alpha-api'}
+  region: ${opt:region, 'us-east-1'}
+  serviceName: logs
+  edgeBucket: ${self:custom.cfstack}.edge.logs.sardius.media
+  logsBucket: ${self:custom.serviceName}.${self:custom.cfstack}.sardius.media
+  optimize:
+    exclude: ['aws-sdk']
+    presets: ['@babel/preset-env']
+  serverless-offline:
+    babelOptions:
+      presets: ['@babel/preset-env']
+
+resources:
+  Description: ${self:service} - ${self:custom.stage}
+  Resources:
+    LogsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.logsBucket}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [GET]
+              AllowedOrigins: ['*']
+              ExposedHeaders: [Date]
+              Id: myCORSRuleId1
+              MaxAge: '3600'
+  Outputs:
+    LogsBucketName:
+      Value:
+        Ref: LogsBucket
+      Export:
+        Name: ${self:custom.cfstack}-sardius-${self:custom.serviceName}-bucket
+
+functions:
+  createUser:
+    handler: api/createUser/executor.handler
+    description: Create a user or users from req.body if it isn't already in the database
+    timeout: 60
+    events:
+      - http:
+          method: POST
+          path: /logs/account/create/
+          cors: true
+  createDuplicateUser:
+    handler: api/createDuplicateUser/executor.handler
+    description: Create a user or users from req.body even if it's already in the database
+    timeout: 60
+    events:
+      - http:
+          method: POST
+          path: /logs/account/createDupe/
+          cors: true
+  readUserById:
+    handler: api/readUserById/executor.handler
+    description: Return the database entry with the passed id
+    timeout: 60
+    events:
+      - http:
+          method: GET
+          path: /logs/account/read/{passedId}/
+          cors: true
+  readAll:
+    handler: api/readAll/executor.handler
+    description: Returns all database entries
+    timeout: 60
+    events:
+      - http:
+          method: GET
+          path: /logs/account/readAll/
+          cors: true
+  updateById:
+    handler: api/updateById/executor.handler
+    description: Updates a database entry with the passed id
+    timeout: 60
+    events:
+      - http:
+          method: POST
+          path: /logs/account/update/{passedId}/
+          cors: true
+  deleteUser:
+    handler: api/deleteUser/executor.handler
+    description: Delete a database entry with the passed id
+    timeout: 60
+    events:
+      - http:
+          method: DELETE
+          path: /logs/account/delete/{passedId}/
+          cors: true

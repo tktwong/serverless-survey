@@ -1,0 +1,63 @@
+service: serverless-discord-auth
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  timeout: 30
+  environment:
+    STAGE: ${opt:stage, self:provider.stage}
+    TABLE_PREFIX: ${self:provider.environment.STAGE}-auth-bot
+  apiKeys:
+    - ${self:provider.environment.STAGE}-discord-auth-bot
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - apigateway:GET
+        - apigateway:HEAD
+        - apigateway:OPTIONS
+        - apigateway:PATCH
+        - apigateway:POST
+        - apigateway:PUT
+        - apigateway:DELETE
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_PREFIX}-licenses"
+
+custom:
+  dynamodb:
+    start:
+      migrate: true
+
+  ngrokTunnel:
+    tunnels:
+      - port: 3000
+
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:provider.environment.STAGE}, self:custom.tableThroughputs.default}
+  dev:
+    deletion_policy: Delete
+  prod:
+    deletion_policy: Retain
+
+functions:
+  - '${file(src/handlers/webhooks/webhooks.serverless.yml)}'
+  - '${file(src/handlers/auth/auth.serverless.yml)}'
+
+resources:
+  - ${file(src/resources/licenses.resource.yml)} 
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-ngrok-tunnel
+  - serverless-dotenv-plugin

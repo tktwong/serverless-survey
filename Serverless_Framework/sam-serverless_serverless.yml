@@ -1,0 +1,138 @@
+service: sam-serverless
+
+custom:
+  dotenv:
+    path: ../.env
+    include:
+      - REGION
+      - FROM_MAIL_ADDRESS
+      - TO_MAIL_ADDRESS
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${env:REGION, "ap-northeast-1"}
+  profile: ${opt:profile, "default"}
+  stage: ${opt:stage, "dev"}
+  apiStage: ${opt:apiStage, "test"}
+  memorySize: 512 # optional, in MB, default is 1024
+  timeout: 10 # optional, in seconds, default is 6
+  versionFunctions: false # optional, default is true
+  environment:
+    USERS_TABLE: Users-${self:provider.stage}
+    ACCESSES_TABLE: Accesses-${self:provider.stage}
+    REGION: ${self:provider.region}
+    TZ: Asia/Tokyo
+    FROM_MAIL_ADDRESS: ${env:FROM_MAIL_ADDRESS, ""}
+    TO_MAIL_ADDRESS: ${env:TO_MAIL_ADDRESS, ""}
+  iamRoleStatements: # permissions for all of your functions can be set here
+    - Effect: Allow
+      Action: # Gives permission to DynamoDB tables in a specific region
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:*"
+
+layers:
+  MyLayer:
+    path: myLayer
+    name: sam-server-myLayer-${self:provider.stage}
+    compatibleRuntimes:
+      - nodejs8.10
+
+functions:
+  PutUser:
+    handler: handler.putUser
+    name: sam-server-putUser-${self:provider.stage}
+    layers:
+      - {Ref: MyLayerLambdaLayer}
+
+  GetUserStatus:
+    handler: handler.getUserStatus
+    name: sam-server-getUserStatus-${self:provider.stage}
+    layers:
+      - {Ref: MyLayerLambdaLayer}
+
+  PutUserEntry:
+    handler: handler.putUserEntry
+    name: sam-server-putUserEntry-${self:provider.stage}
+    layers:
+      - {Ref: MyLayerLambdaLayer}
+
+  PutUserExit:
+    handler: handler.putUserExit
+    name: sam-server-putUserExit-${self:provider.stage}
+    layers:
+      - {Ref: MyLayerLambdaLayer}
+
+  GetUsers:
+    handler: handler.getUsers
+    name: sam-server-getUsers-${self:provider.stage}
+    layers:
+      - {Ref: MyLayerLambdaLayer}
+
+  ExecuteExitProcessAll:
+    handler: handler.executeExitProcessAll
+    name: sam-server-stepFunction-executeExitProcessAll-${self:provider.stage}
+    layers:
+      - {Ref: MyLayerLambdaLayer}
+
+  GetAccessesOfTody:
+    handler: handler.getAccessesOfTody
+    name: sam-server-stepFunction-getAccessesOfTody-${self:provider.stage}
+    layers:
+      - {Ref: MyLayerLambdaLayer}
+
+  SendMail:
+    handler: handler.sendMail
+    name: sam-server-stepFunction-sendMail-${self:provider.stage}
+    layers:
+      - {Ref: MyLayerLambdaLayer}
+
+stepFunctions:
+  stateMachines:
+    EndProcessing:
+      events:
+        - schedule: cron(0 9 ? * SAT *)
+      name: sam-end-processing-${self:provider.stage}
+      definition:
+        Comment: "sta-access-manager 終了処理"
+        StartAt: ExecuteExitProcessAll
+        States:
+          ExecuteExitProcessAll:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:sam-server-stepFunction-executeExitProcessAll-${self:provider.stage}
+            Next: GetAccessesOfToday
+          GetAccessesOfToday:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:sam-server-stepFunction-getAccessesOfTody-${self:provider.stage}
+            Next: SendMail
+          SendMail:
+            Type: Task
+            InputPath: $.message
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:sam-server-stepFunction-sendMail-${self:provider.stage}
+            End: true
+      dependsOn:
+        - ExecuteExitProcessAllLambdaFunction
+        - GetAccessesOfTodyLambdaFunction
+        - SendMailLambdaFunction
+
+# you can add CloudFormation resource templates here
+resources:
+  - ${file(./resources/ApiGateway.yml)}
+  - ${file(./resources/LambdaPermissions.yml)}
+  - ${file(./resources/Tables.yml)}
+
+package:
+  exclude:
+    - resources/**
+    - myLayer/**

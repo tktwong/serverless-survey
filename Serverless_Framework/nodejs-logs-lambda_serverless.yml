@@ -1,0 +1,77 @@
+service: sls-logs-rest-api-with-dynamodb
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: us-east-1
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    QUEUE_URL: https://sqs.us-east-1.amazonaws.com/#{AWS::AccountId}/LogQueue
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - "sqs:SendMessage"
+      Resource: "arn:aws:sqs:${self:provider.region}:*:LogQueue"
+
+functions:
+  create:
+    handler: functions/create_log_entry.create
+    events:
+      - http:
+          path: create_log_entry
+          method: post
+          cors: true
+  getByOrigin:
+    handler: functions/get_logs_by_origin.getByOrigin
+    events:
+      - http:
+          path: get_logs_by_origin
+          method: get
+          cors: true
+  getByType:
+    handler: functions/get_logs_by_type.getByType
+    events:
+      - http:
+          path: get_logs_by_type
+          method: get
+          cors: true
+  save:
+    handler: functions/save_log.save
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - LogQueue
+              - Arn
+          batchSize: 1
+
+resources:
+  Resources:
+    LogsDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+    LogQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "LogQueue"

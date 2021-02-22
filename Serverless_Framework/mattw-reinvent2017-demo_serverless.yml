@@ -1,0 +1,177 @@
+service: 
+  name: mattw-reinvent2017-liveblogger
+
+plugins:
+  - serverless-webpack
+  - serverless-pseudo-parameters
+  - serverless-step-functions
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        - arn:aws:s3:::mattw-reinvent17-liveblogger-src/*
+        - arn:aws:s3:::mattw-reinvent2017-rawsitepages/*
+    - Effect: "Allow"
+      Action:
+        - "states:StartExecution"
+      Resource: 
+        - ${self:resources.Outputs.LiveBloggerStateMachine.Value}
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetItem"
+      Resource:
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/liveblogger
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/livebloggercurrent
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:PutItem"
+      Resource:
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/livebloggercurrent
+    - Effect: "Allow"
+      Action:
+        - "codebuild:StartBuild"
+        - "codebuild:BatchGetBuilds"
+      Resource:
+        - arn:aws:codebuild:#{AWS::Region}:#{AWS::AccountId}:project/buildfromdocker
+    - Effect: "Allow"
+      Action:
+        - "SNS:Publish"
+      Resource:
+        - arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:mattw-notify-siteBuild
+functions:
+  uploadToS3:
+    handler: handler.uploadToS3
+    tags: 
+      demo: liveblogger
+      demorole: uploadToS3
+    events:
+      - http:
+          path: upload
+          method: PUT
+          cors: true
+    environment:
+      s3srcbucket: mattw-reinvent17-liveblogger-src
+
+  startStepFunction:
+    handler: handler.startStepFunction
+    tags: 
+      demo: liveblogger
+      demorole: startStepFunction
+    events: 
+      - s3: 
+          bucket: mattw-reinvent17-liveblogger-src
+          event: s3:ObjectCreated:*
+    environment: 
+      statemachine_arn: ${self:resources.Outputs.LiveBloggerStateMachine.Value}
+  whichSlide:
+    handler: handler.whichSlide
+    environment:
+      vizeaijwt: ${env:vizejwtfinalslides}
+    tags: 
+      demo: liveblogger
+      demorole: whichSlide
+  isThisANewSlide:
+    handler: handler.isThisANewSlide
+    tags: 
+      demo: liveblogger
+      demorole: isThisANewSlide
+  pullSlideData:
+    handler: handler.pullSlideData
+    tags: 
+      demo: liveblogger
+      demorole: pullSlideData
+  createDocument:
+    handler: handler.createDocument
+    tags: 
+      demo: liveblogger
+      demorole: createDocument
+  buildSite:
+    handler: handler.buildSite
+    tags: 
+      demo: liveblogger
+      demorole: buildSite
+  isItBuilt:
+    handler: handler.isItBuilt
+    tags: 
+      demo: liveblogger
+      demorole: isItBuilt
+  completeSF:
+    handler: handler.completeSF
+    tags: 
+      demo: liveblogger
+      demorole: completeSF
+
+stepFunctions:
+  stateMachines:
+    LiveBloggerStateMachine:
+      name: liveBloggerStateMachine
+      definition:
+        StartAt: whichSlide
+        States:
+          whichSlide:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-whichSlide
+            Next: isThisANewSlide
+          isThisANewSlide:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-isThisANewSlide
+            Next: pullSlideData
+          pullSlideData:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-pullSlideData
+            Next: updateSiteOrNot
+          updateSiteOrNot:
+            Type: Choice
+            Choices:
+              - Variable: "$.updateSite"
+                BooleanEquals: true
+                Next: createDocument
+              - Variable: "$.updateSite"
+                BooleanEquals: false
+                Next: completeSF
+          createDocument:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-createDocument
+            Next: buildSite
+          buildSite:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-buildSite
+            Next: waitForBuild
+          waitForBuild:
+            Type: Wait
+            Seconds: 10
+            Next: isItBuilt
+          isItBuilt:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-isItBuilt
+            Next: builtOrNot
+          builtOrNot:
+            Type: Choice
+            Choices: 
+              - Variable: "$.buildDone"
+                BooleanEquals: true
+                Next: completeSF
+              - Variable: "$.buildDone"
+                BooleanEquals: false
+                Next: waitForBuild
+          completeSF:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-completeSF
+            End: true
+          
+
+resources:
+  Outputs:
+    LiveBloggerStateMachine:
+      Description: The ARN of the example state machine
+      Value:
+        Ref: LiveBloggerStateMachine
+
+         

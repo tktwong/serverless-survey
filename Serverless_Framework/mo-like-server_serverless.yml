@@ -1,0 +1,83 @@
+service: mo-like-server
+
+custom:
+  STAGE: ${self:provider.stage} # 현재 스테이지 별로 데이터베이스 접속 정보를 달리하기 위함
+  DB_CONFIG: ${file(./config/config.js):DB_CONFIG} # config.js 에서 가져올 데이터 베이스 접속정보
+  # MYSQL:
+  #   HOST:
+  #     Fn::GetAtt: [MySqlRDSInstance, Endpoint.Address]
+  #   PORT:
+  #     Fn::GetAtt: [MySqlRDSInstance, Endpoint.Port]
+provider:
+  name: aws
+  region: ap-northeast-2
+  stage: ${opt:stage, 'dev'} # -s 옵션을 받으면 사용하고, 그렇지 않으면 기본 dev 스테이지 사용
+  memorySize: 256
+  runtime: nodejs12.x
+  role: LambdaRole
+  environment:
+    #aurora
+    # AURORA_HOST: ${self:custom.AURORA.HOST}
+    # AURORA_PORT: ${self:custom.AURORA.PORT}
+    # DB_NAME: ${self:custom.DB_NAME}
+    # USERNAME: ${self:custom.USERNAME}
+    # PASSWORD: ${self:custom.PASSWORD}
+    # AURORA_HOST: ${self:custom.DB_CONFIG.${self:custom.STAGE}.AURORA.HOST} 
+    # AURORA_PORT: ${self:custom.DB_CONFIG.${self:custom.STAGE}.AURORA.PORT}
+
+    #mysql
+    MYSQL_HOST: ${self:custom.DB_CONFIG.${self:custom.STAGE}.MYSQL.HOST}
+    MYSQL_PORT: ${self:custom.DB_CONFIG.${self:custom.STAGE}.MYSQL.PORT}
+
+    # MYSQL_HOST: ${self:custom.MYSQL.HOST}
+    # MYSQL_PORT: ${self:custom.MYSQL.PORT}
+
+    DB_NAME: ${self:custom.DB_CONFIG.${self:custom.STAGE}.DB_NAME}
+    USERNAME: ${self:custom.DB_CONFIG.${self:custom.STAGE}.USERNAME}
+    PASSWORD: ${self:custom.DB_CONFIG.${self:custom.STAGE}.PASSWORD}
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-offline
+
+resources:
+  Resources:
+    LambdaRole: ${file(./resource/LambdaRole.yml)}
+    ServerlessInternetGateway: ${file(./resource/ServerlessInternetGateway.yml)}
+    ServerlessVPC: ${file(./resource/ServerlessVPC.yml)}
+    ServerlessVPCGA: ${file(./resource/ServerlessVPCGA.yml)}
+    ServerlessSubnetA: ${file(./resource/ServerlessSubnetA.yml)}
+    ServerlessSubnetB: ${file(./resource/ServerlessSubnetB.yml)}
+    ServerlessSubnetC: ${file(./resource/ServerlessSubnetC.yml)}
+    ServerlessSubnetGroup: ${file(./resource/ServerlessSubnetGroup.yml)}
+    ServerlessSecurityGroup: ${file(./resource/ServerlessSecurityGroup.yml)}
+    RouteTablePublic: ${file(./resource/RouteTablePublic.yml)}
+    RoutePublic: ${file(./resource/RoutePublic.yml)}
+    RouteTableAssociationSubnetA: ${file(./resource/RouteTableAssociationSubnetA.yml)}
+    RouteTableAssociationSubnetB: ${file(./resource/RouteTableAssociationSubnetB.yml)}
+    RouteTableAssociationSubnetC: ${file(./resource/RouteTableAssociationSubnetC.yml)}
+
+    # AuroraRDSClusterParameter: ${file(./resource/AuroraRDSClusterParameter.yml)}
+    # AuroraRDSInstanceParameter: ${file(./resource/AuroraRDSInstanceParameter.yml)}
+    # AuroraRDSCluster: ${file(./resource/AuroraRDSCluster.yml)}
+    # AuroraRDSInstance: ${file(./resource/AuroraRDSInstance.yml)}
+
+    
+    #MySqlRDSInstanceParameter: ${file(./resource/MySqlRDSInstanceParameter.yml)}
+    MySqlRDSInstance: ${file(./resource/MySqlRDSInstance.yml)}
+functions:
+  graphql:
+    handler: handler.server
+    events:
+      - http:
+          path: /
+          method: post
+          cors: true
+  playground:
+    handler: handler.playground
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true 
+    

@@ -1,0 +1,127 @@
+service: camview-api
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: prod
+  region: us-east-1
+  stackTags:
+    PROJECTNAME: CamView
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "apigateway:GET"
+      Resource:
+        - "arn:aws:apigateway:${self:provider.region}::/restapis*"
+  environment:
+    CAM_HOST: mycamera.example.com
+    CAM_PORT: 88
+    CAM_USER: admin
+    CAM_PASSWORD: pass
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-aws-documentation
+  - serverless-stack-output
+  - serverless-domain-manager
+
+package:
+  include:
+    src/**/!(*.spec).js
+
+functions:
+  getSwaggerJson:
+    handler: src/swagger/swagger.getSwaggerJson
+    description: Returns the Swagger documentation of the API in JSON format.
+
+    environment:
+      REGION_NAME: ${self:provider.region}
+      REST_API_NAME: ${self:service}
+      STAGE_NAME: ${self:provider.stage}
+      API_INFO_VERSION: ${file(./swagger/documentation.yml):api.info.version}
+      API_INFO_TITLE: ${file(./swagger/documentation.yml):api.info.title}
+
+    events:
+      - http:
+          path: swagger.json
+          method: get
+          cors: true
+
+  getHealthCheck:
+    handler: src/health/health.getHealthCheck
+    description: Returns the result of a quick health check of the API.
+
+    events:
+      - http:
+          path: health/check
+          method: get
+          cors: true
+          documentation:
+            summary: Returns the result of a quick health check of the API.
+            tags:
+              - Health
+            description: Returns the result of a quick health check of the API.
+            methodResponses:
+              - statusCode: '200'
+                description: Returned when the operation is completed successfully.
+                responseModels:
+                  "application/json": GetHealthCheck
+              - ${file(./swagger/error-responses/internal-server-error.yml)}
+
+  getHealthCheckDetailed:
+    handler: src/health/health.getHealthCheckDetailed
+    description: Returns the result of a detailed health check of the API.
+
+    events:
+      - http:
+          path: health/detailed
+          method: get
+          cors: true
+          authorizer: aws_iam
+          documentation:
+            summary: Returns the result of a detailed health check of the API.
+            tags:
+              - Health
+            description: Returns the result of a detailed health check of the API.
+            methodResponses:
+              - statusCode: '200'
+                description: Returned when the operation is completed successfully.
+                responseModels:
+                  "application/json": GetHealthCheckDetailed
+              - ${file(./swagger/error-responses/internal-server-error.yml)}
+
+  getDeviceInfo:
+    handler: src/device/device.getDeviceInfo
+    description: Returns the basic information about the camera.
+
+    events:
+      - http:
+          path: device/info
+          method: get
+          cors: true
+          authorizer: aws_iam
+          documentation:
+            summary: Returns the basic information about the camera.
+            tags:
+              - Camera
+            description: Returns the basic information about the camera.
+            methodResponses:
+              - statusCode: '200'
+                description: Returned when the operation is completed successfully.
+                responseModels:
+                  "application/json": GetDeviceInfoResponse
+              - ${file(./swagger/error-responses/forbidden.yml)}
+              - ${file(./swagger/error-responses/not-found.yml)}
+              - ${file(./swagger/error-responses/internal-server-error.yml)}
+
+custom:
+  documentation: ${file(./swagger/documentation.yml)}
+  output:
+    file: .serverless/output.json
+  customDomain:
+    basePath: "api"
+    domainName: camview.balassy.me
+    certificateName: camview.balassy.me
+    stage: ${self:provider.stage}
+    createRoute53Record: true

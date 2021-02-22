@@ -1,0 +1,143 @@
+service: fabrik
+
+provider:
+    name: aws
+    runtime: go1.x
+    profile: ${opt:profile, 'fabrik'}
+    region: ${opt:region, 'us-west-2'}
+    stage: ${opt:stage}
+    cfLogs: true
+
+package:
+    exclude:
+        - ./**
+    include:
+        - ./bin/**
+
+functions:
+    listener:
+        handler: bin/listener
+        memorySize: 128
+        timeout: 10
+        role: lambdaRole
+        environment:
+            EVENT_TABLE:
+                Ref: dynamoTable
+        events:
+            - http:
+                path: event
+                method: post
+    builder:
+        handler: bin/builder
+        memorySize: 128
+        timeout: 300
+        role: lambdaRole
+        environment:
+            ARTIFACT_STORE:
+                Ref: artifactBucket
+        events:
+            - stream:
+                type: dynamodb
+                arn:
+                    Fn::GetAtt:
+                      - dynamoTable
+                      - StreamArn
+    notifier:
+        handler: bin/notifier
+        memorySize: 128
+        timeout: 30
+        role: lambdaRole
+        events:
+            - cloudwatchEvent:
+                event:
+                    source:
+                        - "aws.codepipeline"
+                    detail-type:
+                        - "CodePipeline Stage Execution State Change"
+                    detail:
+                        state:
+                            - STARTED
+                            - SUCCEEDED
+                            - FAILED
+    stack-cleaner:
+        handler: bin/lib/stack-cleaner
+        memorySize: 128
+        timeout: 300
+        role: lambdaRole
+
+resources:
+    Resources:
+        # override log group retention policy
+        ListenerLogGroup:
+            Properties:
+                RetentionInDays: 7
+        BuilderLogGroup:
+            Properties:
+                RetentionInDays: 7
+        NotifierLogGroup:
+            Properties:
+                RetentionInDays: 7
+        StackDashcleanerLogGroup:
+            Properties:
+                RetentionInDays: 7
+        artifactBucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                AccessControl: Private
+                BucketName:
+                    'Fn::Join':
+                        - "-"
+                        - - "Ref": "AWS::StackName"
+                          - "artifact-store"
+        dynamoTable:
+            Type: AWS::DynamoDB::Table
+            Properties:
+                AttributeDefinitions:
+                - AttributeName: id
+                  AttributeType: S
+                KeySchema:
+                - AttributeName: id
+                  KeyType: HASH
+                ProvisionedThroughput:
+                    ReadCapacityUnits: 3
+                    WriteCapacityUnits: 3
+                StreamSpecification:
+                    StreamViewType: NEW_IMAGE
+                TimeToLiveSpecification:
+                    AttributeName: ttl
+                    Enabled: true
+        lambdaRole:
+            Type: AWS::IAM::Role
+            Properties:
+                Path: "/"
+                RoleName: fabrik-lambda-all
+                AssumeRolePolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                    - Effect: Allow
+                      Principal:
+                        Service:
+                        - lambda.amazonaws.com
+                      Action:
+                        - sts:AssumeRole
+                Policies:
+                    - PolicyName: root
+                      PolicyDocument:
+                          Version: '2012-10-17'
+                          Statement:
+                          - Effect: Allow
+                            Action: '*'
+                            Resource: '*'
+#     ecs-watcher:
+#         handler: bin/lib/ecs-watcher
+#         memorySize: 128
+#         timeout: 30
+#         role: lambdaRole
+#         events:
+#             - cloudwatchEvent:
+#                 event:
+#                     source:
+#                         - "aws.ecs"
+#                     detail-type:
+#                         - "ECS Task State Change"
+

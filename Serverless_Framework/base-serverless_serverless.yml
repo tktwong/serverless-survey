@@ -1,0 +1,130 @@
+service: base-serverless
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  webpack:
+    webpackConfig: webpack.config.js
+    includeModules:
+      forceExclude:
+        - aws-sdk
+        - dotenv
+        - dotenv-expand
+        - typescript
+    packager: 'yarn'
+
+  serverless-offline:
+    host: 0.0.0.0
+    port: 3001
+
+  defaults:
+    stage: dev
+    region: ap-southeast-1
+
+  profiles:
+    dev:
+      memorySize: 512 # optional, in MB, default is 1024
+      timeout: 10 # optional, in seconds, default is 6
+    prod:
+      memorySize: 1024 # optional, in MB, default is 1024
+      timeout: 30 # optional, in seconds, default is 6
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, self:custom.defaults.stage}
+  profile: base-serverless
+  timeout: 10
+  memorySize: 256
+  region: ${opt:region, self:custom.defaults.region}
+  apiKeys:
+    - base-serverless-${self:provider.stage}
+  environment:
+    NODE_ENV: production
+    app__s3_public_bucket: base-serverless-static-${self:provider.stage}
+    app__database_port: 5432
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - ${self:custom.profiles.${self:provider.stage}.dynamodb_arn}
+        - ${self:custom.profiles.${self:provider.stage}.dynamodb_arn}/*
+
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+      Resource:
+        Fn::Join: ['', ["arn:aws:s3:::",  "${self:provider.environment.app__s3_public_bucket}", "/*"]]
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource: "*"
+package:
+  individually: true
+
+functions:
+  api:
+    environment:
+      app__aws_region: ${self:provider.region}
+    memorySize: ${self:custom.profiles.${self:provider.stage}.memorySize}
+    timeout: ${self:custom.profiles.${self:provider.stage}.timeout}
+    handler: src/handler.graphql
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Authorization
+              - Content-Type
+              - X-Amz-Date
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+          integration: lambda-proxy
+
+  playground:
+    handler: src/handler.playground
+    events:
+      - http:
+          path: playground
+          method: any
+
+resources:
+  Resources:
+    staticBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        AccessControl: Private
+        BucketName: ${self:provider.environment.app__s3_public_bucket}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [ HEAD, GET, PUT, POST, DELETE ]
+              AllowedOrigins: [ '*' ]
+              MaxAge: 3600
+              ExposedHeaders: [ ETag, x-amz-server-side-encryption, x-amz-request-id, x-amz-id-2 ]
+              Id: ${self:service}
+        Tags:
+          - Key: 'Name'
+            Value: ${self:service}
+
+    staticBucketPolicy:
+      Type: "AWS::S3::BucketPolicy"
+      Properties:
+        Bucket:
+          Ref: staticBucket
+        PolicyDocument:
+          Statement:
+            - Sid: "AddPerm"
+              Effect: "Allow"
+              Principal: "*"
+              Action: "s3:GetObject"
+              Resource:
+                Fn::Join: ['', [ "arn:aws:s3:::", Ref: staticBucket, "/*" ]]

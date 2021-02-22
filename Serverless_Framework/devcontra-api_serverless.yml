@@ -1,0 +1,175 @@
+service: devcontra-api
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-plugin-include-dependencies
+
+package:
+  excludeDevDependencies: true
+  individually: true
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  profilesTableName: ${self:custom.stage}-devcontra
+  usersTableName: ${self:custom.stage}-devcontra-users
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-west-2
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    profilesTableName: ${self:custom.profilesTableName}
+    usersTableName: ${self:custom.usersTableName}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific tables for the stage
+      Resource:
+        - "Fn::GetAtt": [ ProfilesTable, Arn ]
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific tables for the stage
+      Resource:
+        - "Fn::GetAtt": [ UsersTable, Arn ]
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: 
+        # this is building the following format: arn:aws:dynamodb:us-west-2:AWS::AccountId:table/dev-devcontra-profiles/index/*
+         Fn::Join:
+          - ''
+          -
+            - 'arn:aws:dynamodb:'
+            - Ref: AWS::Region
+            - ':'
+            - Ref: AWS::AccountId
+            - ':table/'
+            - ${self:custom.profilesTableName}/
+            - 'index/*'
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: 
+        # this is building the following format: arn:aws:dynamodb:us-west-2:AWS::AccountId:table/dev-devcontra-profiles/index/*
+         Fn::Join:
+          - ''
+          -
+            - 'arn:aws:dynamodb:'
+            - Ref: AWS::Region
+            - ':'
+            - Ref: AWS::AccountId
+            - ':table/'
+            - ${self:custom.usersTableName}/
+            - 'index/*'
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create-profile.js
+  # - path: url path is /profile
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  create-profile:
+    handler: create-profile.default
+    memorySize: 1600
+    events:
+      - http:
+          path: profile
+          method: post
+          cors: true
+          authorizer: aws_iam
+  create-user:
+    handler: create-user.default
+    memorySize: 1600
+    events:
+      - http:
+          path: user
+          method: post
+          cors: true
+          authorizer: aws_iam
+  get-profile:
+    handler: get-profile.default
+    memorySize: 1600
+    events:
+      - http:
+          path: profile/{variant}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  get-profile-key:
+    handler: get-profile-key.default
+    memorySize: 1600
+    events:
+      - http:
+          path: key/
+          method: get
+          cors: true
+          authorizer: aws_iam
+  generate-profile-key:
+    handler: generate-profile-key.default
+    memorySize: 1600
+    events:
+      - http:
+          path: key/generate
+          method: put
+          cors: true
+          authorizer: aws_iam
+  get-data:
+    handler: get-data.default
+    memorySize: 1600
+    events:
+      - http:
+          path: profile/{variant}/{accessKey}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  populate-tags:
+    handler: populate-tags.default
+    memorySize: 1600
+    events:
+      - http:
+          path: admin/populate-tags
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # Cognito
+  - ${file(resources/cognito-identity-pool.yml)}
+  - ${file(resources/cognito-user-pool.yml)}

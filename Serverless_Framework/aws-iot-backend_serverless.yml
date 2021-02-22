@@ -1,0 +1,99 @@
+# Welcome to Serverless!
+#
+
+service: aws-nodejs
+
+package:
+  include:
+    - lib
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: prod
+  region: ${env:AWS_REGION}
+  profile: ${env:AWS_PROFILE}
+
+  environment:
+    API_TOKEN: ${env:API_TOKEN}
+    NOTIFICATION_CHAT: ${env:NOTIFICATION_CHAT}
+    IOT_HOST: ${env:IOT_HOST}
+
+  iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - "s3:Get*"
+       Resource:
+         - "arn:aws:s3:::${env:PHOTO_BUCKET}/*"
+    - Effect: "Allow"
+      Action:
+        - "iot:*"
+      Resource:
+        - "*"
+
+functions:
+  telegramSendPhoto:
+    handler: photo.handler
+    events:
+      - s3:
+          bucket: ${env:PHOTO_BUCKET}
+          event: s3:ObjectCreated:Put
+
+  telegramMotionActivated:
+    handler: notify.motionActivated
+    environment:
+      MSG_MOTION_ACTIVATED: ${env:MSG_MOTION_ACTIVATED}
+    events:
+      - iot:
+          sql: "SELECT * FROM 'motion-acivated'"
+          enabled: true
+
+  telegramButtonClicked:
+    handler: button.handler
+    environment:
+      MSG_BUTTON_CLICKED: ${env:MSG_BUTTON_CLICKED}
+    events:
+      - iot:
+          sql: "SELECT * FROM 'button-click'"
+          enabled: true
+
+  telegramMotionDeactivated:
+    handler: notify.motionDectivated
+    environment:
+      MSG_MOTION_DEACTIVATED: ${env:MSG_MOTION_DEACTIVATED}
+    events:
+      - iot:
+          sql: "SELECT * FROM 'motion-deactivated'"
+          enabled: true
+
+  telegramAdminConnected:
+    handler: notify.adminConnected
+    environment:
+      MSG_ADMIN_CONNECTED: ${env:MSG_ADMIN_CONNECTED}
+    events:
+      - iot:
+          sql: "SELECT * FROM 'modem-admin-connected'"
+          enabled: true
+
+  telegramAdminDisconnected:
+    handler: notify.adminDisconnected
+    environment:
+      MSG_ADMIN_DISCONNECTED: ${env:MSG_ADMIN_DISCONNECTED}
+    events:
+      - iot:
+          sql: "SELECT * FROM 'modem-admin-disconnected'"
+          enabled: true
+
+  telegramCommand:
+    handler: command.elaborateCommand
+    environment:
+      ADMIN_USERNAME: ${env:ADMIN_USERNAME}
+      MSG_NOT_A_COMMAND: ${env:MSG_NOT_A_COMMAND}
+      MSG_COMMAND_NOT_FOUND: ${env:MSG_COMMAND_NOT_FOUND}
+      MSG_WELCOME: ${env:MSG_WELCOME}
+      MSG_ACK: ${env:MSG_ACK}
+    events:
+      - http:
+          path: bot/update
+          integration: lambda
+          method: post

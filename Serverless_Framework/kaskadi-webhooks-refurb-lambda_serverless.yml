@@ -1,0 +1,52 @@
+service:
+  name: kaskadi-webhooks-refurb-lambda
+
+package:
+  individually: true
+  exclude:
+    - "**/**"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stackName: ${self:service.name}-stack
+  stage: ${opt:stage, 'prod'}
+  region: eu-central-1
+  deploymentBucket:
+    name: kaskadi-serverless-deployment-bucket
+  apiGateway:
+    restApiId: !ImportValue KaskadiWebhooksRestAPIGatewayId
+    restApiRootResourceId: !ImportValue KaskadiWebhooksRestAPIGatewayRootResourceId
+
+layers:
+  KaskadiWebhooksRefurbishmentLayer:
+    path: layer
+    name: ${self:service.name}-layer
+    description: Layer for ${self:service.name}
+    compatibleRuntimes:
+      - nodejs10.x
+      - nodejs12.x
+    licenseInfo: MIT
+    package:
+      include:
+        - '**/**'
+
+functions:
+  KaskadiWebhooksRefurbishment:
+    handler: kaskadi-webhooks-refurb-lambda.handler
+    layers:
+      - { Ref: KaskadiWebhooksRefurbishmentLayerLambdaLayer }
+    name: ${self:service.name}
+    package:
+      include:
+        - 'kaskadi-webhooks-refurb-lambda.js'
+    environment:
+      ES_ID: ${env:ES_ID}
+      ES_SECRET: ${env:ES_SECRET}
+      ES_ENDPOINT: ${env:ES_ENDPOINT}
+      YSWS_TOKEN: ${env:YSWS_TOKEN}
+    events:
+      - http:
+          method: post
+          path: refurbishment
+          cors: true

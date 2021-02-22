@@ -1,0 +1,104 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: cpmsReportWorkflow # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+
+# you can overwrite defaults here
+  stage: dev
+  region: eu-west-1
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+stepFunctions:
+  stateMachines:
+    CpmsReportingWorkflow:
+      definition:
+        Comment: "A state machine that checks CPMS and retrieves reports when ready"
+        StartAt: checkJob
+        States:
+          checkJob:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-check-job"
+            Next: completeCheck
+            InputPath: $.id
+            ResultPath: $.jobStatus
+            OutputPath: $
+          completeCheck:
+            Type: Choice
+            Choices:
+              - Variable: $.jobStatus
+                StringEquals: "COMPLETE"
+                Next: fetchS3
+              - Variable: $.jobStatus
+                StringEquals: "RUNNING"
+                Next: waitXSeconds
+              - Variable: $.jobStatus
+                StringEquals: "FAILED"
+                Next: fail
+              - Variable: $.jobStatus
+                StringEquals: "MAXRETRIES"
+                Next: timedOut
+          waitXSeconds:
+            Type: Wait
+            SecondsPath: $.wait_time
+            Next: checkJob
+          fetchS3:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-fetch-s3"
+            End: true
+            InputPath: $.id
+            OutputPath: $
+          fail:
+            Type: Fail
+            Cause: "Report job failed"
+            Error: "Cpms report failed"
+          timedOut:
+            Type: Fail
+            Cause: "Max duration of checks failed"
+            Error: "cpmsStatusPaid reached maximum retries"
+plugins:
+  - serverless-step-functions

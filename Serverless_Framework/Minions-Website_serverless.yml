@@ -1,0 +1,114 @@
+service: minionscomerce
+
+app: myapp
+org: igorbanp
+
+
+custom:
+  secrets: ${file(secrets.json)}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${self:custom.secrets.NODE_ENV}
+  region: us-east-1
+  environment: 
+    PRODUCT_TABLE_NAME: ${self:provider.stage}-minions
+    USERS_TABLE_NAME: ${self:provider.stage}-user
+    EMAIL: ${self:custom.secrets.EMAIL}
+    DOMAIN: ${self:custom.secrets.DOMAIN}
+  iamRoleStatements:
+    #Permissões de SES
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+      Resource: "arn:aws:ses:${self:provider.region}:*:identity/*"
+    #Permissões do database de minions
+    - Effect: Allow
+      Action:
+          - dynamodb:DescribeTable
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCT_TABLE_NAME}"     
+    #Permissões do database de usuários (nao implementado)
+    - Effect: Allow
+      Action:
+          - dynamodb:DescribeTable
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE_NAME}"
+      
+
+functions:
+  sendemail:
+    handler: src/email/send_email.send
+    events:
+      - http:
+          path: email/send
+          method: post
+          cors: true
+
+  create:
+    handler: src/user/create.create
+    events:
+      - http:
+          path: user
+          method: post
+          cors: true
+
+  list:
+    handler: src/database/scan.list
+    events:
+      - http:
+          path: minion
+          method: get
+          cors: true
+  get:
+    handler: src/database/get.get
+    events:
+      - http:
+          path: minion/{id}
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    MinionsTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.PRODUCT_TABLE_NAME}
+    UserTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.USERS_TABLE_NAME}
+
+

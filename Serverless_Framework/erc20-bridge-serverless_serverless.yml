@@ -1,0 +1,242 @@
+# Service name
+service: erc20-bridge-serverless
+
+# Serverless framework version
+frameworkVersion: ">=1.67.3 <2.0.0"
+
+# Provider
+provider:
+  name: aws
+  runtime: python3.7
+
+  stage: ${env:ALIS_APP_ID}
+  region: ${env:AWS_DEFAULT_REGION}
+
+  # Additional statements of the Lambda's IAM Role
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter
+        - kms:ListKeys
+        - kms:ListAliases
+        - kms:DescribeKey
+        - kms:ListKeyPolicies
+        - kms:GetKeyPolicy
+        - kms:GetKeyRotationStatus
+        - iam:ListUsers
+        - iam:ListRoles
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}ERC20BridgeInfo"
+
+  # Function common environment variables
+  environment:
+    ALIS_APP_ID: ${self:provider.stage}
+
+    # Public chain
+    PUBLIC_CHAIN_RPC_URL: ${file(./chain_config.yml):public.rpcUrl}
+    PUBLIC_CHAIN_BRIDGE_CONTRACT_ADDRESS: ${file(./chain_config.yml):public.bridgeContractAddress}
+
+    # Private chain
+    PRIVATE_CHAIN_RPC_URL: ${file(./chain_config.yml):private.rpcUrl}
+    PRIVATE_CHAIN_BRIDGE_CONTRACT_ADDRESS: ${file(./chain_config.yml):private.bridgeContractAddress}
+
+  # VPC
+  vpc:
+    subnetIds:
+      - ${env:VPC_SUBNET_ID}
+    securityGroupIds:
+      - ${env:VPC_SECURITY_GROUP_ID}
+
+  # Lambda
+  timeout: 60
+
+
+# Package
+package:
+  include:
+    - src/**
+  exclude:
+    - .circleci/**
+    - .envrc*
+    - .git/**
+    - .git*
+    - .vscode/**
+    - node_modules/**
+    - package.json
+    - script/**
+    - tests/**
+    - venv/**
+    - yarn.lock
+    - README.md
+    - requirements.txt
+    - chain_config.yml
+  individually: true
+
+
+# Lambda functions
+functions:
+  deposit:
+    handler: src/handlers/deposit.handler
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+
+    # Scheduling
+    events:
+      - schedule: rate(5 minutes)
+
+    alarms:
+      - functionErrors
+
+    # Function specific environments
+    environment:
+      PRIVATE_CHAIN_GAS: ${file(./chain_config.yml):private.gas}
+      PRIVATE_CHAIN_GAS_PRICE: ${file(./chain_config.yml):private.gasPrice}
+
+  withdraw:
+    handler: src/handlers/withdraw.handler
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+
+    # Scheduling
+    events:
+      - schedule: rate(5 minutes)
+
+    alarms:
+      - functionErrors
+
+    # Function specific environments
+    environment:
+      PUBLIC_CHAIN_GAS: ${file(./chain_config.yml):public.gas}
+      PUBLIC_CHAIN_MAX_GAS_PRICE: ${file(./chain_config.yml):public.maxGasPrice}
+
+  retryDeposit:
+    handler: src/handlers/retry_deposit.handler
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    alarms:
+      - functionErrors
+
+    # Function specific environments
+    environment:
+      PRIVATE_CHAIN_GAS: ${file(./chain_config.yml):private.gas}
+      PRIVATE_CHAIN_GAS_PRICE: ${file(./chain_config.yml):private.gasPrice}
+
+  retryWithdraw:
+    handler: src/handlers/retry_withdraw.handler
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    alarms:
+      - functionErrors
+
+    # Function specific environments
+    environment:
+      PUBLIC_CHAIN_GAS: ${file(./chain_config.yml):public.gas}
+      PUBLIC_CHAIN_GAS_PRICE: ${file(./chain_config.yml):public.gasPrice}
+
+  detectPendingDeposit:
+    handler: src/handlers/detect_pending_deposit.handler
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+
+    # Scheduling
+    events:
+      - schedule:
+          rate: rate(30 minutes)
+          input:
+            notificationEnabled: true
+
+    # エラーが発生するがALIS-3166でペンディングと意思決定したため、この関数ではアラームを設定しない
+    # - http://bit.ly/307R2Fi
+    # alarms:
+    #   - functionErrors
+
+    # Function specific environments
+    environment:
+      SLACK_NOTIFICATION_URL: ${ssm:${env:ALIS_APP_ID}ssmSlackAlarmNotificationUrl}
+      RELAY_IGNORE_SEC_THRESHOLD: 900
+      RELAY_FROM_BLOCK_NUM: 1
+      APPLY_RELAY_FROM_BLOCK_NUM: 1
+
+  detectPendingWithdraw:
+    handler: src/handlers/detect_pending_withdraw.handler
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+
+    # Scheduling
+    events:
+      - schedule:
+          rate: rate(30 minutes)
+          input:
+            notificationEnabled: true
+
+    # エラーが発生するがALIS-3166でペンディングと意思決定したため、この関数ではアラームを設定しない
+    # - http://bit.ly/307R2Fi
+    # alarms:
+    #   - functionErrors
+
+    # Function specific environments
+    environment:
+      SLACK_NOTIFICATION_URL: ${ssm:${env:ALIS_APP_ID}ssmSlackAlarmNotificationUrl}
+      RELAY_IGNORE_SEC_THRESHOLD: 21600
+      RELAY_FROM_BLOCK_NUM: 1
+      APPLY_RELAY_FROM_BLOCK_NUM: 1
+
+
+# Plugins
+plugins:
+  - serverless-python-requirements
+  - serverless-plugin-aws-alerts
+  - serverless-pseudo-parameters
+
+
+# Resources
+resources:
+  Resources:
+    # DynamoDB
+    erc20BridgeInfo:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.stage}ERC20BridgeInfo
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+
+
+# Custom settings
+custom:
+  # serverless-python-requirements
+  # http://bit.ly/2YkYgaK
+  pythonRequirements:
+    dockerizePip: ${self:custom.isCI.${env:CI}}
+    layer: true
+  isCI:
+    true: false
+    false: true
+
+  # serverless-plugin-aws-alerts
+  alerts:
+    stages:
+      - alis
+      - staging
+    topics:
+      alarm: "arn:aws:sns:ap-northeast-1:#{AWS::AccountId}:AlarmToSlack"
+    definitions:
+      functionErrors:
+        description: "ERC20 BridgeのLambdaでエラーが発生したときに通知"
+        treatMissingData: notBreaching

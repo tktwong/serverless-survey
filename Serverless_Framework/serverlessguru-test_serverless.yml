@@ -1,0 +1,63 @@
+service: serverlessguru
+org: riverwalkdevelopers
+app: serverlessguru
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-plugin-additional-stacks
+  - serverless-plugin-include-dependencies
+  - serverless-appsync-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: rwdvs
+  stage: ${opt:stage, 'dev'}
+  region: ${file(./env.yml):${'${self:provider.stage}.REGION'}}
+  timeout: ${file(./env.yml):${'${self:provider.stage}.TIMEOUT'}}
+  stackName: ${self:service}-${self:provider.stage}
+  restApi: false
+  cfnRole: ${file(./env.yml):${'${self:provider.stage}.CLOUD_FORMATION.ROLE'}}
+
+custom:
+  additionalStacks:
+    cognitoResources:
+      Deploy: Before
+      StackName: ${file(./env.yml):${'${self:provider.stage}.COGNITO.STACK_NAME'}}
+      Resources: ${file(./resources/cognito.yml)}
+      Outputs: ${file(./resources/cognito-outputs.yml)}
+    dynamoDBResources:
+      Deploy: Before
+      StackName: ${file(./env.yml):${'${self:provider.stage}.DYNAMODB.STACK_NAME'}}
+      Resources: ${file(./resources/dynamodb.yml)}
+
+  appSync:
+    name: ${file(./env.yml):${'${self:provider.stage}.APP_SYNC.NAME'}}
+    authenticationType: API_KEY
+    logConfig:
+      loggingRoleArn: ${file(./env.yml):${'${self:provider.stage}.LOGGING.SERVICE_ARN'}}
+      level: ALL
+    mappingTemplates:
+      - ${file(resolvers/dynamodb.yml)}
+      - ${file(resolvers/lambda.yml)}
+    dataSources:
+      - type: AWS_LAMBDA
+        name: UserDataSource
+        description: 'Lambda DataSource'
+        config:
+          lambdaFunctionArn: ${file(./env.yml):${'${self:provider.stage}.LAMBDA.ARN'}}
+          serviceRoleArn: ${file(./env.yml):${'${self:provider.stage}.LAMBDA.SERVICE_ARN'}}
+      - type: AMAZON_DYNAMODB
+        name: PostDataSource
+        description: 'Posts DataSource'
+        config:
+          tableName: ${file(./env.yml):${'${self:provider.stage}.DYNAMODB.POSTS.NAME'}}
+          serviceRoleArn: ${file(./env.yml):${'${self:provider.stage}.DYNAMODB.SERVICE_ARN'}}
+
+functions:
+  UserLambda:
+    handler: handler.users
+
+resources:
+  - ${file(resources/logging.yml)}
+  - ${file(resources/lambda.yml)}

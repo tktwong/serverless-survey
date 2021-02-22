@@ -1,0 +1,89 @@
+service:
+  name: authreproduce
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  runtime: nodejs12.x
+  variableSyntax: "\\${((?!AWS)[ ~:a-zA-Z0-9._@'\",\\-\\/\\(\\)]+?)}"
+  environment:
+    COGNITO_IDENTITYPOOL: {  Ref: CognitoIdentityPool }
+    JWTSECRET: 'prettyinsecure'
+    JWTISSUER: 'notreal.example.com'
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - cognito-identity:GetOpenIdTokenForDeveloperIdentity
+      Resource:
+        Fn::Join:
+          - ""
+          - - Fn::Sub: "arn:aws:cognito-identity:${AWS::Region}:${AWS::AccountId}:identitypool/"
+            - Ref: CognitoIdentityPool
+
+custom:
+  PREFIX: ${self:service}-${self:provider.stage}
+  UNDERSCOREPREFIX: ${self:service}_${self:provider.stage}
+
+  webpack:
+    includeModules:
+      forceInclude:
+      - source-map-support
+
+functions:
+
+  Auth_SignIn:
+    handler: src/auth.signinHandler
+    memorySize: 256
+    timeout: 15
+    events:
+      - http:
+          path: auth/signin
+          method: get
+          cors: true
+          integration: lambda-proxy
+
+resources:
+  Resources:
+
+    CognitoIdentityPool:
+      Type: AWS::Cognito::IdentityPool
+      Properties: 
+        AllowUnauthenticatedIdentities: false
+        DeveloperProviderName: developer
+        IdentityPoolName: ${self:custom.UNDERSCOREPREFIX}
+
+    AuthRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            -
+              Action: 'sts:AssumeRoleWithWebIdentity'
+              Principal:
+                Federated: 'cognito-identity.amazonaws.com'
+              Effect: Allow
+              Condition:
+                ForAnyValue:StringLike:
+                  'cognito-identity.amazonaws.com:amr': authenticated
+              Sid: ''
+        MaxSessionDuration: 3600
+        RoleName: ${self:custom.PREFIX}-authUser
+
+    MapAuthRolesToIndentityPool:
+      Type: AWS::Cognito::IdentityPoolRoleAttachment
+      Properties: 
+        IdentityPoolId:
+          Ref: CognitoIdentityPool 
+        Roles:
+          authenticated:
+            Fn::GetAtt: [ AuthRole, Arn ]
+
+  Outputs:
+    
+    CognitoIdentityPool:
+      Value:
+        Ref: CognitoIdentityPool

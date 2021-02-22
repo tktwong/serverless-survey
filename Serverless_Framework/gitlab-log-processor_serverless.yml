@@ -1,0 +1,94 @@
+service: gitlab-log-collector
+frameworkVersion: ">=1.0.0 < 2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'} # -s 옵션을 받으면 사용하고, 그렇지 않으면 기본 dev 스테이지 사용
+  region: ap-northeast-2
+  # logs:
+  #   restApi: true # api gateway log options /aws/api-gateway/{service}-{stage}.
+  #   level: ${self:custom:LOG_LEVEL}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource:
+        - arn:aws:s3::*:*
+  # iamRoleStatements:
+  #   - Effect: Allow
+  #     Action:
+  #       - dynamodb:DescribeTable
+  #       - dynamodb:Query
+  #       - dynamodb:Scan
+  #       - dynamodb:GetItem
+  #       - dynamodb:PutItem
+  #       - dynamodb:UpdateItem
+  #       - dynamodb:DeleteItem
+  #     Resource:
+  #       - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.dynamodb.customers}
+  #       - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.dynamodb.customers}/index/*
+  #       - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.dynamodb.apps}
+  #       - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.dynamodb.apps}/index/*
+  # environment:
+  #   STAGE: ${self:provider.stage}
+  #   LOG_LEVEL: ${self:custom.CONFIG.${self:custom.STAGE}.LOG_LEVEL}
+  #   ACCESS_TOKEN_SECRET: ${self:custom.CONFIG.${self:custom.STAGE}.ACCESS_TOKEN_SECRET}
+  #   REFRESH_TOKEN_SECRET: ${self:custom.CONFIG.${self:custom.STAGE}.REFRESH_TOKEN_SECRET}
+  #   SERVICE_KEY: ${self:custom.CONFIG.${self:custom.STAGE}.SERVICE_KEY}
+  #   DYNAMODB_CUSTOMERS_TABLE: ${self:custom.dynamodb.customers}
+  #   DYNAMODB_APPS_TABLE: ${self:custom.dynamodb.apps}
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+functions:
+  # authorizer 함수
+  logProcessor:
+    handler: logProcessor.logProcessor
+    events:
+      - s3:
+        bucket: gitlab-log-test
+        event: s3:ObjectCreated:*
+        #existing: true
+        # rules:
+        #   - prefix: uploads/
+        #   - suffix: .jpg
+  # 환경변수 조회
+  
+# custom:
+#   STAGE: ${self:provider.stage} # 현재 스테이지 별로 정보를 달리하기 위함
+#   CONFIG: ${file(./src/common/environments.js):CONFIG} # environments.js 에서 가져올 데이터 베이스 접속정보
+#   LOG_LEVEL: ${self:custom.CONFIG.${self:custom.STAGE}.LOG_LEVEL}
+#   dynamodb:
+#     customers: ${self:service}-customers-${self:custom.STAGE}
+#     apps: ${self:service}-apps-${self:custom.STAGE}
+#   serverless-mocha-plugin:
+#     testTemplate: templates/test-template.ejs
+#     functionTemplate: templates/function-template.ejs
+# resources:
+#   Resources:
+#     appTable:
+#       Type: AWS::DynamoDB::Table
+#       DeletionPolicy: Retain
+#       Properties:
+#         TableName: ${self:custom.dynamodb.appTable}
+#         AttributeDefinitions:
+#           - AttributeName: accesskey
+#             AttributeType: S
+#         KeySchema:
+#           - AttributeName: accesskey
+#             KeyType: HASH
+#         ProvisionedThroughput:
+#           ReadCapacityUnits: 1
+#           WriteCapacityUnits: 1
+# 위에 리소스 생성 시 이미 만들어 진 상태에서 deploy 하면 오류 남
+# plugins 없으면 IAM roles의 변수 설정에 오류가 남
+# plugins:
+#   - serverless-pseudo-parameters
+#   - serverless-mocha

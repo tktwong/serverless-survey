@@ -1,0 +1,106 @@
+service: artfullylondon-tag-service
+
+frameworkVersion: ">=1.2.0 <2.0.0"
+
+package:
+    individually: true
+
+provider:
+    name: aws
+    runtime: nodejs8.10
+    region: eu-west-1
+    tracing: true
+    environment: ${file(env.yml):${self:custom.stage}}
+    iamManagedPolicies:
+        - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+    iamRoleStatements:
+        -
+            Effect: "Allow"
+            Action: "dynamodb:*"
+            Resource:
+                Fn::Join:
+                    - ""
+                    -
+                        - "arn:aws:dynamodb:"
+                        - Ref: "AWS::Region"
+                        - ":"
+                        - Ref: "AWS::AccountId"
+                        - ":table/"
+                        - Ref: "TagDynamoTable"
+
+plugins:
+    - serverless-webpack
+    - serverless-pseudo-parameters
+    - serverless-plugin-tracing
+    - serverless-dynamodb-local
+    - serverless-offline
+
+custom:
+    project: artfullylondon
+    stage: "${opt:stage}"
+    region: "${opt:region, self:provider.region}"
+    tagTableName: ${self:custom.project}-${self:custom.stage}-tag
+    webpack:
+        webpackConfig: ./webpack.config.js
+        includeModules:
+            forceExclude:
+                - aws-sdk
+        packager: 'yarn'
+    dynamodb:
+        start:
+            port: 4569
+            migrate: true
+            sharedDb: true
+            noStart: true
+
+functions:
+    auth:
+        handler: src/lambda/auth-handler.handler
+    graphql:
+        handler: src/lambda/graphql-handler.handler
+        environment:
+            SERVERLESS_TAG_TABLE_NAME: ${self:custom.tagTableName}
+        events:
+            - http:
+                path: graphql
+                method: post
+                cors: true
+                authorizer:
+                    name: auth
+                    identitySource: method.request.header.Authorization
+                    resultTtlInSeconds: 300
+                    type: request
+            - http:
+                path: graphql
+                method: get
+                cors: true
+                authorizer:
+                    name: auth
+                    identitySource: method.request.header.Authorization
+                    resultTtlInSeconds: 300
+                    type: request
+
+resources:
+    Resources:
+        TagDynamoTable:
+            Type: AWS::DynamoDB::Table
+            DeletionPolicy: Retain
+            Properties:
+                TableName: ${self:custom.tagTableName}
+                AttributeDefinitions:
+                    -
+                        AttributeName: tagType
+                        AttributeType: S
+                    -
+                        AttributeName: id
+                        AttributeType: S
+                KeySchema:
+                    -
+                        AttributeName: tagType
+                        KeyType: HASH
+                    -
+                        AttributeName: id
+                        KeyType: RANGE
+                ProvisionedThroughput:
+                    ReadCapacityUnits: 2
+                    WriteCapacityUnits: 1

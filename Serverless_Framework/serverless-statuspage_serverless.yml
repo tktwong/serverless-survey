@@ -1,0 +1,60 @@
+service: serverless-statuspage
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs6.10
+  role: ${env:LAMBDA_ROLE}
+  stage: ${env:STAGE}
+  environment:
+    STATUSPAGE_API_KEY: ${env:STATUSPAGE_API_KEY}
+    STAGE: ${env:STAGE}
+
+package:
+  include:
+    - handler.js
+    - sj-config.js
+
+functions:
+  status:
+    events:
+      - http:
+          path: status
+          method: get
+    handler: handler.status
+    memorySize: 128
+
+plugins:
+  - serverless-plugin-stage-variables
+
+# Configures api caching for query strings
+resources:
+  Resources:
+    ApiGatewayStage:
+      Properties:
+        CacheClusterEnabled: true
+        CacheClusterSize: '0.5'
+        MethodSettings:
+          - CacheTtlInSeconds: 5
+            CachingEnabled: true
+            HttpMethod: "GET"
+            ResourcePath: '/*'
+            MetricsEnabled: false
+    ApiGatewayMethodStatusGet:
+      Properties:
+        RequestParameters:
+          method.request.querystring.type: true
+          method.request.querystring.limit: true
+          method.request.querystring.page_id: true
+        Integration:
+          RequestParameters:
+            integration.request.querystring.type: method.request.querystring.type
+            integration.request.querystring.limit: method.request.querystring.limit
+            integration.request.querystring.page_id: method.request.querystring.page_id
+          CacheNamespace: "serverless-statuspage"
+          CacheKeyParameters:
+            - method.request.querystring.type
+            - method.request.querystring.limit
+            - method.request.querystring.page_id
+    ApiGatewayRestApi:
+      Properties:
+        Name: "${self:service}-${self:provider.stage}"

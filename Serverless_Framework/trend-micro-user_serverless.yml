@@ -1,0 +1,60 @@
+service: 
+  name: trend-micro-user
+  awsKmsKeyArn: arn:aws:kms:ap-southeast-2:602381305227:key/d4bced52-ba29-489d-b4d8-96e017d4e69a
+
+app: trend-micro-user
+org: marvel
+
+frameworkVersion: "2"
+
+functions:
+  createUser:
+    handler: createUser.create
+    environment: 
+      CMK: d4bced52-ba29-489d-b4d8-96e017d4e69a
+    events:
+      - http:
+          path: users
+          method: post
+
+  getUser:
+    handler: getUser.get
+    events:
+      - http:
+          path: users/{id}
+          method: get
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-southeast-2
+  environment:
+    USERS_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+resources:
+  Resources:
+    UsersDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.USERS_TABLE}

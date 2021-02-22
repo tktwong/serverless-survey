@@ -1,0 +1,65 @@
+service: myService
+provider:
+    name: aws
+    runtime: nodejs12.x
+    stage: dev
+    region: us-east-1
+
+plugins:
+    - serverless-localstack
+    - serverless-plugin-typescript
+
+custom:
+    localstack:
+        stages:
+            - local
+        host: http://localhost
+        endpoints:
+            cloudformation: http://localhost:4566
+            s3: http://localhost:4566
+            sns: http://localhost:4566
+            sqs: http://localhost:4566
+            sts: http://localhost:4566
+        lambda:
+            mountCode: True
+        docker:
+            sudo: False
+
+resources:
+    Resources:
+        localTopic:
+            Type: AWS::SNS::Topic
+            Properties:
+                TopicName: local-topic
+
+        localQueue:
+            Type: "AWS::SQS::Queue"
+            Properties:
+                QueueName: local-queue
+
+        snsToQueueSqsPolicy:
+            Type: AWS::SQS::QueuePolicy
+            Properties:
+                PolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                        - Sid: "allow-sns-messages"
+                          Effect: Allow
+                          Principal: "*"
+                          Resource: !GetAtt
+                              - localQueue
+                              - Arn
+                          Action: "SQS:SendMessage"
+                          Condition:
+                              ArnEquals:
+                                  "aws:SourceArn": !Ref localTopic
+                Queues:
+                    - Ref: localQueue
+
+        myQueueToSnsSubscription:
+            Type: AWS::SNS::Subscription
+            Properties:
+                Endpoint: !GetAtt localQueue.Arn
+                Protocol: sqs
+                RawMessageDelivery: true
+                TopicArn: !Ref localTopic

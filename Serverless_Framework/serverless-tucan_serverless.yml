@@ -1,0 +1,67 @@
+service: serverless-tucan
+
+custom:
+  gradesTableName: tucan-${self:provider.stage}-grades
+  newGradesTemplate: "serverless-tucan-new-grade"
+
+  # Both recipient and sender addresses have to be registered as SES debug addresses
+  recipientMailAddress: "mail@example.com"
+  senderMailAddress: "mail@example.com"
+
+plugins:
+  - serverless-python-requirements
+
+provider:
+  name: aws
+  runtime: python3.8
+  memorySize: 128
+  timeout: 30
+  region: us-east-1
+
+  stage: ${opt:stage, 'dev'}
+
+  environment:
+    GRADES_TABLE: ${self:custom.gradesTableName}
+    NEW_GRADES_TEMPLATE: ${self:custom.newGradesTemplate}
+    RECIPIENT_MAIL_ADDRESS: ${self:custom.recipientMailAddress}
+    SENDER_MAIL_ADDRESS: ${self:custom.senderMailAddress}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:UpdateItem
+      Resource:
+        - "Fn::GetAtt": [ GradesTable, Arn ]
+    - Effect: Allow
+      Action:
+        - ses:SendTemplatedEmail
+      Resource:
+        - "*"
+      Condition:
+        StringEquals:
+          ses:FromAddress: ${self:custom.senderMailAddress}
+        ForAllValues:StringEquals:
+          ses:Recipients:
+            - ${self:custom.recipientMailAddress}
+
+functions:
+  fetch-grades:
+    handler: handler.handler.fetch_grades
+    events:
+      - schedule: rate(1 hour)
+
+resources:
+  Resources:
+    GradesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.gradesTableName}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

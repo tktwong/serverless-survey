@@ -1,0 +1,88 @@
+# For full config options, check the docs:
+#    docs.serverless.com
+service: fit2
+useDotenv: true
+provider:
+  name: aws
+  runtime: rust
+  memorySize: 128
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  endpointType: REGIONAL
+  versionFunctions: false
+  apiGateway:
+    shouldStartNameWithService: true
+
+  # IAM role for the function itself
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamoDb:GetItem"
+        - "dynamoDb:PutItem"
+        - "dynamoDb:UpdateItem"
+        - "dynamoDb:Scan"
+      Resource:
+        - 'Fn::GetAtt':
+            - UsersTable
+            - Arn
+  environment:
+    USERS_TABLE_NAME: ${self:custom.tableName}
+    GOOGLE_CLIENT_ID: ${env:GOOGLE_CLIENT_ID}
+    GOOGLE_CLIENT_SECRET: ${env:GOOGLE_CLIENT_SECRET}
+    FITBIT_CLIENT_ID: ${env:FITBIT_CLIENT_ID}
+    FITBIT_CLIENT_SECRET: ${env:FITBIT_CLIENT_SECRET}
+    FITBIT_SUBSCRIBER_VERIFY: ${env:FITBIT_SUBSCRIBER_VERIFY}
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: uid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uid
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        Tags:
+          - Key: app
+            Value: fit2
+
+custom:
+  tableName: ${self:service}-${opt:stage, 'dev'}-UsersTable
+
+package:
+  individually: true
+
+functions:
+  fit2:
+    handler: fit2.lambda
+    rust:
+      cargoFlags: '--bin lambda'
+    events:
+      - http:
+          path: /setup
+          method: get
+      - http:
+          path: /api/auth/fitbit
+          method: get
+      - http:
+          path: /api/auth/google
+          method: get
+      - http:
+          path: /api/auth/fitbit/callback
+          method: get
+      - http:
+          path: /api/auth/google/callback
+          method: get
+      - http:
+          path: /api/fitbit/notification
+          method: post
+      - http:
+          path: /api/fitbit/notification
+          method: get
+
+plugins:
+  - serverless-rust

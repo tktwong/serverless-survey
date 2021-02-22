@@ -1,0 +1,99 @@
+service: flash-training
+
+custom:
+  secrets: ${file(credentials.yml)}
+  pythonRequirements:
+    dockerizePip: true
+    zip: true
+    slim: true
+    strip: false
+    noDeploy:
+      - docutils
+      - jmespath
+      - pip
+      - python-dateutil
+      - setuptools
+      - six
+      - tensorboard
+    useStaticCache: true
+    useDownloadCache: true
+    cacheLocation: './cache'
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  region: ${self:custom.secrets.region}
+  timeout: 30
+  environment:
+    S3_BUCKET: ${self:custom.secrets.bucket}
+    P3_INSTANCE_ID: ${self:custom.secrets.p3InstanceId}
+    T2_INSTANCE_ID: ${self:custom.secrets.t2InstanceId}
+    REGION: ${self:custom.secrets.region}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - s3:*
+      Resource: arn:aws:s3:::${self:custom.secrets.bucket}/*
+    - Effect: 'Allow'
+      Action:
+        - ec2:StartInstances
+        - ec2:StopInstances
+      Resource: arn:aws:ec2:${self:custom.secrets.region}:${self:custom.secrets.awsId}:instance/*
+    - Effect: 'Allow'
+      Action:
+        - ec2:DescribeInstances
+      Resource: '*'
+
+package:
+  individually: false
+  exclude:
+    - package.json
+    - package-lock.json
+    - node_modules/**
+    - cache/**
+    - test/**
+    - .vscode/**
+    - __pycache__/**
+    - .pytest_cache/**
+
+functions:
+  train:
+    handler: handler.train
+    memorySize: 3008 # MB
+    timeout: 30 # seconds
+    events:
+      - http:
+          path: train
+          method: post
+          cors: true
+  status:
+    handler: handler.status
+    memorySize: 3008 # MB
+    timeout: 30 # seconds
+    events:
+      - http:
+          path: status
+          method: get
+          cors: true
+  start:
+    handler: handler.server_start
+    memorySize: 3008 # MB
+    timeout: 30 # seconds
+    events:
+      - http:
+          path: start
+          method: get
+          cors: true
+  stop:
+    handler: handler.server_stop
+    memorySize: 3008 # MB
+    timeout: 30 # seconds
+    events:
+      - http:
+          path: stop
+          method: get
+          cors: true
+
+plugins:
+  - serverless-python-requirements

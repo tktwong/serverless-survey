@@ -1,0 +1,85 @@
+service: dealership
+
+provider:
+  name: aws
+  runtime: java8
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  memorySize: 512
+  timeout: 10
+  environment:
+    REGION: ${self:provider.region}
+    TABLE_CARS: cars-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: "*"
+
+package:
+  artifact: build/distributions/${self:service}.zip
+
+custom:
+  handlers: nl.robinlaugs.${self:service}.serverless.handler.aws
+  prune:
+    automatic: true
+    number: 2
+
+functions:
+  listCars:
+    handler: ${self:custom.handlers}.car.AWSCarListHandler
+    events:
+      - http:
+          path: /cars
+          method: get
+
+  getCar:
+    handler: ${self:custom.handlers}.car.AWSCarGetHandler
+    events:
+      - http:
+          path: /cars/{id}
+          method: get
+
+  createCar:
+    handler: ${self:custom.handlers}.car.AWSCarCreateHandler
+    events:
+      - http:
+          path: /cars
+          method: post
+
+  updateCar:
+    handler: ${self:custom.handlers}.car.AWSCarUpdateHandler
+    events:
+      - http:
+          path: /cars/{id}
+          method: patch
+
+  deleteCar:
+    handler: ${self:custom.handlers}.car.AWSCarDeleteHandler
+    events:
+      - http:
+          path: /cars/{id}
+          method: delete
+
+resources:
+  Resources:
+    carsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TABLE_CARS}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: brand
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: brand
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+plugins:
+  - serverless-prune-plugin

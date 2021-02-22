@@ -1,0 +1,123 @@
+service: product-api
+
+plugins:
+  - serverless-bundle
+  - serverless-offline
+
+custom: ${file(./serverless.common.yml):custom}
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  tracing:
+    apiGateway: true
+    lambda: true
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    stage: ${self:custom.stage}
+    resourcesStage: ${self:custom.resourcesStage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - 'Fn::ImportValue': ${self:custom.resourcesStage}-ExtProductTableArn
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /product
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  create:
+    handler: create.main
+    events:
+      - http:
+          path: product
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  get:
+    # Defines an HTTP API endpoint that calls the main function in get.js
+    # - path: url path is /product/{id}
+    # - method: GET request
+    handler: get.main
+    events:
+      - http:
+          path: product/{id}
+          method: get
+          cors: true 
+
+  list:
+    # Defines an HTTP API endpoint that calls the main function in list.js
+    # - path: url path is /products
+    # - method: GET request
+    handler: list.main
+    events:
+      - http:
+          path: products
+          method: get
+          cors: true 
+
+  update:
+    # Defines an HTTP API endpoint that calls the main function in update.js
+    # - path: url path is /product/{id}
+    # - method: PUT request
+    handler: update.main
+    events:
+      - http:
+          path: product/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  delete:
+    # Defines an HTTP API endpoint that calls the main function in delete.js
+    # - path: url path is  product/{id}
+    # - method: DELETE request
+    handler: delete.main
+    events:
+      - http:
+          path: product/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # Cognito Identity Pool Policy
+  - ${file(resources/cognito-policy.yml)}
+
+  - Outputs:
+      ApiGatewayRestApiId:
+        Value:
+          Ref: ApiGatewayRestApi
+        Export:
+          Name: ${self:custom.stage}-ExtApiGatewayRestApiId
+
+      ApiGatewayRestApiRootResourceId:
+        Value:
+          Fn::GetAtt:
+            - ApiGatewayRestApi
+            - RootResourceId
+        Export:
+          Name: ${self:custom.stage}-ExtApiGatewayRestApiRootResourceId

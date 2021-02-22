@@ -1,0 +1,82 @@
+service: example-project
+provider:
+  name: aws
+  runtime: python3.7
+  region: ${self:custom.region}
+  environment:
+    RDS_ENDPOINT: ${ssm:ExampleProjectDbEndpoint-${opt:stage}}
+    DATABASE_NAME: 'ExampleProject'
+    DB_USER: 'lambdaUser'
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action: 'rds-db:connect'
+      Resource:
+        - Fn::Join: ["", [ "arn:aws:rds-db:", { "Ref": "AWS::Region" }, ':', { Ref: "AWS::AccountId" }, ":dbuser:${ssm:ExampleProjectDbInstanceId-${opt:stage}}/lambdaUser" ]]
+
+functions:
+
+  ResetTable:
+    handler: demo.admin.reset_table.handler
+    memorySize: 128
+    timeout: 15
+    events:
+      - http:
+          path: /admin/reset
+          method: get
+          cors: true
+
+  ListPeople:
+    handler: demo.queries.all_people.handler
+    memorySize: 128
+    timeout: 5
+    events:
+      - http:
+          path: /queries/listPeople
+          method: get
+          cors: true
+
+  RawQuery:
+    handler: demo.queries.raw_sql.handler
+    memorySize: 128
+    timeout: 5
+    events:
+      - http:
+          path: /queries/raw
+          method: get
+          cors: true
+
+  SqlAlchemyQuery:
+    handler: demo.queries.sqlalchemy.handler
+    memorySize: 128
+    timeout: 5
+    events:
+      - http:
+          path: /queries/sqlalchemy
+          method: get
+          cors: true
+
+  AddPerson:
+    handler: demo.admin.add_person.handler
+    memorySize: 128
+    timeout: 5
+    events:
+      - http:
+          path: /addPerson
+          cors: true
+          method: post
+          request:
+            schema:
+              application/json: ${file(./demo/admin/add_person.json)}
+
+package:
+  artifact: deployment.zip
+
+custom:
+  scripts:
+    hooks:
+      'deploy:createDeploymentArtifacts': ./build-artifact.sh
+  region: "eu-west-2"
+
+plugins:
+  - serverless-python-requirements
+  - serverless-plugin-scripts

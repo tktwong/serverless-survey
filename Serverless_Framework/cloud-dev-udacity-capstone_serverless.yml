@@ -1,0 +1,181 @@
+service:
+  name: cloud-dev-udacity
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-aws-documentation
+  - serverless-reqvalidator-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  tracing: 
+    lambda: true
+    apiGateway: true
+
+  environment:
+    ITEMS_TABLE: Items-${self:provider.stage}
+    ITEMS_USERID_INDEX: UserIdIndex
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Cloud Developer Udagram API
+        decription: Serverless application for managing Items
+    models:
+      - name: ItemRequest
+        contentType: application/json
+        schema: ${file(models/create-item-request.json)}
+      - name: UpdateRequest
+        contentType: application/json
+        schema: ${file(models/update-item-request.json)}
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetItems:
+    handler: src/lambda/http/getItems.handler
+    events:
+      - http:
+          method: get
+          path: items
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}/index/${self:provider.environment.ITEMS_USERID_INDEX}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+  CreateItem:
+    handler: src/lambda/http/createItem.handler
+    events:
+      - http:
+          method: post
+          path: items
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new item item
+            description: Create a new item item
+            requestModels:
+              'application/json': ItemRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action: 
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+  UpdateItem:
+    handler: src/lambda/http/updateItem.handler
+    events:
+      - http:
+          method: patch
+          path: items/{itemId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a item item
+            description: Update a item item
+            requestModels:
+              'application/json': UpdateRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action: 
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"             
+  DeleteItem:
+    handler: src/lambda/http/deleteItem.handler
+    events:
+      - http:
+          method: delete
+          path: items/{itemId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action: 
+          - dynamodb:GetItem
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    ItemsDynamoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: itemId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S        
+        KeySchema:
+          - AttributeName: itemId
+            KeyType: HASH
+          - AttributeName: userId
+            KeyType: RANGE            
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.ITEMS_USERID_INDEX}
+            KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.ITEMS_TABLE}

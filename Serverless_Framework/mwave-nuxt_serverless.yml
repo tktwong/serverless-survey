@@ -1,0 +1,121 @@
+service: sls-mwave-project-ssr
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${self:custom.secrets.NODE_ENV}
+  region: us-east-1
+  environment: 
+    NODE_ENV: ${self:custom.secrets.NODE_ENV}
+
+functions:
+  ssr:
+    handler: index.nuxt_ssr
+    memorySize: 2048
+    timeout: 30
+    lambdaAtEdge:
+      distribution: 'NuxtEdgeDistribution'
+      eventType: 'origin-request'
+      pathPattern: '*'
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-cloudfront-lambda-edge
+
+custom:
+  secrets: ${file(secrets.json)}
+
+package:
+  individually: true
+  excludeDevDependencies: true
+
+resources:
+  Resources:
+    NuxtEdgeBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: nuxt-lambda-at-edge
+    NuxtEdgeBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: { Ref: NuxtEdgeBucket }
+        PolicyDocument:
+          Statement:
+            -
+              Action:
+                - "s3:GetObject"
+              Effect: Allow
+              Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { Ref : NuxtEdgeBucket }, "/*" ] ]  }
+              Principal:
+                AWS: { "Fn::Join" : [" ", ["arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity", { Ref: NuxtEdgeOriginAccessIdentity } ] ] }
+    NuxtEdgeOriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: "CloudFrontOriginAccessIdentity for ${self:service}-${self:provider.stage}"
+    NuxtEdgeDistribution:
+      Type: 'AWS::CloudFront::Distribution'
+      Properties:
+        DistributionConfig:
+          DefaultCacheBehavior:
+            TargetOriginId: 'NuxtEdgeBucketOrigin'
+            ViewerProtocolPolicy: 'redirect-to-https'
+            MinTTL: 0
+            DefaultTTL: 0
+            MaxTTL: 0
+            Compress: true
+            ForwardedValues:
+              QueryString: true
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+          Aliases:
+            - 'poc2.testing.mwave.net.au'
+          DefaultRootObject: ''
+          Enabled: true
+          PriceClass: 'PriceClass_100'
+          ViewerCertificate:
+            AcmCertificateArn: 'arn:aws:acm:us-east-1:908568066669:certificate/86ad63b8-1f35-42ea-a123-f9ed07fab73b'
+            SslSupportMethod: 'sni-only'
+            MinimumProtocolVersion: 'TLSv1'
+          HttpVersion: 'http2'
+          IPV6Enabled: false
+          Origins:
+            -
+              Id: 'NuxtEdgeBucketOrigin'
+              DomainName: { 'Fn::GetAtt': [ NuxtEdgeBucket, DomainName ] }
+              S3OriginConfig:
+                OriginAccessIdentity: { "Fn::Join" : ["", ["origin-access-identity/cloudfront/", { Ref: NuxtEdgeOriginAccessIdentity } ] ]  }
+          CacheBehaviors:
+            - PathPattern: '*'
+              AllowedMethods:
+                - GET
+                - HEAD
+                - OPTIONS
+              TargetOriginId: NuxtEdgeBucketOrigin
+              ForwardedValues:
+                QueryString: false
+                Cookies:
+                  Forward: none
+              ViewerProtocolPolicy: 'https-only'
+              MinTTL: 31536000
+              DefaultTTL: 31536000
+              MaxTTL: 31536000
+              Compress: true
+
+  Outputs:
+    NuxtEdgeDistributionDomain:
+      Value:
+        'Fn::GetAtt': [ NuxtEdgeDistribution, DomainName ]
+      Export:
+        Name: NuxtEdgeDistributionDomain
+    NuxtEdgeDistributionId:
+      Value:
+        Ref: NuxtEdgeDistribution
+      Export:
+        Name: NuxtEdgeDistributionId

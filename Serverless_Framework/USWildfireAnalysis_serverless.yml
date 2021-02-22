@@ -1,0 +1,48 @@
+service:
+  name: predict-lambda
+
+plugins:
+  - serverless-python-requirements
+provider:
+  name: aws
+  runtime: python3.6
+  region: us-west-2
+  stage: dev
+  iamRoleStatements:
+    -  Effect: Allow
+       Action:
+         - s3:PutObject
+         - s3:GetObject
+       Resource:
+           - "arn:aws:s3:::${self:provider.deploymentBucket}/*"
+
+  ## TODO: Edit this to setup your deployment bucket
+  deploymentBucket:
+    name: cwr-aws-lambda-test
+
+package:
+  exclude:
+    - '**/*'
+  include:
+    - 'categorizer_lambda/**'
+
+custom:
+  pythonRequirements:
+    dockerizePip: true # set to false if `serverless deploy` is run inside a docker container
+    fileName: Pipfile
+    slim: false
+
+functions:
+  categorizer_lambda:
+    name: categorizer_lambda
+    description: >
+      categorize cause of fire based on fire attributes
+    handler: categorizer_lambda.main.lambda_handler
+    events:
+      - http:
+          path: firecause
+          method: POST
+    environment:
+      MODEL_BUCKET: ${self:provider.deploymentBucket}
+      MODEL_PIPELINE_PATH: pydatabln2018/decission_tree_classifier.pkl
+      MODEL_CLASSIFIER_PATH: pydatabln2018/decission_tree_classifier.pkl

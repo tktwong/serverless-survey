@@ -1,0 +1,244 @@
+service:
+  name: sls-wp-acl
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 128
+  tracing:
+    lambda: true
+    apiGateway: true
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sqs:*"
+        - "sns:*"
+        - "ssm:*"
+      Resource:
+        - Fn::Join:
+            - ":"
+            - - "arn:aws:ssm"
+              - Ref: AWS::Region
+              - Ref: AWS::AccountId
+              - "parameter/sls-wp-acl"
+        - Fn::Join:
+            - ":"
+            - - "arn:aws:ssm"
+              - Ref: AWS::Region
+              - Ref: AWS::AccountId
+              - "parameter/sls-wp-acl/*"
+        - Fn::GetAtt: [listItemsTaskQueue, Arn]
+        - Fn::GetAtt: [getItemTaskQueue, Arn]
+        - !Ref putItemTopic
+        - !Ref knownItemsTopic
+    - Effect: Allow
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - Fn::GetAtt: [itemStoreTable, Arn]
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    configRoot: /sls-wp-acl
+    getItemTaskQueueUrl: !Ref getItemTaskQueue
+    listItemsTaskQueueUrl: !Ref listItemsTaskQueue
+    putItemTopic: !Ref putItemTopic
+    deleteItemTopic: !Ref deleteItemTopic
+    knownItemsTopic: !Ref knownItemsTopic
+    itemStoreTable: !Ref itemStoreTable
+
+functions:
+  ####
+  # itemSync component
+  ####
+  resyncApi:
+    handler: handler.resyncApi
+    events:
+      - http:
+          path: /items/{apiName}/resync
+          method: any
+
+  resyncAllApi:
+    handler: handler.resyncAllApi
+    events:
+      - http:
+          path: /items/all/resync
+          method: any
+
+  putItemApi:
+    handler: handler.putItemApi
+    events:
+      - http:
+          path: /items/{apiName}/{type}/{id}
+          method: put
+      - http:
+          path: /items/{apiName}/{type}/{id}/put
+          method: any
+
+  deleteItemApi:
+    handler: handler.deleteItemApi
+    events:
+      - http:
+          path: /items/{apiName}/{type}/{id}
+          method: delete
+      - http:
+          path: /items/{apiName}/{type}/{id}/delete
+          method: any
+
+  resyncScheduler:
+    handler: handler.resyncScheduler
+    events:
+      - schedule: rate(6 hours)
+
+  listItemsTask:
+    handler: handler.listItemsTask
+    events:
+      - sqs:
+          arn: { Fn::GetAtt: [listItemsTaskQueue, Arn] }
+          batchSize: 1
+
+  getItemTask:
+    handler: handler.getItemTask
+    events:
+      - sqs:
+          arn: { Fn::GetAtt: [getItemTaskQueue, Arn] }
+          batchSize: 1
+
+  #####
+  # itemStore component
+  #####
+
+  putItemStoreTask:
+    handler: handler.putItemStoreTask
+    events:
+      - sqs:
+          arn: { Fn::GetAtt: [putItemStoreTaskQueue, Arn] }
+          batchSize: 1
+
+  deleteItemStoreTask:
+    handler: handler.deleteItemStoreTask
+    events:
+      - sqs:
+          arn: { Fn::GetAtt: [deleteItemStoreTaskQueue, Arn] }
+          batchSize: 1
+
+  knownItemsStoreTask:
+    handler: handler.knownItemsStoreTask
+    events:
+      - sqs:
+          arn: { Fn::GetAtt: [knownItemsStoreTaskQueue, Arn] }
+          batchSize: 1
+
+resources:
+  Resources:
+    listItemsTaskQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [deadTasks, Arn]
+          maxReceiveCount: 5
+
+    getItemTaskQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [deadTasks, Arn]
+          maxReceiveCount: 5
+
+    deadTasks:
+      Type: AWS::SQS::Queue
+
+    # Clients subscribe to these.
+    putItemTopic:
+      Type: AWS::SNS::Topic
+    deleteItemTopic:
+      Type: AWS::SNS::Topic
+    knownItemsTopic:
+      Type: AWS::SNS::Topic
+
+    # itemStore
+    putItemStoreTaskQueue:
+      Type: AWS::SQS::Queue
+    putItemStoreTaskQueueSubscriptionToPutItemTopic:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref putItemTopic
+        Endpoint:
+          Fn::GetAtt: [putItemStoreTaskQueue, Arn]
+        Protocol: sqs
+        RawMessageDelivery: "false"
+
+    deleteItemStoreTaskQueue:
+      Type: AWS::SQS::Queue
+    deleteItemStoreTaskQueueSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref deleteItemTopic
+        Endpoint:
+          Fn::GetAtt: [deleteItemStoreTaskQueue, Arn]
+        Protocol: sqs
+        RawMessageDelivery: "false"
+
+    knownItemsStoreTaskQueue:
+      Type: AWS::SQS::Queue
+    knownItemsStoreTaskQueueSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref knownItemsTopic
+        Endpoint:
+          Fn::GetAtt: [knownItemsStoreTaskQueue, Arn]
+        Protocol: sqs
+        RawMessageDelivery: "false"
+
+    storeTaskQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: allow-sns-messages
+              Effect: Allow
+              Principal: "*"
+              Action: sqs:*
+              Resource: "*"
+        Queues:
+          - !Ref deleteItemStoreTaskQueue
+          - !Ref knownItemsStoreTaskQueue
+          - !Ref putItemStoreTaskQueue
+
+    itemStoreTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: ApiTypeId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ApiTypeId
+            KeyType: HASH
+
+  Outputs:
+    putItemTopic:
+      Description: "ARN for the putItem SNS topic"
+      Value: !Ref putItemTopic
+    deleteItemTopic:
+      Description: "ARN for the deleteItem SNS topic"
+      Value: !Ref deleteItemTopic
+    knownItemsTopic:
+      Description: "ARN for the knownItems SNS topic"
+      Value: !Ref knownItemsTopic

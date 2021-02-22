@@ -1,0 +1,394 @@
+service:
+  name: sls-backend
+
+plugins:
+  - serverless-aws-documentation
+  - serverless-iam-roles-per-function
+  - serverless-plugin-tracing
+  - serverless-reqvalidator-plugin
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-2'}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  environment:
+    TWEETS_TABLE: sls-tweets-${self:provider.stage}
+    TWEETS_ID_INDEX: TweetIdIndex
+    USERS_TABLE: sls-users-${self:provider.stage}
+    MEDIA_S3_BUCKET: sls-bkt-${self:provider.stage}
+    REGION: 'us-east-2'
+    SIGNED_URL_EXPIRATION: 300
+
+custom:
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Minimal Twitter-like API
+        description: Serverless application for creating and reading social media posts
+    models:
+      - name: CreateTweetRequest
+        contentType: application/json
+        schema: ${file(models/create-tweet-request.json)}
+      - name: UpdateTweetRequest
+        contentType: application/json
+        schema: ${file(models/update-tweet-request.json)}
+      - name: FollowUserRequest
+        contentType: application/json
+        schema: ${file(models/follow-user-request.json)}
+      - name: UnfollowUserRequest
+        contentType: application/json
+        schema: ${file(models/unfollow-user-request.json)}
+
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/authorizer.handler
+
+  FollowUser:
+    handler: src/lambda/http/followUser.handler
+    events:
+      - http:
+          method: post
+          path: users/follow
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Follow a user
+            description: Follow a user
+            requestModels:
+              'application/json': FollowUserRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: "Allow"
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  UnfollowUser:
+    handler: src/lambda/http/unfollowUser.handler
+    events:
+      - http:
+          method: post
+          path: users/unfollow
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Unfollow a user
+            description: Unfollow a user
+            requestModels:
+              'application/json': UnfollowUserRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: "Allow"
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  CreateTweet:
+    handler: src/lambda/http/createTweet.handler
+    events:
+      - http:
+          method: post
+          path: items
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new tweet
+            description: Create a new tweet
+            requestModels:
+              'application/json': CreateTweetRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TWEETS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: "Allow"
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  DeleteTweet:
+    handler: src/lambda/http/deleteTweet.handler
+    events:
+      - http:
+          method: delete
+          path: items/{tweetId}
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Delete a tweet
+            description: Delete a tweet
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TWEETS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: "Allow"
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  UpdateTweet:
+    handler: src/lambda/http/updateTweet.handler
+    events:
+      - http:
+          method: patch
+          path: items/{tweetId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a tweet
+            description: Update a tweet
+            requestModels:
+              'application/json': UpdateTweetRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TWEETS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: "Allow"
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  GetPosts:
+    handler: src/lambda/http/getPosts.handler
+    events:
+      - http:
+          method: get
+          path: items
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Get posts for a user
+            description: Get posts for a user
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TWEETS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: "Allow"
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  GetFeed:
+    handler: src/lambda/http/getFeed.handler
+    events:
+      - http:
+          method: get
+          path: feed
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Get feed for a user
+            description: Get feed for a user
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TWEETS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: "Allow"
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: items/{tweetId}/media
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Get signed upload url
+            description: Get signed upload url
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TWEETS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:putObject
+        Resource: 'arn:aws:s3:::${self:provider.environment.MEDIA_S3_BUCKET}/*'
+      - Effect: "Allow"
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+resources:
+  Resources:
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    TweetsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: tweetId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: tweetId
+            KeyType: RANGE
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.environment.TWEETS_TABLE}
+
+    UsersDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.environment.USERS_TABLE}
+
+    MediaBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.MEDIA_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MinimalTwitterPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.MEDIA_S3_BUCKET}/*'
+        Bucket: !Ref MediaBucket

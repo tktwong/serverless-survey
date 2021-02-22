@@ -1,0 +1,83 @@
+service:
+  name: test-lucho
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+
+CognitoUserPool:
+  Type: "AWS::Cognito::UserPool"
+  Properties:
+    MfaConfiguration: OFF
+    UserPoolName: ${self:custom.stage}-user-pool
+    UsernameAttributes:
+      - email
+    Policies:
+      PasswordPolicy:
+        MinimumLength: 6
+        RequireLowercase: False
+        RequireNumbers: True
+        RequireSymbols: False
+        RequireUppercase: True
+
+CognitoUserPoolClient:
+  Type: "AWS::Cognito::UserPoolClient"
+  Properties:
+    ClientName: ${self:custom.stage}-user-pool-client
+    GenerateSecret: False
+    UserPoolId:
+      Ref: CognitoUserPool
+
+ApiGatewayAuthorizer:
+  DependsOn:
+    - ApiGatewayRestApi
+  Type: AWS::ApiGateway::Authorizer
+  Properties:
+    Name: cognito-authorizer
+    IdentitySource: method.request.header.Authorization
+    RestApiId:
+      Ref: ApiGatewayRestApi
+    Type: COGNITO_USER_POOLS
+    ProviderARNs:
+      - Fn::GetAtt: [CognitoUserPool, Arn]
+
+custom:
+  serverless-offline:
+    host: 0.0.0.0
+    port: 3000
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ses:ListTemplates"
+        - "ses:UpdateTemplate"
+        - "ses:GetTemplate"
+        - "ses:DeleteTemplate"
+        - "ses:CreateTemplate"
+        - "ses:SendTemplatedEmail"
+        - "ses:SendEmail"
+        - "sqs:SendMessage"
+        - "sqs:DeleteMessage"
+        - "cognito-identity:*"
+        - "cognito-idp:*"
+        - "cognito-sync:*"
+        - "iam:ListRoles"
+        - "iam:ListOpenIdConnectProviders"
+        - "sns:ListPlatformApplications"
+      Resource: "*"
+
+  environment:
+    DB_NAME: ${ssm:/${self:provider.stage}/DB_NAME}
+    DB_USERNAME: ${ssm:/${self:provider.stage}/DB_USERNAME}
+    DB_PASSWORD: ${ssm:/${self:provider.stage}/DB_PASSWORD}
+    DB_HOST: ${ssm:/${self:provider.stage}/DB_HOST}
+    STAGE: ${self:provider.stage}
+
+functions:
+  - ${file(src/users/user.functions.yml):functions}

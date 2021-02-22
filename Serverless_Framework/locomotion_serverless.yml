@@ -1,0 +1,452 @@
+service: locomotion
+app: locomotion
+org: adamjreed
+plugins:
+  - serverless-python-requirements
+  - serverless-domain-manager
+custom:
+  stage: ${opt:stage,'dev'}
+  pythonRequirements:
+    dockerizePip: non-linux
+  config: ${file(./config/${self:provider.stage}.json)}
+  secrets: ${ssm:/aws/reference/secretsmanager/${self:custom.config.secrets_key}~true}
+  customDomain:
+    domainName: ${self:custom.config.api_url}
+    basePath: ''
+    createRoute53Record: true
+    certificateName: ${self:custom.config.certificate_name}
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${self:custom.stage}
+  vpc:
+    securityGroupIds:
+      - !Ref SecurityGroup
+    subnetIds:
+      - !Ref PrivateSubnetOne
+      - !Ref PrivateSubnetTwo
+  iamRoleStatements:
+    - Effect: Allow
+      Action: s3:*
+      Resource: arn:aws:s3:::${self:custom.config.bucket_name}*
+    - Effect: Allow
+      Action:
+        - glue:*
+        - athena:*
+      Resource: "*"
+functions:
+  cities:
+    handler: src/api/cities.get
+    timeout: 30
+    environment:
+      REDIS_HOST: ${self:resources.Outputs.RedisAddress.Value}
+      REDIS_PORT: ${self:resources.Outputs.RedisPort.Value}
+      CORS_ORIGIN: ${self:custom.config.cors.origin}
+    events:
+      - http:
+          path: cities
+          method: get
+          cors: 
+            origin: ${self:custom.config.cors.origin}
+  stations:
+    handler: src/api/stations.get
+    timeout: 30
+    environment:
+      REDIS_HOST: ${self:resources.Outputs.RedisAddress.Value}
+      REDIS_PORT: ${self:resources.Outputs.RedisPort.Value}
+      CORS_ORIGIN: ${self:custom.config.cors.origin}
+    events:
+      - http:
+          path: stations/{city_id}
+          method: get
+          cors: 
+            origin: ${self:custom.config.cors.origin}
+  trains:
+    handler: src/api/trains.get
+    timeout: 30
+    environment:
+      REDIS_HOST: ${self:resources.Outputs.RedisAddress.Value}
+      REDIS_PORT: ${self:resources.Outputs.RedisPort.Value}
+      CORS_ORIGIN: ${self:custom.config.cors.origin}
+    events:
+      - http:
+          path: trains/{city_id}
+          method: get
+          cors: 
+            origin: ${self:custom.config.cors.origin}
+resources:
+  Resources:
+    VPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        EnableDnsSupport: true
+        EnableDnsHostnames: true
+        CidrBlock: '10.0.0.0/16'
+    SecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+          GroupDescription: Security group for Redis, Lambda, and Fargate
+          VpcId: !Ref 'VPC'
+    SecurityGroupIngress:
+      Type: AWS::EC2::SecurityGroupIngress
+      DependsOn: SecurityGroup
+      Properties:
+        GroupId: !Ref SecurityGroup
+        IpProtocol: -1
+        SourceSecurityGroupId: !Ref SecurityGroup
+    PrivateSubnetOne:
+      Type: AWS::EC2::Subnet
+      Properties:
+        MapPublicIpOnLaunch: true
+        AvailabilityZone:
+           Fn::Select:
+           - 0
+           - Fn::GetAZs: {Ref: 'AWS::Region'}
+        VpcId: !Ref 'VPC'
+        CidrBlock: '10.0.1.0/24'
+    PrivateSubnetTwo:
+      Type: AWS::EC2::Subnet
+      Properties:
+        MapPublicIpOnLaunch: true
+        AvailabilityZone:
+           Fn::Select:
+           - 1
+           - Fn::GetAZs: {Ref: 'AWS::Region'}
+        VpcId: !Ref VPC
+        CidrBlock: '10.0.2.0/24'
+    PublicSubnet:
+      Type: AWS::EC2::Subnet
+      Properties:
+        MapPublicIpOnLaunch: true
+        AvailabilityZone:
+           Fn::Select:
+           - 1
+           - Fn::GetAZs: {Ref: 'AWS::Region'}
+        VpcId: !Ref VPC
+        CidrBlock: '10.0.3.0/24'
+    InternetGateway:
+      Type: AWS::EC2::InternetGateway
+    GatewayAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        VpcId: !Ref VPC
+        InternetGatewayId: !Ref 'InternetGateway'
+    PrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref VPC
+    PrivateRouteTableRoute:
+      Type: AWS::EC2::Route
+      DependsOn: GatewayAttachment
+      Properties:
+        RouteTableId: !Ref PrivateRouteTable
+        DestinationCidrBlock: '0.0.0.0/0'
+        GatewayId: !Ref InternetGateway
+    PrivateSubnetOneRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PrivateSubnetOne
+        RouteTableId: !Ref PrivateRouteTable
+    PrivateSubnetTwoRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PrivateSubnetTwo
+        RouteTableId: !Ref PrivateRouteTable
+    PublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref VPC
+    PublicRouteTableRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId: !Ref PublicRouteTable
+        DestinationCidrBlock: '0.0.0.0/0'
+        InstanceId: !Ref NatInstance
+    PublicSubnetRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PublicSubnet
+        RouteTableId: !Ref PublicRouteTable
+    NatInstance:
+      Type: AWS::EC2::Instance
+      Properties: 
+        InstanceType: t2.micro
+        ImageId: ami-00a9d4a05375b2763
+        NetworkInterfaces: 
+          - AssociatePublicIpAddress: "true"
+            DeviceIndex: "0"
+            GroupSet: 
+              - !Ref SecurityGroup
+            SubnetId: !Ref PublicSubnet
+    RedisSubnetGroup:
+      Type: AWS::ElastiCache::SubnetGroup
+      Properties: 
+        Description: Subnet group for Redis
+        SubnetIds: 
+          - !Ref PrivateSubnetOne
+          - !Ref PrivateSubnetTwo
+    Redis:
+      Type: AWS::ElastiCache::CacheCluster
+      Properties: 
+        CacheNodeType: cache.t3.micro
+        CacheSubnetGroupName: !Ref RedisSubnetGroup
+        Engine: redis
+        NumCacheNodes: 1
+        Port: 6379
+        VpcSecurityGroupIds: 
+          - !Ref SecurityGroup
+    ECSTaskExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ ecs-tasks.amazonaws.com, events.amazonaws.com]
+            Action: ['sts:AssumeRole']
+        Path: /
+        ManagedPolicyArns:
+          - 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+        Policies:
+          - PolicyName: AmazonECSTaskExecutionRolePolicy
+            PolicyDocument:
+              Statement:
+              - Effect: Allow
+                Action: s3:*
+                Resource: arn:aws:s3:::${self:custom.config.bucket_name}*
+              - Effect: Allow
+                Action:
+                  - glue:*
+                  - athena:*
+                Resource: "*"
+    ECSCluster:
+      Type: AWS::ECS::Cluster
+    CitiesLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /ecs/${self:custom.stage}-cities
+    CitiesTask:
+      Type: AWS::ECS::TaskDefinition
+      Properties:
+        Family: ${self:custom.stage}-cities
+        Cpu: 256
+        Memory: 512
+        NetworkMode: awsvpc
+        RequiresCompatibilities:
+          - FARGATE
+        ExecutionRoleArn: !Ref ECSTaskExecutionRole
+        TaskRoleArn: !Ref ECSTaskExecutionRole
+        ContainerDefinitions:
+          - Name: cities
+            Cpu: 256
+            Memory: 512
+            Command: [ 'cities.py' ]
+            Environment: 
+              - {'Name': 'BUCKET_NAME', 'Value': '${self:custom.config.bucket_name}'}
+              - {'Name': 'REDIS_HOST', 'Value': '${self:resources.Outputs.RedisAddress.Value}'}
+              - {'Name': 'REDIS_PORT', 'Value': '${self:resources.Outputs.RedisPort.Value}'}
+            Image: 
+              Fn::Join:
+                - ""
+                - [ {Ref: 'AWS::AccountId'}, '.dkr.ecr.', {Ref: 'AWS::Region'}, '.amazonaws.com/${self:service}' ]
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: /ecs/${self:custom.stage}-cities
+                awslogs-region: {Ref: 'AWS::Region'}
+                awslogs-stream-prefix: ecs
+    CitiesEvent:
+      Type: AWS::Events::Rule
+      Properties:
+        ScheduleExpression: cron(0 14 * * ? *)
+        State: ENABLED
+        Targets:
+        - Id: ${self:custom.stage}-cities-cron
+          EcsParameters:
+            TaskDefinitionArn: !Ref CitiesTask
+            TaskCount: 1
+            LaunchType: 'FARGATE'
+            PlatformVersion: 'LATEST'
+            NetworkConfiguration:
+              AwsVpcConfiguration:
+                AssignPublicIp: ENABLED
+                SecurityGroups:
+                  - !Ref SecurityGroup
+                Subnets:
+                  - !Ref PrivateSubnetOne
+                  - !Ref PrivateSubnetTwo
+          RoleArn:  
+            Fn::GetAtt: [ ECSTaskExecutionRole, Arn ]
+          Arn: 
+            Fn::GetAtt: [ ECSCluster, Arn ]
+    ChicagoGTFSLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /ecs/${self:custom.stage}-chicago-gtfs
+    ChicagoGTFSTask:
+      Type: AWS::ECS::TaskDefinition
+      Properties:
+        Family: ${self:custom.stage}-chicago-gtfs
+        Cpu: 256
+        Memory: 512
+        NetworkMode: awsvpc
+        RequiresCompatibilities:
+          - FARGATE
+        ExecutionRoleArn: !Ref ECSTaskExecutionRole
+        TaskRoleArn: !Ref ECSTaskExecutionRole
+        ContainerDefinitions:
+          - Name: chicago-gtfs
+            Cpu: 256
+            Memory: 512
+            Command: [ "gtfs.py", "--city=chicago", "--feed_url=https://www.transitchicago.com/downloads/sch_data/google_transit.zip" ]
+            Environment: 
+              - {'Name': 'BUCKET_NAME', 'Value': '${self:custom.config.bucket_name}'}
+            Image: 
+              Fn::Join:
+                - ""
+                - [ {Ref: 'AWS::AccountId'}, '.dkr.ecr.', {Ref: 'AWS::Region'}, '.amazonaws.com/${self:service}' ]
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: /ecs/${self:custom.stage}-chicago-gtfs
+                awslogs-region: {Ref: 'AWS::Region'}
+                awslogs-stream-prefix: ecs
+    ChicagoGTFSEvent:
+      Type: AWS::Events::Rule
+      Properties:
+        ScheduleExpression: cron(0 11 * * ? *)
+        State: ENABLED
+        Targets:
+        - Id: ${self:custom.stage}-chicago-gtfs-cron
+          EcsParameters:
+            TaskDefinitionArn: !Ref ChicagoGTFSTask
+            TaskCount: 1
+            LaunchType: 'FARGATE'
+            PlatformVersion: 'LATEST'
+            NetworkConfiguration:
+              AwsVpcConfiguration:
+                AssignPublicIp: ENABLED
+                SecurityGroups:
+                  - !Ref SecurityGroup
+                Subnets:
+                  - !Ref PrivateSubnetOne
+                  - !Ref PrivateSubnetTwo
+          RoleArn:  
+            Fn::GetAtt: [ ECSTaskExecutionRole, Arn ]
+          Arn: 
+            Fn::GetAtt: [ ECSCluster, Arn ]
+    ChicagoStationsLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /ecs/${self:custom.stage}-chicago-stations
+    ChicagoStationsTask:
+      Type: AWS::ECS::TaskDefinition
+      Properties:
+        Family: ${self:custom.stage}-chicago-stations
+        Cpu: 256
+        Memory: 512
+        NetworkMode: awsvpc
+        RequiresCompatibilities:
+          - FARGATE
+        ExecutionRoleArn: !Ref ECSTaskExecutionRole
+        TaskRoleArn: !Ref ECSTaskExecutionRole
+        ContainerDefinitions:
+          - Name: chicago-stations
+            Cpu: 256
+            Memory: 512
+            Command: [ "stations.py","--city=chicago" ]
+            Environment: 
+              - {'Name': 'BUCKET_NAME', 'Value': '${self:custom.config.bucket_name}'}
+              - {'Name': 'REDIS_HOST', 'Value': '${self:resources.Outputs.RedisAddress.Value}'}
+              - {'Name': 'REDIS_PORT', 'Value': '${self:resources.Outputs.RedisPort.Value}'}
+            Image: 
+              Fn::Join:
+                - ""
+                - [ {Ref: 'AWS::AccountId'}, '.dkr.ecr.', {Ref: 'AWS::Region'}, '.amazonaws.com/${self:service}' ]
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: /ecs/${self:custom.stage}-chicago-stations
+                awslogs-region: {Ref: 'AWS::Region'}
+                awslogs-stream-prefix: ecs
+    ChicagoStationsEvent:
+      Type: AWS::Events::Rule
+      Properties:
+        ScheduleExpression: cron(0 14 * * ? *)
+        State: ENABLED
+        Targets:
+        - Id: ${self:custom.stage}-chicago-stations-cron
+          EcsParameters:
+            TaskDefinitionArn: !Ref ChicagoStationsTask
+            TaskCount: 1
+            LaunchType: 'FARGATE'
+            PlatformVersion: 'LATEST'
+            NetworkConfiguration:
+              AwsVpcConfiguration:
+                AssignPublicIp: ENABLED
+                SecurityGroups:
+                  - !Ref SecurityGroup
+                Subnets:
+                  - !Ref PrivateSubnetOne
+                  - !Ref PrivateSubnetTwo
+          RoleArn:  
+            Fn::GetAtt: [ ECSTaskExecutionRole, Arn ]
+          Arn: 
+            Fn::GetAtt: [ ECSCluster, Arn ]
+    ChicagoTrainsLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /ecs/${self:custom.stage}-chicago-trains
+    ChicagoTrainsTask:
+      Type: AWS::ECS::TaskDefinition
+      Properties:
+        Family: ${self:custom.stage}-chicago-trains
+        Cpu: 256
+        Memory: 512
+        NetworkMode: awsvpc
+        RequiresCompatibilities:
+          - FARGATE
+        ExecutionRoleArn: !Ref ECSTaskExecutionRole
+        TaskRoleArn: !Ref ECSTaskExecutionRole
+        ContainerDefinitions:
+          - Name: chicago-trains
+            Cpu: 256
+            Memory: 512
+            Command: [ "trains.py","--city=chicago", "--apiKey=${self:custom.secrets.chicago-apiKey}", "--pollInterval=3" ]
+            Environment: 
+              - {'Name': 'REDIS_HOST', 'Value': '${self:resources.Outputs.RedisAddress.Value}'}
+              - {'Name': 'REDIS_PORT', 'Value': '${self:resources.Outputs.RedisPort.Value}'}
+            Image: 
+              Fn::Join:
+                - ""
+                - [ {Ref: 'AWS::AccountId'}, '.dkr.ecr.', {Ref: 'AWS::Region'}, '.amazonaws.com/${self:service}' ]
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: /ecs/${self:custom.stage}-chicago-trains
+                awslogs-region: {Ref: 'AWS::Region'}
+                awslogs-stream-prefix: ecs
+    ChicagoTrainsService:
+      Type: AWS::ECS::Service
+      Properties: 
+        Cluster: !Ref ECSCluster
+        DesiredCount: 1
+        LaunchType: FARGATE
+        NetworkConfiguration: 
+          AwsvpcConfiguration:
+            AssignPublicIp: ENABLED
+            SecurityGroups:
+              - !Ref SecurityGroup
+            Subnets:
+              - !Ref PrivateSubnetOne
+              - !Ref PrivateSubnetTwo
+        SchedulingStrategy: REPLICA
+        ServiceName: ${self:custom.stage}-chicago-trains
+        TaskDefinition: !Ref ChicagoTrainsTask
+  Outputs:
+    RedisAddress:
+      Value:
+        Fn::GetAtt: [ Redis, RedisEndpoint.Address ]
+    RedisPort:
+      Value:
+        Fn::GetAtt: [ Redis, RedisEndpoint.Port ]

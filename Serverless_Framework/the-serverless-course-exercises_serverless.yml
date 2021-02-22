@@ -1,0 +1,72 @@
+service: gettogether2
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-iam-roles-per-function
+
+custom:
+  defaultRegion: eu-west-1
+  defaultStage: dev${env:SLSUSER, ""}
+  getTogethersTableName: ${self:provider.stage}-gettogethers
+  joinGetTogetherSnsTopicName: ${self:provider.stage}-joingettogethers
+  joinGetTogetherSnsTopic: arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:${self:custom.joinGetTogetherSnsTopicName}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${opt:region, self:custom.defaultRegion}
+  stage: ${opt:stage, self:custom.defaultStage}
+
+functions:
+  helloWorld:
+    handler: src/functions/helloWorld.handler
+    events:
+      - http:
+          path: api/helloWorld/{name}
+          method: get
+  getGetTogethers:
+    handler: src/functions/getGetTogethers.handler
+    environment:
+      getTogethersTableName: ${self:custom.getTogethersTableName}
+    events:
+      - http:
+          path: api/gettogethers
+          method: get
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:scan
+        Resource: arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.getTogethersTableName}
+      - Effect: Allow
+        Action: ssm:GetParameters*
+        Resource: arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/gettogethers/${self:provider.stage}/*
+  notifyOrganiser:
+    handler: src/functions/notifyOrganiser.handler
+    events:
+      - sns: ${self:custom.joinGetTogetherSnsTopicName}
+  joinGetTogether:
+    handler: src/functions/joinGetTogether.handler
+    events:
+      - http:
+          path: api/getTogether
+          method: post
+    environment:
+      joinGetTogetherSnsTopic: ${self:custom.joinGetTogetherSnsTopic}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: sns:Publish
+        Resource: ${self:custom.joinGetTogetherSnsTopic}
+
+
+resources:
+  Resources:
+    GetTogethersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.getTogethersTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: N
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST

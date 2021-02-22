@@ -1,0 +1,182 @@
+service: sampleApp
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-plugin-dynamo-autoscaling
+  - serverless-s3-sync
+  - serverless-cloudfront-invalidate  
+  - serverless-plugin-export-endpoints
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: '${opt:region}'
+  memorySize: 128
+  tracing: true
+  environment:
+    accountId: '#{AWS::AccountId}'
+    region: '${opt:region}'
+    stage: '${opt:stage}'
+  iamRoleStatements:
+    - Effect: "Allow"
+      Resource:  arn:aws:dynamodb:${opt:region}:#{AWS::AccountId}:table/${opt:stage}-sampleApp
+      Action:
+        - "dynamodb:PutItem"
+        - "dynamodb:GetItem"
+        - "dynamodb:Scan"
+        - "dynamodb:DeleteItem"
+    - Effect: "Allow"
+      Resource: arn:aws:sns:${opt:region}:#{AWS::AccountId}:${opt:stage}-sampleApp
+      Action:
+        - "SNS:Publish"
+custom:
+  s3Bucket: ${opt:stage}-${opt:region}-sampleapp
+  autoscaling:
+    - table: sampleAppTable  # DynamoDB Resource
+      read:
+        minimum: 5        # Minimum read capacity
+        maximum: 20       # Maximum read capacity
+        targetUsage: 50        # Targeted usage percentage
+      write:
+        minimum: 5        # Minimum write capacity
+        maximum: 20       # Maximum write capacity
+        targetUsage: 50        # Targeted usage percentage  
+  s3Sync:
+    - bucketName: ${self:custom.s3Bucket}
+      localDir: web/build
+  cloudfrontInvalidate:
+    distributionIdKey: WebAppCloudFrontDistributionId
+    items: # one or more paths required 
+      - "/*"
+  exportEndpoints:
+    path: "web/src/endpoints.json" # optional
+resources:
+  Resources:  
+    WebAppS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3Bucket}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    ## React allow any read
+    WebAppS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: WebAppS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.s3Bucket}/*
+    ## React CDN for react
+    WebAppCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName:  ${self:custom.s3Bucket}.s3-website.${opt:region}.amazonaws.com
+              Id: WebApp
+              CustomOriginConfig:
+                HTTPPort: 80
+                OriginProtocolPolicy: http-only
+          Enabled: 'true'
+          DefaultRootObject: index.html
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - HEAD
+              - GET
+            TargetOriginId: WebApp
+            ForwardedValues:
+              QueryString: 'false'
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+    sampleAppTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${opt:stage}-sampleApp
+        AttributeDefinitions:
+          - AttributeName: recordID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: recordID
+            KeyType: HASH
+        #Default value, will auto scale
+        ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+  Outputs:
+    #Export cloudfront dist ID for cache invalidation
+    WebAppCloudFrontDistributionId:
+      Description: WebAppCloudFrontDistribution distribution id.
+      Value:
+        Ref: WebAppCloudFrontDistribution
+functions:
+  #Version service, outputs region, guid, and version from package.json
+  version:
+    handler: services/version.version
+    events:
+      - http:
+          path: /services/version
+          method: get
+          cors: true
+  returnTableContents:
+    handler: services/returnTableContents.returnTableContents
+    events:
+      - http:
+          path: /services/returnTableContents
+          method: get
+          cors: true
+  returnAllTableContents:
+    handler: services/returnAllTableContents.returnAllTableContents
+    events:
+      - http:
+          path: /services/returnAllTableContents
+          method: get
+          cors: true
+  addRecord:
+    handler: services/addRecord.addRecord
+    events:
+      - http:
+          path: /services/addRecord
+          method: post
+          cors: true
+  purgeRecords:
+    handler: services/purgeRecords.purgeRecords
+    memorySize: 256 #Override from default due to large Dynamo items.
+    timeout: 30
+    events:
+      - http:
+          path: /services/purgeRecords
+          method: get
+          cors: true
+  queueRecordPurge:
+    handler: services/queueRecordPurge.queueRecordPurge
+    memorySize: 256 #Override from default due to large Dynamo items.
+    timeout: 30
+    events:
+      - http:
+          path: /services/queuePurgeRecords
+          method: get
+          cors: true
+  purgeRecordsJob:
+    handler: services/purgeRecords.purgeRecords
+    memorySize: 512 #Override from default due to large Dynamo items.
+    timeout: 600
+    events:
+    - sns: ${opt:stage}-sampleApp
+
+# Package exclude to ensure UI not deployed to Lambda, prevents hitting package size limit error
+package:
+  exclude:
+    - web/**

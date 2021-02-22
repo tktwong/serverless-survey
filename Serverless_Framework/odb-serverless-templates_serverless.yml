@@ -1,0 +1,123 @@
+service:
+  name: odb-typescript-api
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  cachingState:
+    prod: true
+    dev: false
+  customDomain:
+    domainName: ${file(../global-variables.json):domainName}
+    basePath: ${file(../global-variables.json):basePath.odb-typescript-api.${self:provider.stage}} # This will be prefixed to all routes
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  apiGatewayCaching:
+    enabled: ${self:custom.cachingState.${self:provider.stage}}
+  autoscaling:
+    - table: ${self:provider.environment.DYNAMODB_TABLE}  # DynamoDB Resource
+plugins:
+  - serverless-webpack
+  - serverless-domain-manager
+  - serverless-plugin-dynamodb-autoscaling
+  - serverless-api-gateway-caching
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  iamManagedPolicies:
+    - 'arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess'
+    - 'arn:aws:iam::aws:policy/AmazonAPIGatewayAdministrator'
+  iamRoleStatements:
+    - Action:
+        - cognito-idp:AdminGetUser
+        - cognito-idp:ListUsers
+      Resource: "*"
+      Effect: Allow
+    - Action:
+        - lambda:*
+      Resource: "*"
+      Effect: Allow
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+    userPool: us-east-1_XJN8imX9v
+
+functions:
+  getMethod:
+    handler: handler.getMethod
+    events:
+      - http:
+          method: get
+          path: /
+          cors: true
+          caching:
+            enabled: ${self:custom.cachingState.${self:provider.stage}}
+            # cacheKeyParameters:
+            #   - name: request.querystring.override
+            #   - name: request.header.Origin
+            #   - name: request.header.origin
+      - http:
+          method: get
+          path: /admin
+          cors: true
+          authorizer: aws_iam
+          caching:
+            enabled: false
+  putMethod:
+    handler: handler.putMethod
+    events:
+      - http:
+          method: put
+          path: /{id}
+  postMethod:
+    handler: handler.postMethod
+    events:
+      - http:
+          method: post
+          path: /
+  deleteMethod:
+    handler: handler.deleteMethod
+    events:
+      - http:
+          method: delete
+          path: /{id}
+resources:
+  Resources:
+    DynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: created_at
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+          -
+            AttributeName: created_at
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 1
+        # GlobalSecondaryIndexes:
+        #   - IndexName: siteCode
+        #     KeySchema:
+        #       - AttributeName: siteCode
+        #         KeyType: HASH
+        #       - AttributeName: created_at
+        #         KeyType: RANGE
+        #     Projection:
+        #       NonKeyAttributes:
+        #         - domain
+        #       ProjectionType: INCLUDE
+        #     ProvisionedThroughput:
+        #       ReadCapacityUnits: 2
+        #       WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

@@ -1,0 +1,46 @@
+service: ses-mail-receiver
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  deploymentBucket: serverless-upload-us-east-1
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: Allow
+      Resource:
+        - "arn:aws:s3:::camelon-inbox/*"
+      Action:
+        - s3:GetObject
+        - s3:DeleteObject
+    - Effect: Allow
+      Resource: "*"
+      Action:
+        - ses:SendRawEmail
+
+functions:
+  main:
+    handler: handler.main
+    events:
+      - s3: camelon-inbox
+
+resources:
+  Resources:
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: { Ref: S3BucketCameloninbox }
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            Effect: Allow
+            Principal:
+              Service: "ses.amazonaws.com"
+            Action:
+              - s3:PutObject
+            Resource:
+              - Fn::Join: [ "", [ "arn:aws:s3:::", { Ref: S3BucketCameloninbox }, "/*" ] ]
+            Condition:
+              StringEquals:
+                "aws:Referer": { Ref: AWS::AccountId }

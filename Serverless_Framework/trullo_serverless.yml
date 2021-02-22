@@ -1,0 +1,85 @@
+service:
+  name: trullo-service
+
+plugins:
+  - serverless-bundle
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 256
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-1
+  environment:
+    PIXABAY_API_KEY: ${file(env.yml):PIXABAY_API_KEY}
+    BOARDS_TABLE_NAME: ${self:custom.BoardsTable.name}
+    LISTS_TABLE_NAME: ${self:custom.ListsTable.name}
+    CARDS_TABLE_NAME: ${self:custom.CardsTable.name}
+    USERS_TABLE_NAME: ${self:custom.UsersTable.name}
+    AUTH0_PUBLIC_KEY: ${file(secret.pem)}
+  iamRoleStatements:
+    - ${file(iam/BoardsTableIAM.yml):BoardsTableIAM}
+    - ${file(iam/ListsTableIAM.yml):ListsTableIAM}
+    - ${file(iam/CardsTableIAM.yml):CardsTableIAM}
+    - ${file(iam/UsersTableIAM.yml):UsersTableIAM}
+
+resources:
+  Resources:
+    BoardsTable: ${file(resources/BoardsTable.yml):BoardsTable}
+    ListsTable: ${file(resources/ListsTable.yml):ListsTable}
+    CardsTable: ${file(resources/CardsTable.yml):CardsTable}
+    UsersTable: ${file(resources/UsersTable.yml):UsersTable}
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+  
+functions:
+  - ${file(src/components/auth/auth-functions.yml)}
+  - ${file(src/components/board/board-functions.yml)}
+  - ${file(src/components/card/card-functions.yml)}
+  - ${file(src/components/image/image-functions.yml)}
+  - ${file(src/components/list/list-functions.yml)}
+  - ${file(src/components/user/user-functions.yml)}
+
+custom:
+  BoardsTable:
+    name: !Ref BoardsTable
+    arn: !GetAtt BoardsTable.Arn
+  ListsTable:
+    name: !Ref ListsTable
+    arn: !GetAtt ListsTable.Arn
+  CardsTable:
+    name: !Ref CardsTable
+    arn: !GetAtt CardsTable.Arn
+  UsersTable:
+    name: !Ref UsersTable
+    arn: !GetAtt UsersTable.Arn
+  bundle:
+    linting: false

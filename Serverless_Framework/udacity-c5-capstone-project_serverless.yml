@@ -1,0 +1,66 @@
+service:
+  name: guestify
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    GUESTS_TABLE: Guests-${self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.GUESTS_TABLE}
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+  
+  GetGuests:
+    handler: src/lambda/http/getGuests.handler
+    events:
+      - http:
+          method: get
+          path: guests 
+          cors: true
+
+  CreateGuest:
+    handler: src/lambda/http/createGuest.handler
+    events:
+      - http:
+          method: post
+          path: guests 
+          cors: true
+
+resources:
+  Resources:
+    GuestsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: guestId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: guestId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.GUESTS_TABLE}
+      

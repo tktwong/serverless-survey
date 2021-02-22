@@ -1,0 +1,136 @@
+service:
+    name: node-serverless-products
+
+frameworkVersion: ">=1.0.0 <2.0.0"
+
+custom:
+    productsTableName: "${self:service.name}-${self:provider.stage}-table"
+    productsBucketName: "${self:service.name}-${self:provider.stage}-bucket"
+    webpack:
+        webpackConfig: ./webpack.config.js
+        packager: yarn
+        includeModules: true
+    prune:
+        automatic: true
+        includeLayers: true
+        number: 1
+
+plugins:
+    - serverless-webpack
+    - serverless-prune-plugin
+    - serverless-cloudformation-sub-variables
+    - serverless-offline
+
+provider:
+    name: aws
+    runtime: nodejs12.x
+    stage: ${opt:stage, 'dev'}
+    region: ${opt:region, 'eu-west-1'}
+    apiGateway:
+        minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+    apiKeys:
+        - ${self:service.name}-${self:provider.stage}
+    timeout: 29
+    # deploymentBucket:
+    #     name: ${file(./config.json:deploymentBucket)}
+    tracing:
+        lambda: true
+    iamRoleStatements:
+        - Effect: Allow
+          Action:
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+          Resource:
+              - Fn::GetAtt: ["ProductsDynamoDBTable", "Arn"]
+        - Effect: Allow
+          Action:
+              - dynamodb:Query
+          Resource:
+              - Fn::Sub:
+                    - "#{TABLE_ARN}/index/*"
+                    - TABLE_ARN:
+                        Fn::GetAtt: ["ProductsDynamoDBTable", "Arn"]
+        - Effect: Allow
+          Action:
+              - s3:ListBucket
+          Resource:
+              - Fn::GetAtt: ["ProductsS3Bucket", "Arn"]
+        - Effect: Allow
+          Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+          Resource:
+              - Fn::Sub:
+                - "#{BUCKET}/*"
+                - BUCKET:
+                    Fn::GetAtt: ["ProductsS3Bucket", "Arn"]
+    environment:
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+        PRODUCTS_TABLE_NAME: ${self:custom.productsTableName}
+        PRODUCTS_TABLE_PRIMARY_ID: id
+        PRODUCTS_TABLE_SECONDARY_INDEX: nameIndex
+        PRODUCTS_BUCKET_NAME: ${self:custom.productsBucketName}
+
+functions:
+    listAllProducts:
+        handler: src/handlers/getAllProducts.handler
+        events:
+            - http:
+                  path: /products
+                  method: get
+                  cors: true
+                  private: true
+
+    queryProduct:
+        handler: src/handlers/queryProduct.handler
+        events:
+            - http:
+                  path: /products/query
+                  method: get
+                  cors: true
+                  private: true
+
+    getProductById:
+        handler: src/handlers/getProduct.handler
+        events:
+            - http:
+                  path: /products/{id}
+                  method: get
+                  cors: true
+                  private: true
+
+    createProduct:
+        handler: src/handlers/createProduct.handler
+        events:
+            - http:
+                  path: /products
+                  method: post
+                  cors: true
+                  private: true
+
+    updateProduct:
+        handler: src/handlers/updateProduct.handler
+        events:
+            - http:
+                  path: /products/{id}
+                  method: put
+                  cors: true
+                  private: true
+
+    deleteProduct:
+        handler: src/handlers/deleteProduct.handler
+        events:
+            - http:
+                  path: /products/{id}
+                  method: delete
+                  cors: true
+                  private: true
+
+resources:
+    - ${file(templates/product-table.yml)}
+    - ${file(templates/s3-bucket.yml)}

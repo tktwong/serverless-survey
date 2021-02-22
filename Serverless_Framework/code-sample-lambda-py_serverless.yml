@@ -1,0 +1,120 @@
+
+service: code-sample-lambda-py
+frameworkVersion: ">=1.12.0 <2.0.0"
+
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: dev
+  region: us-west-2
+  memorySize: 128
+  timeout: 2
+  logRetentionInDays: 7
+
+  usagePlan:
+    quota:
+      limit: 100000
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'dynamodb:Scan'
+        - 'dynamodb:GetItem'
+        - 'dynamodb:BatchWriteItem'
+        - 'dynamodb:PutItem'
+        - 'dynamodb:UpdateItem'
+        - 'dynamodb:DeleteItem'
+      Resource:
+        "Fn::GetAtt": [ KeyValueTable, Arn ]
+
+  apiKeys:
+    - test-key
+  environment:
+    basepath: 'api/v1'
+    tableName: ${self:provider.stage}-${self:service}-kv
+    keyName: 'Id'
+    ttlName: 'Expires'
+
+# you can add packaging information here
+package:
+  include:
+    - handler.py
+    - helpers/
+
+functions:
+  kvGet:
+    handler: handler.get
+    events:
+      - http:
+          path: ${self:provider.environment.basepath}/keys
+          method: get
+          private: true
+      - http:
+          path: ${self:provider.environment.basepath}/keys/{id}
+          method: get
+          private: true
+
+  kvCreate:
+    handler: handler.create
+    events:
+      - http:
+          path: ${self:provider.environment.basepath}/keys
+          method: post
+          cors: true
+          private: true
+
+
+  kvUpdate: # dynamodb put_item overrides previous entry, but since K-V store only. it is ok to use create function
+    handler: handler.update
+    events:
+      - http:
+          path: ${self:provider.environment.basepath}/keys
+          method: put
+          cors: true
+          private: true
+      - http:
+          path: ${self:provider.environment.basepath}/keys/{id}
+          method: put
+          cors: true
+          private: true
+
+  kvDelete:
+    handler: handler.delete
+    events:
+      - http:
+          path: ${self:provider.environment.basepath}/keys/{id}
+          method: delete
+          cors: true
+          private: true
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    KeyValueTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.stage}-${self:service}-kv
+        AttributeDefinitions:
+          - AttributeName: ${self:provider.environment.keyName}
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ${self:provider.environment.keyName}
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: ${self:provider.environment.ttlName}
+          Enabled: true
+  Outputs:
+    UsersTableArn:
+      Description: The ARN for kv table
+      Value:
+        "Fn::GetAtt": [ KeyValueTable, Arn ]
+      Export:
+        Name: ${self:service}:${self:provider.stage}:KeyValueTable

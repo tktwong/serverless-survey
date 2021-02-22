@@ -1,0 +1,135 @@
+service: remarkable-place
+
+package:
+  exclude:
+    - .git/**
+    - .circleci/**
+    - .coverage/**
+    - .docker/**
+    - .dynamodb_data/**
+    - .nyc_output/**
+
+custom:
+  authorsTableName: ${self:service}-authors-${opt:stage, self:provider.stage}
+  pagesTableName: ${self:service}-pages-${opt:stage, self:provider.stage}
+  sessionsTableName: ${self:service}-sessions-${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::Join": ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/${self:custom.authorsTableName}*"]]
+        - "Fn::Join": ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/${self:custom.pagesTableName}*"]]
+        - "Fn::Join": ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/${self:custom.sessionsTableName}*"]]
+
+  environment:
+    # Tables
+    AUTHORS_TABLE: ${self:custom.authorsTableName}
+    PAGES_TABLE: ${self:custom.pagesTableName}
+    SESSIONS_TABLE: ${self:custom.sessionsTableName}
+    # Session
+    SESSION_SECRET: ${ssm:/${self:service}-session-secret-${opt:stage, self:provider.stage}~true}
+    # Github OAuth
+    GITHUB_ORG: ${ssm:/${self:service}-github-org-${opt:stage, self:provider.stage}~true}
+    GITHUB_CLIENT_ID: ${ssm:/${self:service}-github-oauth-client-id-${opt:stage, self:provider.stage}~true}
+    GITHUB_CLIENT_SECRET: ${ssm:/${self:service}-github-oauth-client-secret-${opt:stage, self:provider.stage}~true}
+    GITHUB_OAUTH_REDIRECT_URI: ${ssm:/${self:service}-github-oauth-callback-${opt:stage, self:provider.stage}~true}
+
+functions:
+  api:
+    handler: src/app-api/index.handler
+    events:
+      - http: ANY /api
+      - http: 'ANY /api/{proxy+}'
+  oauth:
+    handler: src/app-oauth/index.handler
+    events:
+      - http: ANY /oauth
+      - http: 'ANY /oauth/{proxy+}'
+  web:
+    handler: src/app-web/index.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+resources:
+  Resources:
+    # Authors table
+    AuthorsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: githubId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: GithubIdIndex
+            KeySchema:
+              - AttributeName: githubId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        TableName: ${self:custom.authorsTableName}
+
+    # Pages table
+    PagesDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: authorId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: AuthorIdIndex
+            KeySchema:
+              - AttributeName: authorId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        TableName: ${self:custom.pagesTableName}
+
+    # Sessions table
+    SessionsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.sessionsTableName}

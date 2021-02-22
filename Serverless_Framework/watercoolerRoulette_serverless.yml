@@ -1,0 +1,164 @@
+app: watercooler-express-app
+service: watercooler-express
+
+frameworkVersion: ">=1.2.0 <2.0.0"
+
+provider:
+  name: aws
+  region: us-west-2
+  runtime: python3.6
+
+  stage: ${opt:stage, 'dev'}
+
+  environment:
+    TABLE_PREFIX: wce-${opt:stage, 'dev'}
+    USERS_TABLE: ${self:provider.environment.TABLE_PREFIX}-users
+    MATCHES_TABLE: ${self:provider.environment.TABLE_PREFIX}-matches
+    OAUTH_ID: ${env:OAUTH_ID}
+    OAUTH_SECRET: ${env:OAUTH_SECRET}
+    JWT_SECRET: ${env:JWT_SECRET}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_PREFIX}-*"
+
+package:
+  exclude: 
+    - .dynamodb/**
+    - node_modules/**
+    - requirements/botocore*/**
+
+functions:
+  match:
+    handler: lambdae/match.match
+    events:
+      - http:
+          path: match
+          method: post
+          cors: true # <-- CORS!
+
+  match_cleanup:
+    handler: lambdae/match.cleanup
+    events:
+      - schedule:
+          rate: rate(30 minutes)
+          enabled: true
+
+  auth:
+    handler: lambdae/auth.slack_oauth
+    events:
+      - http:
+          path: auth
+          method: get
+          cors: true # <-- CORS!
+
+  user_info:
+    handler: lambdae/user.get_user_info
+    events:
+      - http:
+          path: user/{id}
+          method: get
+          request:
+            parameters:
+              querystrings:
+                id: false
+          cors: true
+
+      - http:
+          path: user
+          method: get
+          cors: true
+
+  answer_get:
+    handler: lambdae/match.get_answer
+    events:
+      - http:
+          path: answer/{match_id}
+          method: get
+          cors: true # <-- CORS!
+
+  answer_post:
+    handler: lambdae/match.post_answer
+    events:
+      - http:
+          path: answer
+          method: post
+          cors: true # <-- CORS!
+
+
+plugins:
+  - serverless-domain-manager
+  - serverless-dynamodb-local
+  - serverless-finch
+  - serverless-python-requirements
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.USERS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: group_id
+            AttributeType: S
+          - AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: group_id
+            KeyType: HASH
+          - AttributeName: user_id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+    
+    MatchesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.MATCHES_TABLE}
+        AttributeDefinitions:
+          - AttributeName: group_id
+            AttributeType: S
+          - AttributeName: match_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: group_id
+            KeyType: HASH
+          - AttributeName: match_id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+custom:
+  stage: ${self:provider.stage}
+
+  pythonRequirements:
+    dockerizePip: false
+
+  customDomain:
+    domainName: 'api.watercooler.express'
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  
+  client:
+    bucketName: watercooler-express-client
+    distributionFolder: ../frontend/dist
+
+  dynamodb:
+  # If you only want to use DynamoDB Local in some stages, declare them here
+    stages:
+      - local
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true

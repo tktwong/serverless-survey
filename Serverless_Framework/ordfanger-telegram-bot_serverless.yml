@@ -1,0 +1,75 @@
+# Ordfanger Telegram Bot deployment configuration.
+
+service: ordfanger-telegram-bot
+frameworkVersion: ">=1.28.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: STAGE
+  stackName: ordfanger-telegram-bot-stack
+  apiName: ordfanger-telegram-bot
+  region: eu-central-1
+  profile: SERVERLESS_USER
+  memorySize: 128
+  timeout: 5
+  deploymentBucket:
+    name:  ordfanger.${self:provider.region}.deploys
+  deploymentPrefix: ordfanger-telegram-bot
+  versionFunctions: false
+  environment:
+    WORDS_TABLE: ${opt:stage, self:provider.stage}-words
+    CHAT_STATE_TABLE: ${opt:stage, self:provider.stage}-chat-state
+    BOT_API_KEY: ${ssm:BOT_API_KEY}
+  iamRoleStatements:
+   - Effect: Allow
+     Action:
+       - dynamodb:Query
+       - dynamodb:PutItem
+     Resource: "arn:aws:dynamodb:*:*:*"
+
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+
+functions:
+  handler:
+    handler: bin/handler
+    name: ${self:provider.stage}-${self:provider.apiName}-handler
+    events:
+      - http:
+          path: bot-updates
+          method: post
+
+resources:
+  Resources:
+   WordsDynamoDbTable:
+     Type: 'AWS::DynamoDB::Table'
+     DeletionPolicy: Retain
+     Properties:
+       AttributeDefinitions:
+         - AttributeName: id
+           AttributeType: S
+       KeySchema:
+         - AttributeName: id
+           KeyType: HASH
+       ProvisionedThroughput:
+         ReadCapacityUnits: 1
+         WriteCapacityUnits: 1
+       TableName: '${opt:stage, self:provider.stage}-words'
+   ChatStateDynamoDbTable:
+     Type: 'AWS::DynamoDB::Table'
+     DeletionPolicy: Retain
+     Properties:
+       AttributeDefinitions:
+         - AttributeName: userID
+           AttributeType: N
+       KeySchema:
+         - AttributeName: userID
+           KeyType: HASH
+       ProvisionedThroughput:
+         ReadCapacityUnits: 1
+         WriteCapacityUnits: 1
+       TableName: '${opt:stage, self:provider.stage}-chat-state'

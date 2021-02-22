@@ -1,0 +1,67 @@
+service: julledev-api
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: 'us-east-1'
+  stage: dev
+  memorySize: 256
+  timeout: 5
+  apiGateway:
+    minimumCompressionSize: 1024
+    usagePlan:
+      quota:
+        limit: 5000
+        offset: 4
+        period: MONTH
+      throttle:
+        burstLimit: 10
+        rateLimit: 5
+
+package:
+  individually: true
+
+plugins:
+  - serverless-webpack
+  - serverless-offline-dotenv
+  - serverless-offline
+  - serverless-domain-manager
+
+custom:
+  domain:
+    prod:
+      enable: true
+      prefix: api
+    dev:
+      enable: false
+      prefix: api-dev
+  webpack:
+    webpackConfig: './webpack.config.ts'
+    includeModules:
+      packagePath: './package.json'
+    packager: 'yarn'
+  serverless-offline:
+    httpPort: 3000
+  customDomain:
+    enabled: ${self:custom.domain.${opt:stage, self:provider.stage}.enable, false}
+    domainName: ${self:custom.domain.${opt:stage, self:provider.stage}.prefix}.julle.dev
+    certificateName: julle.dev
+    createRoute53Record: true
+
+functions:
+  contact:
+    handler: src/contact.handler
+    reservedConcurrency: 1
+    environment:
+      TG_TOKEN: ${ssm:/tg-token~true}
+      TG_CHAT_ID: ${ssm:/tg-chat-id~true}
+    events:
+      - http:
+          path: /contact
+          method: post
+          cors:
+            allowCredentials: false
+            origin: 'https://julle.dev'
+            headers: 
+              - Content-Type
+              - Origin

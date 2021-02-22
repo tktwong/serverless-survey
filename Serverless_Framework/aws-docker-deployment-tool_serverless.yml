@@ -1,0 +1,487 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+plugins:
+  - serverless-python-requirements
+  - serverless-domain-manager
+
+custom: ${file(./parameters.yml)}
+
+service: 
+  name: devops-ecs-resources # NOTE: update this with your service name
+  frameworkVersion: 1.0.0.0
+
+provider:
+  name: aws
+  runtime: python2.7
+  role: arn:aws:iam::${self:custom.nonprod_accountid}:role/Containerization_Lambda_Deployment
+  region: ${self:custom.region}
+  stackTags: 
+    version: 1.0.0.0
+  resourcePolicy:
+    - Effect: Allow
+      Principal: 
+        AWS:
+          - ${self:custom.admin_sso_role_arn}
+          - ${self:custom.poweruser_sso_role_arn}
+          - ${self:custom.dev3_sso_role_arn}
+      Action: execute-api:Invoke
+      Resource:
+        - execute-api:/*/POST/stacks
+        - execute-api:/*/DELETE/stacks
+        - execute-api:/*/POST/stacks/deploytoNonProd
+        - execute-api:/*/POST/stacks/deploytoProdBlue
+        - execute-api:/*/POST/stacks/swapProdBlueAndGreen
+    - Effect: Allow
+      Principal:
+        AWS:
+          - ${self:custom.dev1_sso_role_arn}
+          - ${self:custom.dev2_sso_role_arn}
+      Action: execute-api:Invoke
+      Resource:
+        - execute-api:/*/POST/stacks
+        - execute-api:/*/POST/stacks/deploytoNonProd
+    - Effect: Deny
+      Principal:
+        AWS:
+          - ${self:custom.dev1_sso_role_arn}
+          - ${self:custom.dev2_sso_role_arn}
+      Action: execute-api:Invoke
+      Resource:
+        - execute-api:/*/DELETE/stacks
+        - execute-api:/*/POST/stacks/deploytoProdBlue
+        - execute-api:/*/POST/stacks/swapProdBlueAndGreen
+
+
+functions:              
+  createstackapi:
+    name: createstackapi
+    handler: createstackapi.lambda_handler
+    timeout: 900
+    environment:
+      NONPROD_ACC: ${self:custom.nonprod_accountid}
+      PROD_ACC: ${self:custom.prod_accountid}
+      CF_TEMPLATE: ${self:custom.cftemplate}
+      DEVQA_VPC: ${self:custom.devqa_vpc}
+      STAGE_VPC: ${self:custom.stage_vpc}
+      TRAINING_VPC: ${self:custom.training_vpc}
+      DA_VPC: ${self:custom.da_vpc}
+      PROD_VPC: ${self:custom.prod_vpc}
+      DEVQA_SUBNET: ${self:custom.devqa_subnet}
+      STAGE_SUBNET: ${self:custom.stage_subnet}
+      TRAINING_SUBNET: ${self:custom.training_subnet}
+      DA_SUBNET: ${self:custom.da_subnet}
+      PROD_SUBNET: ${self:custom.prod_subnet}
+      DEVQA_ALBSUBNET: ${self:custom.devqa_elbsubnet}
+      STAGE_ALBSUBNET: ${self:custom.stage_elbsubnet}
+      TRAINING_ALBSUBNET: ${self:custom.training_elbsubnet}
+      DA_ALBSUBNET: ${self:custom.da_elbsubnet}
+      PROD_ALBSUBNET: ${self:custom.prod_elbsubnet}
+      DEVQA_SG: ${self:custom.devqa_sg}
+      STAGE_SG: ${self:custom.stage_sg}
+      TRAINING_SG: ${self:custom.training_sg}
+      DA_SG: ${self:custom.da_sg}
+      PROD_SG: ${self:custom.prod_sg}
+      DEVQA_ALBSG: ${self:custom.devqa_elbsg}
+      STAGE_ALBSG: ${self:custom.stage_elbsg}
+      TRAINING_ALBSG: ${self:custom.training_elbsg}
+      DA_ALBSG: ${self:custom.da_elbsg}
+      PROD_ALBSG: ${self:custom.prod_elbsg}
+      REPO_URI: ${self:custom.repouri}
+      HOSTEDZONE_NAME: ${self:custom.hostedzonename}
+      PROD_HOSTEDZONE_NAME: ${self:custom.prodhostedzonename} 
+      ADMIN_ROLEARN: ${self:custom.admin_rolearn}
+      EXECUTION_ROLENAME: ${self:custom.execution_rolename}
+      STSROLEARN: ${self:custom.stsrolearn}
+      NONPROD_CERTARN: ${self:custom.nonprod_certarn}
+      PROD_CERTARN: ${self:custom.prod_certarn}
+      ECSAUTOSCALING_ARN: ${self:custom.ecsautoscaling_arn}
+      PROD_ECSAUTOSCALING_ARN: ${self:custom.prod_ecsautoscaling_arn}
+      LIFECYCLEPOLICYTEXT: ${self:custom.ecrlifecyclepolicytext}
+    events:
+      - http:
+          path: /stacks
+          method: post
+          authorizer: aws_iam
+          cors: true
+  
+  deletestackapi:
+    name: deletestackapi
+    handler: deletestackapi.lambda_handler
+    timeout: 30
+    environment:
+      NONPROD_ACC: ${self:custom.nonprod_accountid}
+      PROD_ACC: ${self:custom.prod_accountid}
+      REGION: ${self:custom.region}
+      STSROLEARN: ${self:custom.stsrolearn}
+    events:
+      - http:
+          path: /stacks
+          method: delete
+          authorizer: aws_iam
+          cors: true   
+
+  ecsdeploytononprodapi:
+    name: ecsdeploytoNonProdApi
+    handler: ecsdeploytoNonProdApi.lambda_handler
+    timeout: 300
+    environment:
+      NONPROD_ACC: ${self:custom.nonprod_accountid}
+      DEVQA_VPC: ${self:custom.devqa_vpc}
+      STAGE_VPC: ${self:custom.stage_vpc}
+      TRAINING_VPC: ${self:custom.training_vpc}
+      DA_VPC: ${self:custom.da_vpc}      
+      DEVQA_SUBNET: ${self:custom.devqa_subnet}
+      STAGE_SUBNET: ${self:custom.stage_subnet}
+      TRAINING_SUBNET: ${self:custom.training_subnet}
+      DA_SUBNET: ${self:custom.da_subnet}
+      DEVQA_SG: ${self:custom.devqa_sg}
+      STAGE_SG: ${self:custom.stage_sg}
+      TRAINING_SG: ${self:custom.training_sg}
+      DA_SG: ${self:custom.da_sg}
+      STSROLEARN: ${self:custom.stsrolearn}
+    events:
+      - http:
+          path: /stacks/deploytoNonProd
+          method: post
+          authorizer: aws_iam
+          cors: true
+
+  ecsdeploytoprodblueapi:
+    name: ecsdeploytoProdBlueApi
+    handler: ecsdeploytoProdBlueApi.lambda_handler
+    timeout: 300
+    environment:
+      PROD_VPC: ${self:custom.prod_vpc}
+      PROD_SUBNET: ${self:custom.prod_subnet}
+      PROD_SG: ${self:custom.prod_sg}
+      STSROLEARN: ${self:custom.stsrolearn}
+      STSROLE_PROD: ${self:custom.stsrole_prod}
+      PROD_ACC: ${self:custom.prod_accountid}
+    events:
+      - http:
+          path: /stacks/deploytoProdBlue
+          method: post
+          authorizer: aws_iam
+          cors: true
+
+  ecsdeploytotraindaapi:
+    name: ecsdeploytoTrainDAApi
+    handler: ecsdeploytoTrainDAApi.lambda_handler
+    timeout: 300
+    environment:
+      NONPROD_ACC: ${self:custom.nonprod_accountid}
+      DEVQA_VPC: ${self:custom.devqa_vpc}
+      STAGE_VPC: ${self:custom.stage_vpc}
+      TRAINING_VPC: ${self:custom.training_vpc}
+      DA_VPC: ${self:custom.da_vpc}
+      DEVQA_SUBNET: ${self:custom.devqa_subnet}
+      STAGE_SUBNET: ${self:custom.stage_subnet}
+      TRAINING_SUBNET: ${self:custom.training_subnet}
+      DA_SUBNET: ${self:custom.da_subnet}
+      DEVQA_SG: ${self:custom.devqa_sg}
+      STAGE_SG: ${self:custom.stage_sg}
+      TRAINING_SG: ${self:custom.training_sg}
+      DA_SG: ${self:custom.da_sg}
+      STSROLEARN: ${self:custom.stsrolearn}
+    events:
+      - http:
+          path: /stacks/deploytoTrainDA
+          method: post
+          authorizer: aws_iam
+          cors: true
+
+  swapprodapi:
+    name: swapprodapi
+    handler: swapprodapi.lambda_handler
+    timeout: 10
+    environment:
+      STSROLEARN: ${self:custom.stsrolearn}
+      STSROLE_PROD: ${self:custom.stsrole_prod}
+      PROD_ACC: ${self:custom.prod_accountid}
+    events:
+      - http:
+          path: /stacks/swapProdBlueAndGreen
+          method: post
+          authorizer: aws_iam
+          cors: true
+   
+  ecssnsnotifications:
+    name: ecssnsnotifications
+    handler: ecssnsnotifications.lambda_handler
+    timeout: 10
+    environment:
+      NONPROD_ACC: ${self:custom.nonprod_accountid}
+    events:
+      - cloudwatchEvent:
+        event:
+          source:
+            - "aws.ecs"
+          detail-type:
+            - "ECS Task State Change"
+
+  addSubscriptions:
+    name: addSubscriptions
+    handler: addSubscriptions.lambda_handler
+    timeout: 5
+    environment:
+      STSROLE_PROD: ${self:custom.stsrole_prod}
+      NONPROD_ACC: ${self:custom.nonprod_accountid}
+      PROD_ACC: ${self:custom.prod_accountid}
+    events:
+      - http:
+          path: /stacks/addSubscription
+          method: post
+          authorizer: aws_iam
+          cors: true
+
+  applicationinfo:
+    name: applicationinfoapi
+    handler: applicationinfoapi.lambda_handler
+    timeout: 30
+    environment:
+      STSROLEARN: ${self:custom.stsrolearn}
+    events:
+      - http:
+          path: /stacks/applicationInfo
+          method: post
+          authorizer: aws_iam
+          cors: true   
+
+  nonprodaction:
+    name: nonprodstatusapi
+    handler: nonprodstatusapi.lambda_handler
+    timeout: 30
+    environment:
+      STSROLEARN: ${self:custom.stsrolearn}
+      NONPROD_ACC: ${self:custom.nonprod_accountid}
+    events:
+      - http:
+          path: /stacks/nonprodStatus
+          method: post
+          authorizer: aws_iam
+          cors: true 
+
+  prodblueaction:
+    name: prodbluestatusapi
+    handler: prodbluestatusapi.lambda_handler
+    timeout: 30
+    environment:
+      STSROLEARN: ${self:custom.stsrolearn}
+      STSROLE_PROD: ${self:custom.stsrole_prod}
+    events:
+      - http:
+          path: /stacks/prodblueStatus
+          method: post
+          authorizer: aws_iam
+          cors: true
+
+
+  devopsstackinfo:
+    name: devopsstackinfoapi
+    handler: devopsstackinfoapi.lambda_handler    
+    timeout: 30
+    events:
+      - http:
+          path: /stacks/devopsstackInfo
+          method: post
+          authorizer: aws_iam
+          cors: true
+
+  cfstackset_notification:
+    name: cfstackset_notification
+    handler: cfstackset_notification.lambda_handler
+    timeout: 300
+    environment:
+      NONPROD_ACC: ${self:custom.nonprod_accountid}
+    events:
+      - cloudwatchEvent:
+        event:
+          source:
+            - "aws.cloudformation"    
+
+  ecr_notifications:
+    name: ecr_notifications
+    handler: ecr_notifications.lambda_handler
+    timeout: 300
+    environment:
+      NONPROD_ACC: ${self:custom.nonprod_accountid}
+    events:
+      - cloudwatchEvent:
+        event:
+          source:
+            - "aws.ecr"
+    
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    Repository:
+      Type: AWS::ECR::Repository
+      Properties:
+        RepositoryName: devopsrepo
+        RepositoryPolicyText:
+          Version: "2008-10-17"
+          Statement: 
+            - 
+              Sid: CrossAccountPull
+              Effect: Allow
+              Principal: 
+                AWS: 
+                  - "arn:aws:iam::${self:custom.prod_accountid}:root"
+              Action: 
+                - "ecr:GetDownloadUrlForLayer"
+                - "ecr:BatchGetImage"
+                - "ecr:BatchCheckLayerAvailability"
+
+    Cluster:
+      Type: AWS::ECS::Cluster
+      Properties:
+        ClusterName: DevOpsCluster
+
+    AgeroECSCFTemplateS3:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: agero-coreautomation-ecs-cf-template
+        VersioningConfiguration:
+          Status: Enabled
+
+    AgeroECSCFTemplateBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: agero-coreautomation-ecs-cf-template
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Principal: 
+                AWS: 
+                  - Fn::Join:  
+                      - '' 
+                      - 
+                        - "arn:aws:iam::"
+                        - ${self:custom.prod_accountid}
+                        - ":root"
+              Action: 
+                - "s3:GetObject"
+                - "s3:PutObject"
+                - "s3:PutObjectAcl"
+              Effect: "Allow"
+              Sid: "AddCrossAccountPermission"
+              Resource: 
+                Fn::Join: ['', [ Fn::GetAtt: [AgeroECSCFTemplateS3, Arn], "/*"] ] 
+        
+#    DynamoECSInventoryNonProd:
+#      Type: AWS::DynamoDB::Table
+#      Properties:
+#        TableName: ECS_Inventory_NonProduction
+#        AttributeDefinitions:
+#          - AttributeName: "ApplicationName"  
+#            AttributeType: "S"
+#          - AttributeName: "Environment"
+#            AttributeType: "S"
+#        KeySchema:
+#          - AttributeName: "ApplicationName"
+#            KeyType: "HASH"
+#          - AttributeName: "Environment"
+#            KeyType: "RANGE"      
+#        ProvisionedThroughput:
+#          ReadCapacityUnits: "5"
+#          WriteCapacityUnits: "5"
+
+
+#    DynamoECSInventoryProd:
+#      Type: AWS::DynamoDB::Table
+#      Properties:
+#        TableName: ECS_Inventory_Production
+#        AttributeDefinitions:
+#          - AttributeName: "ApplicationName"
+#            AttributeType: "S"
+#          - AttributeName: "Environment"
+#            AttributeType: "S"
+#        KeySchema:
+#          - AttributeName: "ApplicationName"
+#            KeyType: "HASH"
+#          - AttributeName: "Environment"
+#            KeyType: "RANGE"
+#        ProvisionedThroughput:
+#          ReadCapacityUnits: "5"
+#          WriteCapacityUnits: "5"
+
+#    DynamoECSInventoryTrainingDA:
+#      Type: AWS::DynamoDB::Table
+#      Properties:
+#        TableName: ECS_Inventory_Training_DA
+#        AttributeDefinitions:
+#          - AttributeName: "ApplicationName"
+#            AttributeType: "S"
+#          - AttributeName: "Environment"
+#            AttributeType: "S"
+#        KeySchema:
+#          - AttributeName: "ApplicationName"
+#            KeyType: "HASH"
+#          - AttributeName: "Environment"
+#            KeyType: "RANGE"
+#        ProvisionedThroughput:
+#          ReadCapacityUnits: "5"
+#          WriteCapacityUnits: "5"
+
+#    DynamoDevOpsLogs:
+#      Type: AWS::DynamoDB::Table
+#      Properties:
+#        TableName: DevOpsLogsTable
+#        AttributeDefinitions:
+#          - AttributeName: "ResourceName"
+#            AttributeType: "S"
+#          - AttributeName: "Time"
+#            AttributeType: "S"
+#        KeySchema:
+#          - AttributeName: "ResourceName"
+#            KeyType: "HASH"
+#          - AttributeName: "Time"
+#            KeyType: "RANGE"
+#        ProvisionedThroughput:
+#          ReadCapacityUnits: "5"
+#          WriteCapacityUnits: "5"
+         
+          
+#    Repository:
+#      Type: AWS::ECR::Repository
+#      Properties: 
+#        RepositoryName: ${self:custom.apiname}
+#
+#    Cluster:
+#      Type: AWS::ECS::Cluster
+#      Properties:
+#        ClusterName: ${self:custom.apiname}
+#
+#    TaskDefinition:
+#      Type: AWS::ECS::TaskDefinition
+#      Properties:
+#        Cpu: 1024
+#        ExecutionRoleArn: arn:aws:iam::${self:custom.accountid}:role/ecsTaskExecutionRole
+#        Memory: 2048
+#        NetworkMode: awsvpc
+#        RequiresCompatibilities: 
+#          - FARGATE
+#        TaskRoleArn: arn:aws:iam::${self:custom.accountid}:role/ecsTaskExecutionRole
+#        ContainerDefinitions: 
+#          - Image: 377558703253.dkr.ecr.us-east-1.amazonaws.com/${self:custom.apiname}
+#            Name: ${self:custom.apiname}
+
+    
+                
+        
+
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

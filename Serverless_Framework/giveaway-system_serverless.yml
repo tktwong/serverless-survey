@@ -1,0 +1,101 @@
+service: giveaway-system
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${self:opt.stage, 'dev'}
+  region: ${self:opt.region, 'eu-central-1'}
+  environment:
+    ENTRIES_TABLE_NAME: giveaway-${opt:stage, self:provider.stage}-entries
+    ENTRIES_SNS_TOPIC: giveaway-${opt:stage, self:provider.stage}-entries
+    ENTRIES_SNS_TOPIC_ARN: ${self:custom.entriesTopicArn}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ENTRIES_TABLE_NAME}"
+    - Effect: Allow
+      Action:
+        - "sns:*"
+      Resource: "*"
+
+plugins:
+  - serverless-python-requirements
+  - serverless-offline
+  - serverless-finch
+
+functions:
+  create-giveaway-entry:
+    handler: api/giveaway.entry.handlers.create_giveaway_entry
+    package: {}
+    events:
+      - http:
+          path: giveaway/entry
+          method: post
+          cors: true
+    layers:
+      - { Ref: PythonRequirementsLambdaLayer }
+
+  get-giveaway-entry:
+    handler: api/giveaway.entry.handlers.get_giveaway_entry
+    package: {}
+    events:
+      - http:
+          path: giveaway/entry/{id}
+          method: get
+          cors: true
+    layers:
+      - { Ref: PythonRequirementsLambdaLayer }
+
+  notify-on-entry:
+    handler: api/giveaway.notify.handlers.notify_on_entry
+    events:
+      - sns: ${self:provider.environment.ENTRIES_SNS_TOPIC}
+    layers:
+      - { Ref: PythonRequirementsLambdaLayer }
+
+resources:
+  Resources:
+    EntriesDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.environment.ENTRIES_TABLE_NAME}
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    fileName: api/requirements.txt
+    layer: true
+  client:
+    bucketName: giveaway-${self:provider.stage}-client
+    distributionFolder: client/out
+  entriesTopicArn: { "Fn::Join": ["", ["arn:aws:sns:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":${self:provider.environment.ENTRIES_SNS_TOPIC}" ] ]  }
+
+
+package:
+  exclude:
+    - node_modules/**
+    - client/**
+    - docs/**
+    - api/venv/**
+    - api/tests/**
+    - yarn.lock
+    - .idea/**
+    - package.json
+    - "**/.mypy_cache/**"
+    - "**/.pytest_cache/**"
+    - "**/__pycache__/**"

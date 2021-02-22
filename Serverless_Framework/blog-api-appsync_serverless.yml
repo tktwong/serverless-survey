@@ -1,0 +1,241 @@
+service: serverless-blog-appsync-service
+
+plugins:
+   - serverless-appsync-plugin
+   - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs8.10
+  stage: dev
+
+functions:
+  lambdaFun1:
+    handler: /functions/handler.lambdaFun1
+    name: ${self:service}-${self:provider.stage}-LambdaFun1
+
+custom:
+  accountId: #{AWS::AccountId}
+  blogTableName: "${self:service}-${self:provider.stage}-BlogsTable"
+  appSync:
+    name: sls-appsync-api
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      awsRegion:  us-east-1
+      defaultAction: ALLOW
+      userPoolId:  { Ref: CognitoUserPool } 
+    mappingTemplates:
+      - dataSource: LambdaDataSource101
+        type: Query #Query, Mutation, Subscription
+        field: helloWorld
+        request: "/lambda/lambda-request-mapping-template1.txt"
+        response: "/lambda/lambda-response-mapping-template1.txt"
+      - dataSource: BlogsTable
+        type: Query
+        field: getBlogs
+        request: "/dynamodb/blog/getBlogs-request-mapping-template.txt"
+        response: "/dynamodb/blog/getBlogs-response-mapping-template.txt"
+
+    schema: schema.graphql
+    serviceRole: "AppSyncServiceRole1"
+    dataSources:
+      - type: AWS_LAMBDA
+        name: LambdaDataSource101
+        description: 'Lambda DataSource'
+        config:
+          lambdaFunctionArn: { Fn::GetAtt: [LambdaFun1LambdaFunction, Arn] } 
+          serviceRoleArn: { Fn::GetAtt: [AppSyncServiceRole1, Arn] }
+      - type: AMAZON_DYNAMODB
+        name: BlogsTable
+        description: 'Blogs table'
+        config:
+          tableName: ${self:custom.blogTableName}
+          serviceRoleArn: { Fn::GetAtt: [AppSyncServiceRole1, Arn] }
+          ##serviceRoleArn: "arn:aws:iam::${self:custom.accountId}:role/${self:custom.appSync.serviceRole}"
+
+resources:
+  Resources:
+    BlogTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: category
+            AttributeType: S
+          - AttributeName: startTime
+            AttributeType: S
+          - AttributeName: presenterId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: blogCategoryIndex
+            KeySchema:
+              - AttributeName: category
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          - IndexName: presenterIndex
+            KeySchema:
+              - AttributeName: presenterId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          - IndexName: startTimeIndex
+            KeySchema:
+              - AttributeName: startTime
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.blogTableName}
+    # Cognito - User pool
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: cognito_sls_appsync_user_pool
+    # Cognito - Client
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: cognito_sls_appsync_client
+        UserPoolId:
+          Ref: CognitoUserPool
+    # Cognito - Identity
+    CognitoIdentityPool:
+      Type: AWS::Cognito::IdentityPool
+      Properties:
+        IdentityPoolName: cognito_sls_appsync_identity_pool
+        AllowUnauthenticatedIdentities: false
+        CognitoIdentityProviders:
+          - ClientId:
+              Ref: CognitoUserPoolClient
+            ProviderName:
+              Fn::GetAtt: [CognitoUserPool, ProviderName]
+    # Cognito roles
+    CognitoIdentityPoolRoles:
+      Type: AWS::Cognito::IdentityPoolRoleAttachment
+      Properties:
+        IdentityPoolId:
+          Ref: CognitoIdentityPool
+        Roles:
+          authenticated:
+            Fn::GetAtt: [CognitoAuthRole, Arn] 
+          unauthenticated:
+            Fn::GetAtt: [CognitoUnauthRole, Arn]
+    CognitoAuthRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: cognito_sls_appsync_appAuthRole
+        Path: /
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
+              Action:
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: CognitoIdentityPool
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": authenticated
+        Policies:
+          - PolicyName: "CognitoAuthorizedPolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "mobileanalytics:PutEvents"
+                    - "cognito-sync:*"
+                    - "cognito-identity:*"
+                  Resource: "*"
+                - Effect: "Allow"
+                  Action:
+                    - "execute-api:Invoke"
+                  Resource: "*"
+    CognitoUnauthRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: cognito_sls_appsync_appUnauthRole
+        Path: /
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
+              Action:
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: CognitoIdentityPool
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": unauthenticated
+        Policies:
+          - PolicyName: "CognitoUnauthorizedPolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "mobileanalytics:PutEvents"
+                    - "cognito-sync:*"
+                    - "cognito-identity:*"
+                  Resource: "*"
+    # AppSync LambdaAndDynamo role
+    AppSyncServiceRole1:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "${self:custom.appSync.serviceRole}"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          - PolicyName: "${self:custom.appSync.serviceRole}-Policy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "lambda:invokeFunction"
+                  Resource:
+                    - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-LambdaFun1"
+                    - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-LambdaFun1:*"
+                -
+                  Effect: "Allow"
+                  Action:
+                    - "dynamodb:Query"
+                    - "dynamodb:BatchWriteItem"
+                    - "dynamodb:GetItem"
+                    - "dynamodb:DeleteItem"
+                    - "dynamodb:PutItem"
+                    - "dynamodb:Scan"
+                    - "dynamodb:UpdateItem"
+                  Resource:
+                    - "arn:aws:dynamodb:#{AWS::Region}:*:table/${self:custom.blogTableName}"
+                    - "arn:aws:dynamodb:#{AWS::Region}:*:table/${self:custom.blogTableName}/*"

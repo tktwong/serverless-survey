@@ -1,0 +1,75 @@
+service: smsminidropbox
+
+custom:
+  bucket: smsminidropboxserverless
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:DeleteObject
+        - s3:GetObject
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+
+functions:
+  s3fetch:
+    handler: dropbox/s3fetch.s3fetch
+    environment:
+      BUCKET: ${self:custom.bucket}
+    events:
+      - http:
+          path: dropbox
+          method: post
+          cors: true
+ 
+  sms:
+    handler: sms.sms
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:*
+
+  read:
+      handler: dropbox/read.read
+      events:
+        - http:
+            path: dropbox
+            method: get
+            cors: true
+  delete:
+      handler: dropbox/delete.delete
+      events:
+        - http:
+            path: dropbox/{name}
+            method: put
+            cors: true
+
+resources:
+  Resources:
+    SMSMiniDropboxDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: 'Retain'
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: name
+          AttributeType: S
+        KeySchema:
+        - AttributeName: name
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'smsminidropbox'

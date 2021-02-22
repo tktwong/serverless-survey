@@ -1,0 +1,95 @@
+# NOTE: update this with your service name
+service: appointment-backend
+tenant: 'jasonlimantoro'
+app: 'appointment'
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+custom:
+  stage: ${self:provider.stage}
+  secrets: ${file(secrets.yml)}
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  tableNames:
+    guests: ${self:custom.stage}-guests
+    entries: ${self:custom.stage}-entries
+    sessions: ${self:custom.stage}-sessions
+    photos: ${self:custom.stage}-photos
+  webpack: ${file(plugins/webpack.yml):webpack}
+  # Due to dynamodb-local bug, the configurations cannot be loaded from external file
+  # dynamodb: ${file(plugins/dynamodb-local.yml):dynamodb}
+  dynamodb:
+    stages:
+      - dev
+    start:
+      migrate: true
+      seed: true
+    seed:
+      domain:
+        sources:
+          - table: dev-guests
+            sources: 
+              - ./fixtures/out/guests.js
+          - table: dev-entries
+            sources:
+              - ./fixtures/out/entries.js
+          - table: dev-photos
+            sources:
+              - ./fixtures/out/photos.js
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  environment: ${file(env.yml):${self:provider.stage}}
+  vpc:
+    securityGroupIds:
+      - ${self:custom.secrets.SECURITY_GROUP_ID}
+    subnetIds:
+      - ${self:custom.secrets.SUBNET1_ID}
+      - ${self:custom.secrets.SUBNET2_ID}
+      - ${self:custom.secrets.SUBNET3_ID}
+      - ${self:custom.secrets.SUBNET4_ID}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sts:AssumeRole
+      Resource:
+        - Fn::GetAtt: [StaffRole, Arn]
+        - Fn::GetAtt: [AdminRole, Arn]
+functions:
+  graphql:
+    handler: graphql.hello
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+      - http:
+          path: graphql
+          method: get
+          cors: true
+  healthCheck:
+    handler: healthCheck.handler
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true
+
+resources:
+  # Dynamodb
+  - ${file(resources/dynamodb.yml)}
+  # Cognito user
+  - ${file(resources/cognito-user.yml)}
+  # Cognito identity
+  - ${file(resources/cognito-identity.yml)}
+  # IAM
+  - ${file(resources/IAM.yml)}
+  # S3 Bucket
+  - ${file(resources/s3.yml)}

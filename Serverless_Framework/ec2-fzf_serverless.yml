@@ -1,0 +1,75 @@
+service: ec2-fzf
+
+custom:
+    # Choose your bucket name here, it will be created for you.
+    bucket: ec2-cache.binaris.com
+    # Specify a list of relevant tags for finding instances (space separated)
+    tags: "realm service Name default_user ssh hostname"
+    # SSH IAM Group (IAM group that should be allowed to use this tool)
+    group: "dev"
+
+provider:
+  name: aws
+  runtime: python2.7
+  timeout: 30
+  memorySize: 128
+
+  # Yes the stage name is the region. We want to run the lambda on multiple regions.
+  stage: eu-central-1
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:PutObject"
+      Resource: "arn:aws:s3:::${self:custom.bucket}*"
+    - Effect: "Allow"
+      Action:
+        - "s3:ListAllMyBuckets"
+      Resource: "arn:aws:s3:::*"
+    - Effect: "Allow"
+      Action:
+          - "ec2:DescribeRegions"
+          - "ec2:DescribeInstances"
+      Resource: "*"
+
+functions:
+  discover_instances:
+    handler: handler.main
+    events:
+      - schedule:
+          rate: rate(10 minutes)
+          enabled: true
+          input:
+              activation: cron
+      - cloudwatchEvent:
+          event:
+            source:
+              - "aws.ec2"
+            detail-type:
+              - "EC2 Instance State-change Notification"
+            detail:
+              state:
+                - stopped
+                - running
+
+    environment:
+        bucket: ${self:custom.bucket}
+        tags: ${self:custom.tags}
+
+resources:
+  Resources:
+    DeveloperBucketAccess:
+      Type: AWS::IAM::Policy
+      Properties:
+          Groups: ["${self:custom.group}"]
+          PolicyName: read-ec2-fzf-bucket
+          PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: Allow
+                  Action:
+                      - s3:GetObject
+                      - s3:ListBucket
+                  Resource: "arn:aws:s3:::${self:custom.bucket}*"

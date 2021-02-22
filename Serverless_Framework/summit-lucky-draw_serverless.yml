@@ -1,0 +1,157 @@
+# For full config options, check the docs:
+#    docs.serverless.com
+
+service: summit-lucky-draw
+
+custom:
+  client:
+    bucketName: origin.summit18.awsug.tw
+  conf: # Mind corresponding static files
+    domain: summit18.awsug.tw
+    verifierArn: arn:aws:iam::406053587786:role/verifierSummit18
+    fromAddress: no-reply@awsug.tw
+    hKey: ${env:defaultKey, 'defaultKey'}
+    kmsKeyAlias: alias/summit18
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: prod
+  region: us-west-2
+  memorySize: 128
+  timeout: 3
+  environment:
+    DOMAIN: ${self:custom.conf.domain}
+    H_KEY: ${self:custom.conf.hKey}
+    KMS_KEY_ALIAS: ${self:custom.conf.kmsKeyAlias}
+    FROM_ADDRESS: ${self:custom.conf.fromAddress}
+    REG_LIST: ${env:REG_LIST, self:resources.Outputs.RegListName.Value}
+    VERIFIER_ARN: ${self:custom.conf.verifierArn}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: "sts:AssumeRole"
+      Resource: ${self:custom.conf.verifierArn}
+    - Effect: "Allow"
+      Action: "kms:Encrypt"
+      Resource: {Fn::GetAtt: [MasterKey, Arn]}
+    - Effect: "Allow"
+      Action: "ses:SendEmail"
+      Resource: "*"
+      Condition:
+        StringEquals:
+          ses:FromAddress: ${self:custom.conf.fromAddress}}
+    - Effect: "Allow"
+      Action: "dynamodb:PutItem"
+      Resource: {Fn::GetAtt: [RegList, Arn]}
+plugins:
+  - serverless-finch
+
+functions:
+  register:
+    handler: handler.register
+    events:
+      - http:
+          path: api/register
+          method: post
+  drawOne:
+    handler: handler.drawOne
+
+resources:
+  Resources:
+    MasterKey:
+      Type: AWS::KMS::Key
+      Properties:
+        KeyPolicy:
+          Version: '2012-10-17'
+          Id: 'key-default-1'
+          Statement:
+            - Sid: 'well well well'
+              Effect: Allow
+              Principal:
+                AWS:
+                  Fn::Join:
+                    - ':'
+                    - - 'arn:aws:iam:'
+                      - Ref: AWS::AccountId
+                      - 'root'
+              Action: 'kms:*'
+              Resource: '*'
+        Tags:
+          - Key: Name
+            Value: "AWS Summit 18 UG"
+    MasterKeyAlias:
+      Type: AWS::KMS::Alias
+      Properties:
+        AliasName: ${self:custom.conf.kmsKeyAlias}
+        TargetKeyId: {Ref: MasterKey}
+    RegList:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: HEmail
+            AttributeType: B
+        KeySchema:
+          - AttributeName: HEmail
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    WriteCapacityScalableTarget:
+      Type: AWS::ApplicationAutoScaling::ScalableTarget
+      Properties:
+        MaxCapacity: 150
+        MinCapacity: 1
+        ResourceId: 
+          Fn::Join:
+            - /
+            - - table
+              - Ref: RegList
+        RoleARN:
+          Fn::GetAtt: [ RegListScalingRole, Arn ]
+        ScalableDimension: dynamodb:table:WriteCapacityUnits
+        ServiceNamespace: dynamodb
+    RegListScalingRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service: application-autoscaling.amazonaws.com
+              Action: "sts:AssumeRole"
+        Path: "/"
+        Policies:
+          -
+            PolicyName: "root"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action:
+                    - "dynamodb:DescribeTable"
+                    - "dynamodb:UpdateTable"
+                    - "cloudwatch:PutMetricAlarm"
+                    - "cloudwatch:DescribeAlarms"
+                    - "cloudwatch:GetMetricStatistics"
+                    - "cloudwatch:SetAlarmState"
+                    - "cloudwatch:DeleteAlarms"
+                  Resource: "*"
+    WriteScalingPolicy:
+      Type: "AWS::ApplicationAutoScaling::ScalingPolicy"
+      Properties:
+        PolicyName: WriteAutoScalingPolicy
+        PolicyType: TargetTrackingScaling
+        ScalingTargetId:
+          Ref: WriteCapacityScalableTarget
+        TargetTrackingScalingPolicyConfiguration:
+          TargetValue: 75.0
+          ScaleInCooldown: 60
+          ScaleOutCooldown: 60
+          PredefinedMetricSpecification:
+            PredefinedMetricType: DynamoDBWriteCapacityUtilization
+  Outputs:
+    RegListName:
+      Value: {Ref: RegList}

@@ -1,0 +1,92 @@
+service: sample-s3-input
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  s3BucketName: game-stats-bucket-sandcr01
+  pythonRequirements:
+    dockerizePip: non-linux
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: dev
+  region: us-east-1
+  profile: personal
+
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - ${self:custom.s3BucketName}
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - ${self:custom.s3BucketName}
+            - "/*"
+
+  # you can define service wide environment variables here
+  environment:
+    S3_BUCKET_NAME: ${self:custom.s3BucketName}
+
+# you can add packaging information here
+package:
+  include:
+#    - include-me.py
+#    - include-me-dir/**
+    - venv/Lib/site-packages/**
+    - myapp/
+    - stats.json
+#  exclude:
+#    - exclude-me.py
+#    - exclude-me-dir/**
+
+functions:
+  compute:
+    handler: handler.main
+    events:
+      - s3:
+          bucket: stats
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .json
+      - http:
+          path: trigger
+          method: get
+  timestamp:
+    handler: handler.now
+    events:
+      - http:
+          path: now
+          method: get
+
+# https://serverless.com/framework/docs/providers/aws/guide/resources#aws-cloudformation-resource-reference
+resources:
+  Resources:
+    S3BucketStats:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3BucketName}
+        # add additional custom bucket configuration here
+    ComputeLambdaPermissionStatsS3:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        FunctionName:
+          "Fn::GetAtt":
+            - ComputeLambdaFunction
+            - Arn
+        Principal: "s3.amazonaws.com"
+        Action: "lambda:InvokeFunction"
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: "arn:aws:s3:::${self:custom.s3BucketName}"

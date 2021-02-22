@@ -1,0 +1,74 @@
+service: tekken-hub-api
+
+package:
+  exclude:
+    - '*'
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-east-1
+  stage: dev
+  environment:
+    STAGE: ${opt:stage, self:provider.stage}
+
+functions:
+  tekken-hub-api:
+    handler: src/index.api
+    name: tekken-hub-api-${opt:stage, self:provider.stage}
+    role: arn:aws:iam::465641754125:role/tekken-hub-api
+    vpc:
+      securityGroupIds:
+        - sg-04235b3cd58e7859f
+      subnetIds:
+        - subnet-962d5699
+        - subnet-62ef6d3e
+        - subnet-75d5595b
+        - subnet-1fc21721
+        - subnet-5e267714
+        - subnet-3339bf54
+    events:
+      - http: ANY /
+      - http:
+          method: GET
+          path: /combos
+          cors: ${self:custom.cors.${opt:stage, self:provider.stage}, self:custom.cors.other}
+      - http:
+          method: ANY
+          path: /{proxy+}
+          cors: ${self:custom.cors.${opt:stage, self:provider.stage}, self:custom.cors.other}
+          authorizer:
+            name: tekken-hub-authorizer
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            identityValidationExpression: ^Bearer [-0-9a-zA-z\.]*$
+            type: token
+    environment:
+      DB_NAME: tekkenhub_${opt:stage, self:provider.stage}
+      DB_HOST: ${env:DB_HOST}
+      DB_PORT: ${env:DB_PORT}
+      DB_USER: ${env:DB_USER}
+      DB_PWD: ${env:DB_PWD}
+  tekken-hub-authorizer:
+    handler: src/index.authorizer
+    name: tekken-hub-authorizer
+    role: arn:aws:iam::465641754125:role/authorizer
+    environment:
+      JWKS_URI: ${env:JWKS_URI}
+      AUTH0_AUDIENCE: ${env:AUTH0_AUDIENCE}
+      AUTH0_ISSUER: ${env:AUTH0_ISSUER}
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-offline
+  - serverless-plugin-include-dependencies
+
+custom:
+  cors:
+    dev: true
+    other: false
+  dotenv:
+    path: .env
+  includeDependencies:
+    always:
+      - 'node_modules/**/mysql/**'

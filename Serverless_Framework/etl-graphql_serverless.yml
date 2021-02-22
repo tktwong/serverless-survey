@@ -1,0 +1,83 @@
+
+service: etl-graphql # NOTE: update this with your service name
+
+plugins:
+  - serverless-offline
+  - serverless-pseudo-parameters
+
+custom:
+  env_src: ${opt:env_src, 'default'}
+  serverless-offline:
+    port: 4000
+  region: us-east-1
+  
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${self:provider.environment.STAGE}
+  environment: ${file(env.yml):${self:custom.env_src}}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: 
+        - arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:#{AWS::StackName}-patientHandler
+        - arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:#{AWS::StackName}-dentalHandler
+        - arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:#{AWS::StackName}-providerHandler
+#package:
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+
+  graphQlHandler:
+    handler: graphQlServer/gqlHandler.main
+    events:
+    - http:
+        path: graphql
+        method: post
+        cors: true
+    - http:
+        path: graphql
+        method: get
+        
+  dentalTableWatcher:
+    handler: changeDetector/dentalTableWatcher.main
+    role: CallSqsRole
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 100
+          arn: 
+            Fn::GetAtt: [ DentalTable, StreamArn ]
+            
+  patientTableWatcher:
+    handler: changeDetector/patientTableWatcher.main
+    role: CallSqsRole
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 100
+          arn: 
+            Fn::GetAtt: [ PatientTable, StreamArn ]
+
+  patientHandler:
+    handler: backEndService/patient/patientHandler.main
+    role: CallDynamoRole
+    
+  providerHandler:
+    handler: backEndService/provider/providerHandler.main
+    role: CallDynamoRole
+        
+  dentalHandler:
+    handler: backEndService/dental/dentalHandler.main
+    role: CallDynamoRole
+    
+resources: 
+  # dms tasks definitions
+  - ${file(./cfResources/patientTable.yml)}
+  - ${file(./cfResources/providerTable.yml)}
+  - ${file(./cfResources/dentalTable.yml)}
+  - ${file(./cfResources/iamRoles.yml)}
+  - ${file(./cfResources/sqs.yml)}

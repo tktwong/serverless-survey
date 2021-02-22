@@ -1,0 +1,62 @@
+custom:
+  writeEnvVars: ${file(./.env.yml)}
+service: ${self:custom.writeEnvVars.SERVICE_NAME}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${self:custom.writeEnvVars.STAGE}
+  region: ${self:custom.writeEnvVars.REGION}
+  memorySize: 128 # optional, default is 1024
+  timeout: 10 # optional, default is 6
+  deploymentBucket: ${self:custom.writeEnvVars.DEPLOYMENT_BUCKET}
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - execute-api:invoke
+      Resource: arn:aws:execute-api:${self:provider.region}:*:*
+    - Effect: Allow
+      Action:
+      - dynamodb:DescribeTable
+      - dynamodb:Query
+      - dynamodb:Scan
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+      - dynamodb:UpdateItem
+      - dynamodb:DeleteItem
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:*
+
+functions:
+  newsubscriber:
+    environment: 
+      TABLE_NAME: ${self:custom.writeEnvVars.MAILING_LIST_TABLE_NAME}
+    handler: subscribe/newsubscriber.create
+    package:
+      include:
+        - subscribe/**
+    events:
+      - http:
+          path: subscribe
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    SubscriptionDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: email
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.writeEnvVars.MAILING_LIST_TABLE_NAME}
+    

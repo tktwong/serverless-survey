@@ -1,0 +1,70 @@
+service: habit-loop
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: qa
+  region: us-east-1
+  tracing:
+    lambda: true
+  environment:
+    NODE_ENV: ${env:NODE_ENV}
+    USER_TABLE: ${self:custom.config.USER_TABLE}
+    REDIS_HOST: ${env:REDIS_HOST}
+    REDIS_PASSWORD: ${env:REDIS_PASSWORD}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:UpdateTable
+        - dynamodb:BatchWriteItem
+        - dynamodb:DescribeTimeToLive
+      Resource:
+        - 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.config.USER_TABLE}'
+        - 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.config.USER_TABLE}/index/*'
+
+functions:
+  graphql:
+    handler: .build/src/app.graphql
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+  pushNotifications:
+    handler: .build/src/lib/pushNotifications.handler
+    events:
+      - schedule:
+          name: push-notification-handler
+          description: 'Sends push notification reminding user to train.'
+          rate: cron(0 13 * * ? *)
+      - http:
+          path: notification
+          method: get
+
+# order matters here for plugins
+plugins:
+  # - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+resources:
+  - ${file(resources/dynamo/UserTable.yml)}
+
+custom:
+  config:
+    USER_TABLE: user-records-${self:provider.stage}
+  dynamodb:
+    start:
+      migrate: false
+      seed: false
+    seed:
+      test:
+        sources:
+          - table: user-records-dev-2
+            sources: [./resources/test_data.json]

@@ -1,0 +1,65 @@
+service:
+  name: cvs-svc-preparers
+
+openapi: 3.0.0
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-plugin-tracing
+  - serverless-plugin-typescript
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  tracing: true # enable tracing
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+
+functions:
+  getPreparers:
+    handler: src/handler.handler
+    events:
+    - http:
+        path: "preparers"
+        method: "get"
+
+custom:
+  serverless-offline:
+    port: 3003
+  dynamodb:
+    start:
+      port: 8006
+      inMemory: true
+      migrate: false
+      seed: true
+      noStart: true
+    seed:
+      preparers:
+        sources:
+        - table: cvs-local-preparers
+          sources: [./tests/resources/preparers.json]
+    stages:
+      - dev
+      - test
+
+resources:
+  Resources:
+    Users:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: cvs-local-preparers
+        AttributeDefinitions:
+        - AttributeName: preparerId
+          AttributeType: S
+        KeySchema:
+        - AttributeName: preparerId
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

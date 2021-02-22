@@ -1,0 +1,176 @@
+service: flamous
+
+app: flamous
+tenant: christiankaindl
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-appsync-plugin
+  - serverless-cognito-add-custom-attributes
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set our DynamoDB throughput for prod and all other non-prod stages.
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  # Load our webpack config
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  # Load our secret environment variables based on the current stage.
+  # Fallback to default if it is not in prod.
+  # environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+  CognitoAddCustomAttributes: 
+    CognitoUserPoolIdOutputKey: "UserPoolId"              # The key of the outputted UserPool Ref 
+    CognitoUserPoolClientIdOutputKey: "UserPoolClientId"  # The key of the outputted UserPoolClient Ref
+    CustomAttributes: 
+      - 
+        AttributeDataType: String
+        DeveloperOnlyAttribute: false
+        Mutable: True
+        Name: "artist_id" # this will end up being custom:another
+        Required: False
+      - 
+        AttributeDataType: String
+        DeveloperOnlyAttribute: false
+        Mutable: True
+        Name: "upload_status" # this will end up being custom:another
+        Required: False
+
+  appSync:
+    name: ${self:custom.stage}-api
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      awsRegion: ${self:provider.region}
+      defaultAction: ALLOW
+      userPoolId: { Ref: CognitoUserPoolUserPool1 }
+    additionalAuthenticationProviders:
+      - authenticationType: AWS_IAM
+    mappingTemplatesLocation: mapping-templates
+    logConfig:
+      loggingRoleArn: { Fn::GetAtt: [AppSyncLoggingServiceRole, Arn] }
+      level: ALL
+    mappingTemplates:
+      - ${file(mapping-templates/queries/queries.yml)}
+      - ${file(mapping-templates/mutations/mutations.yml)}
+    schema: schema.graphql
+    functionConfigurations:
+      - dataSource: usersTable
+        name: createUserFunction
+        request: "createUser-request.vtl"
+        response: "createUser-response.vtl"
+      - dataSource: artistsTable
+        name: createArtistFunction
+        request: "createArtist-request.vtl"
+        response: "createArtist-response.vtl"
+      - dataSource: albumsTable
+        name: deleteAlbumDataFunction
+        request: deleteAlbum-request.vtl
+        response: deleteAlbum-response.vtl
+      - dataSource: deleteAlbumCoverFunction
+        name: deleteAlbumCoverFunction
+        request: deleteAlbumCover-request.vtl
+        response: deleteAlbumCover-response.vtl
+      - dataSource: mainTable
+        name: userHasArtistPermissions
+        request: queries/userHasArtistPermissions-REQ.vtl
+        response: queries/userHasArtistPermissions-DATA.vtl
+      - dataSource: mainTable
+        name: applyArtistName
+        request: mutations/setArtistName-REQ.vtl
+        response: mutations/setArtistName-DATA.vtl
+      - dataSource: mainTable
+        name: createNewArtist
+        request: mutations/createNewArtist-REQ.vtl
+        response: mutations/createNewArtist-DATA.vtl
+      - dataSource: mainTable
+        name: connectUser
+        request: mutations/connectUser-REQ.vtl
+        response: mutations/connectUser-DATA.vtl
+      - dataSource: mainTable
+        name: createAlbum
+        request: mutations/createAlbum-REQ.vtl
+        response: mutations/createAlbum-DATA.vtl
+      - dataSource: mainTable
+        name: updateAlbum
+        request: mutations/updateAlbum-REQ.vtl
+        response: mutations/updateAlbum-DATA.vtl
+      - dataSource: mainTable
+        name: getFeaturedSongs
+        request: queries/getFeaturedSongs-REQ.vtl
+        response: queries/getFeaturedSongs-DATA.vtl
+      - dataSource: mainTable
+        name: getFeaturedAlbums
+        request: queries/getFeaturedAlbums-REQ.vtl
+        response: queries/getFeaturedAlbums-DATA.vtl
+
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: artistsTable
+        config:
+          tableName:
+            Ref: ArtistsTable
+      - type: AMAZON_DYNAMODB
+        name: songsTable
+        config:
+          tableName:
+            Ref: SongsTable
+      - type: AMAZON_DYNAMODB
+        name: albumsTable
+        config:
+          tableName:
+            Ref: AlbumsTable
+      - type: AMAZON_DYNAMODB
+        name: usersTable
+        config:
+          tableName:
+            Ref: UsersTable
+      - type: AMAZON_DYNAMODB
+        name: mainTable
+        config:
+          tableName:
+            Ref: MainTable
+      - type: AWS_LAMBDA
+        name: deleteAlbumCoverFunction
+        config:
+          lambdaFunctionArn:
+            Fn::GetAtt: [DeleteAlbumCoverLambdaFunction, Arn]
+    # dataSources:
+    #   - type: AMAZON_DYNAMODB | AMAZON_ELASTICSEARCH | AWS_LAMBDA
+    #     name: myDynamoDB | myElasticSearch | myLambda
+    #     config:
+    #       tableName | endpoint | lambdaFunctionArn
+    #       serviceRoleArn: IAM ROLE
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: eu-central-1
+
+functions:
+  DeleteAlbumCover:
+    role: AppSyncLambdaRole
+    handler: functions/deleteAlbumCover.main
+  # PreSignupValidation:
+  #   handler: functions/pre-signup-validation.main
+  #   events:
+  #     - cognitoUserPool:
+  #         pool: UserPool1
+  #         trigger: PreSignUp
+
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  - ${file(resources/s3-bucket.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}
+  - ${file(resources/roles.yml)}

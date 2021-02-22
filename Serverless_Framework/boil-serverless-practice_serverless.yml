@@ -1,0 +1,69 @@
+service: local-workflow
+frameworkVersion: '2'
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'development'} # Root effetive of env variables
+  environment:
+    ${file(./env/${self:provider.stage}.yml)}
+  versionFunctions: false
+  apiGateway:
+    minimumCompressionSize: 1024
+  tableName: notes # TODO: move to env file
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:*:*:*"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource: "*"
+
+custom:
+  # stage: ${opt:stage, self:provider.stage}
+  tableName: notes # ${self:provider.stage}-notes
+  webpack:
+    webpackConfig: './webpack.config.js'
+    includeModules: true
+  dynamodb:
+    stages:
+      - development
+    start:
+      port: 8000
+      inMemory: false
+      migrate: true
+      # seed: true
+      # convertEmptyValues: true
+      # heapMax: 1g
+      # heapInitial: 200m
+      # noStart: true
+    # seed:
+    #   domain:
+    #     sources:
+    #       - table: notes
+    #         sources: [./resources/migrations/notes_v0.json]
+    migration:
+      dir: offline/migrations
+
+functions:
+  hello: ${file(todos/hello/index.yml):hello}
+  create: ${file(todos/create/index.yml):create}
+
+resources:
+  - ${file(resources/api-gateway-errors.yml)}
+  - ${file(resources/dynamodb-table.yml)}

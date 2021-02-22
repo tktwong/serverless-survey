@@ -1,0 +1,100 @@
+service: serverless-api-lambda-dynamodb-example
+
+custom:
+  accountTableName: 'Account-${self:provider.stage}'
+  dynamodb:
+      stages:
+        - dev
+      start:
+        migrate: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 128
+  stage: dev
+  region: us-west-2
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["AccountDynamoDBTable", "Arn" ] }
+  environment:
+    ACCOUNT_TABLE: ${self:custom.accountTableName}
+
+  httpApi:
+    authorizers:
+      AuthJwtAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl: <Your Auth0 Issuer URL>
+        audience:
+          - <Your Auth0 API Indentifier>
+
+functions:
+  createAccount:
+    handler: account-controller.createAccount
+    events:
+      - httpApi:
+          path: /accounts
+          method: post
+          authorizer:
+            AuthJwtAuthorizer
+
+  getAccount:
+    handler: account-controller.getAccount
+    events:
+      - httpApi:
+          path: /accounts/{id+}
+          method: get
+          authorizer:
+            AuthJwtAuthorizer
+
+  getAccounts:
+    handler: account-controller.getAccounts
+    events:
+      - httpApi:
+          path: /accounts
+          method: get
+          authorizer:
+            AuthJwtAuthorizer
+
+  updateAccounts:
+    handler: account-controller.updateAccount
+    events:
+      - httpApi:
+          path: /accounts/{id+}
+          method: put
+          authorizer:
+            AuthJwtAuthorizer
+
+  deleteAccount:
+    handler: account-controller.deleteAccount
+    events:
+      - httpApi:
+          path: /accounts/{id+}
+          method: delete
+          authorizer:
+            AuthJwtAuthorizer
+
+resources:
+  Resources:
+    AccountDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: 'id'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'id'
+            KeyType: 'HASH'
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.accountTableName}

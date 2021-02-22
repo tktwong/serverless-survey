@@ -1,0 +1,87 @@
+# serverless.yml
+
+service: voiceid-authentication-service
+plugins:
+  - serverless-plugin-existing-s3
+  - serverless-step-functions  
+  - serverless-pseudo-parameters
+  - serverless-offline
+  - serverless-s3-remover
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or falls back to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}    
+  uploadBucket: truuth-voice-print-bucket-${self:provider.region}-${self:custom.stage}
+  userTableName: truuth-user-profile-${self:custom.stage}
+  sessionTableName: truuth-user-session-${self:custom.stage}
+  audioType: 'WAV'
+
+  # Set our DynamoDB throughput for prod and all other non-prod stages.
+  tableThroughputs:
+    prod: 5
+    default: 1
+
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  # Set stage
+  defaultStage: dev
+  profiles:
+    dev: devProfile
+    prod: prodProfile
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: ap-southeast-2
+  versionFunctions: false
+  environment:
+    uploadBucket: ${self:custom.uploadBucket}
+    userTableName: ${self:custom.userTableName}
+    sessionTableName: ${self:custom.sessionTableName}
+    audioType: ${self:custom.audioType}
+  tags:
+    owner: serverless-agent
+    environment: ${self:custom.stage}
+    runtime: ${self:provider.runtime}
+    application: truuth
+  iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DescribeTable
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+        # Restrict our IAM role permissions to
+        # the specific table for the stage
+        Resource:
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.userTableName}"
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.sessionTableName}"
+          #- "Fn::GetAtt": [ UserProfileTable, Arn ]
+          #- "Fn::GetAtt": [ UserSessionTable, Arn ]
+      - Effect: Allow
+        Action:
+          - s3:*          
+        Resource: "*"
+      -  Effect: "Allow"
+         Action:
+           - "states:*"
+         Resource: "*" 
+functions:
+  start-enroll:
+    handler: services/functions/start-enroll.handler
+    memorySize: 128
+    timeout: 3
+    events:
+      - http:
+          path: start-enroll/{userid}
+          method: GET
+          cors: true
+          #authorizer: aws_iam
+resources:
+  # DynamoDB (already exists)
+  #- ${file(services/resources/dynamodb-table.yml)}
+  # S3
+  - ${file(services/resources/s3-bucket.yml)}    

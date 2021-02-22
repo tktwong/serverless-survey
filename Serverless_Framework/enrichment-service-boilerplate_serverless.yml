@@ -1,0 +1,59 @@
+service: aa-data-enrichment-boilerplate
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 128 # optional, in MB, default is 1024
+  #timeout: 10 # optional, in seconds, default is 6
+  versionFunctions: false # optional, default is true
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, "eu-central-1"}
+
+  cfLogs: true
+  environment: ${file(config/${self:provider.stage}.yml):ENVIRONMENT}
+
+functions:
+  index:
+    handler: handler.index
+    onError: ${self:custom.prefix-sns-arn}-DeadLetterTopic
+
+custom:
+  prefix: ${self:service}-${self:provider.stage}
+  prefix-sns-arn: arn:aws:sns:${self:provider.region}:${self:provider.environment.SERVERLESS_AWS_ACCOUNT_ID}:${self:custom.prefix}
+
+resources:
+  Resources:
+    # Error monitoring queue
+    DeadLetterTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        Subscription:
+          - Endpoint:
+              Fn::GetAtt:
+                - DeadLetterQueue
+                - Arn
+            Protocol: "sqs"
+        TopicName: ${self:custom.prefix}-DeadLetterTopic
+    DeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.prefix}-DeadLetterQueue
+
+    # IAM Policies
+    QueuePolicySNSToSQS:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Id: QueuePolicySNSToSQS
+          Statement:
+          - Sid: AllowSendMessageToQueuesFromSNSTopics
+            Effect: Allow
+            Principal: "*"
+            Action:
+            - sqs:SendMessage
+            Resource: arn:aws:sqs:${self:provider.region}:${self:provider.environment.SERVERLESS_AWS_ACCOUNT_ID}:*
+        Queues:
+        - Ref: DeadLetterQueue
+

@@ -1,0 +1,269 @@
+service: serverless-todo-app
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-2'}
+
+  environment:
+    TODOS_TABLE: Todos-${self:provider.stage}
+    INDEX_NAME: TodosByUserIndex
+    S3_BUCKET: app-attachments-${self:provider.stage}
+    AUTH_0_JWKS_URL: https://abryant710.eu.auth0.com/.well-known/jwks.json
+    SIGNED_URL_EXPIRATION: 300
+
+functions: 
+  Auth: 
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetTodos: 
+    role: getTodosRole
+    events: 
+      - http: 
+          authorizer: Auth
+          cors: true
+          method: get
+          path: todos
+    handler: src/lambda/http/getTodos.handler
+
+  CreateTodo:
+    role: createTodoRole
+    events:
+      - http:
+          authorizer: Auth
+          cors: true
+          method: post
+          path: todos
+    handler: src/lambda/http/createTodo.handler
+
+  DeleteTodo:
+    role: deleteTodoRole
+    events:
+      - http:
+          authorizer: Auth
+          cors: true
+          method: delete
+          path: todos/{todoId}
+    handler: src/lambda/http/deleteTodo.handler
+
+  UpdateTodo:
+    role: updateTodoRole
+    events:
+      - http:
+          authorizer: Auth
+          cors: true
+          method: patch
+          path: todos/{todoId}
+    handler: src/lambda/http/updateTodo.handler
+
+  GenerateUploadUrl:
+    role: generateUploadRole
+    events:
+      - http:
+          authorizer: Auth
+          cors: true
+          method: post
+          path: todos/{todoId}/attachment
+    handler: src/lambda/http/generateUploadUrl.handler
+
+resources: 
+  Resources: 
+    TodoTable: 
+      Properties: 
+        AttributeDefinitions: 
+          - 
+            AttributeName: todoId
+            AttributeType: S
+          - 
+            AttributeName: userId
+            AttributeType: S
+          - 
+            AttributeName: createdAt
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+        KeySchema: 
+          - 
+            AttributeName: userId
+            KeyType: HASH
+          - 
+            AttributeName: todoId
+            KeyType: RANGE
+        LocalSecondaryIndexes: 
+          - 
+            IndexName: "${self:provider.environment.INDEX_NAME}"
+            KeySchema: 
+              - 
+                AttributeName: userId
+                KeyType: HASH
+              - 
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection: 
+              ProjectionType: ALL
+        TableName: "${self:provider.environment.TODOS_TABLE}"
+      Type: "AWS::DynamoDB::Table"
+    
+    AttachmentBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*'
+        Bucket: !Ref AttachmentBucket
+
+    getTodosRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /roles/getTodosRole/
+        RoleName: GetTodosRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: getTodosRole
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "dynamodb:Query"
+                    - "dynamodb:Scan"
+                  Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}"
+                - Effect: Allow
+                  Action:
+                    - "dynamodb:Query"
+                    - "dynamodb:Scan"
+                  Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}/index/${self:provider.environment.INDEX_NAME}"
+
+    createTodoRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /roles/createTodoRole/
+        RoleName: CreateTodoRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: createTodoRole
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "dynamodb:PutItem"
+                  Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}"
+
+    deleteTodoRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /roles/deleteTodoRole/
+        RoleName: DeleteTodoRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: deleteTodoRole
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "dynamodb:DeleteItem"
+                    - "dynamodb:GetItem"
+                  Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}"
+
+    updateTodoRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /roles/updateTodoRole/
+        RoleName: UpdateTodoRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: updateTodoRole
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "dynamodb:UpdateItem"
+                    - "dynamodb:GetItem"
+                  Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}"
+
+    generateUploadRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /roles/generateUploadRole/
+        RoleName: GenerateUploadRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: generateUploadRole
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "s3:PutObject"
+                    - "s3:GetObject"
+                    - "s3:GetSignedUrl"
+                    - "*"  
+                  Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*

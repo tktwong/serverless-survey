@@ -1,0 +1,102 @@
+service: sls-crawler
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  region: ap-northeast-2
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource:
+        {
+          "Fn::Join":
+            ["", ["arn:aws:s3:::", { "Ref": "ServerlessDeploymentBucket" }]],
+        }
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - "Ref": "ServerlessDeploymentBucket"
+            - "/*"
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: hello
+          method: get
+  sqs_test:
+    handler: handler.sqs_hello
+    events:
+      - sqs:
+          queueName: MyTestQueue
+          arn:
+            Fn::GetAtt:
+              - MyTestQueue
+              - Arn
+  call_sqs:
+    handler: handler.call_sqs
+    events:
+      - http:
+          path: call_sqs
+          method: get
+
+plugins:
+  - serverless-python-requirements
+  - serverless-offline-sqs
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+  serverless-offline-sqs:
+    autoCreate: true # Queue 가 없을 시 만들 것
+    apiVersion: "2012-11-05"
+    endpoint: http://0.0.0.0:9324
+    region: ap-northeast-2
+    accessKeyId: root
+    secretAccessKey: root
+    skipCacheInvalidation: false
+  dynamodb:
+    # 특정한 스테이지 DynamoDB local 실행 정의
+    stages:
+      - dev
+    start:
+      port: 9000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+    # DynamoDB를 로컬에서 이미 실행중인 경우는 아래 주석 제거
+    # noStart: true
+
+resources:
+  Resources:
+    MyTestQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: MyTestQueue
+
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: usersTable
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

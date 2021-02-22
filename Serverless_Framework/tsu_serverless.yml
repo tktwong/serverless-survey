@@ -1,0 +1,206 @@
+service: tsu-${self:custom.config.name}
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  false: false
+  pythonRequirements:
+    dockerizePip: non-linux
+    useDownloadCache: ${opt:reqcache, self:custom.false}
+    useStaticCache: ${opt:reqcache, self:custom.false}
+  s3Sync:
+    # First we copy our base files into S3
+    - bucketName: tsu-${self:custom.config.domain}-${self:custom.config.name}-static
+      bucketPrefix: static/base/
+      localDir: static/${self:custom.config.template}
+      acl: public-read
+      deleteRemoved: false
+    # Then we upload any custom files the user provided
+    - bucketName: tsu-${self:custom.config.domain}-${self:custom.config.name}-static
+      bucketPrefix: static/custom/
+      localDir: custom/static
+      acl: public-read
+      deleteRemoved: false
+  config: ${file(config.yml):${self:custom.stage}, file(config.yml):default}
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: dev
+  versionFunctions: falsei
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "arn:aws:lambda:*:*:function:tsu-${self:custom.config.name}-*"
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - Ref: PostsBucket
+    - Effect: "Allow"
+      Action:
+      - "s3:GetObject"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - Ref: PostsBucket
+            - "/*"
+
+  environment:
+    TSU_PREFIX: tsu-${self:custom.config.name}-
+    TSU_DEPLOYMENT_ID: ${sls:instanceId}
+    TSU_POSTS_BUCKET: tsu-${self:custom.config.domain}-${self:custom.config.name}-posts
+    TSU_TEMPLATE: ${self:custom.config.template}
+    TSU_DOMAIN: ${self:custom.config.domain}
+    TSU_CDN_BASE: ${self:custom.config.cdn_base}
+    TSU_HOMEPAGE: ${self:custom.config.homepage}
+    TSU_TITLE: ${self:custom.config.title}
+    TSU_DESCRIPTION: ${self:custom.config.description}
+    TSU_AUTHOR: ${self:custom.config.author}
+
+package:
+  exclude:
+    - "**"
+  include:
+    - custom/templates/**
+    - src/controllers/**
+    - src/services/**
+    - src/templates/**
+    - src/util/**
+
+plugins:
+  - serverless-python-requirements
+  - serverless-s3-sync
+
+functions:
+  ########################
+  # Core application
+  ########################
+  home:
+    handler: src/controllers/home.handler
+    name: tsu-${self:custom.config.name}-home
+    events:
+      - http: GET /
+
+  post:
+    handler: src/controllers/post.handler
+    name: tsu-${self:custom.config.name}-post
+    events:
+      - http: GET /post/{id}
+
+  about:
+    handler: src/controllers/about.handler
+    name: tsu-${self:custom.config.name}-about
+    events:
+      - http: GET /about
+
+  rss:
+    handler: src/controllers/rss.handler
+    name: tsu-${self:custom.config.name}-rss
+    events:
+      - http: GET /rss.xml
+
+  ########################
+  # API routes
+  ########################
+  api_post_list:
+    handler: src/controllers/api/posts.list
+    name: tsu-${self:custom.config.name}-api-post-list
+    events:
+      - http: GET /api/posts
+
+  # api_get_env_var:
+  #   handler: src/api/env_var.handler
+  #   name: tsu-${self:custom.config.name}-env-var
+  #   events:
+  #     - http: GET /api/env_var
+
+  ########################
+  # SEO related routes
+  ########################
+  seo_robots:
+    handler: src/controllers/seo.robots
+    name: tsu-${self:custom.config.name}-seo-robots
+    events:
+      - http: GET /robots.txt
+
+  seo_sitemap:
+    handler: src/controllers/seo.sitemap
+    name: tsu-${self:custom.config.name}-seo-sitemap
+    events:
+      - http: GET /sitemap.xml
+
+resources:
+  Resources:
+    PostsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: tsu-${self:custom.config.domain}-${self:custom.config.name}-posts
+
+    TemplateBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: tsu-${self:custom.config.domain}-${self:custom.config.name}-static
+        AccessControl: PublicRead
+
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      DependsOn:
+        - TemplateBucket
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          Comment: Tsu ${self:custom.config.name} Lambda
+          Aliases:
+          - ${self:custom.config.domain}
+          ViewerCertificate:
+            AcmCertificateArn: ${self:custom.config.domain_cert}
+            SslSupportMethod: sni-only
+          DefaultCacheBehavior:
+            TargetOriginId: tsu-${self:custom.config.name}-ui
+            ViewerProtocolPolicy: 'redirect-to-https'
+            Compress: true
+            DefaultTTL: 30
+            ForwardedValues:
+              QueryString: true
+              QueryStringCacheKeys:
+                - limit
+                - page
+          CacheBehaviors:
+          - PathPattern: static/*
+            # Comment: Tsu ${self:custom.config.name} Static
+            TargetOriginId: tsu-${self:custom.config.name}-static
+            Compress: true
+            AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            ViewerProtocolPolicy: 'redirect-to-https'
+            ForwardedValues:
+              QueryString: true
+              QueryStringCacheKeys:
+                - v
+              Cookies:
+                Forward: none
+
+          Origins:
+            - Id: tsu-${self:custom.config.name}-ui
+              DomainName:
+                Fn::Join:
+                  - "."
+                  -
+                    - Ref: ApiGatewayRestApi
+                    - execute-api.us-east-1.amazonaws.com
+              OriginPath: /${self:custom.stage}
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+            - Id: tsu-${self:custom.config.name}-static
+              DomainName: !GetAtt TemplateBucket.DomainName
+              S3OriginConfig:
+                OriginAccessIdentity: "" # intentionally empty

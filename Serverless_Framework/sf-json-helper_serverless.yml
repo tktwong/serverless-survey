@@ -1,0 +1,34 @@
+service: sf-simple-test
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-central-1'}
+  logRetentionInDays: 3
+
+custom:
+  transformHelper: ${cf:sf-json-helper-${self:provider.stage}.TransformLambdaFunctionQualifiedArn}
+
+stepFunctions:
+  validate: true
+  stateMachines:
+    simpleStateMachine:
+      name: 'simpleStateMachine'
+      definition:
+        StartAt: StepOne
+        States:
+          StepOne:
+            Type: Task
+            Resource: ${self:custom.transformHelper}
+            Parameters:
+              'input.$': '$.item'
+              '_forward': true
+              'expression_derived': '$.input + " constant string"'
+              'expression_len': '$.input.`len`'
+            Next: StepTwo
+          StepTwo:
+            Type: Pass
+            End: true
+
+plugins:
+  - serverless-step-functions

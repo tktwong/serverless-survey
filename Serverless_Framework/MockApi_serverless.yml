@@ -1,0 +1,38 @@
+service: virtual-clinical-datastore
+
+provider:
+  name: aws
+  runtime: dotnetcore2.1
+  stage:  ${opt:stage, 'test'} 
+  region: ${opt:region, 'eu-west-2'}
+  stackName: ${self:provider.stage}-mock-api-stack
+  apiName: ${self:provider.stage}-mock-api
+  bucketName: ${self:provider.stage}-mock-api-config
+  iamRoleStatements:
+  - Effect: Allow
+    Action: 
+      - s3:*
+    Resource: "arn:aws:s3:::*"
+
+package:
+  individually: true
+
+functions:
+  data-mock:
+    handler: SecByte.MockApi.Server::SecByte.MockApi.Server.LambdaEntryPoint::FunctionHandlerAsync
+    environment:
+      DataSource: s3:${self:provider.bucketName}
+      RoutesFile: routes.json
+    events:
+      - http:
+          path: /{proxy+}
+          method: ANY
+    package:
+      artifact: ./bin/mock-api.zip
+
+resources:
+  Resources:
+    S3ClinicalDataSource:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.bucketName}

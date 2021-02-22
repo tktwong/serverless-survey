@@ -1,0 +1,119 @@
+service: serverless-template
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-west-2
+  profile: "<AWS_PROFILE>"
+  role: "arn:aws:iam::<AWS_ID>:role/<ROLE>"
+  stage: ${opt:stage, 'dev'}
+  logRetentionInDays: ${self:custom.logs.retention.${self:provider.stage}, 7}
+  environment:
+    ENV: ${self:provider.stage}
+    REGION: ${self:provider.region}
+    SERVICE_NAME: ${self:service}-${self:provider.stage}
+    DYNAMO_URL: ${self:custom.dynamo.url.${self:provider.stage}, ""}
+    DYNAMO_USERS_TABLE: ${self:custom.dynamo.table.users}
+
+custom:
+  logs:
+    retention:
+      production: 14
+      dev: 7
+  webpack:
+    webpackConfig: ./webpack.config.js
+    packager: 'npm'
+    includeModules:
+      forceExclude:
+        - dotenv 
+  warmup:
+    enabled: true
+    events:
+      - schedule: rate(5 minutes)
+    prewarm: true
+    concurrency: 1
+  prune:
+    automatic: true
+    number: 5
+  dynamo:
+    url:
+      local: http://localhost:8000
+    table:
+      users: users_${self:provider.stage}
+    capacity:
+      production:
+        read: 5
+        write: 5
+      dev:
+        read: 1
+        write: 3
+      local:
+        read: 5
+        write: 5
+  dynamodb:
+    stages:
+      - local
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+
+functions:
+  healthcheck:
+    handler: src/routes/healthcheck/get.handler
+    description: Basic page ok healthcheck
+    events:
+      - http:
+          path: healthcheck
+          method: get
+  v1_POST_users:
+    handler: src/routes/v1/users/post.handler
+    description: POST /v1/users route
+    events:
+      - http:
+          path: v1/users
+          method: post
+resources:
+  Resources:
+    UserTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.dynamo.table.users} 
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: call_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: 'callId_index'
+            KeySchema:
+              - AttributeName: call_id
+                KeyType: HASH
+            Projection:
+              NonKeyAttributes:
+                - id
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: ${self:custom.dynamo.capacity.${self:provider.stage}.read}
+              WriteCapacityUnits: ${self:custom.dynamo.capacity.${self:provider.stage}.write}
+        ProvisionedThroughput:
+          ReadCapacityUnits: ${self:custom.dynamo.capacity.${self:provider.stage}.read}
+          WriteCapacityUnits: ${self:custom.dynamo.capacity.${self:provider.stage}.write}
+plugins:
+  - serverless-webpack
+  - serverless-plugin-warmup
+  - serverless-dotenv-plugin
+  - serverless-prune-plugin
+  - serverless-domain-manager
+  - serverless-offline
+  - serverless-dynamodb-local

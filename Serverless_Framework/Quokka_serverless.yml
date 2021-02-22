@@ -1,0 +1,103 @@
+service:
+  name: quokka-service
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-2
+  stage: ${opt:stage, 'dev'}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    DYNAMODB_TABLENAME: 'quokka'
+    DYNAMODB_REGION: 'eu-west-2'
+    AUDIENCE: 'https://casbp529v8.execute-api.eu-west-2.amazonaws.com/dev'
+    JWKS_URI: 'https://dev-2tbe1zne.eu.auth0.com/.well-known/jwks.json'
+    ISSUER: 'https://dev-2tbe1zne.eu.auth0.com/'
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:eu-west-2:823663213799:table/quokka'
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource: 'arn:aws:dynamodb:eu-west-2:823663213799:table/quokka/index/*'
+functions:
+  app:
+    handler: src/handlers/handler.index
+    events:
+      - http: ANY /
+        cors:
+          origin: '*'
+          headers:
+            - Content-Type
+            - X-Amz-Date
+            - Authorization
+            - X-Api-Key
+            - X-Amz-Security-Token
+            - X-Amz-User-Agent
+      - http: 'ANY {proxy+}'
+        cors:
+          origin: '*'
+          headers:
+            - Content-Type
+            - X-Amz-Date
+            - Authorization
+            - X-Api-Key
+            - X-Amz-Security-Token
+            - X-Amz-User-Agent
+resources:
+  Resources:
+    quokkaTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: quokka
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: ownerId
+            AttributeType: S
+          - AttributeName: recordTypeParentUuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: ownerId-recordTypeParentUuid_index
+            KeySchema:
+              - AttributeName: ownerId
+                KeyType: HASH
+              - AttributeName: recordTypeParentUuid
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

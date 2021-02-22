@@ -1,0 +1,132 @@
+service: tour
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-central-1
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    STAGE: ${opt:stage, self:provider.stage}
+    AUTH0_AUDIENCE: ${file(../secrets.json):AUTH0_AUDIENCE}
+    AUTH0_ISSUER: ${file(../secrets.json):AUTH0_ISSUER}
+    AUTH0_CLIENT_PUBLIC_KEY: ${file(../public_key)}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+  
+package:
+  exclude:
+    - node_modules/**
+    - '!node_modules/node-fetch/**'
+
+functions:
+  auth:
+    handler: src/auth.auth
+    cors: true
+  publicEndpoint:
+    handler: src/handler.publicEndpoint
+    events:
+      - http:
+          path: api/public
+          method: post
+          cors: true
+  privateEndpoint:
+    handler: src/handler.privateEndpoint
+    events:
+      - http:
+          path: api/private
+          method: post
+          # See custom authorizer docs here: http://bit.ly/2gXw9pO
+          authorizer: auth
+          cors: true
+  list:
+    handler: src/handler.list
+    events:
+      - http:
+          path: /
+          method: get
+          authorizer: auth
+          cors: true
+  create:
+    handler: src/handler.create
+    events:
+      - http:
+          path: /          
+          method: post
+          authorizer: auth
+          cors: true
+  get:
+    handler: src/handler.get
+    events:
+      - http:
+          path: /{id}          
+          method: get
+          authorizer: auth
+          cors: true
+  update:
+    handler: src/handler.update
+    events:
+      - http:
+          path: /{id}          
+          method: put
+          authorizer: auth
+          cors: true
+  delete:
+    handler: src/handler.remove
+    events:
+      - http:
+          path: /{id}          
+          method: delete
+          authorizer: auth
+          cors: true
+
+resources:
+  Resources:
+    # This response is needed for custom authorizer failures cors support ¯\_(ツ)_/¯
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    DynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+    

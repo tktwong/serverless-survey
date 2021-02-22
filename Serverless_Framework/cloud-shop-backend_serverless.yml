@@ -1,0 +1,66 @@
+service:
+  name: import-service
+
+frameworkVersion: '2'
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  environment:
+    SQS_URL: ${cf:product-service-${self:provider.stage}.SQSQueueUrl}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: "s3:*"
+      Resource: "arn:aws:s3:::import-products/*"
+    - Effect: 'Allow'
+      Action: 'sqs:*'
+      Resource:
+        - '${cf:product-service-${self:provider.stage}.SQSQueueArn}'
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+functions:
+  importProductsFile:
+    handler: index.importProductsFile
+    events:
+      - http:
+          path: import
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                name: true
+          authorizer:
+            name: tokenAuthorizer
+            arn: '${cf:authorization-service-${self:provider.stage}.basicAuthorizerArn}'
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: token
+
+  importFileParser:
+    handler: index.importFileParser
+    events:
+      - s3:
+          bucket: import-products
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: uploaded/
+            - suffix: .csv
+          existing: true

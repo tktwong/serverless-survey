@@ -1,0 +1,139 @@
+service: tic-tac-toe-api
+
+custom:
+  resourcePrefix: ${self:service}-${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'} # Set the default stage used. Default is dev
+  region: us-west-2
+  iamRoleStatements:
+   - Effect: "Allow"
+     Action: "s3:*"
+     Resource: "arn:aws:s3:::${self:custom.resourcePrefix}/*"
+   - Effect: "Allow"
+     Action: "sqs:CreateQueue"
+     # allow the service to create queues with names like "tic-tac-toe-api-dev*"
+     Resource: "arn:aws:sqs:*:*:${self:custom.resourcePrefix}*"
+   - Effect: "Allow"
+     Action: "sns:Publish"
+     Resource: "arn:aws:sns:*:*:*"
+   - Effect: "Allow"
+     Action: "apigateway:GET"
+     Resource: "arn:aws:apigateway:*:*:**/apis"
+  environment:
+    RESOURCE_PREFIX: ${self:custom.resourcePrefix}
+    INCOMING_COMMANDS_TOPIC_ARN:
+      Ref: IncomingCommandsTopic
+    EVENTS_TOPIC_ARN:
+      Ref: EventsTopic
+    # WEBSOCKETS_API_NAME is really only needed to allow EventDispatcher to find
+    # the websockets API endpoint URL. Would be great to discover something more
+    # standardized!
+    WEBSOCKETS_API_NAME: ${self:provider.stage}-${self:service}-websockets
+
+
+functions:
+  Sessions:
+    handler: src/framework/session-manager.handler
+    events:
+      - websocket: $connect
+      - websocket: $disconnect
+  CommandReceiver:
+    handler: src/framework/command-receiver.handler
+    events:
+      - websocket: $default
+  CommandProcessor:
+    handler: src/tic-tac-toe-command-processor.handler
+    events:
+      - sqs:
+         arn:
+           "Fn::GetAtt": [ CommandDispatchQueue, Arn ]
+  EventDispatch:
+    handler: src/framework/event-dispatcher.handler
+    events:
+      - sqs:
+         arn:
+           "Fn::GetAtt": [ EventDispatchQueue, Arn ]
+
+
+resources:
+  Resources:
+    AppBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+        BucketName: ${self:custom.resourcePrefix}
+        VersioningConfiguration:
+          Status: Enabled
+    IncomingCommandsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.resourcePrefix}-incoming-commands
+        Subscription:
+        - Endpoint:
+            "Fn::GetAtt": [ CommandDispatchQueue, Arn ]
+          Protocol: sqs
+    EventsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.resourcePrefix}-events
+        Subscription:
+        - Endpoint:
+            "Fn::GetAtt": [ EventDispatchQueue, Arn ]
+          Protocol: sqs
+    CommandDispatchQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.resourcePrefix}-command-dispatch
+        ReceiveMessageWaitTimeSeconds: 20
+    # See https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/quickref-iam.html#scenario-sqs-policy
+    # and https://github.com/neillturner/cfndsl_examples/blob/master/IAM/IAM_Policies_SNS_Publish_To_SQS.yml
+    CommandDispatchQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+        - Ref: CommandDispatchQueue
+        PolicyDocument:
+          Id: CommandDispatchQueuePolicy
+          Version: '2012-10-17'
+          Statement:
+          - Sid: Allow-IncomingCommandsTopic-Send-To-CommandDispatchQueue
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+            - sqs:SendMessage
+            Resource:
+              "Fn::GetAtt": [CommandDispatchQueue, Arn]
+            Condition:
+              ArnEquals:
+                aws:SourceArn:
+                  Ref: IncomingCommandsTopic
+    EventDispatchQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.resourcePrefix}-event-dispatch
+        ReceiveMessageWaitTimeSeconds: 20
+    EventDispatchQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+        - Ref: EventDispatchQueue
+        PolicyDocument:
+          Id: EventDispatchQueuePolicy
+          Version: '2012-10-17'
+          Statement:
+          - Sid: Allow-OutgoingEventsTopic-Send-To-EventDispatchQueue
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+            - sqs:SendMessage
+            Resource:
+              "Fn::GetAtt": [EventDispatchQueue, Arn]
+            Condition:
+              ArnEquals:
+                aws:SourceArn:
+                  Ref: EventsTopic

@@ -1,0 +1,46 @@
+service: mb-distributor
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  deploymentBucket: ${opt:deploymentbucket}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 's3:GetObject'
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - ${opt:assetsbucket}
+            - '/*'
+
+package:
+  exclude:
+    - help/**
+    - node_modules/**
+    - scripts/**
+    - dependencies/**
+    - package-lock.json
+    - package.json
+    - README.md
+    - travis.yml
+    - .env
+
+layers:
+  dependencies:
+    path: dependencies
+    description: Shared library layer
+    name: mb-distributor-${opt:stage}
+
+functions:
+  distributeFunction:
+    handler: lambdas/distributor/app.handler
+    name: mb-distributor-distribute-${opt:stage}
+    layers:
+      - {Ref: DependenciesLambdaLayer}
+    events:
+      - s3:
+          bucket: ${opt:assetsbucket}
+          event: s3:ObjectCreated:*
+          existing: true

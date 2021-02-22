@@ -1,0 +1,151 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: gojo
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: go1.x
+  region: us-west-2
+  iamRoleStatements:
+    -
+      Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - 'Fn::Join':
+          - ":"
+          -
+            - "arn:aws:dynamodb"
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - table/${self:custom.entriesTableName}
+
+custom:
+  entriesTableName: gojo-entries-${opt:stage, self:provider.stage}
+  entriesCMKAlias: gojo-entries-cmk-${opt:stage, self:provider.stage}
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+
+functions:
+  web:
+    handler: bin/web
+    events:
+        - http:
+            path: create
+            method: post
+        - http:
+            path: get/{id}
+            method: get
+        - http:
+            path: home
+            method: get
+        - http:
+            path: public/{asset}
+            method: get
+        - http:
+            path: /
+            method: get
+    environment:
+        KMS_KEY_ID:
+          Fn::GetAtt: [entriesCMK, Arn]
+        STAGE: ${opt:stage, self:provider.stage}
+        TABLE_NAME: ${self:custom.entriesTableName}
+
+resources:  # CloudFormation template syntax
+  Resources:
+    entriesCMK:
+      Type: AWS::KMS::Key
+      Properties:
+        Description: "Key to generate data keys for gojo"
+        KeyPolicy:
+          Version: "2012-10-17"
+          Id: keypolicy-${self:custom.entriesCMKAlias}
+          Statement:
+            -
+              Sid: "Allow administration of the key"
+              Effect: "Allow"
+              Principal:
+                AWS:
+                  - 'Fn::Join':
+                    - ":"
+                    -
+                      - "arn:aws:iam:"
+                      - Ref: 'AWS::AccountId'
+                      - "root"
+              Action:
+                - "kms:Create*"
+                - "kms:Describe*"
+                - "kms:Enable*"
+                - "kms:List*"
+                - "kms:Put*"
+                - "kms:Update*"
+                - "kms:Revoke*"
+                - "kms:Disable*"
+                - "kms:Get*"
+                - "kms:Delete*"
+                - "kms:ScheduleKeyDeletion"
+                - "kms:CancelKeyDeletion"
+              Resource: "*"
+            -
+              Sid: "Allow use of the key by gojo"
+              Effect: Allow
+              Principal:
+                AWS:
+                  Fn::GetAtt: [ IamRoleLambdaExecution, Arn ]
+              Action:
+                - "kms:Encrypt"
+                - "kms:Decrypt"
+                - "kms:ReEncrypt*"
+                - "kms:GenerateDataKey*"
+                - "kms:DescribeKey"
+              Resource: "*"
+    entriesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.entriesTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: expires_at
+          Enabled: true
+  Outputs:
+    entriesCMKArn:
+      Description: ARN for the entries CMK
+      Value:
+        Fn::GetAtt: [entriesCMK, Arn]
+plugins:
+    - serverless-sam
+    - serverless-dynamodb-local
+    - serverless-offline
+

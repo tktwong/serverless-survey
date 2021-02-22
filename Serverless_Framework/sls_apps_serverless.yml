@@ -1,0 +1,130 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+# service name
+service: log-sls-test-${self:custom.accountId}
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+custom:
+  accountId: ${env:AWS_ACCOUNT_ID} # TODO 変更 FIXME 自動設定
+  streamNameLog: ${self:provider.stage}-log-sls-test
+  bucketNameLog: ${self:provider.stage}-log-sls-test
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  memorySize: 1024
+  timeout: 10
+
+# you can overwrite defaults here
+  stage: dev
+  region: ap-northeast-1
+#  role: arn:aws:iam::xxxx:role/xxxx
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+    - Effect: Allow
+      Action:
+        - "kinesis:*"
+#        - kinesis:DescribeStream
+#        - kinesis:GetRecords
+#        - kinesis:GetShardIterator
+#        - kinesis:ListStreams
+      Resource: "arn:aws:kinesis:${self:provider.region}:${self:custom.accountId}:stream/${self:custom.streamNameLog}"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: [
+        "arn:aws:s3:::${self:custom.bucketNameLog}"
+      ]
+
+# you can define service wide environment variables here
+  environment:
+    REGION: ${self:provider.region}
+
+# you can add packaging information here
+package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+    - node_modules/**
+    - .idea/**
+
+functions:
+  cleaning:
+    handler: cleaning.handler
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+    events:
+      - stream:
+          arn: arn:aws:kinesis:${self:provider.region}:${self:custom.accountId}:stream/${self:provider.stage}-log-sls-test
+          batchSize: 100
+          startingPosition: TRIM_HORIZON
+          enabled: true
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    SLSTestKinesisStream:
+      Type: 'AWS::Kinesis::Stream'
+      DeletionPolicy: Delete
+      Properties:
+        Name: "${self:custom.streamNameLog}"
+        ShardCount: 1
+    SLSTestS3Bucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Delete
+      Properties:
+        BucketName: "${self:provider.stage}-log-sls-test"
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"
+
+plugins:
+  - serverless-webpack
+
+# custom:
+#   webpack: ./webpack.config.js
+#   webpackIncludeModules: true # enable auto-packing of external modules

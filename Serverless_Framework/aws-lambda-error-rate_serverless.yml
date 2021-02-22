@@ -1,0 +1,122 @@
+service: aws-lambda-error-rate
+
+custom: ${file(./serverless-${opt:stage, 'dev'}.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${opt:region, 'ap-southeast-1'}
+  endpointType: regional
+  stage: ${opt:stage, 'dev'}
+  memorySize: ${self:custom.${opt:region, 'ap-southeast-1'}.memorySize}
+  timeout: ${self:custom.${opt:region, 'ap-southeast-1'}.timeout}
+  vpc:
+    securityGroupIds:
+      - Ref: LambdaErrorRateSecurityGroup
+    subnetIds: ${self:custom.${opt:region, 'ap-southeast-1'}.vpc.subnetIds}
+  iamManagedPolicies:
+    - arn:aws:iam::aws:policy/AWSLambdaFullAccess
+    - arn:aws:iam::aws:policy/AWSLambdaExecute
+    - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+
+functions:
+  errorRate:
+    handler: handler/errorRate.errorRate
+    environment:
+      STACK_NAME:
+        Ref: AWS::StackName
+      INCIDENT_FLAG_BUCKET_NAME:
+        Ref: ErrorRateIncidentFlagBucket
+      INCIDENT_DEGENERATION_DURATION: ${self:custom.${opt:region, 'ap-southeast-1'}.incident.degenerationDuration}
+      INCIDENT_RECOVERY_DURATION: ${self:custom.${opt:region, 'ap-southeast-1'}.incident.recoveryDuration}
+      INCIDENT_THRESHOLD_PERCENTAGE: ${self:custom.${opt:region, 'ap-southeast-1'}.incident.thresholdPercentage}
+      INCIDENT_INTEGRATION_URL: ${self:custom.${opt:region, 'ap-southeast-1'}.incident.integrationUrl}
+      INCIDENT_INTEGRATION_WEBHOOK: ${self:custom.${opt:region, 'ap-southeast-1'}.incident.integrationWebhook}
+
+  error:
+    handler: handler/error.error
+    events:
+      - schedule:
+          description: Trigger error lambda
+          rate: rate(1 minute)
+          enabled: ${self:custom.${opt:region, 'ap-southeast-1'}.errorLambda.schedule.enabled}
+
+resources:
+  Resources:
+    LambdaErrorRateSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Lambda Error Rate Security Group
+        VpcId: ${self:custom.${opt:region, 'ap-southeast-1'}.vpc.id}
+        SecurityGroupEgress:
+          - CidrIp: 0.0.0.0/0
+            IpProtocol: tcp
+            FromPort: 0
+            ToPort: 65535
+
+    LambdaErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda error alarm
+        AlarmName: LambdaErrorAlarm
+        ActionsEnabled: true
+        AlarmActions:
+          - Ref: LambdaErrorSnsTopic
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: ErrorLambdaFunction
+        ComparisonOperator: GreaterThanThreshold
+        Statistic: Sum
+        Unit: Count
+        Threshold: 0
+        Period: 60
+        EvaluationPeriods: 1
+        TreatMissingData: notBreaching
+
+    LambdaErrorSnsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Lambda error SNS topic
+        Subscription:
+          - Protocol: lambda
+            Endpoint: 
+              Fn::GetAtt:
+                 - 'ErrorRateLambdaFunction'
+                 - 'Arn'
+
+    LambdaErrorRateSnsPermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Ref: ErrorRateLambdaFunction
+        Action: lambda:InvokeFunction
+        Principal: 'sns.amazonaws.com'
+        SourceArn:
+          Ref: LambdaErrorSnsTopic
+
+    ErrorRateIncidentFlagBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+
+  Outputs:
+    LambdaErrorRateSecurityGroup:
+      Value:
+        Ref: LambdaErrorRateSecurityGroup
+
+    LambdaErrorAlarm:
+      Value:
+        Ref: LambdaErrorAlarm
+
+    LambdaErrorSnsTopic:
+      Value:
+        Fn::GetAtt:
+          - 'LambdaErrorSnsTopic'
+          - 'TopicName'
+
+    ErrorRateIncidentFlagBucket:
+      Value:
+        Ref: ErrorRateIncidentFlagBucket

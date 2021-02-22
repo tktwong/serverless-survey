@@ -1,0 +1,68 @@
+service:
+  name: update-amz-stocks
+
+package:
+  individually: true
+  exclude:
+    - '**/**'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stackName: ${self:service.name}-stack
+  stage: ${opt:stage, 'prod'}
+  region: eu-central-1
+  deploymentBucket:
+    name: kaskadi-serverless-deployment-bucket
+  apiGateway:
+    restApiId: !ImportValue KaskadiStocksRestAPIGatewayId
+    restApiRootResourceId: !ImportValue KaskadiStocksRestAPIGatewayRootResourceId
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: 'arn:aws:lambda:eu-central-1:374163881813:function:kaskadi-set-stocks-lambda' # not using export/import logic to avoid coupling of stack which could cause troubles with deployment in that case
+
+layers:
+  StockUpdateLayer:
+    path: layer
+    name: ${self:service.name}-layer
+    description: Layer for ${self:service.name}
+    compatibleRuntimes:
+      - nodejs10.x
+      - nodejs12.x
+    licenseInfo: MIT
+    package:
+      include:
+        - '**/**'
+
+functions:
+  StockUpdate:
+    handler: update-amz-stocks.handler
+    name: ${self:service.name}
+    layers:
+      - { Ref: StockUpdateLayerLambdaLayer }
+    package:
+      include:
+        - 'update-amz-stocks.js'
+        - 'helpers/**'
+        - 'marketplaces.js'
+    environment:
+      ES_ID: ${env:ES_ID}
+      ES_SECRET: ${env:ES_SECRET}
+      ES_ENDPOINT: ${env:ES_ENDPOINT}
+      MWS_KEY_ID: ${env:MWS_KEY_ID}
+      MWS_KEY_SECRET: ${env:MWS_KEY_SECRET}
+      AMZ_EU_SELLER_ID: ${env:AMZ_EU_SELLER_ID}
+    timeout: 300
+    events:
+      - http:
+          method: get
+          path: amz/update
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !ImportValue KaskadiStocksCognitoAuthorizerId
+      - schedule:
+          rate: cron(0 7 ? * * *) # runs every day at 7:00AM
+          enabled: true

@@ -1,0 +1,82 @@
+service: teamid-testing
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-east-1
+  versionFunctions: false #Turn off function versioning
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  environment: ${file(./env-${self:provider.stage}.yml):ENV} #Get environment variables from stage env var file
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TEST_TABLE}"
+custom: 
+  app: teamid
+  defaultStage: development
+  profiles:
+    experiments: teamid-experiment # To be removed . For experiments only
+    development: teamid-dev # change to Development AWS Profile
+    testing: teamid-test # change to Testing AWS Profile
+    production: teamid-prod # change to Production AWS Profile
+  documentation:
+    api:
+      info:
+        version: 0.1
+        title: "This is a test API"
+        description: "This is a description of test api"
+        termOfService: "Nothing just use it"
+        contact:
+          name: Avaneesh Tripathi
+          url: https://www.teamid.com
+          email: some-dev@teamid.com
+        license:
+          name: The license
+          url: https://www.teamid.com
+### Functions start from here 
+functions:
+  # Auth function #
+  authorize:
+    handler: src/auth.authorize
+    name: ${self:custom.app}-authorize-${self:provider.stage} # Set name with reference to stage
+  # Save data function #
+  save:
+    handler: src/index.save
+    name: ${self:custom.app}-test-${self:provider.stage} # Set name with reference to stage
+    description: Test function from serverless
+    tags:    # Add tag for the stage to group in AWS
+      environment: ${self:provider.stage}
+    events:
+      - http:
+          path: /save
+          method: post
+          cors: 
+            origins:
+              - '*'
+          authorizer: authorize  
+          documentation:
+            summary: "create a new test entry"
+resources:
+  Resources:
+    testTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TEST_TABLE}
+        AttributeDefinitions:
+        - AttributeName: testId
+          AttributeType: S
+        KeySchema:
+          - AttributeName: testId
+            KeyType: HASH
+        ProvisionedThroughput:
+            ReadCapacityUnits: 2
+            WriteCapacityUnits: 2
+plugins:
+  - serverless-aws-documentation
+

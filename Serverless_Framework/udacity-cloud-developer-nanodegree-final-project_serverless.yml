@@ -1,0 +1,170 @@
+service:
+  name: phonebook
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Serverless Phone Book
+        description: this is a full stack javascript application servered on AWS using serverless framework
+    
+    models:
+      - name: CreateContact
+        contentType: application/json
+        schema: ${file(models/create-contact-request.json)}
+      - name: UpdateContact
+        contentType: application/json
+        schema: ${file(models/update-contact-request.json)}
+
+plugins:
+  - serverless-webpack
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  
+  apiGateway:
+    minimumCompressionSize: 1024
+  
+  state: ${opt:state, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1,
+    PHONE_BOOK_TABLE: PhoneBookTable1-${self:provider.stage}
+    USER_ID_INDEX: userId
+    CONTACT_ID_INDEX: contactId
+  
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:UpdateItem
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PHONE_BOOK_TABLE}
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PHONE_BOOK_TABLE}/index/${self:provider.environment.USER_ID_INDEX}
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PHONE_BOOK_TABLE}/index/${self:provider.environment.CONTACT_ID_INDEX}
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+  
+  GetContacts:
+    handler: src/lambda/http/getAllContacts.handler
+    events:
+      - http:
+          method: get
+          path: phonebook
+          authorizer: Auth
+          cors: true
+  
+  DeleteContact:
+    handler: src/lambda/http/deleteContact.handler
+    events:
+      - http:
+          method: delete
+          path: phonebook/{contactId}
+          authorizer: Auth
+          cors: true
+  
+  CreateContact:
+    handler: src/lambda/http/createContact.handler
+    events:
+      - http:
+          method: post
+          path: phonebook
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: create new contact for phonebook
+            description: create new contact for phonebook
+            requestModels:
+              'application/json': CreateContact
+  
+  UpdateContact:
+    handler: src/lambda/http/updateContact.handler
+    events:
+      - http:
+          method: patch
+          path: phonebook/{contactId}
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: update contact in phonebook
+            description: update contact in phonebook
+            requestModels:
+              'application/json': UpdateContact
+  
+  GetSingleContact:
+    handler: src/lambda/http/getSingleContact.handler
+    events:
+      - http:
+          method: get
+          path: phonebook/contact/{contactId}
+          authorizer: Auth
+          cors: true
+
+
+resources:
+  Resources:
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PATCH,DELETE'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+    PhoneBookDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: contactId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: contactId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.USER_ID_INDEX}
+            KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          - IndexName: ${self:provider.environment.CONTACT_ID_INDEX}
+            KeySchema:
+            - AttributeName: contactId
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.PHONE_BOOK_TABLE}

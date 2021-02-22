@@ -1,0 +1,359 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: perfectSip # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  stage: dev
+  region: us-west-2
+  role: IamRoleLambdaExecution
+  apiKeys:
+    - curatorEnrollPasscode
+  environment:
+    loggerLevel: ${file(./config.json):loggerLevel}
+    psShop: ${file(./config.json):psShop}
+
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+  exclude:
+    - .eslintrc.json
+    - package.json
+    - test/**
+    - testdata/**
+    - node_modules/aws-sdk/**
+    - node_modules/aws-lambda-mock-context/**
+    - node_modules/chai/**
+    - node_modules/istanbul/**
+    - node_modules/mocha/**
+    - node_modules/serverless-offline/**
+
+functions:
+  acceptOrder:
+    handler: acceptOrder.postOrder
+    events:
+      - http:
+          path: orders
+          method: post
+    role: IamRolePSPostOrderKinesisStream
+    environment:
+      ShopifySecret: ${file(./config.json):ShopifySecret}
+      KinesisStream: ${file(./config.json):psOrdersStreamName}
+      S3Bucket: 
+        Fn::Join:
+          - ""
+          - - "Ref": "psDataS3Bucket"
+      AcceptOrderErrorSubscription:
+        Fn::Join:
+          - ""
+          - - "Ref": "AcceptOrderErrorSNS"
+  
+  getOrderInfoFromStream:
+    handler: getOrderInfoFromStream.getOrderInfoFromStream
+    events:
+      - stream:
+          arn: arn:aws:kinesis:us-west-2:781812356504:stream/psOrdersStream
+            #Fn::GetAtt:
+              #- psOrdersStream
+              #- Arn
+          batchSize: 1
+          startingPosition: TRIM_HORIZON
+          enabled: true
+    role: IamRolePSReadOrderKinesisStream
+    environment:
+      OrdersTableName: ${file(./config.json):OrdersTableName}
+      OrdersTableOrderIdIndex: ${file(./config.json):OrdersTableOrderIdIndex}
+
+  saveOrderInfoFromStream:
+    handler: saveOrderInfoFromStream.saveOrderInfo
+    events:
+      - stream:
+          arn: arn:aws:kinesis:us-west-2:781812356504:stream/psOrdersStream
+            #Fn::GetAtt:
+              #- psOrdersStream
+              #- Arn
+          batchSize: 1
+          startingPosition: TRIM_HORIZON
+          enabled: true
+    role: IamRolePSSaveOrderKinesisStream
+    environment:
+      S3Bucket: 
+        Fn::Join:
+          - ""
+          - - "Ref": "psDataS3Bucket"
+  
+  acceptContact:
+    handler: acceptContact.postContact
+    events:
+      - http:
+          path: contact
+          method: post
+    role: IamRolePSPostContactKinesisStream
+    environment:
+      ShopifySecret: ${file(./config.json):ShopifySecret}
+      KinesisStream: ${file(./config.json):psContactsStreamName}
+  
+  getContactInfoFromStream:
+    handler: getContactInfoFromStream.getContactInfoFromStream
+    events:
+      - stream:
+          arn: arn:aws:kinesis:us-west-2:781812356504:stream/psContactsStream
+            #Fn::GetAtt:
+              #- psContactsStream
+              #- Arn 
+          batchSize: 1
+          startingPosition: TRIM_HORIZON
+          enabled: true
+    role: IamRolePSReadContactKinesisStream
+    environment:
+      S3Bucket: 
+        Fn::Join:
+          - ""
+          - - "Ref": "psDataS3Bucket"
+          
+  fetchStock:
+    handler: getInventory.fetchStock
+    events:
+      - http:
+          path: fetch_stock.json
+          method: get
+    role: IamRolePSFetchStock
+    environment:
+      ShopifySecret: ${file(./config.json):ShopifySecret}
+        #Fn::GetAtt:
+         # - "psOrdersStream"
+          #- "Arn"
+        #Fn::Join:
+         # - ""
+          #- - "arn:aws:kinesis:"
+           # - "Ref": "AWS::Region"
+            #- ":"
+            #- "Ref": "AWS::AccountId"
+            #- ":stream/"
+            #- "Ref": "psOrdersStream"
+
+  getOrdersFromShopify:
+    handler: getOrdersFromShopify.getOrdersFromShopify
+    events:
+      - schedule: 
+          rate: ${file(./config.json):GetOpenOrdersFromShopifySheduleRate}
+          enabled: true
+          input: 
+            scheduleOrderName: ${file(./config.json):CreateOrderSchedule}
+            status: ${file(./config.json):GetAllOrdersFromShopifyStatus}
+            shopifyCancelledFlag: ${file(./config.json):GetShopifyCancelledFlagZero}
+    role: IamRolePSOrdersFromShopify  
+    environment:
+      ShopifyApiKey: ${file(./config.json):ShopifyApiKey}
+      ShopifyAccessToken: ${file(./config.json):ShopifyAccessToken}
+      RateLimitDelay: ${file(./config.json):RateLimitDelay}
+      BackOff: ${file(./config.json):BackOff}
+      BackOffDelay: ${file(./config.json):BackOffDelay}
+      KinesisStream: ${file(./config.json):psOrdersStreamName}
+      AuditSchedulerTableName: ${file(./config.json):AuditSchedulerTableName}
+      OrdersTableName: ${file(./config.json):OrdersTableName}
+      OrdersTableShopifyCreatedDateIndex: ${file(./config.json):OrdersTableShopifyCreatedDateIndex}
+
+  getCancelledOrdersFromShopify:
+    handler: getCancelledOrdersFromShopify.getCancelledOrdersFromShopify
+    events:
+      - schedule: 
+          rate: ${file(./config.json):GetCancelOrdersFromShopifySheduleRate}
+          enabled: true
+          input: 
+            scheduleOrderName: ${file(./config.json):CancelOrderSchedule}
+            status: ${file(./config.json):GetOrdersFromShopifyStatusCancelled}
+            shopifyCancelledFlag: ${file(./config.json):GetShopifyCancelledFlagOne}
+    role: IamRolePSOrdersFromShopify  
+    environment:
+      ShopifyApiKey: ${file(./config.json):ShopifyApiKey}
+      ShopifyAccessToken: ${file(./config.json):ShopifyAccessToken}
+      RateLimitDelay: ${file(./config.json):RateLimitDelay}
+      BackOff: ${file(./config.json):BackOff}
+      BackOffDelay: ${file(./config.json):BackOffDelay}
+      KinesisStream: ${file(./config.json):psOrdersStreamName}
+      AuditSchedulerTableName: ${file(./config.json):AuditSchedulerTableName}
+      OrdersTableName: ${file(./config.json):OrdersTableName}
+      OrdersTableShopifyCancelledDateIndex: ${file(./config.json):OrdersTableShopifyCancelledDateIndex}
+
+  acceptProduct:
+    handler: acceptProduct.postProduct
+    events:
+      - http:
+          path: products
+          method: post
+    role: IamRolePSPostProductKinesisStream
+    environment:
+      ShopifySecret: ${file(./config.json):ShopifySecret}
+      KinesisStream: ${file(./config.json):psProductsStreamName}  
+  
+  getProductInfoFromStream:
+    handler: getProductInfoFromStream.getProductInfoFromStream
+    events:
+      - stream:
+          arn: arn:aws:kinesis:us-west-2:781812356504:stream/psProductsStream
+          batchSize: 1
+          startingPosition: TRIM_HORIZON
+          enabled: true
+    role: IamRolePSReadProductKinesisStream
+    environment:
+      ShopifyApiKey: ${file(./config.json):ShopifyApiKey}
+      ShopifyAccessToken: ${file(./config.json):ShopifyAccessToken}
+      RateLimitDelay: ${file(./config.json):RateLimitDelay}
+      BackOff: ${file(./config.json):BackOff}
+      BackOffDelay: ${file(./config.json):BackOffDelay}
+      ProductsTableName: ${file(./config.json):ProductsTableName}
+
+  updateSKUSForSubscriptionProducts:
+    handler: updateSKUSForSubscriptionProducts.updateSKUSForSubscriptionProducts
+    events:
+      - schedule: 
+          rate: ${file(./config.json):UpdateSKUSForSubscriptionProductsSheduleRate}
+          enabled: true
+    role: IamRolePSSKUSubscription   
+    environment:
+      SubscriptionProduct: ${file(./config.json):UpdateSKUSForSubscriptionProduct}
+      ProductsTableName: ${file(./config.json):ProductsTableName}
+      PoductType: ${file(./config.json):UpdateSKUSForSubscriptionProductType}
+      ProductsTableProductTypeIndex: ${file(./config.json):ProductsTableProductTypeIndex}
+      ShopifyApiKey: ${file(./config.json):ShopifyApiKey}
+      ShopifyAccessToken: ${file(./config.json):ShopifyAccessToken}
+      RateLimitDelay: ${file(./config.json):RateLimitDelay}
+      BackOff: ${file(./config.json):BackOff}
+      BackOffDelay: ${file(./config.json):BackOffDelay}
+      SKUSNSSubscription: 
+        Fn::Join:
+          - ""
+          - - "Ref": "SKUSubscription"
+
+  saveProductInfoFromStream:
+    handler: saveProductInfoFromStream.saveProductInfo
+    events:
+      - stream:
+          arn: arn:aws:kinesis:us-west-2:781812356504:stream/psProductsStream
+            #Fn::GetAtt:
+              #- psProductsStream
+              #- Arn
+          batchSize: 1
+          startingPosition: TRIM_HORIZON
+          enabled: true
+    role: IamRolePSSaveProductKinesisStream
+    environment:
+      S3Bucket: 
+        Fn::Join:
+          - ""
+          - - "Ref": "psDataS3Bucket"
+
+  ordersToS3Bucket:
+    handler: ordersToS3Bucket.ordersToS3Bucket
+    role: IamRolePSOrdersToS3
+    environment:
+      createdDate: '2016-12-26'
+      OrdersTableName: ${file(./config.json):OrdersTableName}
+      S3Bucket: 
+        Fn::Join:
+          - ""
+          - - "Ref": "psDataS3Bucket"  
+
+  curatorEnrollment:
+    handler: curatorEnrollment.curatorEnrollment
+    events: 
+      - http:
+          path: enroll/curator 
+          # Make sure gateway name is proper in cloudformation 'ApiGatewayMethodEnrollCuratorPost'
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          private: true
+    role: IamRoleCuratorEnrollment      
+    environment:
+      sesEmail: ${file(./config.json):EmailServiceToAddress}
+      sesSource: ${file(./config.json):SESSource}
+      sesReplyToAddresses: ${file(./config.json):SESReplyToAddresses}
+      sesReturnPath : ${file(./config.json):SESReturnPath}
+
+resources:
+  Resources:
+    $ref: ./cloudformation.json
+  Outputs:
+    $ref: ./cloudformationoutput.json
+
+plugins:
+  - serverless-offline
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

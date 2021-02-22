@@ -1,0 +1,94 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: wpg-air-quality
+app: wpg-air-quality-app
+org: busstopbench
+
+provider:
+  name: aws
+  runtime: python3.6
+  timeout: 30
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: "*"
+      Resource:
+        Fn::GetAtt:
+          - MeasurementsTable
+          - Arn
+
+plugins:
+  - serverless-domain-manager
+  - serverless-python-requirements
+  - serverless-offline
+custom:
+  customDomain:
+    domainName: "winnipegairquality.com"
+    basePath: ""
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  pythonRequirements:
+    dockerizePip: non-linux
+
+package:
+  exclude:
+    - node_modules/**
+    - package.json
+    - package-lock.json
+
+functions:
+  air_quality_raw:
+    handler: src/handler.air_quality_raw
+    events:
+      - http:
+          path: raw
+          method: get
+  air_quality_map:
+    handler: src/handler.air_quality_map
+    events:
+      - http:
+          path: /
+          method: get
+          integration: lambda
+          response:
+            template: $input.path('$')
+            headers:
+              Content-Type: "'text/html'"
+  fetch:
+    handler: src/fetcher.fetch
+    events:
+      - schedule: rate(30 minutes)
+
+resources:
+  Resources:
+    MeasurementsTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: "Measurements"
+        AttributeDefinitions:
+          - AttributeName: "location"
+            AttributeType: "S"
+          - AttributeName: "sk"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "location"
+            KeyType: "HASH"
+          - AttributeName: "sk"
+            KeyType: "RANGE"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 1
+  Outputs:
+    MeasurementsTableName:
+      Value: !Ref 'MeasurementsTable'
+      Description: Table name for the Measurements DynamoDB table

@@ -1,0 +1,98 @@
+service: retotecnico
+
+plugins:
+  - serverless-offline
+  - serverless-openapi-documentation
+
+frameworkVersion: '2'
+
+custom:
+  documentation:
+    version: '1'
+    title: 'Reto técnico Api'
+    description: 'Api que consume SWAPI, registra y lista datos de DynamoDB'
+    models: 
+      - name: ErrorResponse
+        description: Response de error
+        contentType: application/json
+        schema: ${file(models/docs/ErrorResponse.json)}
+      - name: GenericResponse
+        description: Response genérico
+        contentType: application/json
+        schema: ${file(models/docs/BasicResponse.json)}
+      - name: PostVehicleRequest
+        description: Request para el registro de un vehículo
+        contentType: application/json
+        schema: ${file(models/docs/PostVehicleRequest.json)}  
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: "${opt:stage, 'DEV'}"
+  region: "${self:provider.environment.REGION}"
+  versionFunctions: false
+  role: authorizerRole
+  environment:
+    REGION: "us-east-1"
+    REGION_ABR: "UE1"
+    NOM_PROY: "RETOTECNICO"
+    TAB_VEHICULO: ${self:provider.environment.REGION_ABR}COM${opt:stage}TBLVEHICULO${self:provider.environment.NOM_PROY}
+    URL_BASE_SWAPI: "swapi.py4e.com/api"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.environment.REGION}:#{AWS::AccountId}:table/*"
+    - Effect: Allow
+      Action:
+        - logs:CreateLogStream 
+        - logs:CreateLogGroup
+        - logs:PutLogEvents
+      Resource: "arn:aws:logs:${self:provider.environment.REGION}:#{AWS::AccountId}}:log-group:/aws/lambda/*"
+
+functions: 
+  - ${file(./serverless/Persona.yml)}
+  - ${file(./serverless/Vehiculo.yml)}
+  - ${file(./serverless/Docs.yml)}
+
+resources:
+  Resources:
+    authorizerRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: "${self:provider.environment.REGION_ABR}COM${opt:stage}IAM${self:provider.environment.NOM_PROY}"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - "lambda.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        ManagedPolicyArns:
+          - "arn:aws:iam::aws:policy/AmazonAPIGatewayInvokeFullAccess"
+          - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          - "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: ${self:provider.environment.REGION_ABR}NET${opt:stage}API${self:provider.environment.NOM_PROY}
+    VehiculoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TAB_VEHICULO}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

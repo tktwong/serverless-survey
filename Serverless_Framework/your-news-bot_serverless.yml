@@ -1,0 +1,80 @@
+service:
+  name: your-news-bot
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:DescribeTable
+      Resource:
+        Fn::GetAtt: [DBConfiguration, Arn]
+  environment:
+    DB_TABLE_CONFIGURATION:
+      Ref: DBConfiguration
+
+custom:
+  defaultStage: dev
+
+functions:
+  config-list:
+    handler: lambda/configuration.list
+    events:
+      - http:
+          method: get
+          path: config
+  config-get:
+    handler: lambda/configuration.get
+    events:
+      - http:
+          method: get
+          path: config/{key}
+          request:
+            parameters:
+              paths:
+                key: true
+  config-set:
+    handler: lambda/configuration.set
+    events:
+      - http:
+          method: put
+          path: config/{key}
+          request:
+            parameters:
+              paths:
+                key: true
+  feed:
+    handler: lambda/feed.read
+    events:
+      - http:
+          method: get
+          path: feed/{what}
+          request:
+            parameters:
+              paths:
+                what: true
+
+resources:
+  Resources:
+    DBConfiguration:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-configuration
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

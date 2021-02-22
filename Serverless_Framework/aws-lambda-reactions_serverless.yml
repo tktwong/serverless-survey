@@ -1,0 +1,68 @@
+service: site-reactions
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-dotenv-plugin
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  tableName: 'site-reactions-table-${self:provider.stage}'
+  dynamodb:
+    stages:
+      - dev
+    start:
+      migrate: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["ReactionsDynamoDBTable", "Arn" ] }
+  environment:
+    REACTIONS_TABLE: ${self:custom.tableName}
+
+functions:
+  getReactions:
+    handler: src/handlers.getReactions
+    events:
+      - http:
+          path: /posts/{slug}/likes
+          method: get
+          cors: true
+  setReaction:
+    handler: src/handlers.setReaction
+    events:
+      - http:
+          path: /posts/{slug}/likes
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    ReactionsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

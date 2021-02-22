@@ -1,0 +1,76 @@
+# NOTE: update this with your service name
+service: lunar-tour-api
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-bundle
+  - serverless-offline
+  - serverless-dotenv-plugin
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-1
+  profile: personalAccount
+  environment:
+    BookingsDB: ${self:custom.BookingsDB}
+    ListingsDB: ${self:custom.ListingsDB}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStream
+
+      Resource:
+        - "Fn::GetAtt": [ListingsDB, Arn]
+        - "Fn::GetAtt": [BookingsDB, Arn]
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  ListingsDB: ${self:custom.stage}-listings
+  BookingsDB: ${self:custom.stage}-bookings
+  
+
+  tableThroughputs:
+    prod: 1
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  serverless-offline:
+    port: 4000
+  bundle:
+    linting: false
+
+functions:
+  graphql:
+    handler: src/graphql.graphqlHandler
+    environment:
+      SLS_DEBUG: true
+    events:
+      - http:
+          path: graphql
+          method: Post
+          cors: true
+          integration: lambda-proxy
+
+      - http:
+          path: graphql
+          method: Get
+          cors: true
+          integration: lambda-proxy
+
+resources:
+  - ${file(resources/listing-db.yml)}
+  - ${file(resources/bookingDB.yml)}

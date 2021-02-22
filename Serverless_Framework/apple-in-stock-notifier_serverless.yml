@@ -1,0 +1,58 @@
+service: apple-in-stock-notifier
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  memorySize: 128
+  cfLogs: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource:
+        Ref: notifier
+
+plugins:
+  - serverless-webpack
+
+custom:
+  basename: ${self:service}-${self:custom.stage}
+  stage: ${opt:stage, 'dev'}
+  names:
+    lambda: ${self:custom.basename}-lambda
+    sns: ${self:custom.basename}-sns
+
+functions:
+  poller:
+    name: ${self:custom.names.lambda}
+    description: polls apple for retail store product availability
+    handler: src/index.default
+    environment:
+      BASE_URL: https://www.apple.com/shop/retail/pickup-message
+      MAX_DISTANCE: 15
+      SNS_ARN:
+        Ref: notifier
+    events:
+      # multiple schedule events can be configured to watch multiple products
+      - schedule:
+          name: ${self:custom.basename}-tmobile-iphone-8-space
+          description: schedule event for a space grey tmobile iphone 8
+          rate: rate(3 minutes)
+          input:
+            parts.0: MQ6K2LL/A
+            location: ${env:MY_ZIPCODE}
+
+resources:
+  Resources:
+    notifier:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: ${self:custom.names.sns}
+        TopicName: ${self:custom.names.sns}
+    subscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Endpoint: ${env:MY_EMAIL}
+        Protocol: email
+        TopicArn:
+          Ref: notifier

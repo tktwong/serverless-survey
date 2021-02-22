@@ -1,0 +1,52 @@
+service: aws-apigw-s3-batch
+
+plugins:
+  - serverless-apigateway-service-proxy
+
+provider:
+  name: aws
+  region: eu-central-1
+
+custom:
+  apiGatewayServiceProxies:
+    - s3:
+        path: /capture
+        method: POST
+        action: PutObject
+        pathOverride: "work/{objectKey}"
+        bucket: !Ref BatchBucket
+        cors: true
+        roleArn: !GetAtt APIGWServiceRole.Arn
+
+        requestParameters:
+          "integration.request.path.objectKey": "context.requestId"
+          "integration.request.path.object": "context.requestId"
+
+resources:
+  Resources:
+    BatchBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-bucket
+    APIGWServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: apigateway.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: allows3
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    # needed because apigw sends the acl with headers
+                    # x-amz-acl=authenticated-read
+                    - s3:PutObjectAcl
+                  Resource:
+                    - !GetAtt BatchBucket.Arn
+                    - !Join ["", [!GetAtt BatchBucket.Arn, "/*"]]

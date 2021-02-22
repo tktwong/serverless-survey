@@ -1,0 +1,152 @@
+service: work-life-balance-api
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+# NOTE: Conditional serverless.yml based on stage?
+# https://forum.serverless.com/t/conditional-serverless-yml-based-on-stage/1763
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: development
+  region: eu-central-1
+  profile: vlewin
+  cfLogs: true
+  memorySize: 128
+  timeout: 5
+
+  environment:
+    # FIXME: Workaround for timezone issue: https://github.com/date-fns/date-fns/issues/376
+    TZ: 'Europe/Berlin'
+    RECORDS_TABLE: "records-${opt:stage, self:provider.stage}"
+    BALANCE_TABLE: "balance-${opt:stage, self:provider.stage}"
+    NODE_ENV: ${opt:stage, self:provider.stage}
+
+  custom:
+    webpack:
+      webpackConfig: 'webpack.config.js'   # Name of webpack configuration file
+      includeModules: false   # Node modules configuration for packaging
+      packager: 'yarn'   # Packager that will be used to package your external modules
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:CreateTable
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+
+        # NOTE: Permissions needed for stream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+
+      # NOTE: Get logical IDs below where they are provisioned
+      Resource:
+        - { "Fn::GetAtt": ["RecordsDynamoDbTable", "Arn"] }
+        - { "Fn::GetAtt": ["BalanceDynamoDbTable", "Arn"] }
+plugins:
+  - serverless-offline
+  - serverless-webpack
+  # - serverless-plugin-stage-variables
+
+package:
+  excludeDevDependencies: true
+  include:
+    - app/**
+  exclude:
+    - ./**
+
+# TODO: Microservices Pattern vs Services Pattern
+# https://serverless.com/blog/serverless-architecture-code-patterns/#4-the-graph-pattern
+functions:
+  authorizer:
+    handler: app/authorizer/index.handler
+
+  BalanceShow:
+    handler: app/controllers/balance.show
+    description: Get balance.
+    events:
+      - http:
+          authorizer: authorizer
+          path: balance
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+
+
+  BalanceUpdate:
+    handler: app/controllers/balance.update
+    description: Update balance.
+    events:
+      - stream:
+          type: dynamodb
+          arn: { Fn::GetAtt: [ RecordsDynamoDbTable, StreamArn ] }
+          startingPosition: LATEST
+          batchSize: 1
+          enabled: true
+
+  RecordsIndex:
+    handler: app/controllers/records.index
+    description: Get all time record information.
+    events:
+      - http:
+          authorizer: authorizer
+          path: records
+          method: get
+          cors: true
+
+  RecordsCreate:
+    handler: app/controllers/records.create
+    description: Create time record.
+    events:
+      - http:
+          authorizer: authorizer
+          path: records
+          method: post
+          cors: true
+
+  RecordsDelete:
+    handler: app/controllers/records.delete
+    description: Delete time record.
+    events:
+      - http:
+          authorizer: authorizer
+          path: records
+          method: delete
+          cors: true
+      - http:
+          authorizer: authorizer
+          path: records/{id}
+          method: delete
+          cors: true
+
+  AbsencesIndex:
+    handler: app/controllers/absences.index
+    description: Get all absence records.
+    events:
+      - http:
+          authorizer: authorizer
+          path: absences
+          method: get
+          cors: true
+
+  AbsencesCreate:
+    handler: app/controllers/absences.create
+    description: Create absence record.
+    events:
+      - http:
+          authorizer: authorizer
+          path: absences
+          method: post
+          cors: true
+
+resources:
+   - ${file(resources/records_table.yml)}
+   - ${file(resources/balance_table.yml)}

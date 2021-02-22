@@ -1,0 +1,58 @@
+service: vbot
+
+custom:
+  # Service name
+  service: ${self:service}
+  # Stage
+  stage: ${opt:stage, 'dev'}
+  # serverless-python-requirements plugin (package dependencies)
+  pythonRequirements:
+    dockerizePip: true
+    zip: true
+  # serverless-prune-plugin (prune old deployments)
+  prune:
+    automatic: true
+    number: 10
+
+package:
+  individually: false
+  exclude:
+    - '**/*'
+  include:
+    - handler.py
+
+provider:
+  name: aws
+  profile: vbot
+  runtime: python3.7
+  memorySize: 128
+  stackTags:
+    PROJECT: VBot
+  iamRoleStatements:
+    - Sid: AllowAccessToOwnSSMParameters
+      Effect: Allow
+      Action:
+        - ssm:Get*
+      Resource: arn:aws:ssm:*:*:parameter/${self:custom.service}/*
+  environment:
+    SERVICE_NAME: ${self:custom.service}
+
+functions:
+  slack:
+    handler: handler.slack
+    events:
+      - schedule: rate(15 minutes)
+      - http:
+          path: slack
+          method: post
+  travis:
+    handler: handler.travis
+    events:
+      - schedule: rate(15 minutes)
+      - http:
+          path: travis
+          method: post
+
+plugins:
+  - serverless-python-requirements
+  - serverless-prune-plugin

@@ -1,0 +1,75 @@
+service:
+  name: app-serverless-express
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-s3-local
+  - serverless-offline
+
+custom:
+  endpoints:
+    dynamodb-url: "http://localhost:8000"
+    s3-url: "http://localhost:9000"
+  tableNames:
+    product: "local-product-table"
+  bucketNames:
+    product: "local-product-bucket"
+  dynamodb:
+    start:
+      migrate: true
+    stages:
+      - dev
+  s3:
+    port: 9000
+    directory: ./s3-local
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    CONFIG_PRODUCT_TABLE: ${self:custom.tableNames.product}
+    CONFIG_PRODUCT_BUCKET: ${self:custom.bucketNames.product}
+    CONFIG_DYNAMODB_ENDPOINT: ${self:custom.endpoints.dynamodb-url}
+    CONFIG_S3_ENDPOINT: ${self:custom.endpoints.s3-url}
+
+functions:
+  products:
+    handler: src/handler/dynamoHanlder.handler
+    events:
+      - http:
+          path: /product
+          method: get
+          cors: true
+      - http:
+          path: /product
+          method: post
+          cors: true
+
+  webhook:
+    handler: src/handler/s3Handler.webhook
+    events:
+      - http:
+          path: /s3
+          method: get
+          cors: true
+  s3hook:
+    handler: src/handler/s3Handler.s3hook
+    events:
+      - s3:
+          bucket: ${self:custom.bucketNames.product}
+          events:
+            - s3:ObjectCreated:*
+  imageS3hook:
+    handler: src/handler/s3Handler.imageS3hook
+    events:
+      - s3:
+          bucket: ${self:custom.bucketNames.product}
+          events:
+            - s3:ObjectCreated:*
+          rules:
+            - prefix: incoming/
+            - suffix: .jpg
+resources:
+  - ${file(resources/product-table.yml)}
+  - ${file(resources/s3-bucket.yml)}

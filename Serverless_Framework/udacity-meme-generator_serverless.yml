@@ -1,0 +1,298 @@
+service:
+  name: udacity-meme-generator
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-central-1'}
+  environment:
+    CODES_TABLE: CodesTable-${self:provider.stage}
+    USER_ID_INDEX: CodesUserIdIndex
+    IMAGES_S3_BUCKET: udagram-code-images-${self:provider.stage}
+    FILES_S3_BUCKET: udagram-code-files-${self:provider.stage}
+    LIKES_TABLE: Likes-${self:provider.stage}
+  tracing:
+    lambda: true
+    apiGateway: true
+
+layers:
+  HeadlessChrome:
+    name: HeadlessChrome
+    compatibleRuntimes:
+      - nodejs12.x
+    description: Required for headless chrome
+    package:
+      artifact: "layers/chrome_aws_lambda.zip"
+
+custom:
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Udacity Meme Generator App app
+        description: Serverless app MEM_GEN
+    models:
+      - name: CreateRequest
+        contentType: application/json
+        schema: ${file(validators/create-item-request.json)}
+  topicName: codesTopic-${self:provider.stage}
+  webpack:
+    webpackConfig: webpack.config.js
+    includeModules:
+      forceExclude:
+        - chrome-aws-lambda
+    packager: "npm"
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetCodes:
+    handler: src/lambda/http/getMemes.handler
+    events:
+      - http:
+          method: get
+          path: codes
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CODES_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.LIKES_TABLE}
+
+  GetUserCodes:
+    handler: src/lambda/http/getUserMemes.handler
+    events:
+      - http:
+          method: get
+          path: my-codes
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CODES_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CODES_TABLE}/index/${self:provider.environment.USER_ID_INDEX}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+
+  DeleteCode:
+    handler: src/lambda/http/deleteMeme.handler
+    events:
+      - http:
+          method: delete
+          path: codes/{codeId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CODES_TABLE}
+
+  LikeUnlikeCode:
+    handler: src/lambda/http/likeUnlikeMeme.handler
+    events:
+      - http:
+          method: put
+          path: codes/{codeId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CODES_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:DeleteItem
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.LIKES_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+
+  CreateCode:
+    handler: src/lambda/http/createMeme.handler
+    events:
+      - http:
+          method: post
+          path: codes
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new meme item
+            description: Create a new item meme
+            requestModels:
+              "application/json": CreateRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CODES_TABLE}
+
+  GenerateImage:
+    handler: src/lambda/dynamodb/generateImage.handler
+    layers:
+      - { Ref: HeadlessChromeLambdaLayer }
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt CodesTable.StreamArn
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*      
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.FILES_S3_BUCKET}/*
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CODES_TABLE}
+        
+  UpdateLikeCount:
+    handler: src/lambda/dynamodb/updateLikeCount.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt LikesTable.StreamArn
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CODES_TABLE}
+
+  GetUploadLink:
+    handler: src/lambda/http/getCodeUploadLink.handler
+    events:
+      - http:
+          method: post
+          path: codes/{codeId}/link
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.FILES_S3_BUCKET}/*
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: "request-body-validator"
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    CodesTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: codeId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: codeId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.CODES_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.USER_ID_INDEX}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+    LikesTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: codeId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: codeId
+            KeyType: HASH
+          - AttributeName: userId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.LIKES_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    CodesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.IMAGES_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+                - POST
+                - PUT
+              AllowedOrigins:
+                - "*"
+    FilesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.FILES_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+                - POST
+                - PUT
+              AllowedOrigins:
+                - "*"

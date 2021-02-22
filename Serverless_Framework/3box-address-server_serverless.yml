@@ -1,0 +1,92 @@
+service: threebox-address-server
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'develop'}
+  region: ${opt:region, 'us-west-2'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - KMS:Decrypt
+      Resource: ${self:custom.kmsSecrets.keyArn}
+    - Effect: Allow
+      Action:
+      - s3:*
+      Resource: 'arn:aws:s3:::*'
+
+  environment:
+      SECRETS: ${self:custom.kmsSecrets.secrets.SECRETS}
+      IPFS_PATH: /ipfs
+      AWS_BUCKET_NAME: ${self:custom.awsBucketName.${self:provider.stage}}
+      CODE_VERSION: ${env:CODE_VERSION}
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-kms-secrets
+  - serverless-offline
+
+# Enable auto-packing of external modules
+custom:
+  awsBucketName:
+    develop: ipfs-dev.3box.io
+    master: ipfs-bucket-test.3box.io
+  webpackIncludeModules: true
+  serverless-kms-secrets:
+    secretsFile: kms-secrets.${self:provider.stage}.${self:provider.region}.yml
+  kmsSecrets: ${file(kms-secrets.${self:provider.stage}.${self:provider.region}.yml)}
+  contentCompression: 1024
+  serverless-offline:
+      host: 0.0.0.0
+
+functions:
+
+  root_store_address_post:
+    handler: src/api_handler.root_store_address_post
+    timeout: 30
+    events:
+      - http:
+         path: odbAddress
+         method: post
+         cors: true
+
+  root_store_address_get:
+    handler: src/api_handler.root_store_address_get
+    timeout: 30
+    events:
+      - http:
+         path: odbAddress/{id}
+         method: get
+         cors: true
+         request:
+            parameters:
+              paths:
+                id: true
+
+  root_store_addresses_post:
+    handler: src/api_handler.root_store_addresses_post
+    timeout: 30
+    events:
+      - http:
+         path: odbAddresses
+         method: post
+         cors: true
+
+  link_post:
+    handler: src/api_handler.link_post
+    timeout: 30
+    events:
+      - http:
+         path: link
+         method: post
+         cors: true
+
+  link_delete:
+    handler: src/api_handler.link_delete
+    timeout: 30
+    events:
+      - http:
+         path: linkdelete
+         method: post
+         cors: true

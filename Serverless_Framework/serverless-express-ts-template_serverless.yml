@@ -1,0 +1,83 @@
+# Full .yml options can be found at
+# https://serverless.com/framework/docs/providers/aws/guide/serverless.yml/
+
+service: flow-backend
+
+# Deploy on serverless.com dasboard
+# org:
+# app:
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+
+  # stage can be passed as parameter in deploy with sls deploy -stage <stage>. Default is dev
+  stage: ${opt:stage, "dev"}
+
+  # NOTE Use this if you want to deploy your functions under the API Hub infrastructure
+  # This binds your lambda functions triggered by a API gateway to the already existing AGWs
+  # that are configured to recieve traffic from the hub sub-domains
+  # PROD subdomain: hub.dentrodahistoria.com.br/api
+  # DEV subdomain: devhub.dentrodahistoria.com.br/api
+  # apiGateway:
+  #   restApiId:
+  #     "Fn::ImportValue": SharedGW-restApiId-${self:provider.stage}
+  #   restApiRootResourceId:
+  #     "Fn::ImportValue": SharedGW-rootResourceId-${self:provider.stage}
+
+  # service level envvars
+  environment:
+    STAGE: ${self:provider.stage}
+
+  # Number of days that the function logs will be avaiable on CloudWatch
+  logRetentionInDays: 30
+
+  # tracing:
+  #   apiGateway: true # Use this if your lambda has a API GW trigger
+  #   lambda: true # Optional, can be true (true equals 'Active'), 'Active' or 'PassThrough'
+
+package: # Optional deployment packaging configuration
+  exclude:
+    - "envvars.json"
+  excludeDevDependencies: true
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+functions:
+  function-name:
+    handler: handlers/app.handler
+    name: funciton-name-${self:provider.stage} # NOTE keep stage in function name to avoid duplicate resources names
+    description:
+    memorySize: 128
+    timeout: 30 # Timeout for this specific function.  Overrides the default set above.
+    role: ${file(envvars.json):generalRole} # Default rolae for lambda functions
+
+    # vpc:
+    #   vpc:
+    #     - vpc-a4ae4cc2
+    #   securityGroupIds:
+    #     - sg-0ea35f163fc72676e # generalSecurityGroup for lambda functions
+    #   subnetIds: # Default subnets for lambda functions connected with NAT gateway for internet access
+    #     - subnet-020fbb5c03f7c1ee9
+    #     - subnet-0a2a52966a160c778
+
+    events:
+      - http:
+          path: /
+          method: any
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: any
+          cors: true
+
+    # layers:
+    #   - ${file(envvars.json):httpRequestLayerArn}

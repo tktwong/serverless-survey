@@ -1,0 +1,48 @@
+service: vine-watcher
+
+# You can pin your service to only deploy with a specific Serverless version
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: java11
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*Object"
+      Resource: { "Fn::Join": ["", ["arn:aws:s3:::", { "Ref": "WineWatcherBucket" }, "/*" ] ] }
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: { "Fn::Join": ["", ["arn:aws:s3:::", { "Ref": "WineWatcherBucket" } ] ] }
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+package:
+  artifact: build/libs/vine-watcher-dev-all.jar
+
+functions:
+  winewatcher:
+    handler: vine.watcher.Handler
+    memorySize: 512
+    timeout: 60
+    events:
+     - schedule: rate(1 hour)
+    environment:
+      SLACK_WEBHOOK: ${opt:slack-webhook}
+
+resources:
+  Resources:
+    WineWatcherBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "vinewatcher-${opt:stage}"
+

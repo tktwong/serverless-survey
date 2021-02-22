@@ -1,0 +1,60 @@
+service: serverless-tm-agotchi
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage,'dev'}
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+      Resource:
+        - "#{BigHack2020TmAgotchi.Arn}"
+  environment:
+    TMAGOTCHI_TABLE_NAME: ${self:custom.tmAgotchiTableName}
+
+package:
+  excludeDevDependencies: true
+
+functions:
+  handleCommand:
+    handler: src/handler.handleCommand
+    events:
+      - http:
+          method: post
+          path: command
+          cors: true
+
+resources:
+  Resources:
+    BigHack2020TmAgotchi:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tmAgotchiTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+custom:
+  tmAgotchiTableName: tmAgotchiTableName-${self:provider.stage}
+  webpack:
+    keepOutputDirectory: true
+    includeModules:
+      forceExclude:
+        - aws-sdk

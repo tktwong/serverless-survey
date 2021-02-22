@@ -1,0 +1,56 @@
+service: trampo-certo-rating
+
+frameworkVersion: '>=1.1.0 <2.0.0'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  environment:
+    RATINGS_BY_CPF_TABLE: ${self:custom.ratingsByCpfTableName}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:Query
+      Resource: 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.ratingsByCpfTableName}'
+
+functions:
+  cpfQuery:
+    handler: src/handlers.cpfQuery
+    events:
+      - http:
+          path: cpf_query
+          method: get
+          cors: true
+  setRating:
+    handler: src/handlers.setRating
+    events:
+      - http:
+          path: rating
+          method: post
+          cors: true
+
+custom:
+  ratingsByCpfTableName: ${self:provider.stage}-ratings-by-cpf
+
+resources:
+  Resources:
+    RatingsByCpfTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: cpf
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: cpf
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.ratingsByCpfTableName}

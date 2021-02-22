@@ -1,0 +1,313 @@
+service: fh-matchmaking-api
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: us-west-2
+  profile: fh
+  stackPolicy:
+    - Effect: Allow
+      Principal: "*"
+      Action: "Update:*"
+      Resource: "*"
+    - Effect: Deny
+      Principal: "*"
+      Action:
+        - Update:Replace
+        - Update:Delete
+      Resource: "*"
+      Condition:
+        StringEquals:
+          ResourceType:
+            - AWS::Cognito::UserPool
+            - AWS::Cognito::UserPoolGroup
+            - AWS::Cognito::UserPoolClient
+            - AWS::DynamoDB::Table
+            - AWS::S3::Bucket
+
+plugins:
+  - serverless-iam-roles-per-function
+
+functions:
+  app:
+    handler: app.server # reference the file and exported method
+    environment:
+      USER_POOL:
+        Ref: CognitoUserPoolUserPool
+      USER_POOL_CLIENT:
+        Ref: UserPoolClient
+      REGION:
+        Ref: AWS::Region
+      HOST_PROFILES_TABLE:
+        Ref: HostProfilesTable
+      RESIDENT_PROFILES_TABLE:
+        Ref: ResidentProfilesTable
+      MEDIA_BUCKET:
+        Ref: S3BucketMediaBucket
+    events: # events trigger lambda functions
+      - http: # this is an API Gateway HTTP event trigger
+          path: /
+          method: ANY
+          cors: true
+      - http: # all routes get proxied to the Express router
+          path: /{proxy+}
+          method: ANY
+          cors: true
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "cognito-idp:AdminCreateUser"
+          - "cognito-idp:AdminAddUserToGroup"
+          - "cognito-idp:ListUsersInGroup"
+          - "cognito-idp:AdminGetUser"
+          - "cognito-idp:AdminListGroupsForUser"
+          - "cognito-idp:AdminUpdateUserAttributes"
+          - "cognito-idp:AdminDeleteUserAttributes"
+        Resource:
+          Fn::GetAtt:
+            - CognitoUserPoolUserPool
+            - Arn
+      - Effect: "Allow"
+        Action:
+          - "dynamodb:Scan"
+          - "dynamodb:Query"
+          - "dynamodb:GetItem"
+          - "dynamoDb:UpdateItem"
+          - "dynamoDb:DeleteItem"
+        Resource:
+          - Fn::GetAtt:
+              - HostProfilesTable
+              - Arn
+          - Fn::GetAtt:
+              - ResidentProfilesTable
+              - Arn
+      - Effect: "Allow"
+        Action:
+          - "s3:GetObject"
+          - "s3:PutObject"
+          - "s3:PutObjectAcl"
+        Resource:
+          Fn::Join:
+            - ''
+            - - Fn::GetAtt:
+                - S3BucketMediaBucket
+                - Arn
+              - '/*'
+  customMessage:
+    environment:
+      STAGE: ${self:provider.stage}
+    handler: events.cognitoMessage
+    events:
+      - cognitoUserPool:
+          pool: UserPool
+          trigger: CustomMessage
+
+resources:
+  Mappings:
+    DynamoCapacityMap:
+      # We have three stages where we want to provision capacity, but stay
+      # inside the 25/25 free tier limit. We just use 1 unit for dev/stage and
+      # the rest for prod. Each stage has two tables and 1 index, so
+      # (8 + 8 + 3) + (1 + 1 + 1) + (1 + 1 + 1) = 25
+      prod:
+        table: 8
+        index: 3
+      stage:
+        table: 1
+        index: 1
+      dev:
+        table: 1
+        index: 1
+
+  Resources:
+    CognitoUserPoolUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:service}-${self:provider.stage}-user-pool
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: true
+          UnusedAccountValidityDays: 365
+        AutoVerifiedAttributes:
+          - "email"
+        UsernameAttributes:
+          - "email"
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+        Schema:
+          - Name: given_name
+            AttributeDataType: String
+            Mutable: true
+            Required: true
+          - Name: family_name
+            AttributeDataType: String
+            Mutable: true
+            Required: true
+          - Name: birthdate
+            AttributeDataType: String
+            Mutable: true
+            Required: false
+            StringAttributeConstraints:
+              MinLength: 10
+              MaxLength: 10
+          - Name: phone_number
+            AttributeDataType: String
+            Mutable: true
+            Required: false
+    UserPoolAdminGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        Description: Admin users
+        GroupName: admins
+        UserPoolId:
+          Ref: CognitoUserPoolUserPool
+    UserPoolHostGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        Description: Host users
+        GroupName: hosts
+        UserPoolId:
+          Ref: CognitoUserPoolUserPool
+    UserPoolCaseworkerGroup:
+      Type: AWS::Cognito::UserPoolGroup
+      Properties:
+        Description: Caseworker users
+        GroupName: caseworkers
+        UserPoolId:
+          Ref: CognitoUserPoolUserPool
+    UserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:service}-client
+        GenerateSecret: false
+        UserPoolId:
+          Ref: CognitoUserPoolUserPool
+    AdminUser:
+      Type: AWS::Cognito::UserPoolUser
+      Properties:
+        DesiredDeliveryMediums:
+          - EMAIL
+        Username: bendemboski+admin@gmail.com
+        UserAttributes:
+          - Name: given_name
+            Value: Ben
+          - Name: family_name
+            Value: Demboski
+          - Name: email
+            Value: bendemboski+admin@gmail.com
+          - Name: email_verified
+            Value: false
+        UserPoolId:
+          Ref: CognitoUserPoolUserPool
+    HostProfilesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-host-profiles
+        AttributeDefinitions:
+          - AttributeName: host
+            AttributeType: S
+        KeySchema:
+          - AttributeName: host
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits:
+            Fn::FindInMap:
+              - DynamoCapacityMap
+              - ${self:provider.stage}
+              - table
+          WriteCapacityUnits:
+            Fn::FindInMap:
+              - DynamoCapacityMap
+              - ${self:provider.stage}
+              - table
+    ResidentProfilesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-resident-profiles
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: caseworker
+            AttributeType: S
+          - AttributeName: matchedHost
+            AttributeType: S
+        KeySchema:
+          - AttributeName: caseworker
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits:
+            Fn::FindInMap:
+              - DynamoCapacityMap
+              - ${self:provider.stage}
+              - table
+          WriteCapacityUnits:
+            Fn::FindInMap:
+              - DynamoCapacityMap
+              - ${self:provider.stage}
+              - table
+        GlobalSecondaryIndexes:
+          - IndexName: matches
+            KeySchema:
+              - AttributeName: matchedHost
+                KeyType: HASH
+            Projection:
+              NonKeyAttributes:
+                - firstName
+                - lastName
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits:
+                Fn::FindInMap:
+                  - DynamoCapacityMap
+                  - ${self:provider.stage}
+                  - index
+              WriteCapacityUnits:
+                Fn::FindInMap:
+                  - DynamoCapacityMap
+                  - ${self:provider.stage}
+                  - index
+    S3BucketMediaBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-${self:provider.stage}-media
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - Authorization
+                - Content-Type
+              AllowedMethods:
+                - GET
+                - PUT
+              MaxAge: 3000
+
+  Outputs:
+    UserPoolId:
+      Value:
+        Ref: CognitoUserPoolUserPool
+      Export:
+        Name: "${self:provider.stage}::UserPool::Id"
+    UserPoolClientId:
+      Value:
+        Ref: UserPoolClient
+      Export:
+        Name: "${self:provider.stage}::UserPoolClient::Id"
+    HostProfilesTableName:
+      Value:
+        Ref: HostProfilesTable
+      Export:
+        Name: "${self:provider.stage}::HostProfilesTable::Name"
+    ResidentProfilesTableName:
+      Value:
+        Ref: ResidentProfilesTable
+      Export:
+        Name: "${self:provider.stage}::ResidentProfilesTable::Name"
+    MediaBucketName:
+      Value:
+        Ref: S3BucketMediaBucket
+      Export:
+        Name: "${self:provider.stage}::MediaBucket::Name"

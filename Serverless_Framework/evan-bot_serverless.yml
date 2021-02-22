@@ -1,0 +1,44 @@
+service: evan-bot
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  stage: "${opt:stage, env:SLS_STAGE, 'dev'}"
+  log_level: "${env:LOG_LEVEL, 'INFO'}"
+
+  pythonRequirements:
+    dockerizePip: false
+    slim: true
+
+provider:
+  name: aws
+  runtime: python3.6 # don't change; lxml is compiled with python3.6
+  stage: ${self:custom.stage}
+  region: eu-west-1
+  environment:
+    LOG_LEVEL: ${self:custom.log_level}
+    TELEGRAM_TOKEN: ${env:TELEGRAM_TOKEN}
+  stackTags:
+    x-service: evan-bot
+    x-stack: ${self:service}-${self:provider.stage}
+  apiGateway:
+    shouldStartNameWithService: true
+
+package:
+  exclude:
+    - env/**
+    - node_modules/**
+
+functions:
+  webhook:
+    handler: handlers/webhook.handler
+    description: "Webhook handler"
+    memorySize: 256
+    timeout: 30
+    events:
+      - http:
+          path: "${env:WEBHOOK_PATH, 'webhook'}"
+          method: post
+          cors: true
+

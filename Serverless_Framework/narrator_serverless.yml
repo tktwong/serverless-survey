@@ -1,0 +1,94 @@
+# Meidän palvelun nimi
+service: yksilollinen-sanakirja-api
+
+# serverless-webpack transpile to ES6
+plugins:
+- serverless-webpack
+- serverless-offline
+
+custom:
+  stage: dev
+  tableName: KortitTable
+  tableThroughput: 1
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  # Tänne kaikki avaimet sun muut, jos tulee
+  environment: ${file(env.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-2
+  # Näihin pääsee funktioissa käsiksi process.env.
+  environment:
+    tableName: ${self:custom.tableName}
+
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+    - dynamodb:DescribeTable
+    - dynamodb:Query
+    - dynamodb:Scan
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    - dynamodb:DeleteItem
+    Resource:
+    - "Fn::GetAtt": [ KortitTable, Arn ]
+
+
+functions:
+  create:
+    handler: create.main
+    events:
+    - http:
+        path: kortit
+        method: post
+        cors: true
+        authorizer: aws_iam
+  get:
+    handler: get.main
+    events:
+    - http:
+        path: kortit/{id}
+        method: get
+        cors: true
+        authorizer: aws_iam
+  list:
+    handler: list.main
+    events:
+    - http:
+        path: kortit
+        method: get
+        cors: true
+        authorizer: aws_iam
+  update:
+    handler: update.main
+    events:
+    - http:
+        path: kortit/{id}
+        method: put
+        cors: true
+        authorizer: aws_iam
+  delete:
+    handler: delete.main
+    events:
+    - http:
+        path: kortit/{id}
+        method: delete
+        cors: true
+        authorizer: aws_iam
+
+resources:
+# DynamoDB
+- ${file(resources/dynamodb-table.yml)}
+# S3
+- ${file(resources/s3-bucket.yml)}
+# Cognito
+- ${file(resources/cognito-user-pool.yml)}
+- ${file(resources/cognito-identity-pool.yml)}
+- ${file(resources/cognito-identity-pool.yml)}
+# Api gateway errors
+- ${file(resources/api-gateway-errors.yml)} 

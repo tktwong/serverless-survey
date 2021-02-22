@@ -1,0 +1,105 @@
+service: physisBackEnd
+package:
+  individually: true
+  excludeDevDependencies: true
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-webpack
+
+custom:
+  webpack:
+    packager: 'yarn'
+    packExternalModulesMaxBuffer: 200 * 1024   # Size of stdio buffers for spawned child processes
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  profile: physisinvest
+  environment:
+      USER_TABLE: physis_user-${opt:stage, self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/*"
+
+functions:
+  signup:
+    handler: handlers/signup.signUpUser
+    events:
+      - http:
+          path: api/auth/signup
+          method: post
+          cors: true
+
+  login:
+    handler: handlers/login.loginUser
+    events:
+      - http:
+          path: api/auth/login
+          method: post
+          cors: true
+
+  emailExists:
+    handler: handlers/emailExisits.checkEmailExists
+    events:
+      - http:
+          path: api/auth/emailExists
+          method: get
+          cors: true
+
+  getUserData:
+    handler: handlers/get_profile_data.getUserData
+    events:
+      - http:
+          path: api/getUserData
+          method: get
+          cors: true
+
+  userIsLoggedIn:
+    handler: handlers/userIsLoggedIn.loggedInUser
+    events:
+      - http:
+          path: api/isUserLoggedIn
+          method: get
+          cors: true
+  # updateOne:
+  #   handler: handlers/update.updateOne
+  #   events:
+  #     - http:
+  #         path: api/item/{id}
+  #         method: put
+  #         cors: true
+
+  # deleteOne:
+  #   handler: handlers/delete.deleteOne
+  #   events:
+  #     - http:
+  #         path: api/item/{id}
+  #         method: delete
+  #         cors: true
+
+resources:
+  Resources:
+    userTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        ## a formality for creating table
+        AttributeDefinitions:
+          -
+            AttributeName: email
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 15
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.environment.USER_TABLE}

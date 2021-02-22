@@ -1,0 +1,392 @@
+service: flect-chime-sdk # you should configure here. use only lowercase and no underbar
+
+provider:
+  name: aws
+  logs:
+    websocket: true
+  runtime: nodejs12.x
+  memorySize: 256
+  stage: ${opt:stage, 'dev'}
+  #region: us-east-1
+  region: ap-northeast-1 # Tokyo
+  environment:
+    MEETINGS_TABLE_NAME    : !Ref Meetings
+    ATTENDEES_TABLE_NAME   : !Ref Attendees
+    USER_TABLE_NAME        : !Ref Users
+    SQS_QUEUE_ARN          : !GetAtt MeetingNotificationsQueue.Arn
+    CONNECTIONS_TABLE_NAME : !Ref ConnectionsTable
+    MEETING_ROOM_ID_PREFIX : ""
+    CODE                   : ""
+  websocketsApiName: ${self:service.name}
+  websocketsApiRouteSelectionExpression: $request.body.action  
+
+plugins:
+  - serverless-s3-sync
+
+custom:
+  webSiteName: ${self:service}-web
+  s3Sync:
+    - bucketName: ${self:custom.webSiteName}
+      localDir: build
+
+package:
+  exclude:
+    - ./**
+  include:
+    - serverless.yml
+    - sls/**
+    - node_modules/uuid/**
+###############
+## Resources ##
+###############
+resources:
+  Resources:
+    ### For index.htm and js ###
+    HTMLBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.webSiteName}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: error.html
+    StaticSiteS3BucketPolicy:
+          Type: AWS::S3::BucketPolicy
+          Properties:
+            Bucket:
+              Ref: HTMLBucket
+            PolicyDocument:
+              Statement:
+                - Sid: PublicReadGetObject
+                  Effect: Allow
+                  Principal: "*"
+                  Action:
+                  - s3:GetObject
+                  Resource:
+                    Fn::Join: ["", ["arn:aws:s3:::",{"Ref": "HTMLBucket"},"/*"]]
+
+    ### DynamoDB for Meeting ###
+    Users:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "UserId"
+            AttributeType: "S"
+          - AttributeName: "UserName"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "UserId"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: "2"
+          WriteCapacityUnits: "2"
+        GlobalSecondaryIndexes:
+          - IndexName: "reverseGSI"
+            KeySchema:
+              - AttributeName: "UserName"
+                KeyType: "HASH"
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: '2'
+              WriteCapacityUnits: '2'
+    Meetings:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "MeetingName"
+            AttributeType: "S"
+          - AttributeName: "MeetingId"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "MeetingName"
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: "2"
+          WriteCapacityUnits: "2"
+        GlobalSecondaryIndexes:
+          - IndexName: "MeetingId"
+            KeySchema:
+              - AttributeName: "MeetingId"
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: "2"
+              WriteCapacityUnits: "2"
+        TimeToLiveSpecification:
+          AttributeName: "TTL"
+          Enabled: true
+    Attendees:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "AttendeeId"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "AttendeeId"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: "2"
+          WriteCapacityUnits: "2"
+
+    ### Role ###
+    ChimeMeetingsAccessPolicy: # In-line
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: ChimeMeetingsAccess
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource:
+                - arn:aws:execute-api:*:*:**/@connections/*            
+
+            - Effect: Allow
+              Action:
+                - 'chime:CreateMeeting'
+                - 'chime:DeleteMeeting'
+                - 'chime:GetMeeting'
+                - 'chime:ListMeetings'
+                - 'chime:BatchCreateAttendee'
+                - 'chime:CreateAttendee'
+                - 'chime:DeleteAttendee'
+                - 'chime:GetAttendee'
+                - 'chime:ListAttendees'
+                - 'logs:CreateLogStream'
+                - 'logs:CreateLogGroup'
+                - 'logs:PutLogEvents'
+                - 'dynamodb:GetItem'
+                - 'dynamodb:PutItem'
+                - 'dynamodb:Query'
+                - 'dynamodb:DeleteItem'
+                - 'dynamodb:UpdateItem'
+                - 'dynamodb:Scan'
+              Resource: '*'
+        Roles:
+          - Ref: FLECTChimeSdkLambdaRole
+    FLECTChimeSdkLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com            
+              Action:
+                - sts:AssumeRole
+    
+
+    ### SQS (Not used yet) ###
+    MeetingNotificationsQueue:
+      Type: AWS::SQS::Queue
+
+    ### DynamoDB for WwebSocket ###
+    ConnectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: MeetingId
+          AttributeType: S
+        - AttributeName: AttendeeId
+          AttributeType: S
+        KeySchema:
+        - AttributeName: MeetingId
+          KeyType: HASH
+        - AttributeName: AttendeeId
+          KeyType: RANGE
+        SSESpecification:
+          SSEEnabled: True
+        TimeToLiveSpecification:
+          AttributeName: TTL
+          Enabled: true      
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2
+
+###############
+## Functions ##
+###############
+functions:
+  ### for Meeting ###
+  ##### USER #####
+  CreateUser:
+    handler: sls/user_handlers.createUser
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+  GetUser:
+    handler: sls/user_handlers.getUsers
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+
+  DeleteUser:
+    handler: sls/user_handlers.deleteUser
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: users/{userId}
+          method: delete
+          cors: true
+  LoginUser:
+    handler: sls/user_handlers.loginUser
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: users/{userId}/execLogin
+          method: post
+          cors: true
+          request: 
+            parameters: 
+              paths: 
+                userId: true
+  LogoutUser:
+    handler: sls/user_handlers.logoutUser
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: users/{userId}/execLogout
+          method: post
+          cors: true
+          request: 
+            parameters: 
+              paths: 
+                userId: true
+
+
+
+  ##### MEETING #####
+  CreateMeeting:
+    handler: sls/meeting_handlers.createMeeting
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: meetings
+          method: post
+          cors: true
+
+  GetMeeting:
+    handler: sls/meeting_handlers.getMeetings
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: meetings
+          method: get
+          cors: true
+
+  DeleteMeeting:
+    handler: sls/meeting_handlers.end
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: meetings/{meetingId}
+          method: delete
+          cors: true
+          request: 
+            parameters: 
+              paths: 
+                meetingId: true
+
+  JoinMeeting:
+    handler: sls/meeting_handlers.join
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: meetings/{meetingId}/attendees
+          method: post
+          cors: true
+          request: 
+            parameters: 
+              paths: 
+                meetingId: true
+                
+  GetAttendees:
+    handler: sls/meeting_handlers.getAttendee
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: meetings/{meetingId}/attendees/{attendeeId}
+          method: get
+          cors: true
+          request: 
+            parameters: 
+              paths: 
+                meetingId: true
+                attendeeId: true
+  LeaveMeeting:
+    handler: sls/meeting_handlers.leave
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: meetings/{meetingId}/attendees/{attendeeId}
+          method: delete
+          cors: true
+          request: 
+            parameters: 
+              paths: 
+                meetingId: true
+                attendeeId: true
+  ChimeLog:
+    handler: sls/log_handlers.log
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - http:
+          path: logs
+          method: post
+          cors: true
+
+
+
+  # ChimeSQSQueueLambda:
+  #   handler: sls/notification_handlers.sqs_handler
+  #   role: FLECTChimeSdkLambdaRole
+  #   events:
+  #     - sqs:
+  #       arn: !GetAtt MeetingNotificationsQueue.Arn
+  #       batchSize: 10
+
+  connect:
+    handler: sls/messaging.onconnect
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - websocket:
+          route: $connect
+          authorizer:
+            name: auth
+            identitySource:
+              - 'route.request.querystring.joinToken'
+              - 'route.request.querystring.meetingId'
+              - 'route.request.querystring.attendeeId'
+
+  disconnect:
+    handler: sls/messaging.ondisconnect
+    role: FLECTChimeSdkLambdaRole
+    events:
+      - websocket:
+          route: $disconnect
+
+  sendmessage:
+    handler: sls/messaging.sendmessage
+    role: FLECTChimeSdkLambdaRole
+    timeout: 15
+    events:
+      - websocket:
+          route: sendmessage
+          routeResponseSelectionExpression: $default
+
+          
+
+  auth:
+    handler: sls/messaging.authorize
+    role: FLECTChimeSdkLambdaRole

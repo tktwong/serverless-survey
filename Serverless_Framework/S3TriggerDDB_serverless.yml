@@ -1,0 +1,41 @@
+app: s3triggerddb-app
+service: s3triggerddb
+provider:
+  name: aws
+  runtime: python3.8
+  memorySize: 256
+  timeout: 10
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem  
+      Resource: 'arn:aws:dynamodb:us-east-1:*:*'
+
+functions:
+  hello:
+    handler: handler.trigger
+    events:
+      - s3:
+          bucket: pwm-virginia
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: uploads/
+            - suffix: .jpg
+          existing: true
+
+resources: # CloudFormation template syntax
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: s3-object-put
+        AttributeDefinitions:
+          - AttributeName: objectkey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: objectkey
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

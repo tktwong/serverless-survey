@@ -1,0 +1,94 @@
+service: social-barometer
+
+custom:
+  service: ${self:service}-${self:provider.stage}
+  defaultStage: dev
+  defaultRegion: eu-west-1
+  defaultAccount: 627450054263
+  defaultProfile: hackathon
+  version: 1
+  clientDeploy:
+     CLIENT_S3_BUCKET: ${self:custom.service}-www
+     CLIENT_CONFIG_PATH: "./www/config/config.json" 
+     CLIENT_FOLDER: "./www/"
+
+plugins:
+  - clientsetup  
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-west-1
+  profile: hackathon
+  stage: dev
+  account: 627450054263
+  memorySize: 128
+  apiKeys:
+    - ${self:custom.service}
+  timeout: 30
+  environment:
+    TOKEN: 123739874833009|90f51ceaa1b4968477157d4acb4b256a
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - "arn:aws:dynamodb:*:*:table/*"
+
+functions:
+  page:
+    handler: src/handler.facebook
+    events:
+     - http:
+        path: page/{id}
+        integration: lambda-proxy
+        method: get
+        cors: true
+  search:
+    handler: src/handler.search
+    events:
+     - http:
+        path: search
+        integration: lambda-proxy
+        method: get
+        cors: true
+  instagram:
+    handler: src/handler.instagram
+    events:
+     - http:
+        path: instagram/{user}
+        integration: lambda-proxy
+        method: get
+        cors: true
+  google:
+    handler: src/handler.npl
+    events:
+      - http:
+          path: npl
+          method: post
+          cors: true            
+resources:
+  Resources:
+   WwwBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties: 
+     BucketName: ${self:custom.clientDeploy.CLIENT_S3_BUCKET}
+     AccessControl: "PublicRead"
+     WebsiteConfiguration : 
+         IndexDocument: "index.html"
+         ErrorDocument: "index.html"
+   WwwBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: WwwBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action:
+            - s3:GetObject
+            Resource: arn:aws:s3:::${self:custom.clientDeploy.CLIENT_S3_BUCKET}/*                
+

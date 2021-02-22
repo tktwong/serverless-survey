@@ -1,0 +1,75 @@
+#Nombre del servicio
+service: servicio-candidatos
+
+frameworkVersion: '2'
+
+#Configuracion de AWS
+provider:
+  name: aws
+  runtime: nodejs12.x
+  lambdaHashingVersion: 20201221
+  region: la region de aws donde estemos trabajando
+  environment:
+    TABLA_CANDIDATOS: ${self:service}-${opt:stage, self:provider.stage}
+    TABLA_EMAIL_CANDIDATOS: "email-candidato-${opt:stage, self:provider.stage}"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+functions:
+  #Cuando hacemos un POST a /candidatos/api/candidato.submit se llama al handler presente en handler.js
+  #Tambien especificamos cuanta memoria alocar a la operacion
+  #Funcion que sirve para agregar un solo candidato
+  agregarCandidato:
+    handler: api/candidato.submit
+    memorySize: 128
+    description: Hace submit con la informacion del candidato y comienza el proceso de la entrevista.
+    events:
+      - http: 
+          path: candidatos
+          method: post
+
+  #Funcion para obtener una lista con todos los candidatos
+  listaCandidatos:
+    handler: api/candidato.list
+    memorySize: 128
+    description: Enlista todos los candidatos
+    events:
+      - http: 
+          path: candidatos
+          method: get  
+
+  #Función para obtener los detalles de un candidato en especifico
+  detallesCandidato:
+    handler: api/candidato.get
+    events:
+      - http:
+          path: candidatos/{id}
+          method: get
+
+#Esto es lo que nos permite crear la DynamoDB 
+resources:
+  Resources:
+    TablaCandidatos:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.TABLA_CANDIDATOS}

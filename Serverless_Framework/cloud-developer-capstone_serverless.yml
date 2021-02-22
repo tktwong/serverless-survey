@@ -1,0 +1,388 @@
+service:
+  name: notes-app
+
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  environment:
+    NOTES_TABLE: Notes-${self:provider.stage}
+    NOTES_INDEX: NotesIndex
+    IMAGES_TABLE: Notes-Images-${self:provider.stage}
+    IMAGE_ID_INDEX: ImageIdIndex
+    IMAGES_S3_BUCKET: notes-bucket-capstone-proj-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+    AUTH_0_SECRET_ID: Auth0Secret-${self:provider.stage}
+    AUTH_0_SECRET_FIELD: auth0Secret
+    ES_INDEX: es-notes-index
+    ES_NOTES_TYPE: notes
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource:
+        - "*"
+
+custom:
+
+  topicName: notestopic-${self:provider.stage}
+
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Notes API
+        description: Notes API Project Capstone
+    models:
+      - name: CreateNoteValidation
+        contentType: application/json
+        schema: ${file(src/requests/validations/create-note-request.json)}
+      - name: UpdateNoteValidation
+        contentType: application/json
+        schema: ${file(src/requests/validations/update-note-request.json)}
+      - name: SearchNoteRequest
+        contentType: application/json
+        schema: ${file(src/requests/validations/search-note-request.json)}
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetNotes:
+    handler: src/lambda/http/getNotes.handler
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}/index/${self:provider.environment.NOTES_INDEX}
+    events:
+      - http:
+          method: get
+          path: notes
+          authorizer: Auth
+    
+  CreateNote:
+    handler: src/lambda/http/createNote.handler
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}
+    events:
+      - http:
+          method: post
+          path: notes
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a note
+            description: Create a note
+            requestModels:
+              'application/json': CreateNoteValidation
+
+  UpdateNote:
+    handler: src/lambda/http/updateNote.handler
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}
+    events:
+      - http:
+          method: patch
+          path: notes/{noteId}
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a note
+            description: Update a note
+            requestModels:
+              'application/json': UpdateNoteValidation
+
+  DeleteNote:
+    handler: src/lambda/http/deleteNote.handler
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}
+    events:
+      - http:
+          method: delete
+          path: notes/{noteId}
+          authorizer: Auth
+
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*  
+    events:
+      - http:
+          method: post
+          path: notes/{noteId}/attachment
+          authorizer: Auth
+
+  SearchNote:
+    environment:
+      ES_ENDPOINT: !GetAtt NotesSearch.DomainEndpoint
+    handler: src/lambda/http/searchNote.handler
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - es:ESHttpPost
+        Resource: !Sub arn:${AWS::Partition}:es:${AWS::Region}:${AWS::AccountId}:domain/notes-search-${self:provider.stage}/*
+    events:
+      - http:
+          method: post
+          path: notes/search/
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Search notes
+            description: Search for notes
+            requestModels:
+              'application/json': SearchNoteRequest
+
+  SyncWithElasticsearch:
+    environment:
+      ES_ENDPOINT: !GetAtt NotesSearch.DomainEndpoint
+      SNS_ARN:
+        Fn::Join:
+          - ':'
+          - - arn:aws:sns
+            - Ref: AWS::Region
+            - Ref: AWS::AccountId
+            - ${self:custom.topicName}
+      TOPIC_NAME: ${self:custom.topicName}
+    handler: src/lambda/dynamodb/elasticSearchSync.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt NotesDynamoDBTable.StreamArn
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - sns:Publish
+        Resource: 
+          Fn::Join:
+            - ':'
+            - - arn:aws:sns
+              - Ref: AWS::Region
+              - Ref: AWS::AccountId
+              - ${self:custom.topicName}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    NotesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: noteId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: noteId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        TableName: ${self:provider.environment.NOTES_TABLE}
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.NOTES_INDEX}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: noteId
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL # What attributes will be copied to an index
+
+    ImagesDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: groupId
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+          - AttributeName: imageId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: groupId
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        TableName: ${self:provider.environment.IMAGES_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.IMAGE_ID_INDEX}
+            KeySchema:
+            - AttributeName: imageId
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.IMAGES_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket
+
+    KMSKey:
+      Type: AWS::KMS::Key
+      Properties:
+        Description: KMS key to encrypt Auth0 secret
+        KeyPolicy:
+          Version: '2012-10-17'
+          Id: key-default-1
+          Statement:
+            - Sid: Allow administration of the key
+              Effect: Allow
+              Principal:
+                AWS:
+                  Fn::Join:
+                  - ':'
+                  - - 'arn:aws:iam:'
+                    - Ref: AWS::AccountId
+                    - 'root'
+              Action:
+                - 'kms:*'
+              Resource: '*'
+
+    KMSKeyAlias:
+      Type: AWS::KMS::Alias
+      Properties:
+        AliasName: alias/auth0Key-${self:provider.stage}
+        TargetKeyId: !Ref KMSKey
+
+    Auth0Secret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:provider.environment.AUTH_0_SECRET_ID}
+        Description: Auth0 secret
+        KmsKeyId: !Ref KMSKey
+
+    NotesTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: topic for notes search
+        TopicName: ${self:custom.topicName}
+
+    NotesSearch:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        ElasticsearchVersion: '6.3'
+        DomainName: notes-search-${self:provider.stage}
+        ElasticsearchClusterConfig:
+          DedicatedMasterEnabled: false
+          InstanceCount: '1'
+          ZoneAwarenessEnabled: false
+          InstanceType: t2.small.elasticsearch
+        EBSOptions:
+          EBSEnabled: true
+          Iops: 0
+          VolumeSize: 10
+          VolumeType: 'gp2'
+        AccessPolicies:
+          Version: '2012-10-17'
+          Statement:
+            -
+              Effect: Allow
+              Principal:
+                AWS: !Sub '${AWS::AccountId}'
+              Action: 'es:ESHttp*'
+              Resource: !Sub 'arn:aws:es:${self:provider.region}:${AWS::AccountId}:domain/notes-search-${self:provider.stage}/*'

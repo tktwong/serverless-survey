@@ -1,0 +1,76 @@
+
+service: coronovores
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  profile: serverless-admin
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:PutItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+
+functions:
+  createBet:
+    handler: bets/create.saveWager
+    events:
+      - http:
+          path: bets
+          method: post
+          cors: true
+
+
+  listAllBets:
+    handler: bets/get.getAllBets
+    events:
+      - http:
+          path: bets/{eventId}
+          method: get
+          cors: true
+
+
+resources:
+  Resources:
+    CoronavoresDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            #keeping attribute names short so when my site explodes my AWS costs stay low lolz
+            #eventId, will be unquie ID to the gambling event, multiple bets will exist for each event ID
+            AttributeName: eid
+            AttributeType: S
+          -
+            #uniqueId for each element, will be timestamp
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: eid
+            KeyType: HASH
+          -
+            AttributeName: id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

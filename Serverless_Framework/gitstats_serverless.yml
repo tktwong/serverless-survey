@@ -1,0 +1,143 @@
+service:
+  name: gitstats
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+
+provider:
+  name: aws
+  region: us-west-1
+  runtime: nodejs8.10
+  environment: ${file(./env.yml):${opt:stage, self:provider.stage}}
+  vpc:
+    securityGroupIds:
+      - sg-01134f82f6c567c4f
+    subnetIds:
+      # Only private subnets for this VPC
+      - subnet-06ee3eb9ff02b8a42
+      - subnet-00c4c8aadc781fcc6
+
+functions:
+  auth:
+    handler: handler.auth
+    cors: true
+  teams:
+    handler: handler.teams
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: teams
+          resp: http
+          authorizer: auth
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - X-User-Id
+            allowCredentials: false
+  teamInfo:
+    handler: handler.teamInfo
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: team/{owner}
+          resp: http
+          authorizer: auth
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - X-User-Id
+            allowCredentials: false
+  pulls:
+    handler: handler.pulls
+    timeout: 120
+    events:
+      - http:
+          method: get
+          path: pulls/{owner}/{repo}
+          resp: http
+          authorizer: auth
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - X-User-Id
+            allowCredentials: false
+  commits:
+    handler: handler.commits
+    timeout: 120
+    events:
+      - http:
+          method: get
+          path: commits/{owner}/{repo}
+          resp: http
+          authorizer: auth
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - X-User-Id
+            allowCredentials: false
+  email:
+    handler: handler.email
+    timeout: 30
+    events:
+      - http:
+          method: post
+          path: email
+          resp: http
+          authorizer: auth
+          cors: true
+
+resources:
+  Resources:
+    # This response is needed for custom authorizer failures cors support ¯\_(ツ)_/¯
+    # From https://github.com/serverless/examples/blob/master/aws-node-auth0-custom-authorizers-api/serverless.yml
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+
+custom:
+  serverless-offline:
+    port: 8000

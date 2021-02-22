@@ -1,0 +1,264 @@
+service: serverless-todo-app
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-2'}
+  tracing:
+    lambda: true
+    apiGateway: true
+  environment:
+    TODO_TABLE: todo-${self:provider.stage}
+    TODO_INDEX: todo-index
+    S3_BUCKET: todo-${self:provider.stage}-866937819247
+    S3_BUCKET_URL: https://${self:provider.environment.S3_BUCKET}.s3.amazonaws.com
+    BUCKET_MAX_AGE: 3000
+    AUTH0_SECRET_ID: Auth0Secret-${self:provider.stage}
+    AUTH0_SECRET_FIELD: auth0SecretField
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref Auth0Secret
+      - Effect: Allow
+        Action:
+          - kms:Decrypt
+        Resource: !GetAtt KMSKey.Arn
+
+  GetTodos:
+    handler: src/lambda/http/getTodos.handler
+    events:
+      - http:
+          method: get
+          path: todos
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - '*'
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}/index/${self:provider.environment.TODO_INDEX}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: "arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*"
+      - Effect: Allow
+        Action: 
+          - cloudwatch:PutMetricData
+        Resource:
+          - '*'
+
+  CreateTodo:
+    handler: src/lambda/http/createTodo.handler
+    events:
+      - http:
+          method: post
+          path: todos
+          authorizer: Auth
+          cors: true
+          request:
+            schema:
+              application/json: ${file(src/requests/schema/create-todo-request.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - '*'
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}/index/${self:provider.environment.TODO_INDEX}
+      - Effect: Allow
+        Action: 
+          - cloudwatch:PutMetricData
+        Resource:
+          - '*'
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+        Resource: "arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*"
+
+  UpdateTodo:
+    handler: src/lambda/http/updateTodo.handler
+    events:
+      - http:
+          method: patch
+          authorizer: Auth
+          path: todos/{todoId}
+          cors: true
+          request:
+            schema:
+              application/json: ${file(src/requests/schema/update-todo-request.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - '*'
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}/index/${self:provider.environment.TODO_INDEX}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+        Resource: "arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*"
+      - Effect: Allow
+        Action: 
+          - cloudwatch:PutMetricData
+        Resource:
+          - '*'
+
+  DeleteTodo:
+    handler: src/lambda/http/deleteTodo.handler
+    events:
+      - http:
+          method: delete
+          authorizer: Auth
+          path: todos/{todoId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - '*'
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}/index/${self:provider.environment.TODO_INDEX}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+        Resource: "arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*"
+      - Effect: Allow
+        Action: 
+          - cloudwatch:PutMetricData
+        Resource:
+          - '*'
+
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: todos/{todoId}/attachment
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+        Resource: "arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*"
+      - Effect: Allow
+        Action: 
+          - cloudwatch:PutMetricData
+        Resource:
+          - '*'
+
+resources:
+  Resources:
+    TodoDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TODO_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: todoId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: todoId
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.TODO_INDEX}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: todoId
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+                - POST
+                - DELETE
+                - PUT
+                - HEAD
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+              MaxAge: ${self:provider.environment.BUCKET_MAX_AGE}
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref S3Bucket
+        PolicyDocument:
+          Id: todoS3BucketPolicy
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: "*"
+              Action: "s3:GetObject"
+              Resource: "arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*"
+    
+    KMSKey:
+      Type: AWS::KMS::Key
+      Properties:
+        Description: Key to encrypt Auth0 secret
+        KeyPolicy:
+          Version: '2012-10-17'
+          Id: key-default-1
+          Statement:
+            - Sid: Allow administration of the key
+              Effect: Allow
+              Principal:
+                AWS:
+                  Fn::Join:
+                  - ':'
+                  - - 'arn:aws:iam:'
+                    - Ref: AWS::AccountId
+                    - 'root'
+              Action:
+                - 'kms:*'
+              Resource: '*'
+    
+    KMSAlias:
+      Type: AWS::KMS::Alias
+      Properties:
+        AliasName: alias/auth0Key-${self:provider.stage}
+        TargetKeyId: !Ref KMSKey
+    
+    Auth0Secret:
+      Type: AWS::SecretsManager::Secret 
+      Properties:
+        Name: ${self:provider.environment.AUTH0_SECRET_ID}
+        Description: Auth0 Secret
+        KmsKeyId: !Ref KMSKey
+    
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId: 
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false

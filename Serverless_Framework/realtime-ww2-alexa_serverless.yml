@@ -1,0 +1,113 @@
+service:
+  name: realtime-ww2
+
+frameworkVersion: ">=1.22.0"
+
+plugins:
+  - serverless-webpack
+  - serverless-plugin-aws-alerts
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  memorySize: 1024
+  timeout: 10
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:PutObject"
+        - "s3:GetObject"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - Ref: S3TweetCache
+            - /*
+    - Effect: "Allow"
+      Action: 
+        - "ssm:GetParameters"
+      Resource:
+        - Fn::Join:
+          - ""
+          - - "arn:aws:ssm:*:*:parameter/"
+            - ${self:service}
+            - /*
+
+package:
+  individually: true
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  prod:
+    twitterRestBaseUrl: https://api.twitter.com/1.1
+    cacheTweetsSchedule: rate(1 hour)
+    alexaSkillId: amzn1.ask.skill.8955b37b-4975-4462-a4d9-4aba0ad647f0
+  dev:
+    twitterRestBaseUrl: { "Fn::Join" : ["", [ "https://", { "Ref" : "ApiGatewayRestApi" }, ".execute-api.${self:provider.region}.amazonaws.com/${self:custom.stage}" ] ]  }
+    cacheTweetsSchedule: cron(0 0 * * ? 1970)
+    alexaSkillId: amzn1.ask.skill.e24708e2-28ff-4d4a-a2c5-40cf44c25ed2
+  cryptKeyId: c7ce8560-aaf1-4780-be8c-b048a0a749f2
+  tweetCacheBucketName: ${self:service}-${self:custom.stage}-tweet
+  alertEmailEndpoint: ${ssm:/${self:service}/email-endpoint}
+  alerts:
+    dashboards: true
+    topics:
+      alarm:
+        topic: ${self:service}-${self:custom.stage}-alerts-alarm
+        notifications:
+          - protocol: email
+            endpoint: ${self:custom.alertEmailEndpoint}
+      ok:
+        topic: ${self:service}-${self:custom.stage}-alerts-ok
+        notifications:
+          - protocol: email
+            endpoint: ${self:custom.alertEmailEndpoint}
+    definitions:
+      functionErrors:
+        treatMissingData: ignore
+      bunyanErrors:
+        namespace: ${self:service}-${self:custom.stage}
+        metric: bunyanErrors
+        threshold: 0
+        statistic: Sum
+        period: 60
+        evaluationPeriods: 1
+        comparisonOperator: GreaterThanThreshold
+        pattern: '{$.level > 40}'
+        treatMissingData: ignore
+
+functions:
+  alexa-skill:
+    handler: packages/core/src/alexa-skill.handler
+    events:
+      - alexaSkill
+    environment:
+      TWEET_CACHE_BUCKET_NAME: ${self:custom.tweetCacheBucketName}
+      ALEXA_SKILL_ID: ${self:custom.${self:custom.stage}.alexaSkillId}
+      CLOCK: NOW
+    alarms:
+      - bunyanErrors
+  cache-tweets:
+    handler: packages/core/src/cache-tweets.handler
+    events:
+      - schedule: ${self:custom.${self:custom.stage}.cacheTweetsSchedule}
+    environment:
+      TWEET_CACHE_BUCKET_NAME: ${self:custom.tweetCacheBucketName}
+      TWITTER_SECRETS_PATH: /${self:service}/twitter
+      TWITTER_REST_BASE_URL: ${self:custom.${self:custom.stage}.twitterRestBaseUrl}
+      TWITTER_USER_ID: 364488011
+    alarms:
+      - functionErrors
+  fake-twitter:
+    handler: packages/fake-twitter/handler.handler
+    events:
+      - http: GET statuses/user_timeline.json
+  
+resources:
+  Resources:
+    S3TweetCache:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.tweetCacheBucketName}

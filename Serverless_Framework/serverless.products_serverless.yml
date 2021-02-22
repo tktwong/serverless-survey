@@ -1,0 +1,64 @@
+
+service: serverless-products
+
+custom:
+  productsTableName: ${self:service}-${self:provider.stage}-products
+  productsTableArn: # ARNs are addresses of deployed services in AWS space
+    Fn::Join:
+    - ":"
+    - - arn
+      - aws
+      - dynamodb
+      - Ref: AWS::Region
+      - Ref: AWS::AccountId
+      - table/${self:custom.productsTableName}
+
+provider:
+  name: aws
+  runtime: go1.x
+  memorySize: 128
+  stage: dev
+  region: us-east-1
+  environment:
+    PRODUCTS_TABLE_NAME: ${self:custom.productsTableName}
+
+  iamRoleStatements: # Defines what other AWS services our lambda functions can access
+    - Effect: Allow # Allow access to DynamoDB tables
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - ${self:custom.productsTableArn}    
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+
+functions:
+  addProduct:
+    handler: bin/functions/createProduct/main
+    events:
+      - http:
+          path: products
+          method: post
+          cors: true               
+
+resources:
+  Resources: # Supporting AWS services
+    ProductsTable: # Define a new DynamoDB Table resource to store products items
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.productsTableName}
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH          

@@ -1,0 +1,69 @@
+org: chinthaka
+app: my-first-app
+service: mailservice
+
+custom:
+  settings:
+    MAIL_TABLE: mail
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-south-1
+  environment: ${self:custom.settings}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - s3:*
+        - ses:*
+      Resource:
+        - 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.MAIL_TABLE}'
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+functions:
+  parseMail:
+    handler: handler.parseMail
+    events:
+      - http:
+          path: /parse
+          method: post
+  getAllMail:
+    handler: handler.getAllMail
+    events:
+      - http:
+          path: /mails
+          method: get
+
+resources:
+  Resources:
+    MailTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: 'MessageId'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'MessageId'
+            KeyType: 'HASH'
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.settings.MAIL_TABLE}

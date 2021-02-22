@@ -1,0 +1,112 @@
+service: updater
+provider:
+  name: aws
+  stage: stg
+  region: ap-northeast-1
+
+# aws cloudformation deploy --template-file task.yaml --stack-name updater-stack --capabilities CAPABILITY_NAMED_IAM
+# aws cloudformation describe-stack-events --stack-name updater-stack
+# aws cloudformation delete-stack --stack-name updater-stack
+# # aws ecs run-task --cluster stg --task-definition updater-task:X --count 1 --network-configuration "awsvpcConfiguration={subnets=[subnet-abcdefg],assignPublicIp=ENABLED}" --launch-type FARGATE
+# # aws events put-rule --schedule-expression "cron(45 23 * * ? *)" --name ecs-task-schedule-updater
+
+resources:
+  Resources:
+    TaskExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "ecs-tasks.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+    Taskdefinition:
+      Type: AWS::ECS::TaskDefinition
+      DependsOn: TaskExecutionRole
+      Properties:
+        Family: updater-task
+        RequiresCompatibilities:
+          - FARGATE
+        Cpu: 256
+        Memory: 512
+        NetworkMode: awsvpc
+        ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+        TaskRoleArn: !GetAtt TaskExecutionRole.Arn
+        ContainerDefinitions:
+          -
+            Name: updater-container-definition
+            Image:
+              Fn::Join:
+                - ''
+                -
+                  - Ref: 'AWS::AccountId'
+                  - '.dkr.ecr.ap-northeast-1.amazonaws.com/updater:latest'
+            Environment:
+              -
+                Name: GITHUB_USER
+                Value: umihico
+              -
+                Name: GITHUB_PASSWORD
+                Value: ${ssm:GITHUB_REPOSITORY_TOKEN}
+              -
+                Name: GITHUB_REPOSITORY_TOKEN
+                Value: ${ssm:GITHUB_REPOSITORY_TOKEN}
+
+    TaskScheduleEvents:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: ecs-updater-cron
+        ScheduleExpression: "cron(45 23 * * ? *)"
+        State: ENABLED
+        Targets:
+          -
+            Id: ecs-updater-cron
+            Arn:
+              Fn::Join:
+                - ':'
+                -
+                  - "arn:aws:ecs"
+                  - ${self:provider.region}
+                  - Ref: 'AWS::AccountId'
+                  - "cluster/stg"
+            RoleArn:
+              Fn::Join:
+                - ':'
+                - - "arn:aws:iam"
+                  - ""
+                  - Ref: "AWS::AccountId"
+                  - "role/ecsEventsRole"
+            EcsParameters:
+              TaskDefinitionArn: !Ref Taskdefinition
+              TaskCount: 1
+              LaunchType: FARGATE
+              PlatformVersion: LATEST
+              NetworkConfiguration:
+                AwsVpcConfiguration:
+                  AssignPublicIp: ENABLED
+                  Subnets:
+                    - ${ssm:DEFAULT_VPC_SUBNET_A}
+                  SecurityGroups:
+                    - Ref: SecurityGroup
+
+    SecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupName: ecs-updater-security-group
+        GroupDescription: ecs-updater-security-group
+        VpcId: ${ssm:DEFAULT_VPC}
+        SecurityGroupEgress:
+          -
+            CidrIp: 0.0.0.0/0
+            IpProtocol: -1
+        Tags:
+          - Key: Name
+            Value: ecs-updater-security-group

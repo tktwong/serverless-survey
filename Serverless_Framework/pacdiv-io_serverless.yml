@@ -1,0 +1,60 @@
+service: pacdivio-games-snake
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-central-1
+  environment:
+    SCOREBOARD_TABLE: ${self:service}-scoreboard-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.SCOREBOARD_TABLE}"
+
+functions:
+  index:
+    handler: src/handler.index
+    events:
+      - http:
+          method: GET
+          path: /games/snake
+  postScore:
+    handler: src/handler.postScore
+    events:
+      - http:
+          method: POST
+          path: /games/snake/score
+  getRank:
+    handler: src/handler.getRank
+    events:
+      - http:
+          method: GET
+          path: /games/snake/rank/{score}
+  getScoreboard:
+    handler: src/handler.getScoreboard
+    events:
+      - http:
+          method: GET
+          path: /games/snake/scoreboard
+
+plugins:
+  - serverless-offline
+
+resources:
+  Resources:
+    ScoreboardTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.SCOREBOARD_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

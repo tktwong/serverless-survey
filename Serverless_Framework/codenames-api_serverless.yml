@@ -1,0 +1,188 @@
+service:
+  name: codenames-api
+
+plugins:
+  - serverless-webpack
+  - serverless-plugin-iam-checker
+  - serverless-prune-versions
+  - serverless-cloudformation-resource-counter
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, env:STAGE, env:USER, 'local'}
+  logRetentionInDays: 14
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    LAMBDA_WRAPPER_LOG: true
+    GAMES_TABLE: !Ref GamesTable
+    GAME_CODE_INDEX: ${self:custom.codeIndex}
+    GAME_UPDATED_TOPIC: !Ref GameUpdated
+    APIGW_BASE_ENDPOINT: !Join
+      - ""
+      - - Ref: WebsocketsApi
+        - .execute-api.
+        - Ref: AWS::Region
+        - .amazonaws.com/
+        - ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action: sns:Publish
+      Resource: !Ref GameUpdated
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+        - dynamodb:DeleteItem
+      Resource:
+        - !GetAtt GamesTable.Arn
+        - !Join ["/index/", [!GetAtt GamesTable.Arn, "${self:custom.codeIndex}"]]
+
+custom:
+  codeIndex: code-index
+  gameUpdatedTopic: game-updated-${self:provider.stage}
+  # Serverless plugin configurations
+  # https://github.com/manwaring/serverless-prune-versions
+  prune:
+    automatic: true
+    number: 2
+  # https://github.com/drexler/serverless-cloudformation-resource-counter
+  warningThreshold: 100
+  # https://github.com/serverless-heaven/serverless-webpack
+  webpack:
+    includeModules: true
+    excludeFiles: src/**/*.test.[t|j]s
+
+functions:
+  create-game:
+    handler: src/game-setup/create-game.handler
+    events:
+      - http:
+          path: games
+          method: POST
+          cors: true
+
+  join-game:
+    handler: src/game-setup/join-game.handler
+    events:
+      - http:
+          path: games/{gameId}/people
+          method: POST
+          cors: true
+          request: &gameIdRequest
+            parameters:
+              paths:
+                gameId: true
+
+  choose-team:
+    handler: src/game-setup/choose-team.handler
+    events:
+      - http:
+          path: games/{gameId}/people/{personId}/teams/{team}
+          method: PUT
+          cors: true
+          request:
+            parameters:
+              paths:
+                gameId: true
+                personId: true
+                team: true
+
+  choose-role:
+    handler: src/game-setup/choose-role.handler
+    events:
+      - http:
+          path: games/{gameId}/people/{personId}/roles/{role}
+          method: PUT
+          cors: true
+          request:
+            parameters:
+              paths:
+                gameId: true
+                personId: true
+                role: true
+
+  start-game:
+    handler: src/game-actions/start-game.handler
+    events:
+      - http:
+          path: games/{gameId}/start
+          method: POST
+          cors: true
+          request: *gameIdRequest
+
+  start-turn:
+    handler: src/game-actions/start-turn.handler
+    events:
+      - http:
+          path: games/{gameId}/turns
+          method: POST
+          cors: true
+          request: *gameIdRequest
+
+  # make-guess:
+  #   handler: src/game-actions/make-guess.handler
+  #   events:
+  #     - http:
+  #         path: games/{id}/guesses
+  #         method: POST
+  #         cors: true
+  #         request: *gameIdRequest
+  # end-turn:
+  #   handler: src/game-actions/end-turn.handler
+
+  subscribe-to-updates:
+    handler: src/websocket/subscribe-to-updates.handler
+    events:
+      - websocket: $connect
+
+  handle-game-updates:
+    handler: src/table/handle-game-updates.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt GamesTable.StreamArn
+
+  publish-game-updates:
+    handler: src/websocket/publish-game-updates.handler
+    events:
+      - sns:
+          arn: !Ref GameUpdated
+          topicName: ${self:custom.gameUpdatedTopic}
+
+resources:
+  Resources:
+    GameUpdated:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.gameUpdatedTopic}
+
+    GamesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: gameId
+            AttributeType: S
+          - AttributeName: identifiers
+            AttributeType: S
+          - AttributeName: code
+            AttributeType: S
+        KeySchema:
+          - AttributeName: gameId
+            KeyType: HASH
+          - AttributeName: identifiers
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:custom.codeIndex}
+            KeySchema:
+              - AttributeName: code
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES

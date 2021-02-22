@@ -1,0 +1,189 @@
+service: microservice-template # change this
+
+plugins:
+  - serverless-webpack
+  - serverless-pseudo-parameters
+  - serverless-offline
+  - serverless-plugin-aws-alerts
+  - serverless-dynamodb-local
+  - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-central-1
+  stage: ${opt:stage, 'dev'}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  logRetentionInDays: 14
+  environment:
+    ACCOUNT_ID: '#{AWS::AccountId}'
+    REGION: '#{AWS::Region}'
+    STAGE: ${self:provider.stage}
+    DYNAMO_DB_TABLE: ${opt:stage, self:provider.stage}-${self:service}
+  apiGateway:
+    shouldStartNameWithService: true
+  lambdaHashingVersion: 20201221
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE}'
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE}/index/*'
+
+functions:
+  ping:
+    handler: src/api/handlers/rest/ping/ping.default
+    events:
+      - http:
+          method: get
+          path: ping
+          cors: true
+  readAllProducts:
+    handler: src/api/handlers/rest/products/readAll/readAll.default
+    events:
+      - http:
+          method: get
+          path: /{tenantId}
+          cors: true
+  readProduct:
+    handler: src/api/handlers/rest/products/read/read.default
+    events:
+      - http:
+          method: get
+          path: /{tenantId}/{id}
+          cors: true
+  createProduct:
+    handler: src/api/handlers/rest/products/create/create.default
+    events:
+      - http:
+          method: post
+          path: /{tenantId}
+          cors: true
+  updateProduct:
+    handler: src/api/handlers/rest/products/update/update.default
+    events:
+      - http:
+          method: put
+          path: /{tenantId}/{id}
+          cors: true
+  deleteProduct:
+    handler: src/api/handlers/rest/products/delete/delete.default
+    events:
+      - http:
+          method: delete
+          path: /{tenantId}/{id}
+          cors: true
+  # onDatabaseUpdated:
+  #   handler: src/api/handlers/events/onDatabaseUpdated/onDatabaseUpdated.default
+  #   events:
+  #     - stream:
+  #         type: dynamodb
+  #         arn:
+  #           Fn::GetAtt: [ProductDynamoDbTable, StreamArn] # change this
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    packager: 'yarn'
+    excludeFiles: src/**/*.test.ts
+  alerts:
+    stages:
+      - test
+      - prod
+    topics:
+      ok:
+        topic: ${opt:stage}-${self:service}-alerts-ok
+        notifications:
+          - protocol: email
+            endpoint: devops@egonoid.com
+      alarm:
+        topic: ${opt:stage}-${self:service}-alerts-alarm
+        notifications:
+          - protocol: email
+            endpoint: devops@egonoid.com
+    nameTemplate: $[functionId]-$[metricName]
+    alarms:
+      - functionErrors
+    definitions:
+      functionErrors:
+        treatMissingData: notBreaching
+  basePath: products # change this
+  apiVersion: v1
+  stage: ${opt:stage, self:provider.stage}
+  domains:
+    dev: api-dev.mydomain.com # change this
+    test: api-test.mydomain.com # change this
+    prod: api.mydomain.com # change this
+  customDomain:
+    basePath: ${self:custom.basePath}
+    domainName: ${self:custom.domains.${self:custom.stage}}
+    stage: '${self:custom.stage}'
+    createRoute53Record: false
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 4g
+      convertEmptyValues: true
+      migrate: true
+    stages:
+      - dev
+  profiles:
+    dev: microservice-template-dev # change this
+    test: microservice-template-test # change this
+    prod: microservice-template-prod # change this
+
+resources:
+  Resources:
+    ProductDynamoDbTable: # change this
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: tenantId
+            AttributeType: S
+          - AttributeName: itemKey
+            AttributeType: S
+          - AttributeName: sortKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tenantId
+            KeyType: HASH
+          - AttributeName: itemKey
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: ReadAllIndex
+            KeySchema:
+              - AttributeName: tenantId
+                KeyType: HASH
+              - AttributeName: sortKey
+                KeyType: RANGE
+            Projection:
+              ProjectionType: INCLUDE
+              NonKeyAttributes:
+                - id
+                - name
+                - shortDescription
+                - subline
+                - createdAt
+                - updatedAt
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMO_DB_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES

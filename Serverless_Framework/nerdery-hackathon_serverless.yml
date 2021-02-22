@@ -1,0 +1,94 @@
+service: sweep-alert
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+
+  stage: v1
+  region: us-east-1
+
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:DescribeTable"
+        - "dynamodb:Query"
+        - "dynamodb:Scan"
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:DeleteItem"
+      Resource: "*"
+
+  # you can define service wide environment variables here
+  environment:
+    table: "SweepAlert"
+
+functions:
+  createAlert:
+    handler: handler.create
+    events:
+      - http:
+          path: create
+          method: put
+          cors:
+            origin: '*'
+            headers:
+              - Cache-Control
+              - Content-Length
+              - Content-Type
+              - Via
+              - X-amz-cf-id
+              - X-amzn-requestid
+              - X-cache
+              - access-control-request-headers
+  check:
+    handler: handler.check
+    events:
+      - schedule: rate(6 hours)
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    SweepAlert:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "SweepAlert"
+        AttributeDefinitions:
+          -
+            AttributeName: "email"
+            AttributeType: "S"
+        KeySchema:
+          -
+            AttributeName: "email"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    SweepAlertS3:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "sweep-alert.com"
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    SweepAlertS3Policy:
+      Type: "AWS::S3::BucketPolicy"
+      Properties:
+        Bucket:
+          Ref: "SweepAlertS3"
+        PolicyDocument:
+          Statement:
+            -
+              Action:
+                - "s3:GetObject"
+              Effect: "Allow"
+              Resource:
+                Fn::Join:
+                  - ""
+                  -
+                    - "arn:aws:s3:::"
+                    -
+                      Ref: "SweepAlertS3"
+                    - "/*"
+              Principal: "*"

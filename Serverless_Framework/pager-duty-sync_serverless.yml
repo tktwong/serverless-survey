@@ -1,0 +1,246 @@
+service: pager-duty-sync
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${opt:stage, 'dev'}
+  region:  ${env:AWS_REGION}
+  profile: ${env:AWS_DEPLOY_PROFILE}
+
+  # Free usage tier (Change this if you wanna spend money)
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter
+        - ssm:GetParametersByPath
+        - ssm:GetParameters
+        - ssm:DescribeParameters
+        - states:StartExecution
+        # @todo restrict scoping on this
+      Resource: "*"
+
+  # Inherit env from parent context
+  environment:
+    ENV: ${opt:stage, 'dev'}
+
+functions:
+    #Call and auth proxy for accepting chalanges from slack
+  authSlack:
+    handler: core/auth_slack_event.auth_slack_event
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    environment:
+      STEP_FUNCTION_ARN: ${self:resources.Outputs.StateMachine.Value}
+    
+    events:
+      - http: POST /handle/slack
+
+  sendMessageToSlackChannel:
+    handler: core/send_message_to_channel.send_message_to_channel 
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+
+  exportToS3:
+    handler: core/export_pager_duty_reports_to_s3.export_pager_duty_reports_to_s3
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    events:
+      #- http: POST /sync/s3
+      - 
+        schedule: 
+          enabled: true
+          rate: cron(0 0 * * ? *)
+    memorySize: 512
+    timeout: 60
+
+  slackEventHandler:
+    handler: core/handle_slack_event.handle_slack_event
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    memorySize: 512
+    timeout: 60
+    #events:
+    #  - http: POST /handle/slack
+
+  createGoogleSheets:
+    handler: core/generate_and_share_google_sheets.generate_and_share_google_sheets
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    memorySize: 512
+    timeout: 60
+
+plugins:
+  - serverless-offline
+  - serverless-s3-local
+  - serverless-dotenv-plugin
+  - serverless-python-requirements
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+  - serverless-step-functions-offline
+
+package:
+  exclude: ${self:custom.excludeFromStage.${opt:stage, 'dev'}, self.custom.excludeFromStage.default}
+
+custom:
+  s3:
+    port: ${env:LOCAL_S3_PORT}
+    directory: ${env:LOCAL_S3_DIR}
+
+  # Add custom dotenv includes
+  dotenv:
+    logging: false
+    include:
+      # Include S3 creds for bucket
+      #- S3_USER_SECRET (loaded from ssm)
+      - S3_USER_ACCESS_KEY_ID
+      - S3_BUCKET_NAME
+      - S3_USER_REGION
+      
+      # Include pagerduty creds
+      #- PAGER_DUTY_API_TOKEN #(Loaded from SSM)
+      - PAGER_DUTY_SCHEDULE_ID
+
+      # Include athena deets
+      #- ATHENA_USER_SECRET (Loaded from ssm)
+      - ATHENA_USER_ID
+      - ATHENA_DB_NAME
+      - ATHENA_BUCKET_NAME
+      - ATHENA_REGION
+      - ATHENA_DB_TABLE
+
+      #Gspread
+      #- GOOGLE_SHEETS_SERVICE_USER_ACCOUNT_INFO
+
+      #Slack
+      #- "ATHENA_USER_SECRET",
+      #- "GOOGLE_SHEETS_SERVICE_USER_ACCOUNT_INFO"
+      - SLACK_DEBUG_EMAIL
+      - SLACK_ADMIN_EMAILS
+  
+  pythonRequirements:
+    dockerizePip: true
+    dockerFile: Dockerfile
+    layer: true
+  
+  excludeFromStage:
+    prod: 
+      - .env
+      - node_modules/**
+      - node_modules
+      - s3_bucket_local/**
+    
+    dev: 
+      - .env
+      - node_modules/**
+      - node_modules
+      - s3_bucket_local/**
+    
+    local:
+      - node_modules/**
+      - node_modules
+    
+    default:
+      - .env
+      - node_modules/**
+      - node_modules
+      - s3_bucket_local/**
+
+  stepFunctionsOffline:
+    ProcessSlackEvent: slackEventHandler
+    FillInTimesheets: createGoogleSheets
+    ExportToS3: exportToS3
+    SendMessageToSlackChannel: sendMessageToSlackChannel
+
+stepFunctions:
+  stateMachines:
+    SlackResolver:
+      name: SlackResolver
+      type: EXPRESS
+      #loggingConfig:
+      #  level: ALL
+      #  includeExecutionData: true
+      #  destinations:
+      #    - Fn::GetAtt: [MyLogGroup, Arn]
+      definition:
+        Comment: "State machine that handles lambda event directions"
+        StartAt: ProcessSlackEvent
+        States:
+          ProcessSlackEvent:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-slackEventHandler"
+            # @todo implement input path support into task types for local invokations
+            #InputPath: '$.PAYLOAD.slack_event'
+            Next: SlackDirectProcessEvent
+       
+          SlackDirectProcessEvent:
+            Type: Choice
+            Choices:
+              - Variable: "$.EVENT_TYPE"
+                StringEquals: "FILL_IN_TIMESHEETS"
+                Next: FillInTimesheets
+              - Variable: "$.EVENT_TYPE"
+                StringEquals: "EXPORT_TO_S3"
+                Next: ExportToS3
+              - Variable: "$.EVENT_TYPE"
+                StringEquals: "EVENT_DONE"
+                Next: FinishProcess
+              - Variable: "$.EVENT_TYPE"
+                StringEquals: "NO_EVENT_SPECIFIED"
+                Next: FinishProcess
+            Default: UnknownEventType
+
+          FillInTimesheets:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-createGoogleSheets"
+            # @todo implement input path support into task types for local invokations
+            #InputPath: '$.PAYLOAD'
+            Next: ShouldSendMessageToChannel
+
+          ExportToS3:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-exportToS3"
+            # @todo implement input path support into task types for local invokations
+            #InputPath: '$.PAYLOAD'
+            Next: ShouldSendMessageToChannel
+            
+          UnknownEventType:
+            Type: Fail
+            Cause: "Unknown event type"
+          
+          ShouldSendMessageToChannel:
+            Type: Choice
+            Choices:
+              - Variable: "$.EVENT_TYPE"
+                StringEquals: "SAY_TO_CHANNEL"
+                Next: SendMessageToSlackChannel
+            Default: FinishProcess
+
+          SendMessageToSlackChannel:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sendMessageToSlackChannel"
+            Next: FinishProcess
+          
+          FinishProcess:
+            Type: Succeed
+
+
+resources:
+  Resources:
+   NewResource:
+     Type: AWS::S3::Bucket
+     Properties:
+       BucketName: ${env:S3_BUCKET_NAME}
+  Outputs:
+    StateMachine:
+      Description: Value for the provisioned state machine so we can pass it onto the state machine
+      Value:
+        Ref: SlackResolver

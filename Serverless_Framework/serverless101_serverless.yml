@@ -1,0 +1,76 @@
+service: serverless101
+
+app: serverless101-app
+org: tomaszmarcinkowski
+
+frameworkVersion: '2'
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  dev:
+    dataSourceBaseUrl: "https://dn7d67kfl4.execute-api.us-east-1.amazonaws.com/dev"
+  prod:
+    dataSourceBaseUrl: "https://p117dpp7y2.execute-api.us-east-1.amazonaws.com/prod"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    COMPANIES_TABLE: !Ref "CompaniesTable"
+    FETCH_QUEUE_URL: !Ref "DataFetchQueue"
+    SOURCE_URI: ${self:custom.${self:custom.stage}.dataSourceBaseUrl, self:custom.dev.dataSourceBaseUrl}/slow-data-source/financial-risk/{id}
+  apiGateway:
+    shouldStartNameWithService: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: !GetAtt CompaniesTable.Arn
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+      Resource: !GetAtt DataFetchQueue.Arn
+
+plugins:
+  - serverless-plugin-typescript
+
+functions:
+  unreliableDataSource:
+    handler: functions/dataSource.default
+    events:
+      - http:
+          path: slow-data-source/financial-risk/{id}
+          method: get
+    timeout: 5
+  httpCheckCompany:
+    handler: functions/financialRisk.apiCheckCompany
+    events:
+      - http:
+          path: financial-risk/{id}
+          method: get
+  asyncCompanyFetch:
+    handler: functions/financialRisk.queueFetchCompany
+    events:
+      - sqs:
+          arn: !GetAtt DataFetchQueue.Arn
+
+resources:
+  Resources:
+    CompaniesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:custom.stage}-companiesFinanceInfo
+        AttributeDefinitions:
+          - AttributeName: companyId
+            AttributeType: N
+        KeySchema:
+          - AttributeName: companyId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    DataFetchQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:custom.stage}-dataFetchQueue

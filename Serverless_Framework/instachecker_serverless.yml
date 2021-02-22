@@ -1,0 +1,82 @@
+service: instachecker
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: us-east-1
+  timeout: 10
+  iamRoleStatements:
+  - Effect: "Allow"
+    Action:
+    - dynamodb:Query
+    - dynamodb:Scan
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    - dynamodb:DeleteItem
+    Resource:
+      Fn::GetAtt:
+      - StatusesTable
+      - Arn
+  - Effect: "Allow"
+    Action:
+    - dynamodb:Query
+    - dynamodb:Scan
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    - dynamodb:DeleteItem
+    Resource:
+      Fn::GetAtt:
+      - UsersTable
+      - Arn
+functions:
+  check_stores:
+    handler: instachecker.handlers.check_stores
+    events:
+    - schedule: cron(1/5 * * * ? *)
+  sms:
+    handler: instachecker.handlers.sms
+    events:
+    - httpApi:
+        method: POST
+        path: /sms
+  seed_users:
+    handler: instachecker.handlers.seed_users
+
+resources:
+  Resources:
+    StatusesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: StatusesTable
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: store_id
+            AttributeType: N
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+          - AttributeName: store_id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: UsersTable
+        AttributeDefinitions:
+          - AttributeName: phone_number
+            AttributeType: S
+        KeySchema:
+          - AttributeName: phone_number
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    usePoetry: true
+
+plugins:
+  - serverless-python-requirements

@@ -1,0 +1,85 @@
+# serverless.yml
+
+service: serverless-test
+
+package:
+  exclude: # ignore unnecessary folder to generate lambda artifact
+    - test_*
+    - images/**
+    - node_modules/**
+
+provider:
+  name: aws # cloud provider
+  runtime: python3.6 # python version
+  memorySize: 256 # lambda memory size
+  tags:
+    TAG_PROJECT: serverless-test
+  vpc:
+    # subnetIds: in this test is not necessary, just to 
+    #   - subnet-xxxxxxx
+    securityGroupIds:
+      - Ref: LambdaSecurityGroup # reference from resources
+  iamRoleStatements:
+    - Effect: "Allow" # to invoke lambda
+      Action:
+        - "lambda:InvokeFunction"
+        - "lambda:InvokeAsync"
+        - "lambda:GetFunction"
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "execute-api:Invoke"
+      Resource:
+        - "arn:aws:execute-api:*:*:*"
+functions:
+  our-lambda:
+    handler: handler.main
+    timeout: 30
+    environment:
+      ENVIRONMENT: ${self:custom.stage}
+      PROPERTIES: "{\"hello\":\"world\"}"
+    events:
+      - http:
+          path: ping
+          method: get
+          cors: true
+resources: 
+  Resources:
+    LambdaSecurityGroup:
+      Type: 'AWS::EC2::SecurityGroup'
+      Properties:
+        GroupName: serverless-test-lambda-security-${self:custom.stage}
+        GroupDescription: Security group for lambda access 
+        #VpcId: vpc-xxxxxxx #for this example we do not need a vpc
+        SecurityGroupIngress:
+          - IpProtocol: TCP
+            FromPort: 80
+            ToPort: 80
+            CidrIp: 10.0.0.0/8
+          - IpProtocol: TCP
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 10.0.0.0/8
+          - IpProtocol: TCP
+            FromPort: 1433
+            ToPort: 1433
+            CidrIp: 10.0.0.0/8
+
+plugins:
+  - serverless-python-requirements
+  - serverless-domain-manager
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  domains: # create domain for this lambda
+    develop: serverless-test-develop.your-domain.com
+    production: serverless-test.your-domain.com
+
+  customDomain: # create stage path 
+    basePath: ''
+    domainName: ${self:custom.domains.${self:custom.stage}}
+    stage: "${self:custom.stage}"
+    createRoute53Record: true
+
+  pythonRequirements:
+    dockerizePip: non-linux # install dependences on docker only for windows, use py36 pip locally

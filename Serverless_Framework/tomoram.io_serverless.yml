@@ -1,0 +1,109 @@
+service: tomoram-io
+
+plugins:
+  - serverless-plugin-scripts
+  - serverless-s3-sync
+  - serverless-webpack
+
+custom:
+  siteName: tomoram.io
+  apiUrl: https://hts46waami.execute-api.eu-west-2.amazonaws.com/dev
+  s3Sync:
+    - bucketName: ${self:custom.siteName}
+      localDir: dist
+  hostedZoneName: tomoram.io
+  aliasHostedZoneId: Z3GKZC51ZF0DB4
+  aliasDNSName: s3-website.eu-west-2.amazonaws.com
+  scripts:
+    hooks:
+      'before:deploy:createDeploymentArtifacts': npm run compile -- --env.API_URL=${self:custom.apiUrl}
+  webpack:
+    webpackConfig: backend.webpack.config.js
+    includeModules: true
+  mediumUsername: tom.oram
+
+provider:
+  name: aws
+  region: eu-west-2
+  runtime: nodejs8.10
+
+functions:
+  hello:
+    handler: src/hello.handler
+    events:
+      - http:
+          path: hello
+          method: get
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+
+  medium_posts:
+    handler: src/medium/main.handler
+    events:
+      - http:
+          path: medium
+          method: get
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+    environment:
+      MEDIUM_USERNAME: ${self:custom.mediumUsername}
+
+resources:
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.siteName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "StaticSite"
+                    },
+                    "/*"
+                  ]
+                ]
+
+    DnsRecord:
+      Type: "AWS::Route53::RecordSet"
+      Properties:
+        AliasTarget:
+          DNSName: ${self:custom.aliasDNSName}
+          HostedZoneId: ${self:custom.aliasHostedZoneId}
+        HostedZoneName: ${self:custom.siteName}.
+        Name:
+          Ref: StaticSite
+        Type: 'A'

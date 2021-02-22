@@ -1,0 +1,87 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: cdr-reader
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: python3.8
+  lambdaHashingVersion: 20201221
+  profile: serverless-admin
+  region: eu-central-1
+  environment:
+    CDR_QUEUE: "knowhow-cdrs"
+    CDR_TABLE: "processes_cdrs"
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource: "arn:aws:s3:::knowhow-cdrs/*"
+    - Effect: "Allow"
+      Action:
+        - "sqs:*"
+      Resource: "arn:aws:sqs:${opt:region, self:provider.region}:*:${self:provider.environment.CDR_QUEUE}"
+    - Effect: Allow
+      Action:
+        - "dynamodb:*"
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CDR_TABLE}"
+package:
+  individually: true
+  exclude:
+    - images/**
+    - README.md
+
+custom:
+  bucket: knowhow-cdrs
+
+functions:
+  parse_cdr:
+    handler: functions/reader/cdr_reader.parse_cdr
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .cdr
+  aggregate_cdrs:
+    handler: functions/processor/cdr_process.aggregate_cdrs
+    reservedConcurrency: 20
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - CdrQueue
+              - Arn
+          batchSize: 1
+
+resources:
+  Resources:
+    CdrQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:provider.environment.CDR_QUEUE}
+    CdrDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CDR_TABLE}

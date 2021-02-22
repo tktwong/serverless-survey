@@ -1,0 +1,59 @@
+service: firstclass
+
+plugins:
+  - serverless-iam-roles-per-function
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+
+functions:
+  PublishMessage:
+    handler: src/publishMessage/publishMessageHandler.handler
+    environment:
+      MESSAGE_QUEUE_URL: !Ref MessageQueue
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-PublishMessageRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - sqs:SendMessage
+        Resource:
+         - !GetAtt MessageQueue.Arn
+    events:
+      - http:
+          path: message/createMessage
+          method: post
+          cors: true
+      
+  ReceiveMessage:
+    handler: src/publishMessage/receiveMessage.handler
+    environment:
+      MESSAGE_TOPIC_URL: !Ref MessageTopic
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-ReceiveMessageRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - sns:Publish
+        Resource:
+          - !Ref MessageTopic
+    events:
+      - sqs:
+          arn: 
+            !GetAtt MessageQueue.Arn
+
+resources:
+  Resources:
+    MessageQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-MessageQueue
+    MessageTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Message SNS Topic
+        TopicName: ${self:service}-${self:provider.stage}-MessageTopic
+        Subscription:
+          - Endpoint: devmartinese@gmail.com
+            Protocol: email

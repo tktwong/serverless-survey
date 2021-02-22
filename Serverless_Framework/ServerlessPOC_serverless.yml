@@ -1,0 +1,226 @@
+
+service: jaamslsapi
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-2  
+  apiGateway:
+    binaryMediaTypes:
+      - "image/png"
+  environment:    
+    MEETINGS_TABLE: { "Ref": "meetings" } #Logical ID
+    USERS_TABLE: { "Ref": "users" }
+    CONTACTUS_TABLE: { "Ref": "contactus" }
+    FEEDBACKS_TABLE: { "Ref": "feedbacks" }
+    PARTNERSHIPS_TABLE: { "Ref": "partnership" }
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Scan
+        - dynamodb:Query 
+        - ses:SendEmail
+        - ses:SendRawEmail
+        - ses:SendTemplatedEmail
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource: 
+        - { "Fn::GetAtt": ["meetings", "Arn"] }
+        - { "Fn::GetAtt": ["users", "Arn"] }
+        - { "Fn::GetAtt": ["contactus", "Arn"] }
+        - { "Fn::GetAtt": ["feedbacks", "Arn"] }
+        - { "Fn::GetAtt": ["partnership", "Arn"] }   
+        - "arn:aws:ses:${self:provider.region}:*:*"
+        - "arn:aws:lambda:${self:provider.region}:*:*"       
+        - "arn:aws:events:${self:provider.region}:*:*" 
+resources:
+  Resources:
+    meetings:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "meetings"
+        AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    users:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "users"
+        AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    contactus:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "contact"
+        AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    feedbacks:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "feedbacks"
+        AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    partnership:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "partnership"
+        AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+functions:
+  getUser:
+    handler: getUser/handler.getUser
+    environment:
+      TABLENAME_USERS: { "Ref": "users" }
+      TABLENAME_MEETINGS: { "Ref": "meetings" }
+    events:
+      - http:
+          path: /getUser
+          method: post
+          cors: 
+  getMeeting:
+    handler: getMeeting/handler.getMeeting
+    environment:
+      TABLENAME_USERS: { "Ref": "users" }
+      TABLENAME_MEETINGS: { "Ref": "meetings" }
+    events:
+      - http:
+          path: /getMeeting
+          method: post
+          cors: true
+  signup:
+    handler: signup/handler.signup
+    environment:
+      TABLENAME_USERS: { "Ref": "users" }
+      TABLENAME_MEETINGS: { "Ref": "meetings" }
+    events:
+      - http:
+          path: /signup
+          method: post
+          cors: true
+  login:
+    handler: login/handler.login
+    environment:
+      TABLENAME_USERS: { "Ref": "users" }
+      TABLENAME_MEETINGS: { "Ref": "meetings" }
+    events:
+      - http:
+          path: /login
+          method: post
+          cors: true
+  join:
+    handler: join/handler.join
+    environment:
+      TABLENAME_MEETINGS: { "Ref": "meetings" }
+    events:
+      - http:
+          path: /join
+          method: post
+          cors: true
+  updateMeet:
+    handler: updateMeet/handler.updateMeet
+    environment:
+      TABLENAME_MEETINGS: { "Ref": "meetings" }
+    events:
+      - http:
+          path: /updateMeet
+          method: post
+          cors: true 
+  postcontactus:
+    handler: contactus/handler.postcontactus
+    environment:
+      TABLENAME: { "Ref": "contactus" }
+      FUNCTIONNAME: '${self:service}-${self:provider.stage}-sendemail'
+    events:
+      - http:
+          path: /contactus
+          method: post
+          cors: true      
+  postfeedback:
+    handler: feedback/handler.postfeedback
+    environment:
+      TABLENAME: { "Ref": "feedbacks" }
+    events:
+      - http:
+          path: /feedback
+          method: post  
+          cors: true   
+  postpartnership:
+    handler: partnership/handler.postpartnership
+    environment:
+      TABLENAME: { "Ref": "partnership" }
+    events:
+      - http:
+          path: /partnership
+          method: post  
+          cors: true     
+  sendemail:
+    handler: ses_email/handler.sendemail   
+  userExpiry:
+    handler: scheduleTask/handler.userExpiry
+    environment:
+      TABLENAME_USERS: { "Ref": "users" }
+    events:
+      - schedule: 
+          rate: cron(0/10 * * * ? *) 
+          enabled: false
+          name: userExpiry
+          description: 'Update users table after trial expiry'
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

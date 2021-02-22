@@ -1,0 +1,36 @@
+service: data-processing-service
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+      Resource: "arn:aws:s3:::${self:custom.resizedImageBucket}/*"
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource: "arn:aws:s3:::${self:custom.uploadImageBucket}/*"
+
+custom:
+  resizedImageBucket: ${self:service}-${self:provider.stage}-resized-image-bucket
+  uploadImageBucket: ${self:service}-${self:provider.stage}-upload-image-bucket
+
+functions:
+  resizeImage:
+    handler: handler.resizeImage
+    environment: 
+      RESIZED_IMAGE_BUCKET: ${self:custom.resizedImageBucket}
+    events:
+      - s3: ${self:custom.uploadImageBucket}
+        event: s3:ObjectCreated:*
+
+resources:
+  Resources:
+    ResizedImageBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.resizedImageBucket}

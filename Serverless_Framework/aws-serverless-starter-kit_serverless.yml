@@ -1,0 +1,84 @@
+service: appsync-services
+
+plugins:
+   - serverless-appsync-plugin
+   - serverless-python-requirements
+   - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: '********' # add region
+  profile: '************' # add user profile name here
+  environment:
+    DYNAMODB_TABLE: ${self:custom.APPSYNC_TABLE}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: "arn:aws:dynamodb:#{AWS::Region}:*:table/${self:custom.APPSYNC_TABLE}"
+
+custom:      
+  APPSYNC_TABLE: appsync-table
+  
+  appSync:
+    name:  appsync
+    schema: schema.graphql
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      defaultAction: ALLOW
+      userPoolId: '*****' # required # user pool ID
+    mappingTemplates:
+      - dataSource: GraphQLResolver
+        type: Query
+        field: getItem
+        request: getItem-request-mapping-template.vtl
+        response: common-response-mapping-template.vtl
+      - dataSource: GraphQLResolver
+        type: Query
+        field: allItems
+        request: allItems-request-mapping-template.vtl
+        response: common-response-mapping-template.vtl
+      - dataSource: GraphQLResolver
+        type: Mutation
+        field: addItem
+        request: addItem-request-mapping-template.vtl
+        response: common-response-mapping-template.vtl
+      - dataSource: GraphQLResolver
+        type: Mutation
+        field: updateItem
+        request: updateItem-request-mapping-template.vtl
+        response: common-response-mapping-template.vtl
+      - dataSource: GraphQLResolver
+        type: Mutation
+        field: deleteItem
+        request: deleteItem-request-mapping-template.vtl
+        response: common-response-mapping-template.vtl
+    dataSources:
+      - type: AWS_LAMBDA
+        name: GraphQLResolver
+        description: 'Lambda DataSource'
+        config:
+          lambdaFunctionArn: { "Fn::GetAtt": [GraphQLResolverLambdaFunction, Arn] } 
+          
+
+functions:
+  GraphQLResolver:
+    handler: handler.graphql
+
+resources:
+  Resources:
+    GraphQLResolverLambdaFunction:
+      Type: AWS::Lambda::Function
+    AppsyncTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:custom.APPSYNC_TABLE} 

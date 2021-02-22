@@ -1,0 +1,100 @@
+
+# Created by Argemiro Neto
+# 
+# This file establishes API endpoints for the weather 
+# sensor station project.
+# 
+
+service: weather-api
+
+plugins:
+  - serverless-offline
+  
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: us-west-2
+  
+  iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - dynamodb:*
+       Resource: "arn:aws:dynamodb:us-west-2:*:*"
+
+
+functions:
+  add-sensor:
+    handler: api-handler.addSensor
+    events:
+      - http:
+          path: add-sensor
+          method: post
+          cors: true
+
+  list-sensors:
+    handler: api-handler.listSensors
+    events:
+      - http:
+          path: list-sensors
+          method: get
+          cors: true
+
+
+resources:
+  Resources:
+    HistoryDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: 'sensors-hist'
+    
+    SensorsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: 'sensors-data'
+
+      
+    WebAppS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: weather-client
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    WebAppS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: WebAppS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource: arn:aws:s3:::weather-client/*

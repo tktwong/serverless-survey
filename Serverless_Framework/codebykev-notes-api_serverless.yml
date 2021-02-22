@@ -1,0 +1,133 @@
+# NOTE: update this with your service name
+service: codebykev-notes-api
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: eu-west-2
+  # To load environment variables externally
+  # rename env.example to .env and uncomment
+  # the following line. Also, make sure to not
+  # commit your .env.
+  #
+  #environment:
+  #  SAMPLE_ENV_VAR: ${env:SAMPLE_ENV_VAR}
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName: notes
+    stripeSecretKey: ${env:STRIPE_SECRET_KEY}
+    stripePublishableKey: ${env:STRIPE_PUBLISHABLE_KEY}
+  
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:eu-west-2:680255552777:table/notes"
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /notes
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  create:
+    handler: endpoints/notes/create.main
+    events:
+      - http:
+          path: notes
+          method: post
+          cors: true
+          authorizer: aws_iam
+  # Defines an HTTP API endpoint that calls the main function in get.js
+  # - path: url path is /notes/{id}
+  # - method: GET request
+  get:
+    handler: endpoints/notes/get.main
+    events:
+      - http:
+          path: notes/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  # Defines an HTTP API endpoint that calls the main function in list.js
+  # - path: url path is /notes
+  # - method: GET request
+  list:
+    handler: endpoints/notes/list.main
+    events:
+      - http:
+          path: notes
+          method: get
+          cors: true
+          authorizer: aws_iam
+  # Defines an HTTP API endpoint that calls the main function in update.js
+  # - path: url path is /notes/{id}
+  # - method: PUT request
+  update:
+    handler: endpoints/notes/update.main
+    events:
+      - http:
+          path: notes/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  # Defines an HTTP API endpoint that calls the main function in delete.js
+  # - path: url path is /notes/{id}
+  # - method: DELETE request
+  delete:
+    handler: endpoints/notes/delete.main
+    events:
+      - http:
+          path: notes/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+  # Defines an HTTP API endpoint that calls the main function in billing-payment-intent
+  # - path: url path is /payment-intent
+  # - method: POST request
+  paymentintent:
+    handler: endpoints/billing/payment-intent.main
+    events: 
+      - http:
+          path: payment-intent
+          method: post
+          cors: true
+          authorizer: aws_iam
+  # Defines an HTTP API endpoint that stripe will call when a payment is made using the payment intent
+  # - path: url path is /payment-webhook
+  # - method: POST request
+  paymentwebhook:
+    handler: endpoints/billing/payment-webhook.main
+    events: 
+      - http:
+          path: payment-webhook
+          method: post
+          cors: true
+

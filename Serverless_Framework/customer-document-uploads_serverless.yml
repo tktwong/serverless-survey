@@ -1,0 +1,118 @@
+service: customer-document-uploads
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 256
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "*"
+  environment:
+    DROPBOXES_TABLE: "${self:service}-${self:provider.stage}-dropboxes"
+    REQUESTS_TABLE: "${self:service}-${self:provider.stage}-requests"
+    SENTRY_DSN: ${ssm:/customer-document-uploads/SENTRY_DSN}
+    URL_PREFIX: ${self:custom.endpoints.${self:provider.stage}}
+    jwtsecret: ${ssm:/common/hackney-jwt-secret}
+    CUSTOMER_TOKEN_SECRET: ${ssm:/common/customer-jwt-secret~true}
+    stage: ${self:provider.stage}
+    EVIDENCE_STORE_URL: ${self:custom.evidenceStoreUrls.${self:provider.stage}}
+    EVIDENCE_STORE_TOKEN: ${ssm:/customer-document-uploads/evidence-store-token~true}
+    GOV_NOTIFY_API_KEY: ${ssm:/customer-document-uploads/${self:provider.stage}-govnotify-api-key~true}
+    GOV_NOTIFY_TEMPLATE_ID: ${ssm:/customer-document-uploads/govnotify-template-id}
+
+custom:
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+  endpoints:
+    dev: http://localhost:3000
+    test: http://localhost:3000
+    staging: https://staging.uploads.hackney.gov.uk
+    production: https://uploads.hackney.gov.uk
+  evidenceStoreUrls:
+    dev: http://localhost:5050
+    test: https://staging-evidence-store.api.hackney.gov.uk
+    staging: https://staging-evidence-store.api.hackney.gov.uk
+    production: https://evidence-store.api.hackney.gov.uk
+
+plugins:
+  - serverless-offline
+  - serverless-offline-ssm
+  - serverless-dynamodb-local
+
+package:
+  individually: true
+  exclude:
+    - ./**
+
+functions:
+  app:
+    handler: lambda.appHandler
+    package:
+      include:
+        - lambda.js
+        - lib/**
+        - static/**
+        - templates/**
+        - node_modules/**
+    events:
+      - http: GET /
+      - http:
+          path: /assets/{proxy+}
+          method: GET
+      - http:
+          path: /requests
+          method: POST
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: ANY
+
+resources:
+  Resources:
+    UploadsDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: dropboxId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: dropboxId
+            KeyType: HASH
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        TableName: ${self:provider.environment.DROPBOXES_TABLE}
+    RequestsDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: requestId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: requestId
+            KeyType: HASH
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        TableName: ${self:provider.environment.REQUESTS_TABLE}

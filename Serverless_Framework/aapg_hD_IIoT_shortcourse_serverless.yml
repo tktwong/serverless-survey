@@ -1,0 +1,63 @@
+
+service: aapg-hd-iiot-shortcourse
+
+
+plugins:
+  - serverless-python-requirements
+
+
+custom:
+
+  stage: ${{opt:stage, self:provider.stage}}
+  esDomainName: aapghd
+  awsAccountId: ${{env:AWS_ACCOUNT_ID}}
+  esEndpoint: ${{env:ES_ENDPOINT}}
+  esIndex: iotdata
+  esRegion: us-east-1
+  esIotMappingFile: es_mapping_data.json
+  pythonRequirements:
+    dockerizePip: false
+
+
+
+
+provider:
+  name: aws
+  variableSyntax: '\${{([\s\S]+?)}}'
+
+  stage: dev
+  region: us-east-1
+  environment:
+    DYNAMODB_TABLE_NAME: aapgHD
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${{opt:region, self:provider.region}}:${{self:custom.awsAccountId}}:table/${{self:provider.environment.DYNAMODB_TABLE_NAME}}"
+
+
+functions:
+
+  aapghdiiot:
+    handler: pyHandler/create_es_meta.handler
+    name: elasticsearchIotMapping
+    description: Creates IIoT data mapping in Elasticsearch
+    runtime: python3.6
+    environment:
+      ES_ENDPOINT: ${{self:custom.esEndpoint}}
+      ES_INDEX: ${{self:custom.esIndex}}
+      ES_IOT_MAPPING_FILE: ${{self:custom.esIotMappingFile}}
+      ES_REGION: ${{self:custom.esRegion}}
+
+
+
+
+resources:
+  - ${{file(resources/iot_stack.yml)}}

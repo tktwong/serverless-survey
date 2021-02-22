@@ -1,0 +1,120 @@
+# NOTE: update this with your service name
+service: shops-api-service
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-domain-manager
+  - serverless-iam-roles-per-function
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  webpack:
+    webpackConfig: ../../webpack.config.js
+    includeModules: true
+  customDomain:
+    domainName: api.authentic.shop
+    basePath: shops
+    stage: ${self:provider.stage}
+    certificateName: "*.authentic.shop"
+    createRoute53Record: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  # To load environment variables externally
+  # rename env.example to env.yml and uncomment
+  # the following line. Also, make sure to not
+  # commit your env.yml.
+  #
+  #environment: ${file(env.yml):${self:provider.stage}}
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+
+functions:
+  getAllShops:
+    handler: getShopsHandler.getAllShops
+    events:
+      - http:
+          path: /all
+          method: get
+          cors: true
+          authorizer: aws_iam
+  getShopByName:
+    handler: getShopsHandler.getShopByName
+    events:
+      - http:
+          path: /{shopAccount}
+          method: get
+          cors: true
+          authorizer: aws_iam
+          request:
+            parameters:
+              paths:
+                shopAccount: true
+  createShop:
+    handler: createShopHandler.createShop
+    events:
+      - http:
+          path: /new
+          method: post
+          cors: true
+          authorizer: aws_iam
+  editShop:
+    handler: editShopHandler.editShop
+    events:
+      - http:
+          path: /edit/{shopAccount}
+          method: patch
+          cors: true
+          authorizer: aws_iam
+          request:
+            parameters:
+              paths:
+                shopAccount: true
+  deleteShop:
+    handler: deleteShopHandler.deleteShop
+    events:
+      - http:
+          path: /delete/{shopAccount}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+          request:
+            parameters:
+              paths:
+                shopAccount: true
+  uploadAttachment:
+    handler: uploadAttachmentHandler.uploadAttachment
+    events:
+      - http:
+          path: /upload/{shopAccount}
+          method: post
+          cors: true
+          authorizer: aws_iam
+          request:
+            parameters:
+              paths:
+                shopAccount: true
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - s3:PutObject
+        Resource: "arn:aws:s3:::ads-ax-service.shops--zine/*"

@@ -1,0 +1,64 @@
+service: something-to-read
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+  - serverless-domain-manager
+  - serverless-dynamodb-local
+custom:
+  wsgi:
+    app: app.app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: true
+  customDomain:
+    domainName: something.to-rea.de
+    basePath: ''
+    stage: dev
+    createRoute53Record: true
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+provider:
+  name: aws
+  runtime: python2.7
+  stage: dev
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:we-west-1:*:*"
+functions:
+  app:
+    handler: wsgi.handler
+    events:
+      - http: ANY /
+      - http: ANY /thankyou
+      - http: ANY /listing
+      - http: 'ANY {proxy+}'
+resources:  # CloudFormation template syntax
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: suggestions
+        AttributeDefinitions:
+          - AttributeName: Title
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Title
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

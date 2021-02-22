@@ -1,0 +1,177 @@
+service: memstack
+
+frameworkVersion: ">=1.28.0 <2.0.0"
+
+plugins:
+  - serverless-finch
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  profile: memstack
+  stage: ${opt:stage, 'dev'}
+  environment:
+    TABLE_NAME: Memstack
+  apiKeys:
+    - dev
+  region: eu-west-2
+  apiGateway:
+    restApiId: !Ref ApiGatewayRestApi
+  authorizer:
+    name: authorizer
+    identitySource: method.request.header.Authorization
+    arn: arn:aws:cognito-idp:eu-west-2:145787944847:userpool/eu-west-2_94cWFJlSO
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - !GetAtt MemstackTable.Arn
+        - Fn::Join:
+            - "/"
+            - - !GetAtt MemstackTable.Arn
+              - "index"
+              - "SkeyData"
+
+functions:
+  createCard:
+    handler: lambda/createCard.handler
+    events:
+      - http:
+          method: post
+          path: cards
+
+  getCardById:
+    handler: lambda/getCardById.handler
+    events:
+      - http:
+          method: get
+          path: cards/{cardId}
+          request:
+            parameters:
+              path:
+                cardId: true
+
+  getCardsByUserId:
+    handler: lambda/getCardsByUserId.handler
+    events:
+      - http:
+          method: get
+          path: user/{userId}/cards
+          request:
+            parameters:
+              path:
+                userId: true
+
+  createStack:
+    handler: lambda/createStack.handler
+    events:
+      - http:
+          method: post
+          path: stacks
+
+  uploadFile:
+    handler: lambda/uploadFile.handler
+    events:
+      - http:
+          method: post
+          path: upload
+          authorizer: ${self:provider.authorizer}
+    environment:
+      bucket: ${self:custom.uploadsBucketName}
+
+  getStacks:
+    handler: lambda/getStacks.handler
+    events:
+      - http:
+          method: get
+          path: stacks
+
+  getStackById:
+    handler: lambda/getStackById.handler
+    events:
+      - http:
+          method: get
+          path: stacks/{stackId}
+          request:
+            parameters:
+              path:
+                stackId: true
+
+  addCardToStack:
+    handler: lambda/addCardToStack.handler
+    events:
+      - http:
+          method: post
+          path: stacks/{stackId}/cards/{cardId}
+          request:
+            parameters:
+              path:
+                stackId: true
+                cardId: true
+
+  login:
+    handler: lambda/login.handler
+    events:
+      - http:
+          method: post
+          path: login
+          integration: lambda
+          response:
+            headers:
+              Set-Cookie: integration.response.body.Cookie
+    environment:
+      LOGIN_REDIRECT: ${self:custom.cognito.${self:provider.stage}.loginRedirect}
+      COGNITO_CLIENT_ID: ${env:COGNITO_CLIENT_ID}
+      COGNITO_CLIENT_SECRET: ${env:COGNITO_CLIENT_SECRET}
+
+resources:
+  - ${file(resources/api-gateway.yml)}
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/s3-bucket.yml)}
+  - ${file(resources/cloudfront.yml)}
+
+custom:
+  siteBucketName: dev.memstack.io
+  uploadsBucketName: ${self:provider.stage}-memstack-uploads
+
+  client:
+    manageResources: false
+    bucketName: dev.memstack.io
+    distributionFolder: ../web/build/
+    objectHeaders:
+      "index.html":
+        - name: "Cache-Control"
+          value: "no-cache"
+
+  cognito:
+    local:
+      loginRedirect: "https://localhost:3000/login"
+    dev:
+      loginRedirect: "https://dev.memstack.io/login"
+
+  serverless-offline:
+    port: 3001
+
+  dynamodb:
+    start:
+      migrate: true
+      seed: true
+
+    seed:
+      dev:
+        sources:
+          - table: Memstack
+            sources: [./seed-data.json]
+
+  webpack:
+    excludeFiles: lambda/*.test.ts

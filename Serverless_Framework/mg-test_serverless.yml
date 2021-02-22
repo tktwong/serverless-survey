@@ -1,0 +1,381 @@
+service:
+  name: smallservices
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-prune-plugin
+custom:
+  mongoUrl: ${opt:mongoUrl}
+  clientDataBucket: ${opt:clientDataBucket}
+  senderEmail: ${opt:senderEmail}
+  role: ${opt:role}
+  cryptoKey: ${opt:cryptoKey}
+  iv: ${opt:iv}
+  secret: ${opt:secret}
+  failedEmail: ${opt:failedEmail}
+  resources: ${opt:resources}
+  stage: ${opt:stage}
+  jumioUserAgent: ${opt:jumioUserAgent}
+  jumioRegion: ${opt:jumioRegion}
+  jumioAuthorization: ${opt:jumioAuthorization}
+  callbackUrl: ${opt:callbackUrl}
+  emailBucket: ${opt:emailBucket}
+  carAPIKey: ${opt:carAPIKey}
+  questionnaireBucket: ${opt:questionnaireBucket}
+  litifyAPIUrl: ${opt:litifyAPIUrl}
+  restApiId: ${opt:restApiId}
+  rootResourceId: ${opt:rootResourceId}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  timeout: 600
+  role: ${self:custom.role}
+  stage: ${self:custom.stage}
+  apiGateway:
+    restApiId: ${self:custom.restApiId}
+    restApiRootResourceId: ${self:custom.rootResourceId}
+  environment:
+    mongoUrl: ${self:custom.mongoUrl}
+    clientDataBucket: ${self:custom.clientDataBucket}
+    senderEmail: ${self:custom.senderEmail}
+    cryptoKey: ${self:custom.cryptoKey}
+    iv: ${self:custom.iv}
+    secret: ${self:custom.secret}
+    failedEmail: ${self:custom.failedEmail}
+    resources: ${self:custom.resources}
+    jumioUserAgent: ${self:custom.jumioUserAgent}
+    jumioRegion: ${self:custom.jumioRegion}
+    jumioAuthorization: ${self:custom.jumioAuthorization}
+    callbackUrl: ${self:custom.callbackUrl}
+    emailBucket: ${self:custom.emailBucket}
+    carAPIKey: ${self:custom.carAPIKey}
+    questionnaireBucket: ${self:custom.questionnaireBucket}
+    stage: ${self:custom.stage}
+    litifyAPIUrl: ${self:custom.litifyAPIUrl}
+
+functions:
+  # Utils
+  sendMail:
+    handler: src/endpoints/sendEmail.sendMail
+    events:
+      - http:
+          method: post
+          path: sendMail
+          cors: true
+          authorizer: authorizeAdminToken
+
+  translateText:
+    handler: src/endpoints/translate.translateText
+    events:
+      - http:
+          method: post
+          path: translateText
+          cors: true
+          authorizer: authorizeAdminToken
+
+  ## Token
+  decrypt:
+    handler: src/endpoints/crypto.decryptToken
+    events:
+      - http:
+          method: get
+          path: crypto/descrypt/{token}
+          cors: true
+
+  validateToken:
+    handler: src/endpoints/validateToken.validateToken
+    events:
+      - http:
+          method: get
+          path: validateToken/{token}
+          cors: true
+
+  ## S3 Files
+  getSignedUrl:
+    handler: src/endpoints/S3Files.getSignedUrl
+    events:
+      - http:
+          method: post
+          path: api/getSignedUrl
+          cors: true
+          authorizer: authorizeAdminOrJWT
+
+  ## Other
+  cars:
+    handler: src/endpoints/cars.cars
+    events:
+      - http:
+          method: get
+          path: api/cars/{vrm}
+          cors: true
+          authorizer: authorizeAdminOrJWT
+
+  emailAnswer:
+    handler: src/endpoints/emailAnswer.getEmailAnswer
+    events:
+      - http:
+          method: post
+          path: emailAnswer
+          cors: true
+          authorizer: authorizeAdminOrJWT
+
+  resendEmail:
+    handler: src/endpoints/resendEmail.resendEmail
+    events:
+      - http:
+          method: post
+          path: resendEmail
+          cors: true
+          authorizer: authorizeAdminToken
+
+  ## Crud lambdas
+  create:
+    handler: src/endpoints/crud.create
+    events:
+      - http:
+          method: post
+          path: api/{collection}/create
+          cors: true
+          authorizer: authorizeAdminToken
+
+  retrieve:
+    handler: src/endpoints/crud.retrieve
+    events:
+      - http:
+          method: post
+          path: api/{collection}/retrieve
+          cors: true
+          authorizer: authorizeAdminOrJWT
+
+  retrieveById:
+    handler: src/endpoints/crud.retrieveById
+    events:
+      - http:
+          method: get
+          path: api/{collection}/retrieve-by-id/{_id}
+          cors: true
+          authorizer: authorizeAdminOrJWT
+
+  update:
+    handler: src/endpoints/crud.update
+    events:
+      - http:
+          method: post
+          path: api/{collection}/update
+          cors: true
+          authorizer: authorizeAdminOrJWT
+
+  delete:
+    handler: src/endpoints/crud.deleteById
+    events:
+      - http:
+          method: delete
+          path: api/{collection}/delete/{_id}
+          cors: true
+          authorizer: authorizeAdminToken
+
+  count:
+    handler: src/endpoints/crud.count
+    events:
+      - http:
+          method: post
+          path: api/{collection}/count
+          cors: true
+          authorizer: authorizeAdminToken
+
+  # Jumio
+  requestAuthentication:
+    handler: src/endpoints/jumioAuthentication.authenticateDoc
+    events:
+      - http:
+          method: post
+          path: api/requestAuthentication
+          cors: true
+          authorizer: authorizeJWT
+
+  jumioCallback:
+    handler: src/endpoints/jumioAuthentication.jumioCallback
+    events:
+      - http:
+          method: post
+          path: api/jumioCallback
+          cors: true
+
+  getAuthenticationResult:
+    handler: src/endpoints/jumioAuthentication.getAuthenticationResult
+    events:
+      - http:
+          method: post
+          path: api/getAuthenticationResult
+          cors: true
+          authorizer: authorizeAdminOrJWT
+
+  # Delete these
+  ## Echo emailLead
+  echo:
+    handler: src/endpoints/echo.echo
+
+  # Intake
+  ## Create intake
+  createIntakeFromData:
+    handler: src/endpoints/startIntake.startFromData
+    events:
+      - http:
+          method: post
+          path: api/createIntake
+          cors: true
+          authorizer: authorizeAdminToken
+
+  emailLead:
+    handler: src/lambdas/startIntake.startFromRecord
+
+  createNew:
+    handler: src/endpoints/searchClient.createNew
+    events:
+      - http:
+          method: post
+          path: createNew
+          cors: true
+
+  deleteClient:
+    handler: src/endpoints/clients.deleteClient
+    events:
+      - http:
+          method: delete
+          path: client/deactivateIntake/{id}
+          cors: true
+          authorizer: authorizeAdminToken
+
+  ## Search intake
+  search:
+    handler: src/endpoints/searchClient.searchClient
+    events:
+      - http:
+          method: get
+          path: search
+          cors: true
+
+  # SurveyAnswers
+  getAnswers:
+    handler: src/endpoints/getAnswersSheet.getAnswersSheet
+    events:
+      - http:
+          method: post
+          path: api/getAnswersCSV
+          cors: true
+          authorizer: authorizeAdminToken
+
+  getSurveyAnswersStats:
+    handler: src/endpoints/getSurveyStats.getSurveyStats
+    events:
+      - http:
+          method: post
+          path: api/getStats
+          cors: true
+          authorizer: authorizeAdminToken
+
+  # Survey
+
+  ## Get questionnaire ids
+  getQuestIds:
+    handler: src/endpoints/getQuestIds.getQuestIds
+    events:
+      - http:
+          method: get
+          path: questIds
+          cors: true
+          authorizer: authorizeAdminToken
+
+  createSurvey:
+    handler: src/endpoints/createSurvey.createSurvey
+    events:
+      - http:
+          method: post
+          path: createSurvey
+          cors: true
+          authorizer: authorizeAdminToken
+
+  # Contacts
+  createContact:
+    handler: src/endpoints/contacts.create
+    events:
+      - http:
+          method: post
+          path: contacts/create
+          cors: true
+          authorizer: authorizeAdminToken
+
+  updateContact:
+    handler: src/endpoints/contacts.update
+    events:
+      - http:
+          method: post
+          path: contacts/update
+          cors: true
+          authorizer: authorizeAdminToken
+
+  deleteContact:
+    handler: src/endpoints/contacts.deleteContact
+    events:
+      - http:
+          method: delete
+          path: contacts/delete/{id}
+          cors: true
+          authorizer: authorizeAdminToken
+
+  listContacts:
+    handler: src/endpoints/contacts.list
+    events:
+      - http:
+          method: post
+          path: contacts/list
+          cors: true
+          authorizer: authorizeAdminToken
+
+  detailContact:
+    handler: src/endpoints/contacts.details
+    events:
+      - http:
+          method: get
+          path: contacts/details/{id}
+          cors: true
+          authorizer: authorizeAdminToken
+
+  # # Denylist
+  addToDenylist:
+    handler: src/endpoints/denylist.addToDenylist
+    events:
+      - http:
+          method: post
+          path: denylist/addToList
+          cors: true
+          authorizer: authorizeAdminToken
+  getDenylist:
+    handler: src/endpoints/denylist.getDenylist
+    events:
+      - http:
+          method: get
+          path: denylist/getList
+          cors: true
+          authorizer: authorizeAdminToken
+  isInDenylist:
+    handler: src/endpoints/denylist.isInDenylist
+    events:
+      - http:
+          method: get
+          path: denylist/isInDenylist/{email}
+          cors: true
+          authorizer: authorizeAdminToken
+
+  #Auth lambdas
+  authorizeAdminToken:
+    handler: src/lambdas/auth.authorizeAdminToken
+
+  authorizeJWT:
+    handler: src/lambdas/auth.authorizeJWT
+
+  authorizeAdminOrJWT:
+    handler: src/lambdas/auth.authorizeAdminOrJWT

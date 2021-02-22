@@ -1,0 +1,58 @@
+service: forex-robonifacio1
+
+frameworkVersion: "<=1.25.0"
+
+custom:
+  namespace: ${self:service}-${self:custom.stage}
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: ap-southeast-1
+  environment:
+    CLIENT_ID: '305570257588.320331178501'
+    CLIENT_SECRET: 12d29f6c43572df3e5efe2799f123ec7
+    VERIFICATION_TOKEN: mVFmhwG7FGSK9FiZPOx0LRcv
+    INSTALL_ERROR_URL: http://forex-robonifacio1.s3-website-ap-southeast-1.amazonaws.com/#error
+    INSTALL_SUCCESS_URL: http://forex-robonifacio1.s3-website-ap-southeast-1.amazonaws.com/#success
+    NAMESPACE: ${self:custom.namespace}
+    TEAMS_TABLE: ${self:custom.namespace}-teams
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.TEAMS_TABLE}
+
+functions:
+  events:
+    handler: events.handler
+    events:
+      - http:
+          path: events
+          method: post
+  install:
+    handler: install.handler
+    events:
+      - http:
+          path: install
+          method: get
+
+resources:
+  Resources:
+    TeamsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TEAMS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: team_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: team_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

@@ -1,0 +1,149 @@
+service: ingredients
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: ">=1.44.0"
+
+# environment:
+#   tableName: ${self:service}-${self:provider.stage}-Ingredients
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline #serverless-offline needs to be last in the list
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:Query"
+        - "dynamodb:BatchWriteItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:GetItem"
+        - "dynamodb:UpdateItem"
+      Resource: "arn:aws:dynamodb:${self:provider.region}:373376418880:table/${self:service}-${self:custom.myStage}-Ingredients"
+
+custom:
+  myStage: ${opt:stage, self:provider.stage}
+  webpack:
+    includeModules: true # enable auto-packing of external modules
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: false
+      convertEmptyValues: true
+
+functions:
+  addIngredientStyle:
+    environment:
+      tableName: ${self:service}-${self:custom.myStage}-Ingredients
+    handler: src/handlers/index.addIngredientStyle
+    events:
+      - http:
+          path: ingredients/styles
+          method: post
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - X-User-Key
+
+  updateIngredient:
+    environment:
+      tableName: ${self:service}-${self:custom.myStage}-Ingredients
+    handler: src/handlers/index.updateIngredientStyle
+    events:
+      - http:
+          path: ingredients/styles
+          method: put
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - X-User-Key
+
+  removeIngredient:
+    environment:
+      tableName: ${self:service}-${self:custom.myStage}-Ingredients
+    handler: src/handlers/index.deleteIngredientStyle
+    events:
+      - http:
+          path: ingredients
+          method: delete
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - X-User-Key
+
+  addIngredient:
+    environment:
+      tableName: ${self:service}-${self:custom.myStage}-Ingredients
+    handler: src/handlers/index.addIngredient
+    events:
+      - http:
+          path: ingredients/new
+          method: post
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - X-User-Key
+
+  getIngredientsByUserId:
+    environment:
+      tableName: ${self:service}-${self:custom.myStage}-Ingredients
+    handler: src/handlers/index.getIngredientsByUserId
+    events:
+      - http:
+          path: ingredients
+          method: get
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - X-User-Key
+
+  getNewRecipe:
+    environment:
+      tableName: ${self:service}-${self:custom.myStage}-Ingredients
+    handler: src/handlers/index.getNewRecipe
+    events:
+      - http:
+          path: recipes
+          method: post
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - X-User-Key
+
+resources:
+  Resources:
+    IngredientsDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      # DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: name
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:service}-${self:custom.myStage}-Ingredients

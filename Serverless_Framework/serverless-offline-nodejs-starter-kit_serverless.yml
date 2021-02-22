@@ -1,0 +1,81 @@
+service: serverless-offline-nodejs-starter
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: serverless
+  logRetentionInDays: 30 # Only hold on to a month's worth of data in logs
+
+  # Add VPC configuration here if deploying to a VPC (see https://serverless.com/framework/docs/providers/aws/guide/functions/#vpc-configuration)
+  vpc:
+    securityGroupIds:
+      - example-vpc-123
+    subnetIds:
+      - example-subnet-123
+
+  # Add any environment variables (see https://serverless.com/framework/docs/providers/aws/guide/functions#environment-variables)
+  environment:
+    NODE_ENV: ${opt:stage, self:provider.stage}
+    JWT_SECRET: 'FAKE_KEY_DO_NOT_USE'
+
+  # Configure global lambda function permissions (see https://serverless.com/framework/docs/providers/aws/guide/iam/)
+  iamRoleStatements:
+    - Effect: Allow # WarmUp lamda to send logs to CloudWatch
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource:
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:logs'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'log-group:/aws/lambda/*:*:*'
+    - Effect: Allow # WarmUp lamda to manage ENIS (only needed if deploying to VPC, https://docs.aws.amazon.com/lambda/latest/dg/vpc.html)
+      Action:
+        - ec2:CreateNetworkInterface
+        - ec2:DescribeNetworkInterfaces
+        - ec2:DetachNetworkInterface
+        - ec2:DeleteNetworkInterface
+      Resource: "*"
+    - Effect: 'Allow' # WarmUp lamda to invoke the functions to be warmed
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource:
+      - Fn::Join:
+        - ':'
+        - - arn:aws:lambda
+          - Ref: AWS::Region
+          - Ref: AWS::AccountId
+          - function:${self:service}-${opt:stage, self:provider.stage}-*
+
+  # you can overwrite defaults here
+  stage: local
+  region: us-east-1
+
+plugins:
+  - serverless-webpack
+  - serverless-offline-ssm-provider
+  - serverless-offline-scheduler
+  - serverless-offline
+  - serverless-pseudo-parameters
+  - serverless-plugin-split-stacks
+  - serverless-plugin-include-dependencies
+  - serverless-plugin-warmup
+
+custom:
+  webpackIncludeModules: true
+
+  warmup:
+    enabled: false
+    folderName: '_warmup'
+    cleanFolder: false
+    memorySize: 256
+    name: 'serverless-offline-nodejs-starter-${opt:stage, self:provider.stage}-warmup'
+    schedule: 'cron(0/5 14-02 ? * MON-SAT *)' # Run warm up every 5 minutes Mon-Fri between 8:00am and 6:00pm (CT)
+    timeout: 20
+    prewarm: true # Run warmup immediately after a deployment
+
+functions: ${file(serverless.js)}

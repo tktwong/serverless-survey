@@ -1,0 +1,112 @@
+service: CloudSinnBackend
+
+plugins:
+  - serverless-iam-roles-per-function
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+custom: ${file(./src/env.yml)}
+
+package:
+  individually: true
+  exclude:
+    # since './**' does not work because of a (reported) bug
+    - ".idea/**"
+    - "./src/jwt-lambda-authorizer/package.json"
+    - "./src/jwt-lambda-authorizer/package-lock.json"
+    - "invoke-secured-lambda.sh"
+    - "./package.json"
+    - "./package-lock.json"
+    - "./node_packages"
+    - "src/env.yml"
+    - "README.md"
+
+functions:
+  CloudSinnLambdaAuthorizer:
+    handler: src/jwt-lambda-authorizer/index.handler
+    environment:
+      AUDIENCE: ${self:custom.AUDIENCE}
+      JWKS_URI: ${self:custom.JWKS_URI}
+      TOKEN_ISSUER: ${self:custom.TOKEN_ISSUER}
+
+  CloudSinnQueryDispatcher:
+    handler: src/dispatcher/index.handler
+    runtime: python3.6
+    events:
+    - http:
+        path: resources
+        method: get
+        cors: true
+        authorizer:
+          name: CloudSinnLambdaAuthorizer
+          type: token
+          identitySource: method.request.header.Authorization
+          identityValidationExpression: ^Bearer [-0-9a-zA-z\.]*$
+          resultTtlInSeconds: 3600
+    iamRoleStatements:
+    - Effect: "Allow"
+      Action: lambda:InvokeFunction
+      Resource: "*"
+
+  CloudSinnListStack:
+    handler: src/stack/list-stacks.handler
+    events:
+    - http:
+        path: stacks
+        method: get
+        cors: true
+        authorizer:
+          name: CloudSinnLambdaAuthorizer
+          type: token
+          identitySource: method.request.header.Authorization
+          identityValidationExpression: ^Bearer [-0-9a-zA-z\.]*$
+          resultTtlInSeconds: 3600
+    iamRoleStatements:
+    - Effect: "Allow"
+      Action: cloudformation:DescribeStacks
+      Resource: "*"
+
+  CloudSinnListStackStatus:
+    handler: src/stack/list-stack-status.handler
+    iamRoleStatements:
+    - Effect: "Allow"
+      Action: cloudformation:DescribeStacks
+      Resource: "*"
+
+  CloudSinnDatabaseBackup:
+    handler: src/database/backup-summaries.handler
+    iamRoleStatements:
+    - Effect: "Allow"
+      Action: dynamodb:ListBackups
+      Resource: "*"
+    - Effect: "Allow"
+      Action: cloudformation:DescribeStacks
+      Resource: "*"
+  
+  CloudSinnOttaDeveloperViolation:
+    runtime: python3.6
+    handler: src/iam/otta-developers.handler
+    iamRoleStatements:
+    - Effect: "Allow"
+      Action: iam:ListGroupsForUser
+      Resource: "*"
+
+  CloudSinnTaskMonitor:
+    handler: src/ecs/task-monitor.handler
+    runtime: python3.6
+    iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+      - ecs:ListTasks
+      - ecs:DescribeTasks
+      - ecs:DescribeTaskDefinition
+      Resource: "*"
+
+  CloudSinnNumberOfInstances:
+    handler: src/ec2/number-of-instances.handler
+    iamRoleStatements:
+    - Effect: "Allow"
+      Action: ec2:DescribeInstances
+      Resource: "*"

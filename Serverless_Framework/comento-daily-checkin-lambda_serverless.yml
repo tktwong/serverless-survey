@@ -1,0 +1,94 @@
+service: daily-check
+
+provider:
+    name: aws
+    region: ap-northeast-2
+    runtime: provided.al2
+    memorySize: 512
+    logRetentionInDays: 1 # Set the default RetentionInDays for a CloudWatch LogGroup
+    lambdaHashingVersion: "20201221"
+    apiGateway:
+      shouldStartNameWithService: true
+      # https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-gzip-compression-decompression.html
+      minimumCompressionSize: 1024
+      binaryMediaTypes:
+        - '*/*'
+    environment:
+      APP_STORAGE: '/tmp'
+      SQS_QUEUE:
+        Ref: DailyCheckInQueue
+      # If you create the queue manually, the `SQS_QUEUE` variable can be defined like this:
+      # SQS_QUEUE: https://sqs.us-east-1.amazonaws.com/your-account-id/my-queue
+    iamRoleStatements:
+      # Allows our code to interact with SQS
+      - Effect: Allow
+        Action: [ sqs:SendMessage, sqs:DeleteMessage ]
+        Resource:
+          Fn::GetAtt: [ DailyCheckInQueue, Arn ]
+      - Effect: Allow
+        Action:
+          - ses:*
+        Resource: [ '*' ]
+
+package:
+    # Directories to exclude from deployment
+    exclude:
+        - node_modules/**
+        - public/storage
+        - public/docs
+        - resources/assets/**
+        - storage/**
+        - tests/**
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  domains:
+    prod: daily-api.comento.kr
+    dev: dev-daily-api.comento.kr
+
+  customDomain:
+    basePath: ""
+    domainName: ${self:custom.domains.${self:custom.stage}}
+    stage: "${self:custom.stage}"
+    createRoute53Record: true
+    endpointType: regional
+    apiType: http
+
+functions:
+    # This function runs the Laravel website/API
+    web:
+        handler: public/index.php
+        timeout: 28 # in seconds (API Gateway has a timeout of 29 seconds)
+        layers:
+            - ${bref:layer.php-74-fpm}
+        events:
+            -   httpApi: '*'
+    # This function lets us run artisan commands in Lambda
+    artisan:
+        handler: artisan
+        timeout: 120 # in seconds
+        layers:
+            - ${bref:layer.php-74} # PHP
+            - ${bref:layer.console} # The "console" layer
+
+plugins:
+  - ./vendor/bref/bref
+  - serverless-domain-manager
+resources:
+  Resources:
+    # The SQS queue
+    DailyCheckInQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: dailycheckin-${opt:stage , 'dev'}-queue
+        RedrivePolicy:
+          maxReceiveCount: 3 # jobs will be retried up to 3 times
+          # Failed jobs (after the retries) will be moved to the other queue for storage
+          deadLetterTargetArn:
+            Fn::GetAtt: [ DailyCheckInDeadLetterQueue, Arn ]
+    # Failed jobs will go into that SQS queue to be stored, until a developer looks at these errors
+    DailyCheckInDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: dailycheckin-${opt:stage , 'dev'}-dead-letter-queue
+        MessageRetentionPeriod: 1209600 # maximum retention: 14 days

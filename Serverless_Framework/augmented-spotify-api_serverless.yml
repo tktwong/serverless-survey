@@ -1,0 +1,54 @@
+service: augmented-spotify-api
+
+provider:
+  name: aws
+  runtime: ruby2.5
+  region: ${env:AWS_REGION}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+       - dynamodb:Query
+       - dynamodb:Scan
+       - dynamodb:GetItem
+       - dynamodb:PutItem
+       - dynamodb:UpdateItem
+       - dynamodb:DeleteItem
+      Resource: ${env:DYNAMODB_METADATA_ARN}
+  apiKeys:
+    - ${env:API_KEY}
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+
+functions:
+  api:
+    handler: rack_adapter.handler
+    events:
+      - http:
+          path: artists/{id}
+          method: get
+          integration: lambda-proxy
+          private: true
+      - http:
+          path: artists/{id}/metadata
+          method: post
+          integration: lambda-proxy
+          private: true
+
+plugins:
+  - serverless-rack
+  - serverless-dotenv-plugin
+
+package:
+  exclude:
+    - .env
+    - .env.*
+    - README.md
+    - openapi.yml
+    - spec/**
+    

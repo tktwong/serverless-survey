@@ -1,0 +1,160 @@
+
+service: greet-gateway # NOTE: update this with your service name
+
+provider:
+  name: aws
+  basePath: 'greet'
+  runtime: nodejs10.x
+  # try to put changeable stuff here and refer back to it
+  # you can pass --stage from command line, lowercase
+  stage: ${opt:stage, 'dev'}
+  # required parameter from command line --domain
+  domainName: ${opt:domain}
+  # Region us-east-1 is tied to certificates
+  region: ${opt:region, 'us-east-1'
+  # profiles are setup by you on your local machine
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  # thinking ahead to data table
+  tableName: greet_${self:provider.stage}
+  # Retain says create but dont overwrite existing data table
+  tableDeletionPolicy: Retain
+
+  tableGSI_1: gsi_1_${self:provider.tableName}
+  # apiKeys are first step to securing your gateway api service
+  # apiKeys remove the browser's access to the gateway.
+  # apiKeys will appear in command window on deploy
+  # use insomnia or postman to verify your gateway
+  apiKeys:
+    - serverless-${self:custom.customDomain.basePath}-${self:provider.stage}-apikey
+  # you can define service wide environment variables here
+  #  environment:
+  #    variable1: value1
+  environment:
+    SERVICE_NAME: ${self:service}
+    # reference from your lambda, lowercase
+    STAGE_NAME: ${self:provider.stage}
+    # reference from your lambda...switch tween dev, test, and prod tables
+    TABLE_NAME: ${self:provider.tableName}
+    # index for TABLE_NAME
+    GSI_1: ${self:provider.tableGSI_1}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "lambda:InvokeFunction"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "*"
+
+functions:
+  authorize:
+    handler: handler.authorize
+
+  # register:
+  #  handler: handler.register
+  #  description: "Signup to use services"
+  #  events:
+  #    - http:
+  #        path: register
+  #        method: post
+  #        cors: true
+  signin:
+    handler: handler.signin
+    description: "An authorized signin will return a JWT"
+    events:
+      - http:
+          path: signin
+          method: post
+          cors: true
+
+  hello:
+    handler: handler.hello
+    description: "returns Greet hello + name. guest"
+    events:
+      - http:
+          method: post
+          path: hello
+          cors: true
+          authorizer: authorize # requires a login
+          # private: true # apikey
+  goodbye:
+    handler: handler.goodbye
+    description: "Returns Goodbye. Public"
+    events:
+      - http:
+          method: get
+          path: goodbye
+          cors: true
+  index:
+    handler: handler.index
+    description: "returns index to documents for given words."
+    events:
+      - http:
+          method: get
+          path: index
+          cors: true
+          # private: true # apikey
+          authorizer: authorize # requires a signin
+
+plugins:
+  # configures custom domain ...
+  - serverless-domain-manager
+
+custom:
+    #defaultStage: dev
+    # use input stage otherwise use provider.stage
+    # stage: ${opt:stage, 'dev'}
+    stage: ${self:provider.stage}
+    # Set the table name here so we can use it while testing locally
+    tableName: ${self:provider.tableName}
+    tableDeletionPolicy: ${self:provider.tableDeletionPolicy}
+    gsi_1: ${self:provider.tableGSI_1}
+
+    profiles:
+      dev: devProfile
+      prod: prodProfile
+      test: testProfile
+
+    domains:
+      # you should have a domain name before you get add subdomains
+      # subdomains configured for gateway lambda
+      # domain is abc.com
+      # subdomain is related to domainName
+      # subdomain is dev-api.abc.com
+      # you have to acquire the domain i.e. name abc.com in Route53
+      dev: dev-api.${self:provider.domainName}
+      prod: api.${self:provider.domainName}
+      test: test-api.${self:provider.domainName}
+      #dev: dev-api.lyttlebit.com
+      #prod: api.lyttlebit.com
+      #test: test-api.lyttlebit.com
+    customDomain:
+      basePath: ${self:provider.basePath} # This will be prefixed to all routes
+      endpointType: 'edge'
+
+      # stage: ${self:provider.stage}
+      # lookup domain based on stage
+      # serverless-domain-manager interacts with the following
+      domainName: "${self:custom.domains.${self:provider.stage}}" # Change this to your domain.
+      # request certs from certificate manager
+      # request certs for the domain and the subdomains
+      certificateName: "${self:custom.domains.${self:provider.stage}}"
+      createRoute53Record: true
+
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # DynamoDB
+  # be careful files are very sensitive to non-visible character dont cut and paste
+  # including table resources (resources/dynamodb-table.yml) will cause a deploy errror
+  #  * ServerlessError: An error occurred: Table1 - greet_dev already exists.
+  # uncomment the following to create a table from scratch
+  # - ${file(resources/dynamodb-table.yml)}
+  # cognito not used yet
+  # - ${file(resources/cognito-user-pool.yml)}

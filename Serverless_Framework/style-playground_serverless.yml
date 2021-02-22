@@ -1,0 +1,154 @@
+# to deploy the application run command below in the same directory:
+# sls deploy -s {stage} -v
+# Note: you should have the AWS user and profile configured first
+
+service: planit-backend
+frameworkVersion: '2'
+
+plugins:
+  - serverless-bundle
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: planit
+  timeout: 30
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: "*"
+
+  apiKeys:
+    - backendApiKey2
+
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+
+  apiGateway:
+    shouldStartNameWithService: true
+
+# varibles to be used by sls and also the code
+  environment:
+    TABLE_REGION: "us-east-1"
+    CATEGORIES_TABLE: ${self:custom.categoriesTable}
+    TASKS_TABLE: ${self:custom.tasksTable}
+    TASKS_TABLE_SECONDARY_INDEX_NAME: ${self:custom.taskTableSecondaryIndexName}
+
+# custom properties
+custom:
+  categoriesTable: "categories-new-${self:provider.stage}"
+  tasksTable: "tasks-new-${self:provider.stage}"
+  taskTableSecondaryIndexName: "userAndCategoryIndex"
+  bundle:
+    linting: false
+
+functions:
+  # functions to handle Category requets
+  getCategoriesByUser:
+    handler: src/handlers/category.getCategoriesByUser
+    events:
+      - http:
+          path: /categories/{userId}
+          method: get
+          cors: true
+          private: true
+
+  getCategory:
+    handler: src/handlers/category.getCategory
+    events:
+      - http:
+          path: /categories/{userId}/{cdate}
+          method: get
+          cors: true
+          private: true
+
+  # this one handles both creation and update
+  creatCategory:
+    handler: src/handlers/category.creatCategory
+    events:
+      - http:
+          path: /categories
+          method: post
+          cors: true
+          private: true
+      - http:
+          path: /categories
+          method: put
+          cors: true
+          private: true
+
+  deleteCategory:
+    handler: src/handlers/category.deleteCategory
+    events:
+      - http:
+          path: /categories/{userId}/{cdate}
+          method: delete
+          cors: true
+          private: true
+
+
+  # functions to handle task requests
+  getTasksByUser:
+    handler: src/handlers/task.getTasksByUser
+    events:
+      - http:
+          path: /tasks/{userId}
+          method: get
+          cors: true
+          private: true
+
+  getTasksByUserAndCategory:
+    handler: src/handlers/task.getTasksByUserAndCategory
+    events:
+      - http:
+          path: /tasks/{userId}/category/{category}
+          method: get
+          cors: true
+          private: true
+
+  getTask:
+    handler: src/handlers/task.getTask
+    events:
+      - http:
+          path: /tasks/{userId}/{cdate}
+          method: get
+          cors: true
+          private: true
+
+  # this one handles both creation and update
+  creatTask:
+    handler: src/handlers/task.creatTask
+    events:
+      - http:
+          path: /tasks
+          method: post
+          cors: true
+          private: true
+      - http:
+          path: /tasks
+          method: put
+          cors: true
+          private: true
+
+  deleteTask:
+    handler: src/handlers/task.deleteTask
+    events:
+      - http:
+          path: /tasks/{userId}/{cdate}
+          method: delete
+          cors: true
+          private: true
+
+resources:
+  - ${file(resources/dynamoDB.yml)}
+

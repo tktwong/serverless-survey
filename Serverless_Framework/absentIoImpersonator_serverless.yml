@@ -1,0 +1,103 @@
+service: absentIoImpersonator # NOTE: update this with your service name
+
+custom:
+  defaultStage: dev
+  currentStage: ${opt:stage, self:custom.defaultStage}
+  userPoolName: test-user-pool-${self:custom.currentStage}
+  userPoolClientName: test-user-pool-client-${self:custom.currentStage}
+
+provider:
+  name: aws
+  runtime: java8
+
+package:
+  artifact: build/libs/absetIoImpersonator-${self:custom.currentStage}-all.jar
+
+functions:
+  start:
+    handler: com.serverless.lambdas.Start
+    events:
+      - http:
+          path: /start
+          method: post
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      key: ${ssm:absentIokey}
+      id: ${ssm:absentIoId}
+
+  stop:
+    handler: com.serverless.lambdas.Stop
+    events:
+      - http:
+          path: /stop
+          method: put
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      key: ${ssm:absentIokey}
+      id: ${ssm:absentIoId}
+
+  pause:
+    handler: com.serverless.lambdas.Pause
+    events:
+      - http:
+          path: /pause
+          method: post
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      key: ${ssm:absentIokey}
+      id: ${ssm:absentIoId}
+
+resources:
+  Resources:
+    CognitoUserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        MfaConfiguration: OFF
+        UserPoolName: ${self:custom.userPoolName}
+        UsernameAttributes:
+          - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 6
+            RequireLowercase: False
+            RequireNumbers: True
+            RequireSymbols: False
+            RequireUppercase: True
+    CognitoUserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: ${self:custom.userPoolClientName}
+        GenerateSecret: False
+        ExplicitAuthFlows:
+          - "USER_PASSWORD_AUTH"
+        UserPoolId:
+          Ref: CognitoUserPool
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: cognito-authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [CognitoUserPool, Arn]
+  Outputs:
+    CognitoUserPoolArn:
+      Value:
+        Fn::GetAtt:
+          - CognitoUserPool
+          - Arn
+      Export:
+        Name: CognitoUserPoolArn-${self:custom.currentStage}

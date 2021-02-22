@@ -1,0 +1,83 @@
+service: caring-fred
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ca-central-1'}
+  stackName: ${self:service}-dynamo-${self:provider.stage}
+  lambdaHashingVersion: 20201221
+  deploymentBucket:
+    name: ${self:service}-${self:provider.stage}-serverlessdeploymentbucket
+
+  # Allow for cf "AWS::" variables
+  # See https://serverless.com/framework/docs/providers/aws/guide/variables/#using-custom-variable-syntax
+  variableSyntax: "\\${((?!AWS)[ ~:a-zA-Z0-9._'\",\\-\\/\\(\\)]+?)}"
+
+resources:
+  Resources:
+    TableUser:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-user
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        GlobalSecondaryIndexes:
+        - IndexName: user-email-index
+          KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+        SSESpecification:
+          SSEEnabled: True
+        BillingMode: PAY_PER_REQUEST
+
+    TableOrganizations:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-organization
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: search_name
+          AttributeType: S
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        GlobalSecondaryIndexes:
+        - IndexName: search_name-index
+          KeySchema:
+          - AttributeName: search_name
+            KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+        SSESpecification:
+          SSEEnabled: True
+        BillingMode: PAY_PER_REQUEST
+
+    TableEvents:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-event
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: owner
+          AttributeType: S
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: owner
+          KeyType: RANGE
+        SSESpecification:
+          SSEEnabled: True
+        BillingMode: PAY_PER_REQUEST

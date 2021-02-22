@@ -1,0 +1,135 @@
+service: nameless
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-central-1
+  stage: local
+  environment:
+    balanceTableName: ${self:custom.balanceTableName}
+    rulesTableName: ${self:custom.rulesTableName}
+    transactionQueueName: ${self:custom.transactionQueueName}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+      - "xray:PutTraceSegments"
+      - "xray:PutTelemetryRecords"
+      Resource:
+      - "*"
+    - Effect: "Allow"
+      Action:
+      - "s3:ListBucket"
+      Resource:
+        Fn::Join:
+        - ""
+        - - "arn:aws:s3:::"
+          - Ref: ServerlessDeploymentBucket
+    - Effect: "Allow"
+      Action:
+      - "s3:PutObject"
+      Resource:
+        Fn::Join:
+        - ""
+        - - "arn:aws:s3:::"
+          - Ref: "ServerlessDeploymentBucket"
+          - "/*"
+    - Effect: Allow
+      Action:
+      - "*"
+      Resource: "arn:aws:dynamodb:*:*:table/${self:custom.balanceTableName}"
+    - Effect: Allow
+      Action:
+      - "*"
+      Resource: "arn:aws:dynamodb:*:*:table/${self:custom.rulesTableName}"
+    - Effect: "Allow"
+      Action:
+      - "sqs:SendMessage"
+      Resource:
+      - "arn:aws:sqs:*:*:${self:custom.transactionQueueName}"
+
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-tracing
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  balanceTableName: "nameless.${self:custom.stage}.balance"
+  rulesTableName: "nameless.${self:custom.stage}.rules"
+  transactionQueueName: "nameless-${self:custom.stage}-transaction-queue"
+
+functions:
+  handleIntent:
+    handler: transactions/IntentController.handleIntent
+    tracing: true
+    events:
+    - http:
+        path: webhook
+        method: post
+        cors: true
+  txlistener:
+    handler: transactions/TransactionListener.process
+    tracing: true
+    events:
+      - sqs:
+          arn: arn:aws:sqs:eu-central-1:323151569707:${self:custom.transactionQueueName}
+          batchSize: 1
+  txCreate:
+    handler: transactions/TransactionsController.create
+    tracing: true
+    events:
+    - http:
+        path: transactions
+        method: post
+        cors: true
+  getBalances:
+    handler: transactions/TransactionsController.getBalances
+    tracing: true
+    events:
+    - http:
+        path: balances/{userId}
+        method: get
+        cors: true
+
+resources:
+  Resources:
+    BalanceTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: spaceName
+          AttributeType: S
+        KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: spaceName
+          KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 10
+        TableName: ${self:custom.balanceTableName}
+    RulesTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 10
+        TableName: ${self:custom.rulesTableName}
+    TransactionQueue:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: ${self:custom.transactionQueueName}
+        MessageRetentionPeriod: 1209600
+        VisibilityTimeout: 60

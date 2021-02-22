@@ -1,0 +1,96 @@
+service: scale-of-belief-import
+
+provider:
+  name: aws
+  stage: ${env:ENVIRONMENT}
+  runtime: nodejs10.x
+  region: us-east-1
+  vpc:
+    securityGroupIds:
+      - ${file(${env:ECS_CONFIG}/bin/vars.yml):us-east-1.webapp_elb_sg}
+    subnetIds: ${file(${env:ECS_CONFIG}/bin/vars.yml):us-east-1.prod_apps_1_all}
+  stackTags:
+    Name: ${env:PROJECT_NAME}-${self:custom.environmentMap.${env:ENVIRONMENT}}
+    owner: apps@cru.org
+    application: ${env:PROJECT_NAME}
+    env: ${self:custom.environmentMap.${env:ENVIRONMENT}}
+    managed_by: serverless-framework
+    function: lambda
+  memorySize: 256
+  environment: ${file(serverless/environment.js)}
+  apiKeys:
+    - ${opt:stage}-siebel-api-key
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+        - s3:GetObject
+      Resource:
+        - arn:aws:s3:::${env:CAMPAIGN_SNOWPLOW_S3_BUCKET}
+        - arn:aws:s3:::${env:CAMPAIGN_SNOWPLOW_S3_BUCKET}/*
+
+functions:
+  api:
+    handler: api/import.handler
+    timeout: 300
+    events:
+      - http:
+          path: /api/import
+          method: ANY
+  campaign:
+    handler: campaign/import.handler
+    timeout: 300
+    memorySize: 1024
+    events:
+      - schedule: cron(5 6 * * ? *)
+  staticfiles:
+    handler: static/staticfile.handler
+    events:
+      - http:
+          path: /{url}
+          method: get
+  siebel-api:
+    handler: api/siebel.handler
+    timeout: 30
+    events:
+      - http:
+          path: /api/siebel/import
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Accept
+          private: true
+package:
+  individually: true
+  exclude:
+    - .serverless/**
+    - .webpack/**
+    - .git/**
+    - test/**
+    - '**/*.test.js'
+    - '**/*.sql'
+    - .deployment/**
+
+plugins:
+  - '@cruglobal/serverless-merge-config'
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+    packager: yarn
+    excludeFiles: '**/*.test.js'
+  environmentMap:
+    production: prod
+    staging: stage
+    development: dev
+    lab: lab

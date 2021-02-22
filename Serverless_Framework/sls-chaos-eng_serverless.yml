@@ -1,0 +1,95 @@
+service: sls-chaos-eng
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+  environment:
+    REGION: ${self:provider.region}
+    PENDING_ORDER_QUEUE:
+      Ref: PendingOrdersQueue
+    PENDING_ORDER_QUEUE_NAME: sls-chaos-eng-PendingOrdersQueue-dev
+    COMPLETED_ORDER_TABLE: sls-chaos-eng-CompletedOrderTable-dev
+    THUNDRA_KEY: ${ssm:/sls-chaos-eng/thundraKey}
+    thundra_agent_lambda_trace_span_listener: FilteringSpanListener[listener=LatencyInjectorSpanListener,config.delay=8000,filter1.className=AWS-SQS,filter1.operationName=sls-chaos-eng-PendingOrdersQueue-dev,filter1.tag.operation.type=WRITE]
+
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+      Resource: "arn:aws:sqs:${self:provider.region}:*:${self:provider.environment.PENDING_ORDER_QUEUE_NAME}"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:DeleteItem"
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COMPLETED_ORDER_TABLE}"
+
+functions:
+  hacerPedido:
+    handler: handler.hacerPedido
+    events:
+      - http:
+          method: post
+          path: pedido
+    layers:
+      - arn:aws:lambda:${self:provider.region}:269863060030:layer:thundra-lambda-node-layer:12
+
+  prepararPedido:
+    handler: handler.prepararPedido
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - PendingOrdersQueue
+              - Arn
+          batchSize: 1
+    layers:
+      - arn:aws:lambda:${self:provider.region}:269863060030:layer:thundra-lambda-node-layer:12
+
+  enviarPedido:
+    handler: handler.enviarPedido
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - CompletedOrdersTable
+              - StreamArn
+    layers:
+      - arn:aws:lambda:${self:provider.region}:269863060030:layer:thundra-lambda-node-layer:12
+
+  estadoPedido:
+    handler: handler.estadoPedido
+    events:
+      - http:
+          method: get
+          path: pedido/{orderId}
+    layers:
+      - arn:aws:lambda:${self:provider.region}:269863060030:layer:thundra-lambda-node-layer:12
+
+
+resources:
+  Resources:
+    PendingOrdersQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:provider.environment.PENDING_ORDER_QUEUE_NAME}
+    CompletedOrdersTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: "orderId"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "orderId"
+          KeyType: "HASH"
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.COMPLETED_ORDER_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE

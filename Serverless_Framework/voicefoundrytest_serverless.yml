@@ -1,0 +1,76 @@
+# name of serverless service
+service: voicefoundrytest
+
+# plugins required to upload file and to get requirements
+plugins:
+  - serverless-s3-sync
+  - serverless-python-requirements
+
+# custom settings containing names of variables and plugin settings
+custom:
+  settings:
+    dynamodbTable: voicefoundrytest-table2
+    bucketName: voicefoundrytest-bucket-985461
+  s3Sync:
+    - bucketName: ${self:custom.settings.bucketName}
+      localDir: UploadData
+  pythonRequirements:
+    dockerizePip: true
+
+# information on aws including environment variables and iamRoleStatements
+provider:
+  name: aws
+  runtime: python3.8
+  profile: default
+  region: eu-west-2
+  environment:
+    TABLE: ${self:custom.settings.dynamodbTable}
+    BUCKET: ${self:custom.settings.bucketName}
+
+  iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "s3:ListBucket"
+        Resource:
+          - "arn:aws:s3:::${self:custom.settings.bucketName}"
+      - Effect: "Allow"
+        Action:
+          - "s3:GetObject"
+          - "s3:GetBucket"
+        Resource:
+          - "arn:aws:s3:::${self:custom.settings.bucketName}/*"
+      - Effect: "Allow"
+        Action:
+          - "dynamodb:*"
+        Resource:
+          - { "Fn::GetAtt": ["VoiceFoundryTable", "Arn" ] }
+
+# lambda function location and trigger event
+functions:
+  s3toDynamo:
+    handler: handler.s3toDynamo
+    events:
+      - http:
+          path: s3toDynamo
+          method: get
+
+# s3 and DynamoDB information for CloudFormation
+resources:
+  Resources:
+    UploadBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: ${self:custom.settings.bucketName}
+    VoiceFoundryTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: "itemId"
+          AttributeType: "N"
+        KeySchema:
+        - AttributeName: "itemId"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 100
+          WriteCapacityUnits: 100
+        TableName: ${self:custom.settings.dynamodbTable}

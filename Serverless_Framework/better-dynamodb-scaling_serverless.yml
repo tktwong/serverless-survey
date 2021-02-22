@@ -1,0 +1,62 @@
+service: better-dynamodb-scaling
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - cloudwatch:PutMetricAlarm
+        - cloudwatch:PutMetricData
+        - cloudwatch:DescribeAlarms
+        - cloudwatch:GetMetricStatistics
+        - cloudwatch:SetAlarmState
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:BatchWriteItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateTable
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "arn:aws:lambda:us-east-1:*:function:${self:service}-${opt:stage, self:provider.stage}-*"
+
+functions:
+  scale_up_dynamodb:
+    handler: functions/scale_up_dynamodb.handler    
+    events:
+      - sns:
+          topicName: scale_up_dynamodb
+          displayName: Scale Up DynamoDB table
+
+  generate_linear_load:
+    handler: functions/generate_linear_load.handler
+    timeout: 300
+
+  generate_head_heavy_load:
+    handler: functions/generate_head_heavy_load.handler
+    timeout: 300
+
+  change_cw_alarm:
+    handler: functions/change_cw_alarm.handler
+    environment:
+      accountId: 
+        Ref: AWS::AccountId
+      region:
+        ${opt:region, self:provider.region}
+    events:
+      - cloudwatchEvent:
+          event:
+            source:
+              - aws.monitoring
+            detail-type:
+              - AWS API Call via CloudTrail
+            detail:
+              eventSource:
+                - monitoring.amazonaws.com
+              eventName:
+                - PutMetricAlarm

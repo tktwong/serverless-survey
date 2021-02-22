@@ -1,0 +1,95 @@
+
+service: crud-operation
+
+frameworkVersion: '2'
+
+custom:
+  tableName: 'informations'
+  dynamodb:
+    stages:
+      - dev
+    start:
+      migrate: true
+provider:
+  name: aws
+  runtime: python3.8
+  # environment:
+  #   DYNAMODB_TABE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Resource:
+      #   # - arn:aws:dynamodb:*:*:table/${self:custom.tableName}
+      #   - { "Fn::GetAtt": ["UsersDynamoDBTable", "Arn" ] }
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}"
+  lambdaHashingVersion: 20201221
+  environment:
+    USERS_TABLE: ${self:custom.tableName}
+
+
+functions:
+  create:
+    handler: todo/create.create
+    events:
+      - http:
+          path: todos
+          method: post
+          cors: true
+  
+  list:
+    handler: todo/list.list
+    events:
+      - http:
+          path: todos
+          method: get
+          cors: true
+  hello:
+    handler: handler.hello
+    events: 
+      - http:
+          path: hello
+          method: get
+  getInfoById:
+    handler: todo/getInfo.getInfoById
+    events: 
+      - http:
+          path: info/{id}
+          method: get
+          cors: true
+  updateInfo:
+    handler: todo/updateInfo.update
+    events:
+      - http:
+          path: info/{id}
+          method: put
+          cors: true
+  deleteInfo:
+    handler: todo/deleteInfo.delete
+    events:
+      - http:
+          path: info/{id}
+          method: delete
+          cors: true
+
+resources:
+ Resources:
+  TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

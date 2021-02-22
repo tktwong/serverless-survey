@@ -1,0 +1,80 @@
+service: parrodise-image-processor
+# Add binary support on api gateway - see serverless-apigw-binary repo for more info
+custom:
+  apigwBinary:
+    types:
+      - '*/*'
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-2
+  timeout: 5 # optional, in seconds, default is 6
+  role: ImageProcessorRole
+  environment:
+    # set env on lambda
+    BUCKET: parrodise-test-2
+plugins:
+  - serverless-apigw-binary
+  - serverless-apigwy-binary
+  - serverless-offline
+functions:
+  processImage:
+    handler: handler.processImage
+    events:
+      - http:
+          path: process-image
+          method: get
+          contentHandling: CONVERT_TO_BINARY
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+resources:
+  Resources:
+    ImageProcessorRole: # logical ID
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-S3-ACCESS
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+# The assume role policy determines which principals (users, other roles, AWS services) are permitted to call sts:AssumeRole for this role
+# In this example, the lambda service itself is given access, which means that lambda is able to take actions on your behalf using this role
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:service}-s3-access
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "s3:GetObject"
+                    - "s3:PutObject"
+                  Resource:
+                    - 'arn:aws:s3:::${self:provider.environment.BUCKET}/*'
+
+    ImageBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      Properties:
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          RoutingRules:
+          - RoutingRuleCondition:
+              HttpErrorCodeReturnedEquals: 404
+            RedirectRule:
+              HttpRedirectCode: 307
+              HostName: {"Fn::Join": ["", [{"Ref": "ApiGatewayRestApi"}, ".execute-api.${self:provider.region}.amazonaws.com"]]}
+              Protocol: https
+              ReplaceKeyPrefixWith: prod?key=

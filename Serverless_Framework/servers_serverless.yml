@@ -1,0 +1,94 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: servers
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+
+# you can overwrite defaults here
+  stage: dev
+  region: us-west-1
+  environment:
+    POSTS_TABLE: ${self:service}-posts-${opt:stage, self:provider.stage}
+    REGION: ${opt:region, self:provider.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.POSTS_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.POSTS_TABLE}/index/*"
+
+functions:
+  create_post:
+    handler: src/api/create_post.endpoint
+    events:
+      - http:
+          path: posts
+          method: post
+          cors: true
+  enqueue_post:
+    handler: src/api/enqueue_post.endpoint
+    events:
+      - http:
+          path: enqueue
+          method: post
+          cors: true
+  query_post:
+    handler: src/api/query_post.endpoint
+    events:
+      - http:
+          path: posts
+          method: get
+          cors: true
+  auth_example:
+    handler: src/api/test_auth.endpoint
+    events:
+      - http:
+          path: auth_test_whatever
+          method: get
+          cors: true
+          authorizer: auth
+  auth:
+    handler: src/lib/auth.endpoint
+          
+resources:
+  Resources:
+    PostsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.POSTS_TABLE}
+
+plugins:
+  - serverless-offline

@@ -1,0 +1,69 @@
+service: laravel
+
+provider:
+    name: aws
+    region: us-east-2
+    stage: prod
+    runtime: provided
+
+package:
+    exclude:
+        - node_modules/**
+        - public/storage
+        - resources/assets/**
+        - storage/**
+        - tests/**
+
+functions:
+    web:
+        handler: public/index.php
+        timeout: 28
+        layers:
+            - ${bref:layer.php-74-fpm}
+        events:
+            -   http: 'ANY /'
+            -   http: 'ANY /{proxy+}'
+            - schedule:
+                rate: rate(5 minutes)
+                input:
+                  warmer: true
+    artisan:
+        handler: artisan
+        timeout: 120 # in seconds
+        layers:
+            - ${bref:layer.php-74}
+            - ${bref:layer.console}
+    hello:
+        handler: handler.hello
+        vpc:
+          securityGroupIds:
+            - sg-3002774f
+          subnetIds:
+            - subnet-3b047777
+            - subnet-3baea641
+            - subnet-6035e70b
+
+resources:
+  Resources:
+    Assets:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: f507d3a1-1b08-49c5-a893-94dd4d112b28
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: [ "*" ]
+              AllowedMethods: [ GET ]
+              AllowedOrigins: [ "*" ]
+    AssetsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref Assets
+        PolicyDocument:
+          Statement:
+            -   Effect: Allow
+                Principal: '*' # everyone
+                Action: 's3:GetObject'
+                Resource: 'arn:aws:s3:::f507d3a1-1b08-49c5-a893-94dd4d112b28/*'
+
+plugins:
+    - ./vendor/bref/bref

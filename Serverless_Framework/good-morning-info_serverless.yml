@@ -1,0 +1,77 @@
+service: good-morning-info
+
+plugins:
+- serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - dynamodb:Scan
+      - dynamodb:GetItem
+      - dynamodb:UpdateItem
+      - dynamodb:DescribeTable
+      Resource:
+      - { "Fn::GetAtt": ["DBConfiguration", "Arn"] }
+  environment:
+    DB_TABLE_CONFIGURATION: { "Ref": "DBConfiguration" }
+
+
+custom:
+  defaultStage: dev
+  webpack:
+    webpackConfig: './config/webpack/serverless.js'
+    includeModules:
+      packagePath: './package.json'
+  environment:
+    DB_TABLE_CONFIGURATION: { "Ref": "DBConfiguration" }
+
+functions:
+  config-list:
+    handler: lambda/configuration.list
+    events:
+      - http:
+          path: config
+          method: get
+  config-get:
+    handler: lambda/configuration.get
+    events:
+      - http:
+          path: config/{hash}/{range}
+          method: get
+          request:
+            parameters:
+              paths:
+                hash: true
+                range: true
+  config-set:
+    handler: lambda/configuration.bulkSet
+    events:
+    - http:
+        path: config
+        method: post
+
+
+resources:
+  Resources:
+    DBConfiguration:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-configuration
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+          - AttributeName: keyRange
+            AttributeType: S
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+          - AttributeName: keyRange
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

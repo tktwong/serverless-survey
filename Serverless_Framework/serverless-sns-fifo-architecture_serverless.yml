@@ -1,0 +1,429 @@
+service: ${env:API_NAME}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: ${env:VERSION}
+  deploymentBucket: ${env:DEPLOYMENT_BUCKET}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - cloudwatch:*
+        - logs:*
+        - xray:*
+        - sns:*
+        - sqs:*
+      Resource: "*"
+  vpc:
+    securityGroupIds:
+      - ${env:VPC_SECURITY_GROUP}
+    subnetIds:
+      - ${env:VPC_SUBNET_PUBLIC_1}
+      - ${env:VPC_SUBNET_PUBLIC_2}
+  environment:
+    NODE_ENV         : ${env:NODE_ENV}
+    LOG_INFO_ENABLE  : ${env:LOG_INFO_ENABLE}
+    LOG_ERROR_ENABLE : ${env:LOG_ERROR_ENABLE}
+    LOG_WARN_ENABLE  : ${env:LOG_WARN_ENABLE}
+
+plugins:
+  - serverless-offline
+  - serverless-api-gateway-xray
+
+custom:
+  apiGatewayXray: true
+  serverless-offline:
+    apiKey: local
+    port: 3000
+
+functions:
+  root:
+    name: ${self:service}_root_${self:provider.stage}
+    handler: src/controller/_handler.root
+    description: Function root path
+    timeout: 2
+    memorySize: 128
+    events:
+      - http:
+          path: /
+          method: GET
+          cors: true
+          private: true
+
+  sendMessageToTopicSNS:
+    name: ${self:service}_send-message-sns_${self:provider.stage}
+    handler: src/controllers/_handler.sendMessageToTopicSNSRoute
+    description: Function to send a sns message to topic
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: send/sns
+          method: POST
+          cors: true
+          private: false
+
+  receiveMessageFromTopicSNS:
+    name: ${self:service}_receive-message-sns_${self:provider.stage}
+    handler: src/controllers/_handler.receiveMessageFromTopicSNSRoute
+    description: Function to receive a sns message from topic
+    timeout: 30
+    memorySize: 256
+    events:
+      - sqs:
+          arn: "arn:aws:sqs:${self:provider.region}:${env:AWS_ACCOUNT_ID}:sns-receiver.fifo"
+          batchSize: 1
+
+resources:
+### Resources
+  Resources:
+   ### SNS Topic
+    SNSTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: SNS Topics Fifo
+        TopicName: ${self:service}-${self:provider.stage}-topic.fifo
+        FifoTopic: true
+        ContentBasedDeduplication: false
+
+    MessagesDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: sns-receiver-topic-dl.fifo
+        MessageRetentionPeriod: 1209600
+        FifoQueue: True
+ 
+    Messages:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: sns-receiver-topic.fifo
+        MessageRetentionPeriod: 1209600
+        VisibilityTimeout: 30
+        FifoQueue: True
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - MessagesDeadLetterQueue
+              - Arn
+          maxReceiveCount: 3
+      DependsOn: "MessagesDeadLetterQueue"
+
+    SnsReceiverSQSPolicy: 
+      Type: AWS::SQS::QueuePolicy
+      Properties: 
+        Queues: 
+          - !Ref Messages
+        PolicyDocument: 
+          Statement: 
+            - 
+              Action: 
+                - "SQS:SendMessage"
+              Effect: "Allow"
+              Resource: !GetAtt Messages.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn:
+                    - !Ref SNSTopic
+              Principal:  
+                Service: 
+                  - "sns.amazonaws.com"
+
+    myQueueToSnsSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Endpoint: !GetAtt Messages.Arn
+        Protocol: sqs
+        RawMessageDelivery: true
+        TopicArn: !Ref SNSTopic
+
+  ### API Gateway
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: ${env:API_NAME}-${self:provider.stage}
+
+  ### API Authorizer
+    ApiGatewayAuthorizer:
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        AuthorizerResultTtlInSeconds: 0
+        IdentitySource: method.request.header.Authorization
+        Name: authorizerToken
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        Type: TOKEN
+        AuthorizerUri: arn:aws:apigateway:${self:provider.region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${self:provider.region}:${env:AWS_ACCOUNT_ID}:function:${self:service}_authorizer-token_${self:provider.stage}/invocations
+
+  ### Gateway Response
+    GatewayResponseDefault400:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: DEFAULT_4XX
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\sns-message-4XX_generic\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseDefault500:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: DEFAULT_5XX
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-5XX_generic\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseAccessDeied:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: ACCESS_DENIED
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-403_access-denied\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseApiConfigurationError:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: API_CONFIGURATION_ERROR
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-500_api-configuration-error\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseAuthorizerConfigurationError:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: AUTHORIZER_CONFIGURATION_ERROR
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-500_authorizer-configuration-error\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseAuthorizerFailure:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: AUTHORIZER_FAILURE
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-500_authorizer-failure\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseBadRequestBody:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: BAD_REQUEST_BODY
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-400_bad-request-body\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseBadRequestParameters:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: BAD_REQUEST_PARAMETERS
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-400_bad-request-parameters\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseExpiredToken:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: EXPIRED_TOKEN
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-403_expired-token\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseIntegrationFailure:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: INTEGRATION_FAILURE
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-504_integration-failure\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseIntegrationTimeout:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: INTEGRATION_TIMEOUT
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-504_integration-timeout\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseInvalidApiKey:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: INVALID_API_KEY
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-403_invalid-api-key\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseInvalidSignature:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: INVALID_SIGNATURE
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-403_invalid-signature\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseMissingAuthenticationToken:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: MISSING_AUTHENTICATION_TOKEN
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-403_missing-authentication-token\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseQuotaExceeded:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: QUOTA_EXCEEDED
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-429_quota-exceeded\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseRequestTooLarge:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: REQUEST_TOO_LARGE
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-413_request-too-large\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseResourceNotFound:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: RESOURCE_NOT_FOUND
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-404_resource-not-found\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseThrottled:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: THROTTLED
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-429_throttled\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseUnauthorized:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: UNAUTHORIZED
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-401_unauthorized\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseUnauthorizedMediType:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: UNSUPPORTED_MEDIA_TYPE
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"sns-message-415_unsupported-media-type\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+### Outputs
+  Outputs:
+    ApiGatewayRestApiId:
+      Value:
+        Ref: ApiGatewayRestApi
+      Export:
+        Name: ${env:API_NAME}-${self:provider.stage}-restApiId
+
+    ApiGatewayRestApiRootResourceId:
+      Value:
+        Fn::GetAtt:
+          - ApiGatewayRestApi
+          - RootResourceId
+      Export:
+        Name: ${env:API_NAME}-${self:provider.stage}-rootResourceId
+
+    ApiGatewayAuthorizerId:
+      Value:
+        Ref: ApiGatewayAuthorizer
+      Export:
+        Name: ${env:API_NAME}-${self:provider.stage}-authorizerId
+
+package:
+ excludeDevDependencies: true
+ exclude:
+   - .vscode/**
+   - .git/**
+   - .gitignore
+
+
+

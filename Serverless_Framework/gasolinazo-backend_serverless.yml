@@ -1,0 +1,68 @@
+service: gasolinazo-rest-api
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  runtime: nodejs8.10
+  memorySize: 128
+  timeout: 10
+  environment:
+    DYNAMODB_TABLE: ${self:provider.stage}-gas-stations
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+package:
+  exclude:
+    - ".*/**"
+  include:
+    - node_modules/**
+    - src/**
+
+functions:
+  get:
+    handler: src/gas/get.get
+    events:
+      - http:
+          method: GET
+          path: gas/{zipcode}
+          cors: true
+          resp: http
+
+resources:
+  Resources:
+    GasDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.stage}-gas-stations
+        AttributeDefinitions:
+          - AttributeName: permisoid
+            AttributeType: S
+          - AttributeName: codigopostal
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: permisoid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: gsi-CodigoPostal
+            KeySchema:
+              - AttributeName: codigopostal
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

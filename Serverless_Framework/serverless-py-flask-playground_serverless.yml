@@ -1,0 +1,102 @@
+service: flask-test # NOTE: update this with your service name
+
+package:
+  exclude:
+    - node_modules/**
+    - package-lock.json
+    - pakcage.json
+    - Dockerfile*
+    - db.*
+    - src/**
+    - .vscode/**
+    - __pycache__/**
+
+plugins:
+  - serverless-python-requirements
+  - serverless-plugin-warmup
+  - serverless-wsgi
+
+custom:
+  warmup:
+    role: '${ssm:/infra/lambda/v1/serverless/role-for-vpc-exec}'
+    vpc: false
+    prewarm: true
+    events:
+      - schedule: 'rate(5 minutes)'
+  wsgi:
+    app: index.app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: true
+    dockerImage: 'poddworks/serverless-py:v1'
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${opt:stage, 'debug'}
+  region: ap-northeast-1
+  deploymentBucket:
+    name: ${ssm:/infra/lambda/v1/serverless/bucket-name}
+    tags:
+      version: 0.0.0-debug
+  environment:
+    DEPLOY_STATUS: 'development-aws'
+    DATABASE_URI: '${ssm:/${self:provider.stage}/v1/database/uri}'
+    DATABASE_USER: '${ssm:/${self:provider.stage}/v1/database/user~true}'
+    DATABASE_PASSWD: '${ssm:/${self:provider.stage}/v1/database/passwd~true}'
+    DATABASE_DB_NAME: '${ssm:/${self:provider.stage}/v1/database/db-name~true}'
+    CACHE_URI: '${ssm:/${self:provider.stage}/v1/cache/uri}'
+    CACHE_PORT: '${ssm:/${self:provider.stage}/v1/cache/port}'
+    CACHE_DB_NAME: '${ssm:/${self:provider.stage}/v1/cache/db-name~true}'
+    AWS_SQS_QUEUE_URI: '${ssm:/${self:provider.stage}/v1/queue/webhook/queue-endpoint~true}'
+    AWS_SQS_REGION: ${self:provider.region}
+  vpc:
+    securityGroupIds:
+      "Fn::Split":
+        - ","
+        - ${ssm:/infra/vpc/v1/security-group-ids}
+    subnetIds:
+      "Fn::Split":
+        - ","
+        - ${ssm:/infra/vpc/v1/subnet-ids}
+
+functions:
+  auth:
+    name: ${self:provider.stage}-${self:service}-auth
+    handler: worker.auth
+    role: ${ssm:/infra/lambda/v1/serverless/role-for-vpc-exec}
+    reservedConcurrency: 100
+    warmup:
+      enabled: true
+      concurrency: 1
+
+  wsgi:
+    name: ${self:provider.stage}-${self:service}-wsgi
+    handler: wsgi_handler.handler
+    role: ${ssm:/infra/lambda/v1/serverless/role-for-vpc-exec}
+    environment:
+      API_GATEWAY_BASE_PATH: 'api'
+      FLASK_APP_SECRET: '${ssm:/${self:provider.stage}/v1/flask-app/secret~true}'
+    reservedConcurrency: 100
+    events:
+      - http: ANY /
+      - http:
+          path: '{proxy+}'
+          method: ANY
+          authorizer:
+            name: auth
+            resultTtlInSeconds: 3
+    warmup:
+      enabled: true
+      concurrency: 1
+
+  worker:
+    name: ${self:provider.stage}-${self:service}-worker
+    handler: worker.worker
+    role: ${ssm:/infra/lambda/v1/serverless/role-for-vpc-exec}
+    reservedConcurrency: 5
+    timeout: 3
+    events:
+      - sqs:
+          arn: '${ssm:/${self:provider.stage}/v1/queue/webhook/queue-name~true}'
+          batchSize: ${ssm:/${self:provider.stage}/v1/queue/webhook/batch-size}

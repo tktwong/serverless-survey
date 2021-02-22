@@ -1,0 +1,43 @@
+service: racket-serverless
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-central-1
+
+plugins:
+  - serverless-offline
+  - serverless-finch
+  - serverless-dotenv-plugin
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  client:
+    bucketName: racket-api-client
+    distributionFolder: packages/frontend/dist
+  environments:
+    prod:
+      LAMBDA_PATH: packages/api/dist/handler.app
+      EXEC_PATH: ./packages/api/dist/linux-application
+    dev:
+      LAMBDA_PATH: packages/api/src/handler.app
+      EXEC_PATH: ./packages/api/dev/application
+
+package:
+  individually: true
+  exclude:
+    - ./**
+
+functions:
+  api:
+    handler: ${self:custom.environments.${self:custom.stage}.LAMBDA_PATH}
+    environment: ${self:custom.environments.${self:custom.stage}}
+    events:
+      - http:
+          path: /{proxy+}
+          method: any
+          cors: true
+    package:
+      include:
+        - packages/api/dist/**

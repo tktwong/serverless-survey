@@ -1,0 +1,52 @@
+service:
+  name: caching-error-repro-hello
+
+plugins:
+  - serverless-api-gateway-caching
+
+custom:
+  defaultStage: dev
+  gwCaching:
+    dev:
+      enabled: true
+      clusterSize: '0.5'
+    prod:
+      enabled: true
+      clusterSize: '0.5'
+  apiGatewayCaching:
+    skipRestAPICheck: true
+    enabled: ${self:custom.gwCaching.${opt:stage, self:custom.defaultStage}.enabled}
+    clusterSize: ${self:custom.gwCaching.${opt:stage, self:custom.defaultStage}.clusterSize}
+    ttlInSeconds: 60
+    perKeyInvalidation:
+      requireAuthorization: true
+      handleUnauthorizedRequests: IgnoreWithWarning
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-west-2
+  stage: ${opt:stage, self:custom.defaultStage}
+  apiGateway:
+    restApiId:
+      'Fn::ImportValue': reproApiGatewayRestApiId-${self:provider.stage}
+    restApiRootResourceId:
+      'Fn::ImportValue': reproApiGatewayRestApiRootResourceId-${self:provider.stage}
+
+functions:
+  hello:
+    handler: handler.hello
+    timeout: 10
+    events:
+      - http:
+          method: get
+          path: /hello/{name}
+          caching:
+            enabled: true
+            ttlInSeconds: 60
+            cacheKeyParameters:
+              - name: request.path.name
+          cors: true

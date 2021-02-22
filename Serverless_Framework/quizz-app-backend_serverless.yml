@@ -1,0 +1,83 @@
+service: quiz-app-api
+
+# important to individually package our lambda functions so that they can start quicker from cold
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle 
+  - serverless-offline
+  - serverless-dotenv-plugin 
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: eu-west-1
+
+  environment:
+    tableName: quizzes
+
+# specifying actions to our DB that we allow from our lambdas 
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+  # TODO: What's in the box? Do mock lambda calls actually write/read from db?
+      Resource: "arn:aws:dynamodb:eu-west-1:064549713001:table/quizzes"
+
+# think of this section as a specification of our functions - their method call, the path to hit them on, the request method to use, etc
+functions:
+  create:
+    handler: create.main
+    events:
+      - http:
+          path: quizzes
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  list:
+    handler: list.main
+    events:
+      - http:
+          path: quizzes
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  get:
+    handler: get.main
+    events:
+      - http:
+          path: quizzes/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  update:
+    handler: update.main
+    events:
+      - http:
+          path: quizzes/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  delete:
+    handler: delete.main
+    events:
+      - http:
+          path: quizzes/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+# this resource is a CloudFormation template configuration for API Gateway for error handling
+resources:
+  - ${file(resources/api-gateway-errors.yml)}

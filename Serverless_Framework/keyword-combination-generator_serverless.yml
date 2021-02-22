@@ -1,0 +1,115 @@
+service: ishu-keyword-generator
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  uploadBucketName: com.ishu.keyword-uploads
+  downloadBucketName: com.ishu.keyword-downloads
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  versionFunctions: false
+  profile: zafar
+
+# you can overwrite defaults here
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+# you can define service wide environment variables here
+  environment:
+    UPLOAD_BUCKET: ${self:custom.uploadBucketName}
+    DOWNLOAD_BUCKET: ${self:custom.downloadBucketName}
+    REGION: ${self:provider.region}
+
+  deploymentBucket:
+    blockPublicAccess: true 
+
+# you can add statements to the service-wide IAM Roles here
+  iamRoleStatements:
+    # allow S3 read/write access
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:ListBucket
+        - s3:ListBucketVersions
+      Resource:
+        - 'arn:aws:s3:::${self:custom.uploadBucketName}'
+        - 'arn:aws:s3:::${self:custom.uploadBucketName}/*'
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:ListBucket
+        - s3:ListBucketVersions
+      Resource:
+        - 'arn:aws:s3:::${self:custom.downloadBucketName}'
+        - 'arn:aws:s3:::${self:custom.downloadBucketName}/*'
+
+functions:
+  healthcheck:
+    handler: src/handlers/healthcheck.handler
+    description: System health check endpoint
+    events:
+      - http: 
+          path: ''
+          method: get
+  getSignedURL:
+    handler: src/handlers/presigner.handler
+    description: Get pre-signed s3 upload URL
+    events:
+      - http: 
+          path: 'uploadurl'
+          method: get
+  parseFile:
+    handler: src/handlers/parser.handler
+    description: Parse a file that gets uploaded to the temporary uploads bucket
+    events:
+      - s3:
+          bucket: ${self:custom.uploadBucketName}
+          event: s3:ObjectCreated:*
+          existing: true
+          rules:
+            # this event will be triggered only when a .txt file is uploaded
+            - suffix: .txt
+
+resources:
+  Resources:
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.uploadBucketName}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [GET, PUT]
+              AllowedOrigins: ['*']
+              Id: CORSRuleId1
+              MaxAge: '3600'
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          IgnorePublicAcls: true
+          BlockPublicPolicy: true
+          RestrictPublicBuckets: true
+    DownloadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.downloadBucketName}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [GET, PUT]
+              AllowedOrigins: ['*']
+              Id: CORSRuleId1
+              MaxAge: '3600'
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          IgnorePublicAcls: true
+          BlockPublicPolicy: true
+          RestrictPublicBuckets: true

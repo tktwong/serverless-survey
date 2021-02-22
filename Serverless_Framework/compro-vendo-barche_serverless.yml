@@ -1,0 +1,213 @@
+service: medboat
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set our DynamoDB throughput for prod and all other non-prod stages.
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  # Load our webpack config
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+
+provider:
+  name: medboat
+  runtime: nodejs8.10
+  stage: dev
+  region: eu-west-1
+
+  environment:
+    tableName:
+      Ref: MedboatTable
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - "Fn::GetAtt": [ MedboatTable, Arn ]
+
+functions:
+  #---- RESERVATIONS ----#
+  createRes:
+    handler: container/reservation/create.main
+    events:
+      - http:
+          path: reservations
+          method: post
+          cors: true
+          authorizer: aws_iam
+  getRes:
+    handler: container/reservation/get.main
+    events:
+      - http:
+          path: reservations/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  listRes:
+    handler: container/reservation/list.main
+    events:
+      - http:
+          path: reservations
+          method: get
+          cors: true
+          authorizer: aws_iam
+          request:
+            parameters:
+              querystrings:
+                userId: false
+                boatId: false
+  updateRes:
+    handler: container/reservation/update.main
+    events:
+      - http:
+          path: reservations/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  deleteRes:
+    handler: container/reservation/delete.main
+    events:
+      - http:
+          path: reservations/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+  #---- END RESERVATIONS ----#
+  #---- BOATS ----#
+  createBoat:
+    handler: container/boat/create.main
+    events:
+      - http:
+          path: boats
+          method: post
+          cors: true
+          authorizer: aws_iam
+  getBoat:
+    handler: container/boat/get.main
+    events:
+      - http:
+          path: boats/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  listBoat:
+    handler: container/boat/list.main
+    events:
+      - http:
+          path: boats
+          method: get
+          cors: true
+          authorizer: aws_iam
+          request:
+            parameters:
+              querystrings:
+                userId: false
+  updateBoat:
+    handler: container/boat/update.main
+    events:
+      - http:
+          path: boats/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  deleteBoat:
+    handler: container/boat/delete.main
+    events:
+      - http:
+          path: boats/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+  #---- END BOATS ----#
+  #---- USERS ----#
+  getUser:
+    handler: container/user/get.main
+    events:
+      - http:
+          path: users/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  listUser:
+    handler: container/user/list.main
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+          authorizer: aws_iam
+          request:
+            parameters:
+              querystrings:
+                email: false
+  createUser:
+    handler: container/user/create.main
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+          authorizer: aws_iam
+  updateUser:
+    handler: container/user/update.main
+    events:
+      - http:
+          path: users
+          method: put
+          cors: true
+          authorizer: aws_iam
+  #---- END USERS ----#
+  #---- ACTIVITIES ----#
+  createActivity:
+    handler: container/activities/create.main
+    environment:
+    events:
+      - http:
+          path: activities
+          method: post
+          cors: true
+          authorizer: aws_iam
+  listActivity:
+    handler: container/activities/list.main
+    events:
+      - http:
+          path: activities/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  #---- END ACTIVITIES ----#
+  checkConfirm:
+      handler: container/cron/checkConfirm.main
+      events:
+        - schedule:
+            rate: cron(0 7/5 * * ? *)
+            enabled: false
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  - ${file(resources/s3-bucket.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

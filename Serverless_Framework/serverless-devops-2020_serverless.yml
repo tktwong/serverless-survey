@@ -1,0 +1,52 @@
+service: frontend
+frameworkVersion: '2'
+plugins:
+  - serverless-plugin-scripts
+  - serverless-s3-sync
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${env:AWS_DEFAULT_REGION}
+  stage: ${env:STAGE}
+
+resources:
+  Resources:
+    ProfileApp:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.bucketName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    ProfileAppS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: ProfileApp
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "ProfileApp"
+                    },
+                    "/*"
+                  ]
+                ]
+
+custom:
+  bucketName: profile-app-${env:STAGE}
+  scripts:
+    hooks:
+      'package:initialize': npm run build
+  s3Sync:
+    - bucketName: ${self:custom.bucketName}
+      localDir: dist/profile

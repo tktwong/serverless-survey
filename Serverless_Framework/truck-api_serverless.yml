@@ -1,0 +1,109 @@
+service: truck-api
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: us-east-1
+
+  stage: ${opt:stage,'dev'}
+  environment:
+      STAGE_NAME: ${self:provider.stage}
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:HeadObject
+      Resource: 
+        - "arn:aws:s3:::${self:custom.S3_BUCKET}"
+        - "arn:aws:s3:::${self:custom.S3_BUCKET}/*"
+
+# you can add packaging information here
+
+plugins:
+  - serverless-python-requirements
+  - serverless-dotenv-plugin
+custom:
+  myStage: ${opt:stage, self:provider.stage}
+  dotenv:
+    path: .env
+  pythonRequirements:
+    dockerizePip: non-linux
+  S3_BUCKET: ${env:S3_BUCKET}-${self:provider.stage}
+  # TERMINAL_DB: ${env:S3_BUCKET}-${self:provider.stage}-terminals
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    UserDB:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.S3_BUCKET}
+        AccessControl:  Private
+
+functions:
+  get_users:
+    handler: handler.get_users
+    events:
+      - http:
+          path: users
+          method: get
+          request:
+            queryParams:
+            - name: "name"
+              description: "name"
+            - name: "gender"
+              description: "Gender"
+            - name: "ownVehicle"
+              description: "The owner of this vehicle is the user?"
+            - name: "licence"
+              description: "Driver Licence (CNH) Category"
+
+  add_user:
+    handler: handler.add_user
+    events:
+      - http:
+          path: users
+          method: post
+
+  get_user_info:
+    handler: handler.get_user_info
+    events:
+      - http:
+          path: users/{user_id}
+          method: get
+
+  update_user_info:
+    handler: handler.update_user_info
+    events:
+      - http:
+          path: users/{user_id}
+          method: put
+          private: false
+          authorization: None
+
+  get_terminal_info:
+    handler: handler.get_terminal_info
+    events:
+      - http:
+          path: terminals/{terminal_id}
+          method: get
+          request: 
+            queryParams:
+            - name: "ini_date"
+              description: "Initial date"
+            - name: "end_date"
+              description: "Final date"
+            - name: "loaded"
+              description: "Is the truck loaded"
+            - name: "groupByVehicle"
+              description: "The type of vehicle"
+
+  add_terminal_traffic:
+    handler: handler.add_terminal_traffic
+    events:
+      - http:
+          path: terminals/{terminal_id}
+          method: post

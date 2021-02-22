@@ -1,0 +1,218 @@
+service: web-api
+provider:
+  name: aws
+  runtime: nodejs8.10
+  timeout: 30
+  stage: ${self:custom.secrets.NODE_ENV}
+  environment:
+    NODE_ENV: ${self:custom.secrets.NODE_ENV}
+    DB_NAME: ${self:custom.secrets.DB_NAME}
+    DB_USER: ${self:custom.secrets.DB_USER}
+    DB_PASSWORD: ${self:custom.secrets.DB_PASSWORD}
+    DB_HOST: ${self:custom.secrets.DB_HOST}
+    DB_PORT: ${self:custom.secrets.DB_PORT}
+  vpc:
+    securityGroupIds:
+      - ${self:custom.secrets.SECURITY_GROUP_ID}
+    subnetIds:
+      - ${self:custom.secrets.SUBNET1_ID}
+      - ${self:custom.secrets.SUBNET2_ID}
+      - ${self:custom.secrets.SUBNET3_ID}
+      - ${self:custom.secrets.SUBNET4_ID}
+functions:
+  healthCheck:
+    handler: handler.healthCheck
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true
+    environment:
+      DB_ID:
+        Ref: Database
+      DB_ADDRESS:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Address
+      DB_PORT:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Port
+      DB_ARN:
+        Fn::Sub: 'arn:aws:rds:#{AWS::Region}:#{AWS::AccountId}:cluster:#{Database}'
+  create:
+    handler: handler.create
+    events:
+      - http:
+          path: notes
+          method: post
+          cors: true
+    environment:
+      DB_ID:
+        Ref: Database
+      DB_ADDRESS:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Address
+      DB_PORT:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Port
+      DB_ARN:
+        Fn::Sub: 'arn:aws:rds:#{AWS::Region}:#{AWS::AccountId}:cluster:#{Database}'
+  getOne:
+    handler: handler.getOne
+    events:
+      - http:
+          path: notes/{id}
+          method: get
+          cors: true
+    environment:
+      DB_ID:
+        Ref: Database
+      DB_ADDRESS:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Address
+      DB_PORT:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Port
+      DB_ARN:
+        Fn::Sub: 'arn:aws:rds:#{AWS::Region}:#{AWS::AccountId}:cluster:#{Database}'
+  getAll:
+    handler: handler.getAll
+    events:
+      - http:
+          path: notes
+          method: get
+          cors: true
+    environment:
+      DB_ID:
+        Ref: Database
+      DB_ADDRESS:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Address
+      DB_PORT:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Port
+      DB_ARN:
+        Fn::Sub: 'arn:aws:rds:#{AWS::Region}:#{AWS::AccountId}:cluster:#{Database}'
+  update:
+    handler: handler.update
+    events:
+      - http:
+          path: notes/{id}
+          method: put
+          cors: true
+    environment:
+      DB_ID:
+        Ref: Database
+      DB_ADDRESS:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Address
+      DB_PORT:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Port
+      DB_ARN:
+        Fn::Sub: 'arn:aws:rds:#{AWS::Region}:#{AWS::AccountId}:cluster:#{Database}'
+  destroy:
+    handler: handler.destroy
+    events:
+      - http:
+          path: notes/{id}
+          method: delete
+          cors: true
+    environment:
+      DB_ID:
+        Ref: Database
+      DB_ADDRESS:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Address
+      DB_PORT:
+        Fn::GetAtt:
+          - Database
+          - Endpoint.Port
+      DB_ARN:
+        Fn::Sub: 'arn:aws:rds:#{AWS::Region}:#{AWS::AccountId}:cluster:#{Database}'
+plugins:
+  - serverless-offline
+  - serverless-cf-vars
+resources:
+  Resources:
+    Database:
+      Type: AWS::RDS::DBCluster
+      Properties:
+        BackupRetentionPeriod: 1
+        DBSubnetGroupName:
+          Ref: DatabaseSubnetGroup
+        Engine: aurora
+        EngineMode: serverless
+        MasterUsername: root
+        MasterUserPassword:
+          Ref: EnvConfigpasswordAsString
+        ScalingConfiguration:
+          AutoPause: false
+          MinCapacity: 2
+          MaxCapacity: 16
+        StorageEncrypted: true
+        VpcSecurityGroupIds:
+          - Ref: DatabaseSecurityGroup
+    DatabaseSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription:
+          Fn::Sub:
+            - 'Stack #{StackTagName} Environment #{EnvironmentTagName} Database #{ResourceName} VPC Subnets'
+            - ResourceName: Database
+        SubnetIds:
+          Ref: DefaultVPCSubnets
+        Tags:
+          - Key: Name
+            Value:
+              Fn::Sub:
+                - 'Stack #{StackTagName} Environment #{EnvironmentTagName} Database #{ResourceName} VPC Subnets'
+                - ResourceName: Database
+    DatabaseSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Database Security Group
+        SecurityGroupIngress:
+          CidrIp: 0.0.0.0/0
+          FromPort: 3306
+          IpProtocol: tcp
+          ToPort: 3306
+        Tags:
+          - Key: Name
+            Value:
+              Fn::Sub:
+                - 'Stack #{StackTagName} Environment #{EnvironmentTagName} Database #{ResourceName} VPC Security Group'
+                - ResourceName: Database
+        VpcId:
+          Ref: DefaultVPCId
+  Parameters:
+    StackTagName:
+      Type: String
+      Description: Stack Name (injected by Stackery at deployment time)
+      Default: web-api
+    EnvironmentTagName:
+      Type: String
+      Description: Environment Name (injected by Stackery at deployment time)
+      Default: dev
+    DefaultVPCId:
+      Type: AWS::EC2::VPC::Id
+      Description: AWS account-specific default VPC ID (injected by Stackery at deployment time)
+    DefaultVPCSubnets:
+      Type: List<AWS::EC2::Subnet::Id>
+      Description: AWS account-specific default VPC subnets (injected by Stackery at deployment time)
+    EnvConfigpasswordAsString:
+      Type: AWS::SSM::Parameter::Value<String>
+      Default: /<EnvironmentName>/password
+  Metadata:
+    EnvConfigParameters:
+      EnvConfigpasswordAsString: password

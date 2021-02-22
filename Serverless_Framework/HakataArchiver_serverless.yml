@@ -1,0 +1,66 @@
+service:
+  name: hakataarchiver
+
+custom:
+  defaultStage: dev
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  profiles:
+    dev: serverless
+    production: null
+  productionOnly:
+    dev: false
+    production: true
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 256
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: ap-northeast-1
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    HAKATASHI_API_KEY: ${env:HAKATASHI_API_KEY}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+        - s3:*
+      Resource: '*'
+  iamManagedPolicies:
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+
+functions:
+  crawlTwitter:
+    handler: crawlers/twitter.default
+    events:
+      - schedule:
+          rate: cron(34 * * * ? *)
+          enabled: ${self:custom.productionOnly.${self:provider.stage}}
+    timeout: 900
+  crawlPixiv:
+    handler: crawlers/pixiv.default
+    events:
+      - schedule:
+          rate: cron(17 * * * ? *)
+          enabled: ${self:custom.productionOnly.${self:provider.stage}}
+    timeout: 900
+  postSession:
+    handler: lib/postSession.default
+    events:
+      - http:
+          method: post
+          path: post-session
+  randomTwitter:
+    handler: lib/random.twitter
+    events:
+      - http:
+          method: get
+          path: random/twitter

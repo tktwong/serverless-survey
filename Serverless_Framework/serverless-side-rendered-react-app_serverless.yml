@@ -1,0 +1,181 @@
+service: serverless-side-rendered-react-app
+# app and org for use with dashboard.serverless.com
+app: serverless-side-rendered-react-app
+#org: your-org-name
+
+plugins:
+  - serverless-s3-local
+  - serverless-plugin-typescript
+  - serverless-dynamodb-local
+  - serverless-s3-sync
+  - serverless-s3-local-sync
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName: historic-exchange-rates
+    bucketName: serverless-side-rendered-react-app
+    DEV_API_URL: ${self:custom.dev.API_URL}
+    PROD_API_URL: ${self:custom.prod.API_URL}
+    NODE_ENV: ${self:custom.${self:custom.stage}.NODE_ENV}
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:us-east-1:*:table/${self:provider.environment.tableName}'
+    - Effect: 'Allow'
+      Action:
+        - 's3:ListBucket'
+        - 's3:GetObject'
+        - 's3:PutObject'
+        - 's3:PutObjectAcl'
+        - 's3:DeleteObject'
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - Ref: bucket
+
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+
+# you can add packaging information here
+#package:
+#include:
+#    - ./frontend/public
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+# This will create our API Gateway handlers/endpoints
+functions:
+  getHistoricExchangeRates:
+    handler: ./src/handler.getHistoricExchangeRates
+    events:
+      - http:
+          path: /api/historic
+          method: get
+          cors: true
+  sendHtml:
+    handler: ./src/handler.sendHtml
+    events:
+      - http:
+          # Catch-all handler that allows for navigation in the UI
+          path: /{path}
+          method: get
+          cors: true
+      - http:
+          path: /
+          method: get
+          cors: true
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# Create additional resources like DynamoDB or an S3 bucket
+resources:
+  Resources:
+    # Create our DynamoDB with the exchangeRatesTable
+    exchangeRatesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.tableName}
+        AttributeDefinitions:
+          - AttributeName: currency
+            AttributeType: S
+        KeySchema:
+          - AttributeName: currency
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    # Create our S3 bucket for the static frontend files
+    bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.bucketName}
+        AccessControl: PublicRead
+    # Attach a policy to the S3 bucket
+    # Here we allow public read/get access to the files in the bucket
+    S3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: '*'
+              Action:
+                - s3:GetObject
+              Resource:
+                Fn::Join: ['', ['arn:aws:s3:::', { 'Ref': 'bucket' }, '/*']]
+
+# Here we define the settings for our plugins
+custom:
+  stage: '${opt:stage, self:provider.stage}'
+  region: '${opt:region, self:provider.region}'
+  # This will retrieve our API endpoint URL
+  # We make this available to the handlers via environment variables
+  prod:
+    NODE_ENV: production
+    API_URL:
+      {
+        'Fn::Join':
+          [
+            '',
+            [
+              'https://',
+              { 'Ref': 'ApiGatewayRestApi' },
+              '.execute-api.${self:custom.region}.amazonaws.com/${self:custom.stage}',
+            ],
+          ],
+      }
+  dev:
+    NODE_ENV: development
+    API_URL: 'http://localhost:3000/'
+
+  # Local DynamoDB config
+  dynamodb:
+    # If you only want to use DynamoDB Local in some stages, declare them here
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      convertEmptyValues: true
+    # Uncomment only if you already have a DynamoDB running locally
+    # noStart: true
+
+  # Local S3 config
+  s3:
+    port: 5000
+    directory: ./s3_tmp
+
+  # S3 sync config
+  # This will be used by both the "online" and "local" version
+  # We sync the build files from our frontend to our S3 bucket
+  s3Sync:
+    - bucketName: ${self:provider.environment.bucketName}
+      localDir: ./frontend/public/
+      #bucketPrefix: static/files/
+      # Keep file/folder structure
+      followSymlinks: true

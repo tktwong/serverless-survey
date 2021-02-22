@@ -1,0 +1,188 @@
+service: 
+  name: ${{env:SERVICE, 'event-store'}}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  variableSyntax: "\\${{([\\s\\S]+?)}}" 
+  stage: ${{opt:stage, 'dev'}}
+  tracing: true 
+  environment:
+    EVENT_STREAM: ${{self:service}}-${{self:provider.stage}}-stream
+    PLAYBACK_STREAM: ${{self:service}}-${{self:provider.stage}}-playback
+    S3_BUCKET: ${{self:service}}-${{self:provider.stage}}-bucket
+    DYNAMO_BUFFER_TABLE: ${{self:service}}-${{self:provider.stage}}-buffer-table
+    DYNAMO_EVENT_TABLE: ${{self:service}}-${{self:provider.stage}}-event-table
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - xray:PutTelemetryRecords
+        - xray:PutTraceSegments
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "kinesis:PutRecord"
+        - "kinesis:PutRecords"
+      Resource:
+        - Fn::GetAtt:
+          - EventStream
+          - Arn
+        - Fn::GetAtt:
+          - PlaybackStream
+          - Arn
+plugins:
+  - serverless-plugin-tracing
+ 
+functions:
+  playback:
+    handler: src/main/js/lambda/playback/index.handler
+    timeout: 300 
+    memorySize: 1500 
+
+  link:
+    handler: src/main/js/lambda/link/index.handler
+    timeout: 300 
+    memorySize: 1500 
+
+  load:
+    handler: src/main/js/lambda/load/index.handler
+    events:
+      - http:
+          path: claps/create
+          method: post
+          integration: lambda
+          request:
+            template:
+              application/json: '{ "body" : $input.json(''$'') }'
+ 
+  scan:
+    handler: src/main/js/lambda/scan/index.handler
+    timeout: 300 
+    memorySize: 1500 
+    events:
+      - schedule: rate(1 minute)
+  pump:
+    handler: src/main/js/lambda/pump/index.handler
+    timeout: 300 
+    memorySize: 1500 
+    events:
+      - stream:
+          type: kinesis
+          arn:
+            Fn::GetAtt:
+              - EventStream
+              - Arn
+          batchSize: 500
+          startingPosition: TRIM_HORIZON
+
+package:
+  include:
+    - src/main/js/lambda/**
+    - node_modules/**
+  exclude:
+    - ./**
+
+resources:
+  Description: DynamoDB Event Store
+  Resources:
+    EventStore:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${{self:provider.environment.DYNAMO_EVENT_TABLE}}
+        AttributeDefinitions:
+          - AttributeName: event_time_slot
+            AttributeType: S
+          - AttributeName: event_id
+            AttributeType: S
+          - AttributeName: event_time_stamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: event_time_slot
+            KeyType: HASH
+          - AttributeName: "event_id"
+            KeyType: "RANGE"
+        LocalSecondaryIndexes:
+        - IndexName: "event_time_stamp"
+          KeySchema: 
+            - AttributeName: "event_time_slot"
+              KeyType: "HASH"
+            - AttributeName: event_time_stamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 25
+    EventBuffer:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${{self:provider.environment.DYNAMO_BUFFER_TABLE}}
+        AttributeDefinitions:
+          - AttributeName: partition_key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: partition_key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 25
+          WriteCapacityUnits: 50
+    EventStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${{self:provider.environment.EVENT_STREAM}}
+        ShardCount: 1
+    PlaybackStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${{self:provider.environment.PLAYBACK_STREAM}}
+        ShardCount: 1
+
+  Outputs:
+    EventStream:
+      Description: Event Stream name
+      Value:
+        'Ref': EventStream
+    EventStreamARN:
+      Description: Event Stream ARN
+      Value:
+        'Fn::GetAtt':
+          - EventStream
+          - Arn
+    PlaybackStream:
+      Description: Playback Stream name
+      Value:
+        'Ref': PlaybackStream
+    PlaybackStreamARN:
+      Description: Playback Stream ARN
+      Value:
+        'Fn::GetAtt':
+          - PlaybackStream
+          - Arn
+    EventStore:
+      Description: Event Store DynamoDB Table name
+      Value:
+        'Ref': EventStore
+    EventStoreARN:
+      Description: Event Store DynamoDB Table ARN
+      Value:
+        'Fn::GetAtt':
+          - EventStore
+          - Arn
+    EventBuffer:
+      Description: Event Buffer DynamoDB Table name
+      Value:
+        'Ref': EventBuffer
+    EventBufferARN:
+      Description: Event Buffer DynamoDB Table ARN
+      Value:
+        'Fn::GetAtt':
+          - EventBuffer
+          - Arn

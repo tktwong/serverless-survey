@@ -1,0 +1,48 @@
+service: portfolio 
+
+app: cuffney
+
+custom:
+  env:
+    dev: dev
+    master: prod
+  vars:
+    HOSTED_ZONE_NAME: cuffney.com
+    DOMAIN_NAME: cuffney.com
+    CFN_TEMPLATE_URL: https://s3.amazonaws.com/com.cuffney.cf-templates
+    SSM_NAMESPACE: '/${self:app}/${opt:stage}/${self:service}'
+    RESOURCE_NAMESPACE: '${self:app}-${opt:stage}-${self:service}'
+
+provider:
+  name: aws
+  stackName: '${self:custom.vars.RESOURCE_NAMESPACE}'
+
+resources:
+  Resources:
+    Website:
+      Type: AWS::CloudFormation::Stack
+      Properties:
+        TemplateURL: '${self:custom.vars.CFN_TEMPLATE_URL}/static-spa-website/template.json'
+        Parameters:
+          HostedZoneName: '${self:custom.vars.HOSTED_ZONE_NAME}'
+          DomainName: '${self:custom.vars.DOMAIN_NAME}'
+
+    DistributionId:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Type: String
+        Name: '${self:custom.vars.SSM_NAMESPACE}/distribution/id'
+        Value:
+          Fn::GetAtt:
+            - Website
+            - Outputs.DistributionId
+
+    SourceBucketName:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Type: String
+        Name: '${self:custom.vars.SSM_NAMESPACE}/source-bucket/name'
+        Value:
+          Fn::GetAtt:
+            - Website
+            - Outputs.SourceBucketName

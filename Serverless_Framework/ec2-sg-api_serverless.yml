@@ -1,0 +1,47 @@
+service: ec2-sg-api
+
+provider:
+  name: aws
+  runtime: nodejs10.
+  stage: ${opt:stage,'development'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ec2:DescribeRegions"
+        - "ec2:DescribeSecurityGroups"
+      Resource: "*"
+
+functions:
+  authorizer:
+    cors: true
+    handler: src/handlers.authorizer
+    environment:
+      JWT_KEY: ${self:custom.jwtKey.${self:provider.stage}}
+  list:
+    handler: src/handlers.list
+    events:
+      - http:
+          authorizer: authorizer
+          cors: true
+          integration: lambda
+          path: /
+          method: GET
+          response:
+            headers:
+              Content-Type: 'application/vnd.api+json'
+
+
+plugins:
+  - serverless-offline
+  - serverless-stage-manager
+
+custom:
+  stages:
+    - development
+    - staging
+    - production
+  jwtKey:
+    local: CloudConformityJWTKey
+    development: CloudConformityJWTKey
+    staging: ${ssm:/ec2-sg-api/staging/jwt-key} #get from ssm
+    production: ${ssm:/ec2-sg-api/prod/jwt-key} #get from ssm

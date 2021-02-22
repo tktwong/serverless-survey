@@ -1,0 +1,45 @@
+service: cube-gog # NOTE: Don't put the word "google" in here
+
+provider:
+  name: google
+  stage: dev
+  runtime: nodejs8
+  region: us-central1
+  project: atlas-cube
+  # The GCF credentials can be a little tricky to set up. Luckily we've documented this for you here:
+  # https://serverless.com/framework/docs/providers/google/guide/credentials/
+  #
+  # the path to the credentials file needs to be absolute
+  credentials: ./gcloud.json
+  environment:
+    CUBEJS_DB_BQ_PROJECT_ID: atlas-cube
+    CUBEJS_DB_BQ_KEY_FILE: ./gcloud.json
+    CUBEJS_DB_TYPE: bigquery
+    CUBEJS_API_SECRET: 6fb60a620185573b12684c63442dd7df42ae1df95447a90a1346dfe92ced6d0993491ff02a99d37e033c1fb6c90ee5f1e20592e6162e2ff7e00c4022d4422c22
+    REDIS_URL: redis://10.0.0.3:6379/0
+    CUBEJS_APP: "${self:service.name}-${self:provider.stage}"
+    CUBEJS_SERVERLESS_PLATFORM: "${self:provider.name}"
+
+plugins:
+  - serverless-google-cloudfunctions
+  - serverless-express
+
+# needs more granular excluding in production as only the serverless provider npm
+# package should be excluded (and not the whole node_modules directory)
+package:
+  exclude:
+    - node_modules/**
+    - .gitignore
+    - .git/**
+
+functions:
+  cubejs:
+    handler: api
+    events:
+      - http: ANY
+  cubejsProcess:
+    handler: process
+    events:
+      - event:
+          eventType: providers/cloud.pubsub/eventTypes/topic.publish
+          resource: "projects/${self:provider.project}/topics/${self:service.name}-${self:provider.stage}-process"

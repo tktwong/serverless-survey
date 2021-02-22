@@ -1,0 +1,116 @@
+
+service: go-assets
+
+frameworkVersion: "=1.57.0"
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, env:stage, 'dev'}
+  region: us-west-2
+
+custom:
+  certificateArn: arn:aws:acm:us-east-1:863138142000:certificate/2bf0b9d2-f40e-409d-b963-a88e59e51d3a
+
+resources:
+  Resources:
+
+    S3BucketAssets:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: growme-go-${self:provider.stage}-assets
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - PUT
+                - GET
+              AllowedOrigins: ${file(./serverless.${self:provider.stage}.yml):cors.allowedOrigins}
+              MaxAge: 3000
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          ErrorDocument: index.html
+          IndexDocument: index.html
+
+    S3PublicReadPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref S3BucketAssets
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            Sid: PublicReadForGetBucketObjects
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref S3BucketAssets
+                - /*
+
+    CloudFrontWebApp:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - ${file(./serverless.${self:provider.stage}.yml):cloudFrontAlias}
+          CustomErrorResponses:
+            - ErrorCachingMinTTL: 0
+              ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - HEAD
+              - GET
+            CachedMethods:
+              - HEAD
+              - GET
+            Compress: false
+            DefaultTTL: 3600
+            ForwardedValues:
+              Cookies:
+                Forward: none
+              QueryString: true
+            MaxTTL: 18000
+            MinTTL: 5
+            SmoothStreaming: false
+            TargetOriginId: !Ref S3BucketAssets
+            ViewerProtocolPolicy: redirect-to-https
+          DefaultRootObject: index.html
+          Enabled: true
+          HttpVersion: http2
+          IPV6Enabled: true
+          Origins:
+            - CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginKeepaliveTimeout: 5
+                OriginProtocolPolicy: http-only
+                OriginReadTimeout: 30
+                OriginSSLProtocols:
+                  - TLSv1
+                  - TLSv1.1
+                  - TLSv1.2
+              DomainName: !GetAtt S3BucketAssets.DomainName
+              Id: !Ref S3BucketAssets
+          PriceClass: PriceClass_100
+          ViewerCertificate:
+            AcmCertificateArn: ${self:custom.certificateArn}
+            MinimumProtocolVersion: TLSv1.2_2018
+            SslSupportMethod: sni-only
+
+    Route53RecordSetAlias:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        AliasTarget:
+          DNSName: !GetAtt CloudFrontWebApp.DomainName
+          EvaluateTargetHealth: false
+          # hosted zone for cloud formation
+          # https://docs.aws.amazon.com/general/latest/gr/rande.html#elb_region
+          HostedZoneId: Z2FDTNDATAQYW2
+        HostedZoneName: growme.fyi.
+        Name: ${file(./serverless.${self:provider.stage}.yml):cloudFrontAlias}
+        Type: 'A'

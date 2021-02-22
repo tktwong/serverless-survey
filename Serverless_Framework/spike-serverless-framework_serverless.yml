@@ -1,0 +1,183 @@
+service: spike-serverless-framework # NOTE: update this with your service name
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: ap-northeast-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - execute-api:ManageConnections
+      Resource:
+        - arn:aws:execute-api:*:*:**/@connections/*
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:${self:provider.region}:*:table/*-${self:provider.stage}'
+    - Effect: Allow
+      Action:
+        - 'sqs:SendMessage'
+        - 'sqs:GetQueueUrl'
+        - 'sqs:CreateQueue'
+      Resource: 'arn:aws:sqs:${self:provider.region}:*:*-${self:provider.stage}'
+  environment:
+    SQS_BASE_URL: ${env:SQS_BASE_URL}
+    TEST_QUEUE_NAME: ${self:service}-${self:provider.stage}
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+    TEST_DYNAMODB_TABLE: test-${self:service}-${self:provider.stage}
+    IMAGES_DYNAMODB_TABLE: images-${self:service}-${self:provider.stage}
+    CONNECTIONS_DYNAMODB_TABLE: connections-${self:service}-${self:provider.stage}
+    PIXABAY_API_KEY: ${env:PIXABAY_API_KEY}
+    API_GATEWAY_URL: ${env:API_GATEWAY_URL}
+  websocketApiName: ${self:service.name}-${self:provider.stage}
+  websocketApiRouteSelectionExpression: $request.body.action
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+  - serverless-domain-manager
+  - serverless-dynamodb-local
+  - serverless-websockets-plugin
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+      # dbPath: '<mypath>/'
+      # noStart: true
+  customDomain:
+    domainName: ${self:provider.stage}-spike-serverless.${env:CUSTOM_DOMAIN_NAME}
+    certificateName: ${env:CERTIFICATE_NAME}
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    endpointType: 'regional'
+
+functions:
+  hello:
+    handler: src/functions/handler.hello
+    events:
+      - http:
+          path: /hello
+          method: GET
+  simplePut:
+    handler: src/functions/handler.simplePut
+    events:
+      - http:
+          path: /simple-put
+          method: POST
+  searchPixabay:
+    handler: src/functions/handler.searchPixabay
+    events:
+      - http:
+          path: /search-pixabay
+          method: GET
+  putToSQS:
+    handler: src/functions/handler.putToSQS
+    events:
+      - http:
+          path: /put-to-sqs
+          method: POST
+  sqsTriggered:
+    handler: src/functions/handler.sqsTriggered
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - TestQueue
+              - Arn
+  connectionManager:
+    handler: src/functions/handler.connectionManager
+    events:
+      - websocket:
+          routeKey: $connect
+      - websocket:
+          routeKey: $disconnect
+  defaultMessage:
+    handler: src/functions/handler.defaultMessage
+    events:
+      - websocket:
+          routeKey: $default
+  sendMessage:
+    handler: src/functions/handler.sendMessage
+    events:
+      - websocket:
+          routeKey: sendMessage
+
+resources:
+  Resources:
+    TestQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.TEST_QUEUE_NAME}
+    SpikeServerlessFrameworkTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: url
+            AttributeType: S
+        KeySchema:
+          - AttributeName: url
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    SpikeServerlessFrameworkTestTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TEST_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: message
+            AttributeType: S
+        KeySchema:
+          - AttributeName: message
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    SpikeServerlessFrameworkImagesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.IMAGES_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: query
+            AttributeType: S
+        KeySchema:
+          - AttributeName: query
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    SpikeServerlessFrameworkConnectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.CONNECTIONS_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: ConnectionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ConnectionId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        SSESpecification:
+          SSEEnabled: True
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES

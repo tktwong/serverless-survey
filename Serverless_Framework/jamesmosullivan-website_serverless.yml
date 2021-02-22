@@ -1,0 +1,97 @@
+service: jamesmosullivan-website
+
+plugins:
+  - serverless-s3-sync
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  siteName: jamesmosullivan
+  bucketName: jamesmosullivan.uk
+  s3Sync:
+    - bucketName: ${self:custom.bucketName}
+      localDir: dist
+  hostedZoneName: jamesmosullivan.uk.
+  aliasHostedZoneId: Z2FDTNDATAQYW2
+
+provider:
+  name: aws
+  stage: dev
+  runtime: nodejs8.10
+  profile: serverless
+  region: us-east-1
+  environment:
+    STAGE: ${self:custom.stage}
+
+package:
+  exclude:
+    - ".*/**"
+    - "dist/**"
+    - "src/**"
+    - "public/**"
+
+resources:
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.bucketName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                  "arn:aws:s3:::",
+                  {
+                    "Ref": "StaticSite"
+                  },
+                  "/*"
+                ]
+                ]
+    DnsRecord:
+      Type: "AWS::Route53::RecordSet"
+      Properties:
+        AliasTarget:
+          DNSName: !GetAtt
+            - StaticSiteCDN
+            - DomainName
+          HostedZoneId: ${self:custom.aliasHostedZoneId}
+        HostedZoneName: ${self:custom.hostedZoneName}
+        Name:
+          Ref: StaticSite
+        Type: 'A'
+    StaticSiteCDN:
+      Type: "AWS::CloudFront::Distribution"
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName: ${self:custom.bucketName}.s3-website-eu-west-1.amazonaws.com
+              Id: StaticSiteCustomOrigin
+              CustomOriginConfig:
+                HTTPPort: '80'
+                HTTPSPort: '443'
+                OriginProtocolPolicy: http-only
+          Aliases:
+            - www.jamesmosullivan.uk
+          Enabled: 'true'
+          DefaultCacheBehavior:
+            TargetOriginId: StaticSiteCustomOrigin
+            ForwardedValues:
+              QueryString: 'true'
+            ViewerProtocolPolicy: redirect-to-https
+          PriceClass: "PriceClass_100"
+          ViewerCertificate:
+            SslSupportMethod: sni-only
+            AcmCertificateArn: 'arn:aws:acm:us-east-1:192047392996:certificate/71fe49c1-a0aa-41b2-9933-069b22960563'

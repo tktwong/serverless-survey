@@ -1,0 +1,133 @@
+# Serverless definition file
+# --------------------------
+# Defines Lambda functions to be deployed to AWS using the Serverless Framework.
+# http://serverless.com
+
+service: lambda-house
+
+# frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: us-east-1
+  stage: dev
+  memorySize: 128
+  timeout: 30
+
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    DYNAMODB_IP_TABLE: ${self:service}-ip
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_IP_TABLE}"
+
+functions:
+  roomCreate:
+    handler: rooms/create.create
+    events:
+      - http:
+          path: rooms
+          method: post
+          cors: true
+
+  roomList:
+    handler: rooms/list.list
+    events:
+      - http:
+          path: rooms
+          method: get
+          cors: true
+
+  roomGet:
+    handler: rooms/get.get
+    events:
+      - http:
+          path: rooms/{id}
+          method: get
+          cors: true
+
+  roomUpdate:
+    handler: rooms/update.update
+    events:
+      - http:
+          path: rooms/{id}
+          method: put
+          cors: true
+
+  roomDelete:
+    handler: rooms/delete.delete
+    events:
+      - http:
+          path: rooms/{id}
+          method: delete
+          cors: true
+
+  ipUpdate:
+    handler: ip/update.update
+    events:
+      - http:
+          path: ip/update
+          method: put
+          cors: true
+           
+resources:
+  Resources:
+    RoomsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+    IPDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_IP_TABLE}
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    port: 5000

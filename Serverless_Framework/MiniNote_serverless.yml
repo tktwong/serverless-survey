@@ -1,0 +1,166 @@
+
+
+service: mini-onenote
+
+#allow custome headers
+custom:
+  allowedHeaders:
+    - Accept
+    - Content-Type
+    - Content-Length
+    - Authorization
+    - X-Amz-Date
+    - X-Api-Key
+    - X-Amz-Security-Token
+    - X-Amz-User-Agent
+    - app_user_id
+    - app_user_name
+  customDomain:
+    domainName: api.mini-note.uk
+    basePath: 'version1'
+    stage: ${self:provider.stage}
+    #ssl certificate
+    certificateName: mini-note.uk
+    createRoute53Record: true
+
+# allow test API offline
+plugins:
+  - serverless-offline
+  - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-west-2
+  stage: prod
+  memorySize: 128
+  timeout: 5
+  endpointType: regional
+  environment:
+    NOTES_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    COGNITO_IDENTITY_POOL_ID: us-west-2:9f4c4c7f-9c90-42be-92b7-ed74aff97f93
+  #set up iam roles that apply to all the lambda functions
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}"
+
+#define lambda function and corresponding API
+functions:
+  auth-google:
+    handler: oneNoteAPI/auth-google.handler
+    description: Google IDP Authentication
+    events:
+      - http:
+          path: auth
+          method: get
+          cors:
+            origin: '*' #allow all origin to make request
+            headers: ${self:custom.allowedHeaders} #allow custom headers
+
+  add-note:
+    #lambda function folder's name/lambda function file name.handler
+    handler: oneNoteAPI/add-note.handler
+    description: POST /note
+    events:
+      - http:
+          authorizer: aws_iam
+          path: note
+          method: post
+          cors:
+            origin: '*' #allow all origin to make request
+            headers: ${self:custom.allowedHeaders} #allow custom headers
+
+  update-note:
+    handler: oneNoteAPI/update-note.handler
+    description: PATCH /note
+    events:
+      - http:
+          authorizer: aws_iam
+          path: note
+          method: patch
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+  get-notes:
+    handler: oneNoteAPI/get-notes.handler
+    description: GET /notes
+    events:
+      - http:
+          authorizer: aws_iam
+          path: notes
+          method: get
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+  get-note:
+    handler: oneNoteAPI/get-note.handler
+    description: GET /note/n/{note_id}
+    events:
+      - http:
+          authorizer: aws_iam
+          path: note/n/{note_id}
+          method: get
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+  delete-note:
+    handler: oneNoteAPI/delete-note.handler
+    description: DELETE /note
+    events:
+      - http:
+          authorizer: aws_iam
+          path: note/t/{timestamp}
+          method: delete
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+
+resources:
+  Resources:
+    GatewayResponseDefault4xx:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+    NotesTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.environment.NOTES_TABLE}
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: N
+          - AttributeName: note_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: note_id-index
+            KeySchema:
+              - AttributeName: note_id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

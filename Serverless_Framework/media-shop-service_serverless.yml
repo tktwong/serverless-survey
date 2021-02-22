@@ -1,0 +1,84 @@
+service: bmt-media-shop-service
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-central-1
+  profile: serverless-profile
+
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:PutObjectAcl
+        - s3:DeleteObject
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::*"
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:UpdateItem
+      Resource: "*"
+
+  environment:
+    BUCKET: ${self:service}-templates
+    DOCUMENTATION_BUCKET: ${self:service}-docs
+    PDF_BUCKET: ${self:service}-pdf
+    REVIEW_TABLE: ${self:service}-review
+    PROMOCODE_TABLE: ${self:service}-promocode
+    USER_TABLE: ${self:service}-user
+    ORDER_TABLE: ${self:service}-order
+
+package:
+  include:
+    - wkhtmltopdf
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+#      dbPath: ./.tmp/
+      migrate: true
+  s3:
+    port: 8800
+    directory: ./.tmp
+  s3Sync:
+    - bucketName: ${self:provider.environment.DOCUMENTATION_BUCKET}
+      localDir: documentation
+    - bucketName: ${self:provider.environment.BUCKET}
+      localDir: templates
+  remover:
+     buckets:
+       - ${self:provider.environment.BUCKET}
+       - ${self:provider.environment.PDF_BUCKET}
+  documentation:
+    raml:
+      title: BMT media-shop API
+      version: v1.0
+  dirconfig:
+      quiet: true
+  webpack:
+      webpackConfig: 'webpack.config.js'   # Name of webpack configuration file
+      includeModules: false   # Node modules configuration for packaging
+      packager: 'npm'   # Packager that will be used to package your external modules
+      packExternalModulesMaxBuffer: 200 * 1024   # Size of stdio buffers for spawned child processes
+
+plugins:
+  - serverless-webpack
+  - serverless-dir-config-plugin
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-s3-local
+  - serverless-s3-remover
+  - serverless-s3-sync
+  - raml-serverless

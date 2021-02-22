@@ -1,0 +1,97 @@
+service: aws-nodejs # NOTE: update this with your service name
+provider:
+  name: aws
+  runtime: nodejs6.10
+functions:
+  get:
+    handler: handler.get
+    events:
+      - http:
+          path: users/{email}
+          method: get
+          request:
+            parameters:
+              paths:
+                email: true
+  post:
+    handler: handler.post
+    events:
+      - http:
+          path: users
+          method: post
+  put:
+    handler: handler.put
+    events:
+      - http:
+          path: users/{email}
+          method: put
+          request:
+            parameters:
+              paths:
+                email: true
+  delete:
+    handler: handler.delete
+    events:
+      - http:
+          path: users/{email}
+          method: delete
+          request:
+            parameters:
+              paths:
+                email: true
+resources:
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: usersTable
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: usersTable
+      Properties:
+        PolicyName: lambda-dynamodb
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:DeleteItem
+              Resource: arn:aws:dynamodb:*:*:table/usersTable
+        Roles:
+          - Ref: IamRoleLambdaExecution
+    userSnapshotBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: BucketOwnerFullControl
+        BucketName: user-snapshot-bucket
+    S3IamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: userSnapshotBucket
+      Properties:
+        PolicyName: lambda-s3
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+                - s3:GetObject
+                - s3:PutObject
+              Resource: arn:aws:s3:::user-snapshot-bucket/*
+            - Effect: Allow
+              Action: s3:ListAllMyBuckets
+              Resource:
+              - arn:aws:s3:::*
+        Roles:
+          - Ref: IamRoleLambdaExecution

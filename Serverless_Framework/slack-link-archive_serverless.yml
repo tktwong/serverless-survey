@@ -1,0 +1,96 @@
+service:
+  name: codesquad-link-archive
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    includeModules: true
+    packager: 'yarn'
+    excludeFiles: src/**/*.test.js
+
+  channelTableName: ${self:provider.stage}-channels
+  userTableName: ${self:provider.stage}-users
+  linkTableName: ${self:provider.stage}-links
+
+  cralwerFailureTopicName: crawler-failure-alarm-${self:provider.stage}
+  cralwerFailureEndpoint: ${ssm:/squadref-v1/failure-endpoint}
+
+  dynamodb:
+    stages:
+      - dev
+      - test
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      sharedDb: true
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-local-schedule
+  - serverless-offline
+  - serverless-offline-ssm
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-northeast-2
+  stage: ${opt:stage, 'dev'}
+  memorySize: 128
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    AUTH_SECRET: ${ssm:/squadref-v1/auth-secret}
+    BASE_URL: ${ssm:/squadref-v1/base-url}
+    CLIENT_BASE_URL: ${ssm:/squadref-v1/client-base-url}
+    ENTER_PATH: ${ssm:/squadref-v1/enter-path}
+    INVITATION_SECRET: ${ssm:/squadref-v1/invitation-secret}
+    NODE_PATH: ${ssm:/squadref-v1/node-path}
+    REGION: ${self:provider.region}
+    SLACK_TOKEN: ${ssm:/squadref-v1/slack-token}
+    MONGO_URI: ${ssm:/squadref-v1/mongo-uri}
+    STAGE: ${self:provider.stage}
+    TZ: Asia/Seoul
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:BatchGetItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/*"
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource:
+        - { Ref: CrawlerFailureTopic }
+
+package:
+  individually: true
+
+functions:
+# Crawler Services
+  crawler:
+    handler: src/crawler/index.crawl
+    timeout: 60
+    events:
+      - schedule:
+          rate: cron(0 4 * * ? *)
+          timezone: ${self:provider.environment.TZ}
+    destinations:
+      onFailure:
+        - Ref: CrawlerFailureTopic
+
+
+resources:
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/sns.yml)}

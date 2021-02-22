@@ -1,0 +1,356 @@
+service: ecommerce-api
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-aws-documentation
+
+custom:
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+  productTableName: "Product"
+  userEcoTableName: "UserEco"
+
+  documentation:
+    info:
+      version: "1"
+      name: "Ecommerce Api"
+      description: "RESTFUL api for ecommerce app"
+    models:
+      - name: "Product"
+        description: "A new product"
+        contentType: "application/json"
+        schema:
+          type: "object"
+          properties:
+            name:
+              type: "string"
+            brand:
+              type: "string"
+            price:
+              type: "number"
+            image:
+              type: "string"
+            description:
+              type: "string"
+            owner:
+              type: "string"
+      - name: "SuccessfulAuthResponse"
+        description: "Log in successful"
+        contentType: "application/json"
+        schema:
+          type: "object"
+          properties:
+            idToken:
+              type: "string"
+            accessToken:
+              type: "string"
+      - name: "LoginRequest"
+        contentType: "application/json"
+        schema:
+          type: "object"
+          properties:
+            email:
+              type: "string"
+            password:
+              type: "string"
+      - name: "SignUpRequest"
+        contentType: "application/json"
+        schema:
+          type: "object"
+          properties:
+            email:
+              type: "string"
+            password:
+              type: "string"
+      - name: "AccountVerificationRequest"
+        contentType: "application/json"
+        schema:
+          type: "object"
+          properties:
+            email:
+              type: "string"
+            code:
+              type: "string"
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-1
+  environment:
+    IS_OFFLINE: "false"
+    USER_POOL_ID: "YOUR_USER_POOL_ID"
+    USER_POOL_CLIENT_ID: "YOUR_CLIENT_ID"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+        - dynamodb:CreateTable
+      Resource:
+        - { "Fn::GetAtt": ["UsersEcoDynamoDBTable", "Arn"] }
+        - { "Fn::GetAtt": ["ProductsDynamoDBTable", "Arn"] }
+
+functions:
+  createUser:
+    handler: src/routes/user.register
+    events:
+      - http:
+          path: /register
+          method: post
+          cors: true
+          documentation:
+            summary: "Sign up to the app"
+            description: "Registers and creates a new user account"
+            methodResponses:
+              - statusCode: "201"
+                responseBody:
+                  description: "Successful! User Created"
+              - statusCode: "400"
+                responseBody:
+                  description: "Bad Request"
+            requestModels:
+              "application/json": SignUpRequest
+
+  loginUser:
+    handler: src/routes/user.login
+    events:
+      - http:
+          path: /login
+          method: post
+          cors: true
+          documentation:
+            summary: "Sign in to the app"
+            description: "Logs user into account"
+            requestModels:
+              "application/json": LoginRequest
+            methodResponses:
+              - statusCode: "200"
+                responseBody:
+                  description: "Successful! User authenticated"
+                responseModels:
+                  "application/json": SuccessfulAuthResponse
+              - statusCode: "400"
+                responseBody:
+                  description: "Bad Request"
+
+  logoutUser:
+    handler: src/routes/user.logout
+    events:
+      - http:
+          path: /logout
+          method: post
+          cors: true
+          documentation:
+            summary: "Log out"
+            description: "Invalidates ID token and logs out user"
+            methodResponses:
+              - statusCode: "200"
+                responseBody:
+                  description: "Successful!"
+              - statusCode: "401"
+                responseBody:
+                  description: "Unauthenticated!"
+            requestHeaders:
+              - name: "idtoken"
+                description: "ID token retrieved after successful log in"
+                required: "true"
+
+  verifyUser:
+    handler: src/routes/user.verify
+    events:
+      - http:
+          path: /verify
+          method: post
+          cors: true
+          documentation:
+            summary: "Verify account"
+            description: "Verify your account after successful sign up"
+            requestModels:
+              "application/json": AccountVerificationRequest
+            methodResponses:
+              - statusCode: "200"
+                responseBody:
+                  description: "Successful! Account Verified"
+              - statusCode: "400"
+                responseBody:
+                  description: "Error verifying account"
+
+  createProduct:
+    handler: src/routes/product.createProduct
+    events:
+      - http:
+          path: /products
+          method: post
+          cors: true
+          authorizer:
+            arn: --
+          documentation:
+            summary: "Create product"
+            description: "Creates a new product"
+            methodResponses:
+              - statusCode: "200"
+                responseBody:
+                  description: "Successful!"
+
+              - statusCode: "401"
+                responseBody:
+                  description: "Unauthenticated!"
+            requestHeaders:
+              - name: "idtoken"
+                description: "ID token retrieved after successful log in"
+                required: "true"
+
+  getALlProducts:
+    handler: src/routes/product.allProducts
+    events:
+      - http:
+          path: /products
+          method: get
+          cors: true
+          documentation:
+            summary: "Get all products"
+            description: "Fetches all products belonging to authenticated user"
+            methodResponses:
+              - statusCode: "200"
+                responseBody:
+                  description: "Successful!"
+
+              - statusCode: "401"
+                responseBody:
+                  description: "Unauthenticated!"
+            requestHeaders:
+              - name: "idtoken"
+                description: "ID token retrieved after successful log in"
+                required: "true"
+
+  getbyID:
+    handler: src/routes/product.productById
+    events:
+      - http:
+          path: /product/{id}
+          method: get
+          cors: true
+          documentation:
+            summary: "Get product"
+            description: "Gets a product by its id"
+            methodResponses:
+              - statusCode: "200"
+                responseBody:
+                  "application/json": { { model: Product } }
+
+              - statusCode: "401"
+                responseBody:
+                  description: "Unauthenticated!"
+            pathParams:
+              - name: "id"
+                description: "ID of the product"
+                required: "true"
+                allowValues: "true"
+            requestHeaders:
+              - name: "idtoken"
+                description: "ID token retrieved after successful log in"
+                required: "true"
+
+  updateID:
+    handler: src/routes/product.updateProduct
+    events:
+      - http:
+          path: /product/{id}
+          method: patch
+          cors: true
+          authorizer:
+            arn: --
+          documentation:
+            summary: "Update product"
+            description: "Update a product by its id"
+            methodResponses:
+              - statusCode: "200"
+                responseBody:
+                  description: "Successful!"
+
+              - statusCode: "401"
+                responseBody:
+                  description: "Unauthenticated!"
+            pathParams:
+              - name: "id"
+                description: "ID of the product"
+                required: "true"
+                allowValues: "true"
+            requestHeaders:
+              - name: "idtoken"
+                description: "ID token retrieved after successful log in"
+                required: "true"
+
+  deleteProduct:
+    handler: src/routes/product.deleteProduct
+    events:
+      - http:
+          path: /product/{id}
+          method: delete
+          cors: true
+          authorizer:
+            arn: --
+          documentation:
+            summary: "Delete product"
+            description: "Deletes a product by its id"
+            methodResponses:
+              - statusCode: "200"
+                responseBody:
+                  description: "Successful!"
+
+              - statusCode: "401"
+                responseBody:
+                  description: "Unauthenticated!"
+            pathParams:
+              - name: "id"
+                description: "ID of the product"
+                required: "true"
+                allowValues: "true"
+            requestHeaders:
+              - name: "idtoken"
+                description: "ID token retrieved after successful log in"
+                required: "true"
+
+resources:
+  Resources:
+    UsersEcoDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.userEcoTableName}
+    ProductsDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.productTableName}

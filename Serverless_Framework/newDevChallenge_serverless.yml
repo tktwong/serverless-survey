@@ -1,0 +1,92 @@
+# serverless.yml
+
+service: lambda-rest-api
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+# Custom sets a variable for my DynamoDB table name.
+# provider.environment is setting the value at 'Locations'
+custom:
+  start:
+    migrate: true
+    seed: true
+  tableName: 'Locations'
+
+  # seed:
+  #   domain:
+  #     sources:
+  #       - table: ${self:custom.tableName}
+  #         sources: [./Data.json]
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["LocationsDynamoDBTable", "Arn" ] }
+  environment:
+    LOCATIONS_TABLE: ${self:custom.tableName}
+
+functions:
+  server:
+    handler: server/server.handler
+    events:
+      - http:
+          path: /
+          method: GET
+          cors: true
+      # - http:
+      #     path: /initialLocations
+      #     method: GET
+      #     cors: true
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors: true
+
+
+resources:
+  Resources:
+    LocationsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:custom.tableName}
+
+package:
+  # Excludes so IF/WHEN we deploy it will only deploy the node/express
+  # and DynamoDB files we care about
+  exclude:
+    - public/**
+    - src/**
+    - DockerFile
+    - .dockerignore
+    - .gitignore
+    - README.md
+    - .env
+    - '*.{png}'
+    - '*.{ts,js,json,yml}' # All other configs
+
+  include:
+    - server/**

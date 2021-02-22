@@ -1,0 +1,100 @@
+# serverless.yml
+
+# Serverless.yml is the configuration the CLI uses to deploy your code to
+# your provider of choice. The file denotes the entire architecture of the
+# server, including the provider, the plugins, and the functions.
+
+# Read the serverless docs here:
+# https://serverless.com/framework/docs/
+
+# The `service` block is the name of the service
+service: lambda-sensui-csi
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: develop
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - KMS:Decrypt
+      Resource: ${self:custom.kmsSecrets.keyArn}
+    - Effect: Allow
+      Action:
+      - s3:*
+      Resource: 'arn:aws:s3:::*'
+
+  environment:
+      SECRETS: ${self:custom.kmsSecrets.secrets.SECRETS}
+
+# Use the serverless-webpack plugin to transpile ES6
+
+# serverless-kms-secrets: Serverless plugin to encrypt variables with KMS
+# A Serverless Plugin for the Serverless Framework which helps with
+# encrypting service secrets using the AWS Key Management Service (KMS)
+plugins:
+  - serverless-webpack
+  - serverless-kms-secrets
+
+# Enable auto-packing of external modules
+custom:
+  webpackIncludeModules: true
+  serverless-kms-secrets:
+    secretsFile: kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml
+  kmsSecrets: ${file(kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml)}
+# The `functions` block defines what code to deploy
+functions:
+  fund:
+    handler: src/api_handler.fund
+    description: Fund handler
+    timeout: 30
+    events:
+     - http:
+         path: v1/fund #Legacy
+         method: post
+     - http:
+         path: fund
+         method: post
+  relay:
+    handler: src/api_handler.relay
+    description: Relay handler
+    timeout: 30
+    events:
+     - http:
+         path: v2/relay #Legacy
+         method: post
+     - http:
+         path: relay
+         method: post
+  checkPending:
+    handler: src/api_handler.checkPending
+    description: check if pending tx are mined
+    events:
+     - http:
+         path: checkPending
+         method: post
+  checkBalances:
+    handler: src/jobs_handler.checkBalances
+    description: check for balances on all address used and report if low funds
+    events:
+      - schedule:
+          rate: rate(10 minutes)
+          enabled: true
+  fixNonces:
+    handler: src/script_handler.fixNonces
+    description: fix for blockchain nonces against database stored nonce
+  makeReport:
+    handler: src/api_handler.makeReport
+    description: create transaction and send to smart contract to make a report
+    events:
+     - http:
+         path: makeReport
+         method: post
+  makeHistoricalReport:
+    handler: src/api_handler.makeHistoricalReport
+    description: create transaction and send to smart contract to make a historical report
+    events:
+     - http:
+         path: makeHistoricalReport
+         method: post

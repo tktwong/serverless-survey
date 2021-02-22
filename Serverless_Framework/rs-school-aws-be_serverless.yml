@@ -1,0 +1,94 @@
+service: import-service
+
+frameworkVersion: 2
+
+custom:
+    webpack:
+        webpackConfig: ./webpack.config.js
+        includeModules: true
+
+plugins:
+    - serverless-webpack
+
+provider:
+    name: aws
+    runtime: nodejs12.x
+    region: eu-west-1
+    apiGateway:
+        minimumCompressionSize: 1024
+    environment:
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+        SQS_URL:
+            Fn::ImportValue: SQSQueue
+        SNS_ARN:
+            Fn::ImportValue: SNSTopic
+    iamRoleStatements:
+        - Effect: Allow
+          Action:
+              - 's3:ListBucket'
+          Resource:
+              - 'arn:aws:s3:::pav-import-data'
+        - Effect: Allow
+          Action:
+              - 's3:*'
+          Resource:
+              - 'arn:aws:s3:::pav-import-data/*'
+        - Effect: Allow
+          Action:
+              - 'sqs:*'
+          Resource:
+              - Fn::ImportValue: SQSQueueARN
+        - Effect: Allow
+          Action:
+              - 'sns:*'
+          Resource:
+              - Fn::ImportValue: SNSTopic
+
+resources:
+    Resources:
+        GatewayResponseAccessDenied:
+            Type: AWS::ApiGateway::GatewayResponse
+            Properties:
+                ResponseParameters:
+                    gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+                    gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
+                ResponseType: ACCESS_DENIED
+                RestApiId: !Ref ApiGatewayRestApi
+        GatewayResponseUnauthorized:
+            Type: AWS::ApiGateway::GatewayResponse
+            Properties:
+                ResponseParameters:
+                    gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+                    gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
+                ResponseType: UNAUTHORIZED
+                RestApiId: !Ref ApiGatewayRestApi
+
+functions:
+    importProductsFile:
+        handler: handlers/import-products.importProductsFile
+        events:
+            - http:
+                  method: get
+                  path: import
+                  cors: true
+                  authorizer:
+                      name: tokenAuthorizer
+                      arn:
+                          Fn::ImportValue: AuthorizationARN
+                      resultTtlInSeconds: 0
+                      identitySource: method.request.header.Authorization
+                      type: token
+                  request:
+                      parameters:
+                          querystrings:
+                              name: true
+
+    importFileParser:
+        handler: handlers/import-file.importFileParser
+        events:
+            - s3:
+                  bucket: pav-import-data
+                  event: s3:ObjectCreated:*
+                  rules:
+                      - prefix: uploaded/
+                  existing: true

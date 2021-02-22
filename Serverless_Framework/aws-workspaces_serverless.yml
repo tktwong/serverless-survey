@@ -1,0 +1,104 @@
+service: aws-workspaces
+
+provider:
+  name: aws
+
+resources:
+  Resources:
+    VPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: 10.0.2.0/24
+        EnableDnsHostnames: true
+        EnableDnsSupport: true
+    PublicSubnet:
+      Type: AWS::EC2::Subnet
+      Properties:
+        AvailabilityZone:
+          Fn::Select:
+            - 0
+            - Fn::GetAZs: ""
+        CidrBlock: 10.0.2.0/26
+        MapPublicIpOnLaunch: true
+        VpcId: !Ref VPC
+    InternetGateway:
+      Type: AWS::EC2::InternetGateway
+    VPCGatewayAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        InternetGatewayId: !Ref InternetGateway
+        VpcId: !Ref VPC
+    RouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref VPC
+    Route:
+      Type: AWS::EC2::Route
+      Properties:
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId: !Ref InternetGateway
+        RouteTableId: !Ref RouteTable
+    PublicSubnetRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId: !Ref RouteTable
+        SubnetId: !Ref PublicSubnet
+
+    PrivateSubnet1:
+      Type: AWS::EC2::Subnet
+      Properties:
+        AvailabilityZone:
+          Fn::Select:
+            - 0
+            - Fn::GetAZs: ""
+        CidrBlock: 10.0.2.128/26
+        MapPublicIpOnLaunch: false
+        VpcId: !Ref VPC
+    PrivateSubnet2:
+      Type: AWS::EC2::Subnet
+      Properties:
+        AvailabilityZone:
+          Fn::Select:
+            - 1
+            - Fn::GetAZs: ""
+        CidrBlock: 10.0.2.192/26
+        MapPublicIpOnLaunch: false
+        VpcId: !Ref VPC
+    EIP:
+      Type: AWS::EC2::EIP
+      Properties:
+        Domain: vpc
+    NatGateway:
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId:
+          Fn::GetAtt:
+            - EIP
+            - AllocationId
+        SubnetId: !Ref PublicSubnet
+    PrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref VPC
+    PrivateRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        DestinationCidrBlock: 0.0.0.0/0
+        NatGatewayId: !Ref NatGateway
+        RouteTableId: !Ref PrivateRouteTable
+    Subnet1RouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId: !Ref PrivateRouteTable
+        SubnetId: !Ref PrivateSubnet1
+    Subnet2RouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId: !Ref PrivateRouteTable
+        SubnetId: !Ref PrivateSubnet2
+
+  Outputs:
+    VPC:
+      Value: !Ref VPC
+      Export:
+        Name: aws-workspaces-vpc-${opt:stage}

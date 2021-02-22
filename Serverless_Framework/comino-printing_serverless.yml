@@ -1,0 +1,221 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: comino-printing
+plugins:
+  - serverless-dynamodb-local
+  - serverless-finch
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: dotnetcore2.1
+  region: eu-west-2
+  stage: ${opt:stage}
+  timeout: 30
+  vpc:
+    securityGroupIds:
+      - sg-022acccbebd7bca46
+    subnetIds:
+      - subnet-00356e0650138f74f
+      - subnet-0a7f442c22a6feedc
+  environment:
+    HTML_TO_PDF_CONVERSION_ENDPOINT: ${ssm:/hn-comino-printing/${self:provider.stage}/HTML_TO_PDF_CONVERSION_ENDPOINT}
+    DOCUMENT_CONFIG: ${ssm:/hn-comino-printing/${self:provider.stage}/DOCUMENT_CONFIG}
+    LETTERS_TABLE_NAME: "${self:service}-${self:provider.stage}-letters"
+    W2_DOCUMENT_BASE_URL: ${ssm:/hn-comino-printing/${self:provider.stage}/W2_DOCUMENTS_API}
+    GENERATED_PDF_BUCKET_NAME: "${self:service}-${self:provider.stage}-generated-pdfs"
+    DOCUMENTS_API_TOKEN: ${ssm:/hn-comino-printing/${self:provider.stage}/DOCUMENTS_API_TOKEN}
+    GOV_NOTIFY_API_KEY: ${ssm:/hn-comino-printing/${self:provider.stage}/GOV_NOTIFY_API_KEY}
+    COMINO_DB_CONN_STR: ${ssm:/hn-comino-printing/${self:provider.stage}/COMINO_DB_CONN_STR~true}
+
+package:
+  artifact: ./src/Lambda/bin/release/netcoreapp2.1/comino-printing.zip
+
+functions:
+  fetch-document-ids:
+    name: ${self:service}-${self:provider.stage}-fetch-document-ids
+    handler: Lambda::AwsDotnetCsharp.Handlers::FetchAndQueueDocumentIds
+    role: arn:aws:iam::775052747630:role/LBH_Lambda_Execution
+    events:
+      - schedule: rate(1 minute)
+    environment:
+      SQS_URL: ${ssm:/hn-comino-printing/${self:provider.stage}/SQS_URL}
+      ENV: ${self:provider.stage}
+
+  convert-document-to-pdf:
+    name: ${self:service}-${self:provider.stage}-convert-document-to-pdf
+    handler: Lambda::AwsDotnetCsharp.Handlers::ConvertDocumentToPdf
+    role: arn:aws:iam::775052747630:role/LBH_Lambda_Execution
+    events:
+      - sqs: arn:aws:sqs:eu-west-2:775052747630:sqs-comino-printing-${self:provider.stage}
+        batchSize: 1
+
+  send-to-notify:
+    name: ${self:service}-${self:provider.stage}-send-to-notify
+    handler: Lambda::AwsDotnetCsharp.Handlers::QueryDocumentsAndSendToNotify
+    role: arn:aws:iam::775052747630:role/LBH_Lambda_Execution
+    timeout: 900
+    events:
+      - schedule: cron(30 15 ? * MON-FRI *) # every weekday at 3:30pm UTC
+
+  check-send-status-of-letters:
+    name: ${self:service}-${self:provider.stage}-check-send-status-of-letters
+    handler: Lambda::AwsDotnetCsharp.Handlers::GetSendStatusOfLetters
+    role: arn:aws:iam::775052747630:role/LBH_Lambda_Execution
+    events:
+      - schedule: rate(1 hour)
+
+  authorize-api:
+    name: ${self:service}-${self:provider.stage}-authorize-api
+    handler: Lambda::AwsDotnetCsharp.Api::Authorizer
+    role: arn:aws:iam::775052747630:role/LBH_Lambda_Execution
+    environment:
+      JWT_SECRET: ${ssm:/common/hackney-jwt-secret}
+      ALLOWED_USER_GROUP: ${self:service}-${self:provider.stage}
+
+  get-all-documents-api:
+    name: ${self:service}-${self:provider.stage}-get-all-documents-api
+    handler: Lambda::AwsDotnetCsharp.Api::GetAllDocuments
+    role: arn:aws:iam::775052747630:role/LBH_Lambda_Execution
+    events:
+      - http:
+          path: /api/documents
+          method: GET
+          authorizer: ${self:custom.authorizer.authorize-api}
+          cors: true
+          request:
+            parameters:
+              query:
+                - limit
+                - cursor
+
+  get-document-api:
+    name: ${self:service}-${self:provider.stage}-get-document-api
+    handler: Lambda::AwsDotnetCsharp.Api::GetById
+    role: arn:aws:iam::775052747630:role/LBH_Lambda_Execution
+    events:
+      - http:
+          path: /api/documents/{id}
+          method: get
+          authorizer: ${self:custom.authorizer.authorize-api}
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+
+  approve-document-api:
+    name: ${self:service}-${self:provider.stage}-approve-document-api
+    handler: Lambda::AwsDotnetCsharp.Api::ApproveDocument
+    role: arn:aws:iam::775052747630:role/LBH_Lambda_Execution
+    events:
+      - http:
+          path: /api/documents/{id}/approve
+          method: post
+          authorizer: ${self:custom.authorizer.authorize-api}
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+
+  cancel-document-api:
+    name: ${self:service}-${self:provider.stage}-cancel-document-api
+    handler: Lambda::AwsDotnetCsharp.Api::CancelDocument
+    role: arn:aws:iam::775052747630:role/LBH_Lambda_Execution
+    events:
+      - http:
+          path: /api/documents/{id}/cancel
+          method: post
+          authorizer: ${self:custom.authorizer.authorize-api}
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+
+  view-document-pdf-api:
+    name: ${self:service}-${self:provider.stage}-view-document-pdf-api
+    handler: Lambda::AwsDotnetCsharp.Api::ViewDocumentPdf
+    role: arn:aws:iam::775052747630:role/LBH_Lambda_Execution
+    events:
+      - http:
+          path: /api/documents/{id}/view
+          method: get
+          authorizer: ${self:custom.authorizer.authorize-api}
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+
+resources:
+  Resources:
+    cominoLetters:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.LETTERS_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: InitialTimestamp
+            AttributeType: S
+          - AttributeName: Status
+            AttributeType: S
+        KeySchema:
+          - AttributeName: InitialTimestamp
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: Status
+            KeySchema:
+              - AttributeName: Status
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 250
+          WriteCapacityUnits: 10
+    sqsQueueCominoPrintingDocumentIds:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: sqs-comino-printing-${self:provider.stage}
+    uiBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "${self:service}-${self:provider.stage}-ui"
+    generatedPdfsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.GENERATED_PDF_BUCKET_NAME}
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+      - test
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+  client:
+    bucketName: "${self:service}-${self:provider.stage}-ui"
+    distributionFolder: comino-print-ui/build
+    indexDocument: index.html
+    errorDocument: index.html
+  authorizer:
+    authorize-api:
+      name: authorize-api
+      type: request
+      identitySource: ''
+      resultTtlInSeconds: 0

@@ -1,0 +1,67 @@
+service: serverless-scala-api-sample
+
+provider:
+  name: aws
+  runtime: java8
+  region: ap-northeast-1
+  memorySize: 128
+
+package:
+  artifact: target/scala-2.12/hello.jar
+
+functions:
+  hello:
+    handler: hello.ApiGatewayHandler
+    timeout: 5
+    events:
+      - http:
+          path: hello/{name}
+          method: GET
+
+resources:
+  Resources:
+    WebAppCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName:
+                Fn::Join:
+                  - ''
+                  - - Ref: ApiGatewayRestApi
+                    - .execute-api.ap-northeast-1.amazonaws.com
+              Id: Api
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+          Enabled: 'true'
+          DefaultRootObject: index.html
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            TargetOriginId: Api
+            ForwardedValues:
+              QueryString: 'true'
+              Cookies:
+                Forward: all
+            ViewerProtocolPolicy: redirect-to-https
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: 'true'
+
+  Outputs:
+    WebAppCloudFrontDistributionOutput:
+      Value:
+        'Fn::GetAtt': [ WebAppCloudFrontDistribution, DomainName ]
+
+

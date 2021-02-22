@@ -1,0 +1,148 @@
+service: serverless-marketplace
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-east-1
+  memorySize: 128
+  apiKeys:
+    - main
+  environment:
+    ISSUER: ${self:service}
+    PRODUCTS_TABLE: ${self:service}-products
+    CARTS_TABLE: ${self:service}-carts
+    PHOTO_BUCKET: ${self:service}-photos
+    MAX_PHOTO_SIZE: 1048576 #Bytes = 1 MB
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource:
+        - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CARTS_TABLE}
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+        - s3:GetObject
+        - s3:ListBucket
+      Resource:
+        - arn:aws:s3:::${self:provider.environment.PHOTO_BUCKET}
+        - arn:aws:s3:::${self:provider.environment.PHOTO_BUCKET}/*
+
+functions:
+  updateItem:
+    handler: src/products.update
+    events:
+      - http:
+          path: products/update
+          method: post
+          private: true
+          authorizer: adminAuth
+          cors: false
+  getItems:
+    handler: src/products.getAll
+    events:
+      - http:
+          path: products/query
+          method: get
+          private: true
+  queryItem:
+    handler: src/products.query
+    events:
+      - http:
+          path: products/query
+          method: post
+          private: true
+  createCart:
+    handler: src/carts.create
+    events:
+      - http:
+          path: cart/create
+          method: post
+          private: true
+  updateCart_addItem:
+    handler: src/carts.addItem
+    events:
+      - http:
+          path: cart/update
+          method: put
+          private: true
+          authorizer: userAuth
+  updateCart_removeItem:
+    handler: src/carts.removeItem
+    events:
+      - http:
+          path: cart/update
+          method: delete
+          private: true
+          authorizer: userAuth
+  completeCart:
+    handler: src/carts.complete
+    events:
+      - http:
+          path: cart/complete
+          method: post
+          private: true
+          authorizer: userAuth
+  cartInfo:
+    handler: src/carts.info
+    events:
+      - http:
+          path: cart/info
+          method: post
+          private: true
+          authorizer: userAuth
+  userAuth:
+    handler: src/security.userAuthorizer
+  adminAuth:
+    handler: src/security.adminAuthorizer
+
+resources:
+  Resources:
+    ProductsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.PRODUCTS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: title
+            AttributeType: S
+        KeySchema:
+          - AttributeName: title
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    CartsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.CARTS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    PhotoBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.PHOTO_BUCKET}
+package:
+  excludeDevDependencies: true
+
+plugins:
+  - serverless-offline

@@ -1,0 +1,200 @@
+service:
+  name: serverless-todo-app
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  environment:
+    TODO_TABLE: TodosTable
+    INDEX_NAME: OwnerIndex
+    BUCKET_NAME: todo-attachments-bucket-pnshiralkar
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+custom:
+  documentation:
+    api:
+      info:
+        version: v1.0.1
+        title: Todo App API
+        description: Serverless To-Do application
+    models:
+      - name: CreateItemReq
+        contentType: application/json
+        schema: ${file(models/CreateItem.json)}
+      - name: UpdateItemReq
+        contentType: application/json
+        schema: ${file(models/UpdateItem.json)}
+
+functions:
+
+  RS256Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetTodos:
+    handler: src/lambda/http/getTodos.handler
+    events:
+      - http:
+          method: get
+          path: todos
+          cors: true
+          authorizer: RS256Auth
+    iamRoleStatements:
+      - ${file(serverless-iam-roles.yml):dynamodbGetItem}
+      - ${file(serverless-iam-roles.yml):dynamodbQuery}
+      - ${file(serverless-iam-roles.yml):xrayPutSegments}
+
+
+  CreateTodo:
+    handler: src/lambda/http/createTodo.handler
+    events:
+      - http:
+          method: post
+          path: todos
+          cors: true
+          authorizer: RS256Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new Todo item
+            description: Create a new Todo item
+            requestModels:
+              'application/json': CreateItemReq
+    iamRoleStatements:
+      - ${file(serverless-iam-roles.yml):dynamodbPutItem}
+      - ${file(serverless-iam-roles.yml):xrayPutSegments}
+
+  UpdateTodo:
+    handler: src/lambda/http/updateTodo.handler
+    events:
+      - http:
+          method: patch
+          path: todos/{todoId}
+          cors: true
+          authorizer: RS256Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a Todo item
+            description: Update a Todo item
+            requestModels:
+              'application/json': UpdateItemReq
+    iamRoleStatements:
+      - ${file(serverless-iam-roles.yml):dynamodbUpdateItem}
+      - ${file(serverless-iam-roles.yml):xrayPutSegments}
+
+  DeleteTodo:
+    handler: src/lambda/http/deleteTodo.handler
+    events:
+      - http:
+          method: delete
+          path: todos/{todoId}
+          cors: true
+          authorizer: RS256Auth
+    iamRoleStatements:
+      - ${file(serverless-iam-roles.yml):dynamodbDeleteItem}
+      - ${file(serverless-iam-roles.yml):xrayPutSegments}
+
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: todos/{todoId}/attachment
+          cors: true
+          authorizer: RS256Auth
+    iamRoleStatements:
+      - ${file(serverless-iam-roles.yml):dynamodbUpdateItem}
+      - ${file(serverless-iam-roles.yml):s3PutObject}
+      - ${file(serverless-iam-roles.yml):xrayPutSegments}
+
+resources:
+  Resources:
+    TodoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: todoId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+          - AttributeName: ownerId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ownerId
+            KeyType: HASH
+          - AttributeName: todoId
+            KeyType: RANGE
+        TableName: ${self:provider.environment.TODO_TABLE}
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.INDEX_NAME}
+            KeySchema:
+              - AttributeName: ownerId
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    AttachmentStorageBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - POST
+                - PUT
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.BUCKET_NAME}/*'
+        Bucket: !Ref AttachmentStorageBucket
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi

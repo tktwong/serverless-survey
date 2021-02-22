@@ -1,0 +1,84 @@
+
+service: aws-python-pynamodb-s3-sigurl
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-python-requirements
+
+package:
+  exclude:
+    - node_modules/**
+    - .idea/**
+    - .requirements/**
+    - env/**
+    - README.md
+    - package.json
+    - package-lock.json
+    - requirements.txt
+
+# DRY constants: define all compound/generated names in one place
+# Override args are: .. defaults:
+# --app_acroym          signed-uploader
+# --s3_bucket           self:custom.app_acronym
+# --s3_key_base         self:custom.stage
+# --region              us-east-1
+
+custom:
+  app_acronym: sig-s3-uploader
+  default_stage: test
+  stage: ${opt:stage, self:custom.default_stage}
+  stack_name: ${self:custom.app_acronym}-${self:custom.stage}
+  region: ${opt:region, self:provider.region}
+  deletion_policy: Delete
+  s3_bucket: ${opt:s3_bucket, self:custom.app_acronym}
+  # default to using ${stage} as key base path, keeps stages from namespace collisions
+  s3_key_base: ${opt:s3_key_base, self:custom.stage}
+  s3_bucket_arn: arn:aws:s3:::${self:custom.s3_bucket}
+  s3_role_resource: ${self:custom.s3_bucket_arn}/${self:custom.s3_key_base}/*
+  # Put this here rather than in code (presigned URL TTL)
+  url_default_ttl: 60
+
+
+
+provider:
+  name: aws
+  runtime: python3.6
+
+Type: AWS::S3::Bucket
+Properties: 
+  BucketName:"Incoming"
+
+Type: AWS::S3::Bucket
+Properties: 
+  BucketName:"Processed"
+
+Type: AWS::SNS::Topic
+Properties: 
+  DisplayName: 'GitHub'
+  KmsMasterKeyId: '61982e77-69bc-4a02-8cc8-df0e611a5c5d'
+  Subscription: 
+    - lambda_handler
+  TopicName: 'github'
+  
+functions:
+
+  lamda_handler:
+    handler: lambda_handler.event
+    name: ${self:custom.stack_name}-lambda_handler
+    description: Called by s3 create/remove events to manage asset state in dynamo
+    events:
+      - s3:
+          bucket: ${self:custom.s3_bucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: ${self:custom.s3_key_base}
+      - s3:
+          bucket: ${self:custom.s3_bucket}
+          event: s3:ObjectRemoved:*
+          rules:
+            - prefix: ${self:custom.s3_key_base}
+
+
+
+

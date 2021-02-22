@@ -1,0 +1,96 @@
+service: documents-app-api
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: ${file(./aws_params.yml):profile}
+  stage: ${file(./aws_params.yml):stage}
+  region: ${file(./aws_params.yml):region}
+  # deploymentBucket: ${file(./aws_params.yml):DEPLOYMENT_S3_BUCKET}
+  environment:
+    tableName: ${self:custom.tableName}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ DocumentsTable, Arn ]
+
+functions:
+  #Not required anymore
+  # preSignUpForPool1:
+  #   handler: preSignUp.createUserFolder
+  #   events:
+  #     - cognitoUserPool:
+  #         pool: ""
+  #           # - "Fn::GetAtt": [ CognitoUserPool, Arn ]
+  #         trigger: PreSignUp
+  create:
+    handler: create.main
+    events:
+      - http:
+          path: documents
+          method: post
+          cors: true
+          authorizer: aws_iam
+  get:
+    handler: get.main
+    events:
+      - http:
+          path: documents/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  list:
+    handler: list.main
+    events:
+      - http:
+          path: documents
+          method: get
+          cors: true
+          authorizer: aws_iam
+  update:
+    handler: update.main
+    events:
+      - http:
+          path: documents/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  delete:
+    handler: delete.main
+    events:
+      - http:
+          path: documents/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+resources:
+  - ${file(resources/api-gateway-errors.yml)}
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/s3-bucket.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  tableName: ${self:custom.stage}-documents
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+    packager: 'npm'

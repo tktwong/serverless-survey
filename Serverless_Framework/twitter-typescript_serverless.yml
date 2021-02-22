@@ -1,0 +1,63 @@
+service:
+  name: api
+
+package:
+  individually: true
+
+custom:
+  defaultStage: dev
+  environment: ${file(configuration/variables.yml)}
+  serverless-offline:
+    httpPort: 4000
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  prune: # automatically prune old lambda versions
+    automatic: true
+    number: 3
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+  - serverless-prune-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  frameworkVersion: ‘1.68.0’
+  stage: ${opt:stage, env:STAGE, self:custom.defaultStage}
+  region: ${opt:region, 'ap-southeast-2'}
+  apiGateway:
+    minimumCompressionSize: 1024 *# Enable gzip compression for responses > 1 KB
+  environment: ${self:custom.environment.currentSettings}
+  tracing:
+    lambda: true
+  iamRoleStatements: ${file(configuration/iamRoleStatements.yml)}
+
+functions:
+  user:
+    handler: src/handlers/user.handler
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: user/name/{searchName}
+          cors: true
+
+  location:
+    handler: src/handlers/location.handler
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: user/location/{searchLocation}
+          cors: true
+
+  tweets:
+    handler: src/handlers/tweets.handler
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: tweets/{userId}
+          cors: true

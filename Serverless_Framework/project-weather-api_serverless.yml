@@ -1,0 +1,81 @@
+service: project-weather-api
+
+custom:
+  common: ${file(config/env/${env:ENV}/common.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+  stage: ${self:custom.common.STAGE}
+  region: ${self:custom.common.AWS_REGION}
+  environment:
+    DYNAMODB_TABLE: ${self:service}
+    API_KEY: ${env:WEATHER_API_KEY}
+    WEATHER_URL: ${env:WEATHER_URL}
+    AWSREGION: ${self:custom.common.AWS_REGION}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+      Resource:
+        - Fn::GetAtt:
+          - DynamoDbTable
+          - Arn
+        - "arn:aws:dynamodb:${self:custom.common.AWS_REGION}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/*"
+
+functions:
+  weather:
+    handler: src/handlers/getWeather/handler.handler
+    events:
+      - http:
+          path: weather
+          method: get
+          cors:
+            origins:
+              - '*'
+
+plugins:
+  - serverless-webpack
+
+resources:
+  Resources:
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: city
+            AttributeType: S
+          - AttributeName: lon
+            AttributeType: S
+          - AttributeName: lat
+            AttributeType: S
+        KeySchema:
+          - AttributeName: city
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        GlobalSecondaryIndexes:
+          - IndexName: lon-lat-index
+            KeySchema:
+              - AttributeName: lon
+                KeyType: HASH
+              - AttributeName: lat
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5

@@ -1,0 +1,129 @@
+
+service: workshop-jezd
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action: sns:Publish
+      Resource: 
+        Ref: restaurantNotificationTopic
+    - Effect: Allow
+      Action: dynamodb:scan
+      Resource:
+        Fn::GetAtt:
+          - restaurantsTable
+          - Arn
+    - Effect: Allow
+      Action: execute-api:Invoke
+      Resource: arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:*/*/GET/restaurants
+    - Effect: Allow
+      Action: kinesis:PutRecord
+      Resource: 
+        Fn::GetAtt:
+          - orderEventsStream
+          - Arn
+
+plugins:
+  - serverless-offline
+  - serverless-pseudo-parameters
+
+functions:
+  hello:
+    handler: src/handelrs/handler.hello
+
+  place-order:
+    handler: src/handlers/place-order.handler
+    events:
+      - http:
+          path: /orders
+          method: post
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/${self:service}/${opt:stage, self:provider.stage}/cognito_user_pool_id}
+    environment:
+      order_events_stream: ${ssm:/${self:service}/${opt:stage, self:provider.stage}/stream_name}
+
+  get-index:
+    handler: src/handlers/get-index.handler
+    events:
+      - http:
+          path: /
+          method: get
+    environment:
+      orders_api: 
+        Fn::Join:
+          - ''
+          - - "https://"
+            - Ref: ApiGatewayRestApi
+            - ".execute-api.${opt:region}.amazonaws.com/${opt:stage}/orders"
+      restaurants_api:
+        Fn::Join:
+          - ''
+          - - "https://"
+            - Ref: ApiGatewayRestApi
+            - ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}/restaurants"
+      cognito_user_pool_id: ${ssm:/${self:service}/${opt:stage, self:provider.stage}/cognito_user_pool_id}
+      cognito_client_id: ${ssm:/${self:service}/${opt:stage, self:provider.stage}/cognito_web_client_id}
+
+  search-restaurants:
+    handler: src/handlers/search-restaurants.handler
+    events:
+      - http:
+          path: /restaurants/search
+          method: post
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/us-east-1_cAYHcYQXC
+    environment:
+      restaurants_table: ${ssm:/${self:service}/${opt:stage, self:provider.stage}/table_name}
+  
+  notify-restaurant:
+    handler: src/handlers/notify-restaurant.handler
+    events:
+      - stream:
+          type: kinesis
+          arn: 
+            Fn::GetAtt:
+              - orderEventsStream
+              - Arn
+    environment:
+      order_events_stream: ${self:service}/${opt:stage, self:provider.stage}/stream_name}
+      restaurant_notification_topic: 
+        Ref: restaurantNotificationTopic
+
+  restaurants:
+    handler: src/handlers/get-restaurants.handler
+    events:
+    - http:
+        path: /restaurants
+        method: get
+        authorizer: aws_iam
+    environment:
+      restaurants_table: ${ssm:/${self:service}/${opt:stage, self:provider.stage}/table_name}
+
+resources:
+  Resources:
+    restaurantNotificationTopic:
+      Type: AWS::SNS::Topic
+      Properties: 
+        DisplayName: ${ssm:/${self:service}/${opt:stage, self:provider.stage}/restaurant_topic_name}
+        TopicName: ${ssm:/${self:service}/${opt:stage, self:provider.stage}/restaurant_topic_name}
+    orderEventsStream:
+      Type: AWS::Kinesis::Stream
+      Properties: 
+        Name: ${ssm:/${self:service}/${opt:stage, self:provider.stage}/stream_name}
+        ShardCount: 1
+    restaurantsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${ssm:/${self:service}/${opt:stage, self:provider.stage}/table_name}
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

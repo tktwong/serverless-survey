@@ -1,0 +1,79 @@
+service: tshirt-weather-serverless-python
+
+provider:
+  name: aws
+  runtime: python3.6
+  environment: ${file(./.env.yml)}
+  stage: prod
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - s3:GetObject
+        - s3:PutObject
+      Resource:
+        - 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}'
+        - 'arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*'
+
+plugins:
+  - serverless-offline
+  - serverless-python-requirements
+
+custom:
+  serverless-offline:
+    httpPort: 5000
+  pythonRequirements:
+    dockerizePip: true
+    zip: true
+    slim: true
+
+package:
+  individually: true
+  include:
+    - app/**
+  exclude:
+    - venv/** # virtualenv
+    - node_modules/**
+
+functions:
+  weather:
+    handler: handlers/get_weather.main
+    events:
+      - http:
+          path: weather
+          method: get
+          # cors: true
+  save:
+    handler: handlers/classify_current_weather.main
+    events:
+      - http:
+          path: classify
+          method: post
+          # cors: true
+
+resources:
+  Resources:
+    WeatherDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+    WeatherMocks:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET}

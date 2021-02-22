@@ -1,0 +1,46 @@
+service: jobget
+
+plugins:
+  - serverless-finch
+  - serverless-stack-output
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${opt:stage, self:custom.defaultStage}
+  awsKmsKeyArn: ${ssm:MDB_KEY}
+  environment:
+    DEBUG: "true"
+    ONLINE: "true"
+    MONGODB_ATLAS_CLUSTER_URI: ${ssm:MDB_ATLAS_URI_ENCRYPTED}
+
+custom:
+  bucketNames: 
+    dev: jobgetwebsite-dev
+    prod: jobget.com
+  defaultStage: dev
+  output:
+    handle: scripts/output.process
+    file: client/dist/js/apistring.json
+  client:
+    bucketName: ${self:custom.bucketNames.${self:provider.stage}}
+
+functions:
+  createCompany:
+    handler: api/app.createCompany
+    events:
+      - http:
+          path: companies
+          method: post
+          cors: true
+  createSubscriber:
+    handler: api/app.createSubscriber
+    events:
+      - http:
+          path: subscribers
+          method: post
+          cors: true
+  sendWelcomeEmail:
+    handler: api/mailer.sendWelcomeEmail
+    environment:
+      GMAIL_NOREPLY_CONFIG: ${ssm:GMAIL_NOREPLY_CONFIG_ENCRYPTED}

@@ -1,0 +1,153 @@
+service: bgpoc
+package:
+  excludeDevDependencies: false
+  browser: false
+  exclude:
+    # - node_modules/**
+    - .npm/**
+    - venv/**
+    - /tmp/**
+
+plugins:
+  - serverless-plugin-aws-alerts
+  - serverless-plugin-canary-deployments
+custom:
+  config: ${file(config.yml):${self:provider.stage}}
+  logLevel:
+    prod: WARN
+    default: DEBUG
+
+defaultAuth: &defaultAuth
+  name: apiCustomAuth
+  resultTtlInSeconds: 1800
+  identitySource: method.request.header.Authorization
+  identityValidationExpression: ^Bearer [A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$
+  type: token
+
+defaultConfig: &defaultConfig
+  layers:
+    - arn:aws:lambda:us-west-2:102671227235:layer:pcxfe-nodejs-lambda-layer:56
+  vpc: # Optional VPC. But if you use VPC then both subproperties (securityGroupIds and subnetIds) are required
+    securityGroupIds:
+      - sg-03836fc0067da9a77
+    subnetIds:
+      - subnet-d91ef6af
+      - subnet-3d18cf59
+      - subnet-fe1c18a7
+
+defaultTags: &defaultTags
+  nike-application: pcx
+  nike-domain: solution development
+  nike-environment: ${self:provider.stage}
+  nike-department: pes
+  TagGuid: 4fd6cee0-15aa-11e8-81ed-9919136c5cee
+  ChargeCode: FY150017.02
+
+optionsConfig: &optionsConfig
+  method: options
+  cors: true
+  integration: mock
+  request:
+    template:
+      application/json: '{"statusCode": 200}'
+  response:
+    template: $input.path('$')
+    statusCodes:
+      200:
+        pattern: ''
+        template:
+          application/json: ''
+      201:
+        pattern: ''
+
+provider:
+  name: aws
+  region: 'us-west-2'
+  stage: 'dev'
+  runtime: nodejs12.x
+  stackTags:
+    <<: *defaultTags
+  deploymentBucket:
+    name: pcxfe-infrastructure-preprod
+  role: arn:aws:iam::${self:custom.config.awsAccountNumber}:role/${self:custom.config.lambdaExecutionRoleName}
+  # cfnRole: arn:aws:iam::${self:custom.config.awsAccountNumber}:role/${self:custom.config.cloudFormationRoleName}
+  endpointType: regional
+  environment:
+    STAGE: ${self:provider.stage}
+  tags:
+    <<: *defaultTags
+
+functions:
+  apiCustomAuth:
+    handler: src/apiCustomAuth/index.handler
+    <<: *defaultConfig
+    cors: true 
+  bgCallBlueGreen:
+    handler: src/index.bluegreen 
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+      preTrafficHook: preHook
+      postTrafficHook: postHook
+      alarms:
+        - name: !Ref ApiGatewayErrorsAlarm
+        - name: !Ref LambdaErrorsAlarm
+    <<: *defaultConfig
+    events:
+      - http:
+          path: /bgCall
+          method: get
+          cors: true
+          authorizer:
+            <<: *defaultAuth
+  bgCallCanary:
+    handler: src/index.canary
+    deploymentSettings:
+      type: Canary10Percent10Minutes
+      alias: Live
+    <<: *defaultConfig
+    events:
+      - http:
+          path: /canaryCall
+          method: get
+          cors: true
+          authorizer:
+            <<: *defaultAuth
+
+  preHook:
+    handler: hooks.pre
+  postHook:
+    handler: hooks.post
+
+Resources:
+  ApiGatewayErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: ${self:service}-${self:provider.stage}-apigateway-error-alarm
+      AlarmDescription: Alarm that is triggerd when any errors are returned via the API gateway
+      Dimensions:
+        - Name: ApiName
+          Value: ${self:provider.stage}-${self:service}
+      Namespace: AWS/ApiGateway
+      MetricName: Errors
+      Statistic: Sum
+      Period: 60
+      Threshold: 1
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: ${self:service}-${self:provider.stage}-function-error-alarm
+      AlarmDescription: Alarm that is triggerd when errors are triggered by the lambda function itself
+      Dimensions:
+        - Name: FunctionName
+          Value: ${self:service}-${self:provider.stage}
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Statistic: Sum
+      Period: 60
+      Threshold: 1
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+    

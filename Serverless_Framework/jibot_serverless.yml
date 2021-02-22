@@ -1,0 +1,72 @@
+app: jibot
+service: jibot
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'dynamodb:*'
+      Resource: 
+        - Fn::GetAtt:
+           - DynamoDBTable
+           - Arn
+        - Fn::Join:
+          - ''
+          - - Fn::GetAtt:
+                - DynamoDBTable
+                - Arn
+            - '/index/*'       
+      
+functions:
+  bot:
+    handler: app/handler.bot
+    events:
+      - http:
+          path: /
+          method: post
+  lookup:
+    handler: app/handler.lookup
+    events:
+      - http:
+          path: /lookup
+          method: get
+
+plugins:
+  - serverless-plugin-typescript
+
+# you can add CloudFormation resource templates here
+resources:
+ Resources:
+    DynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: 'id'
+            AttributeType: 'S'
+          - AttributeName: 'type'
+            AttributeType: 'S'
+          - AttributeName: 'value'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'id'
+            KeyType: 'HASH'
+        BillingMode: PAY_PER_REQUEST
+        TableName: jibot-subscription
+        GlobalSecondaryIndexes:
+          - IndexName: type-index
+            KeySchema:
+              - AttributeName: 'type'
+                KeyType: HASH
+            Projection: 
+              ProjectionType: ALL
+          - IndexName: value-index
+            KeySchema:
+              - AttributeName: 'value'
+                KeyType: HASH
+            Projection: 
+              ProjectionType: ALL
+              
+    
+ 

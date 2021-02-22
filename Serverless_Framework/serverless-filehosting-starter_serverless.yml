@@ -1,0 +1,175 @@
+service: serverless-filehosting-starter
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  # opt:stage - stage set in command line like 'serverless deploy --stage $STAGE'
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  tableName: ${self:custom.stage}-files
+  # Set the table for user data
+  userTableName: ${self:custom.stage}-userdata
+  # Set our DynamoDB throughput for prod and all other non-prod stages.
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  # Load our webpack config
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName: ${self:custom.tableName}
+    userTableName: ${self:custom.userTableName}
+    region: ${self:provider.region}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - cognito-idp:ListUsers
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - "Fn::GetAtt": [FilesTable, Arn]
+        # Todo: fix hardcoding
+        # Added to give permissions for FilesTable GSI
+        - "arn:aws:dynamodb:us-east-1:393638563319:table/dev-files/index/*"
+        - "Fn::GetAtt": [UsersTable, Arn]
+
+    - Effect: Allow
+      Action:
+        - cognito-idp:ListUsers
+      Resource:
+        # Todo: fix hardcoding
+        - "arn:aws:cognito-idp:us-east-1:393638563319:userpool/us-east-1_2iED5ewUY"
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in upload.js
+  # - path: url path is /upload
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  upload:
+    handler: src/upload.main
+    events:
+      - http:
+          path: upload
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  get:
+    # Defines an HTTP API endpoint that calls the main function in get.js
+    # - path: url path is /file/{id}
+    # - method: GET request
+    handler: src/get.main
+    events:
+      - http:
+          path: item/{userName}/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  get-most-recent:
+    handler: src/get-most-recent.main
+    events:
+      - http:
+          path: recent
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  list:
+    # Defines an HTTP API endpoint that calls the main function in list.js
+    # - path: url path is /list
+    # - method: GET request
+    handler: src/list.main
+    events:
+      - http:
+          path: list/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  update:
+    # Defines an HTTP API endpoint that calls the main function in update.js
+    # - path: url path is /file/{id}
+    # - method: PUT request
+    handler: src/update.main
+    events:
+      - http:
+          path: file/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  delete:
+    # Defines an HTTP API endpoint that calls the main function in delete.js
+    # - path: url path is /file/{id}
+    # - method: DELETE request
+    handler: src/delete.main
+    events:
+      - http:
+          path: file/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  # Defines an HTTP API endpoint that calls the main function in create-user.js
+  # - path: url path is /create-user
+  # - method: POST request
+  # - authorizer: authenticate using the AWS IAM role
+  create-user:
+    handler: src/create-user.main
+    events:
+      - http:
+          path: create-user
+          method: post
+          authorizer: aws_iam
+
+  get-user:
+    # Defines an HTTP API endpoint that calls the main function in get.js
+    # - path: url path is /user/{id}
+    # - method: GET request
+    handler: src/get-user.main
+    events:
+      - http:
+          path: user/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # DyamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3 File Storage
+  - ${file(resources/s3-bucket.yml)}
+  # Cognito User Pool
+  - ${file(resources/cognito-user-pool.yml)}
+  # Cognito Identity Pool
+  - ${file(resources/cognito-identity-pool.yml)}

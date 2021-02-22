@@ -1,0 +1,61 @@
+service: codear-api
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+
+resources:
+  Resources:
+    DBBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.dbBucket}
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  dbBucket: "${self:service}-db-${self:custom.stage}"
+  wsgi:
+    app: codear.wsgi.application
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: non-linux
+
+provider:
+  name: aws
+  region: sa-east-1
+  runtime: python3.8
+  stage: development
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*Object"
+      Resource:
+        Fn::Join:
+          - ""
+          - - Fn::GetAtt:
+              - DBBucket
+              - Arn
+            - "/*"
+
+functions:
+  app:
+    handler: wsgi_handler.handler
+    environment:
+      SQLITE_BUCKET: ${self:custom.dbBucket}
+      SERVERLESS_STAGE: ${self:custom.stage}
+      SECRET_KEY: ${env:SECRET_KEY}
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+  fetch_events:
+    handler: lambda_manage.handler
+    timeout: 60
+    environment:
+      SQLITE_BUCKET: ${self:custom.dbBucket}
+      SERVERLESS_STAGE: ${self:custom.stage}
+      SECRET_KEY: ${env:SECRET_KEY}
+    events:
+      - schedule:
+          rate: rate(12 hours)
+          input:
+            command: fetch_events

@@ -1,0 +1,79 @@
+service: startwar
+
+frameworkVersion: 2
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  environment:
+    NODE_ENV: dev
+    API_STAR_WAR: https://swapi.py4e.com/api
+    DYNAMODB_TABLE: prueba-tecnica2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  People:
+    handler: src/people/handler.people
+    events:
+      - http:
+          path: people
+          method: post
+      - http:
+          path: people
+          method: get
+      - http:
+          path: people/{id}
+          method: get
+  StarWar:
+    handler: src/star-war/handler.startWar
+    events:
+      - http:
+          path: startWar
+          method: get
+      - http:
+          path: startWar/{id}
+          method: get
+
+custom:
+  webpack:
+      webpackConfig: ./webpack.config.js
+      includeModules: true
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+
+resources:
+  Resources:
+    MyDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

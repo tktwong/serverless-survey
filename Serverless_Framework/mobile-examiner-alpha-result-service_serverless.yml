@@ -1,0 +1,74 @@
+service: aws-starter
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+      test:
+        sources:
+          -
+            table: testResultsTable
+            sources: [./mock-data/fake-tests-results.json]
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-openapi-documentation
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-west-1
+  environment:
+    DYNAMODB_TABLE: testResultsTable
+    ENV: DEV  # TODO: Can we do something clever here with build settings?
+
+functions:
+  authorizer:
+    handler: handler.auth
+    memorySize: 128
+  create:
+    handler: handler.create
+    memorySize: 128
+    events:
+      -
+        http:
+          path: /test-result
+          method: post
+          authorizer: authorizer
+          cors: true
+
+resources:
+  Resources:
+    testResultsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: testResultsTable
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: testResultsTable
+      Properties:
+        PolicyName: lambda-dynamodb
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:PutItem
+              Resource: arn:aws:dynamodb:*:*:table/testResultsTable
+        Roles:
+          - Ref: IamRoleLambdaExecution

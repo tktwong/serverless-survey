@@ -1,0 +1,91 @@
+service: foodapi
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-west-2 # London
+  environment:
+    ingredientsTableName: ${self:custom.ingredientsTableName}
+    recipeTableName: ${self:custom.recipeTableName}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource: '*'
+  lambdaHashingVersion: 20201221 # will be default in serverless 3.0
+  apiGateway:
+    shouldStartNameWithService: true # will be default in serverless 3.0
+
+plugins:
+  - serverless-webpack
+
+package:
+  individually: true
+
+functions:
+  addIngredients:
+    handler: lambdas/endpoints/addIngredients.default
+    events:
+      - http:
+          path: addIngredients/
+          method: POST
+          cors: true
+  getIngredients:
+    handler: lambdas/endpoints/getIngredients.default
+    events:
+      - http:
+          path: getIngredients/
+          method: POST
+          cors: true
+  addRecipes:
+    handler: lambdas/endpoints/addRecipes.default
+    events:
+      - http:
+          path: addRecipes/
+          method: POST
+          cors: true
+  getRecipes:
+    handler: lambdas/endpoints/getRecipes.default
+    events:
+      - http:
+          path: getRecipes/
+          method: POST
+          cors: true
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  ingredientsTableName: ingredients-${self:custom.stage}
+  recipeTableName: recipes-${self:custom.stage}
+
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+
+resources:
+  Resources:
+    Ingredients:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.ingredientsTableName}
+        AttributeDefinitions:
+          - AttributeName: ID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ID
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    Recipes:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.recipeTableName}
+        AttributeDefinitions:
+          - AttributeName: ID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ID
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST

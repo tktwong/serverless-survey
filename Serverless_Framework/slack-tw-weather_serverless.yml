@@ -1,0 +1,71 @@
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: slack-tw-weather
+
+frameworkVersion: ">=1.28.0 <2.0.0"
+
+custom:
+  radarTopic:
+    Fn::Join:
+    - ""
+    - - "arn:aws:sns:"
+      - Ref: "AWS::Region"
+      - ":"
+      - Ref: "AWS::AccountId"
+      - ":radarTopic"
+  radarBucket: {Ref: "RadarBucket"}
+
+provider:
+  name: aws
+  runtime: go1.x
+  memorySize: 256
+  environment:
+    CWB_API_KEY: ${env:CWB_API_KEY}
+    RADAR_TOPIC_SNS_ARN: ${self:custom.radarTopic}
+    RADAR_BUCKET: ${self:custom.radarBucket}
+
+  # you can overwrite defaults here
+  #  stage: dev
+  region: ap-northeast-1
+
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+    - sns:Publish
+    Resource:
+    - ${self:custom.radarTopic}
+  - Effect: Allow
+    Action:
+    - s3:*
+    Resource:
+    - Fn::GetAtt: [RadarBucket, Arn]
+    - Fn::Join:
+      - ""
+      - - Fn::GetAtt: [RadarBucket, Arn]
+        - "/*"
+
+package:
+  exclude:
+  - ./**
+  include:
+  - ./bin/**
+
+functions:
+  app:
+    handler: bin/weather
+    events:
+    - http:
+        path: weather
+        method: post
+  funcRadar:
+    handler: bin/funcRadar
+    events:
+    - sns: radarTopic
+
+resources:
+  Resources:
+    RadarBucket:
+      Type: AWS::S3::Bucket

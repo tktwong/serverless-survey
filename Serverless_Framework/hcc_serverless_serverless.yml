@@ -1,0 +1,89 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: hull-cinema-club
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-2
+
+  environment:
+    tableName: ${self:custom.tableName}
+    stage: ${self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+      Resource:
+        - ${ssm:hcc_db_arn}
+    - Effect: Allow
+      Action:
+        - ssm:GetParametersByPath
+        - ssm:GetParameter
+      Resource:
+        - "*"
+
+plugins:
+  - serverless-webpack
+  - serverless-pseudo-parameters
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  tableName: ${ssm:hcc_db_name}
+
+
+functions:
+  hello:
+    handler: handler.hello
+
+  movie_import:
+    handler: src/movie-importer.handler
+    timeout: 30
+    events:
+      - schedule: rate(24 hours)
+
+  dynamo_stream:
+    handler: src/dynamo-stream.handler
+    timeout: 30
+    events:
+      - stream: ${ssm:hcc_db_stream_arn}
+
+  movies_list:
+    handler: src/api/movies.list
+    events:
+      - http:
+          path: /api/movies
+          method: get
+
+  movies_view:
+    handler: src/ui/movies.handler
+    events:
+      - http:
+          path: /
+          method: get

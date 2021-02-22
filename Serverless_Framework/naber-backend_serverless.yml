@@ -1,0 +1,57 @@
+service: naberchat
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-1
+  profile: awshakan
+
+package:
+  exclude:
+    - ./node_modules/**
+    - node_modules/**
+
+plugins:
+  - serverless-appsync-plugin
+#  - serverless-dynamodb-local
+#  - serverless-appsync-offline
+#  - serverless-offline
+
+custom:
+  stage: dev
+  appsync-offline:
+    port: 62222
+    dynamodb:
+      client:
+        endpoint: "http://localhost:8000"
+        region: localhost
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: false
+      seed: false
+  appSync:
+    name: ${self:service}-${self:custom.stage}
+    authenticationType: API_KEY
+    mappingTemplates:
+      - dataSource: Messages
+        type: Mutation
+        field: createMessage
+        request: "createMessage-request-mapping-template.txt"
+        response: "createMessage-response-mapping-template.txt"
+      - dataSource: Messages
+        type: Query
+        field: getAllMessages
+        request: "getMessages-request-mapping-template.txt"
+        response: "getMessages-response-mapping-template.txt"
+    schema: schema.graphql
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: Messages
+        description: Messages Table
+        config:
+          tableName: { Ref: MessagesTable }
+resources:
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/outputs.yml)}

@@ -1,0 +1,87 @@
+service: proliferate
+
+provider:
+  name: aws
+  stage: dev
+  region: us-east-1
+  runtime: dotnetcore2.0
+  environment: 
+    stage: ${self:provider.stage}
+    email_table: ${self:service}-${opt:stage, self:provider.stage}-emails
+    apiKeys_table: ${self:service}-${opt:stage, self:provider.stage}-api-keys
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - dynamodb:Query
+        - dynamodb:Scan  
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:ListStreams
+        - ses:SendEmail
+      Resource: "*"
+
+resources:
+  Resources:
+    EmailsDynamoDbTable: 
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        TableName: ${self:provider.environment.email_table}
+    ApiKeysDynamoDbTable: 
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: api_key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: api_key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.apiKeys_table}
+
+package:
+  artifact: bin/release/netcoreapp2.0/deploy-package.zip
+
+functions:
+  send-email:
+    handler: Proliferate::Proliferate.Services.SendEmail.SendEmailService::Execute
+    events:
+      - http:
+          path: send-email
+          method: post
+
+  validate-email:
+    handler: Proliferate::Proliferate.Services.ValidateEmail.ValidateEmailService::Execute
+
+  validate-api-key:
+    handler: Proliferate::Proliferate.Services.ValidateApiKey.ValidateApiKeyService::Execute
+
+  build-markup:
+    handler: Proliferate::Proliferate.Services.BuildMarkup.BuildMarkupService::Execute
+  
+  email-trigger:
+    handler: Proliferate::Proliferate.Services.EmailTrigger.EmailTriggerService::Execute
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - EmailsDynamoDbTable
+              - StreamArn

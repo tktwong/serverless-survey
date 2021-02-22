@@ -1,0 +1,78 @@
+service: serverless-store
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+
+  stage: dev
+  region: us-east-2
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+     - Effect: Allow
+       Action:
+         - dynamodb:Query
+         - dynamodb:Scan
+         - dynamodb:GetItem
+         - dynamodb:PutItem
+         - dynamodb:UpdateItem
+         - dynamodb:DeleteItem
+       Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  create:
+    handler: store-api/create.create
+    events:
+      - http:
+          path: items
+          method: post
+          cors: true
+  list:
+    handler: store-api/list.list
+    events:
+      - http:
+          path: items
+          method: get
+          cors: true
+  checkout:
+    handler: store-api/checkout.checkout
+    events:
+      - http:
+          path: items/{id}/checkout
+          method: get
+          cors: true
+plugins:
+  - serverless-finch
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: false
+      migrate: false
+      dbPath: .
+    stages:
+      - dev
+  client:
+    bucketName: client-serverless-store-${opt:stage, self:provider.stage}
+    distributionFolder: client/${opt:stage, self:provider.stage}
+resources:
+  Resources:
+    ItemsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

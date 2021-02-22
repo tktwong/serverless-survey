@@ -1,0 +1,53 @@
+service: pychromelambda
+
+provider:
+  name: aws
+  runtime: python3.6
+  profile: personal
+  iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - "s3:PutObject"
+       Resource: "arn:aws:s3:::stiglerimages/*"
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    layer: true
+    useDownloadCache: true
+    useStaticCache: true
+
+functions:
+  sqs_screenshot:
+    handler: chrome.screenshot
+    exclude:
+     - ./bin
+     - ./node_modules
+     - "*.zip"
+    events:
+    #   - http:
+    #       path: img
+    #       method: get
+    #       private: true
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - MyQueue
+              - Arn
+    layers:
+       - {Ref: ChromeLambdaLayer}
+       - {Ref: PythonRequirementsLambdaLayer}
+
+resources:
+  Resources:
+    MyQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "pychromelambda"
+
+layers:
+  chrome:
+    path: ./bin
+
+plugins:
+  - serverless-python-requirements

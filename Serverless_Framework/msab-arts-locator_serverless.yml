@@ -1,0 +1,186 @@
+service: msab-arts-locator
+
+plugins:
+  - fullstack-serverless
+  - serverless-stack-output
+
+custom:
+  vars: ${file(./config/${opt:stage}.yml)}
+  domain: ${opt:stage}.${self:custom.vars.domainNameRoot}
+  region: ${opt:region, 'us-east-2'}
+  certificateId: ${self:custom.vars.certificateId} # Required by AWS to be in us-east-1
+  apiKey: ${self:custom.vars.googleGeocodingApiKey} #api key to use google maps api
+  captchaKey: ${self:custom.vars.googleCaptchaKey}
+  imageBucket: ${self:custom.vars.imageS3BucketName}
+  emailUser: ${self:custom.vars.emailUsername}
+  emailPW: ${self:custom.vars.emailPassword}
+
+  output:
+    file: .serverless/stack.json
+
+  fullstack:
+    domain: ${self:custom.domain}
+    certificate:
+      Fn::Join:
+        - ''
+        - - 'arn:aws:acm:'
+          - 'us-east-1'
+          - ':'
+          - 'Ref': 'AWS::AccountId'
+          - ':certificate/'
+          - '${self:custom.certificateId}'
+    bucketName: '${self:custom.region}'
+    distributionFolder: dist # Path to the client assets to be uploaded to S3
+    indexDocument: index.html # The index document to use
+    errorDocument: error.html # The error document to use
+    singlePageApp: true # If true 403 errors will be rerouted (missing assets) to your root index document to support single page apps like React and Angular where the js framework handles routing
+    compressWebContent: true # Use compression when serving web content
+    apiPath: api # The path prefix for your API Gateway lambdas. The path for the lambda http event trigger needs to start with this too eg. api/myMethod
+    clientCommand: npm i && npm run build
+    clientSrcPath: . # The path to where you want to run the clientCommand
+    # logging:
+    #   bucket: "${self:custom.region}-${self:custom.domain}-logs"
+    #   prefix: logs
+    minimumProtocolVersion: TLSv1.2_2018
+    priceClass: PriceClass_100
+    objectHeaders:
+      index.html:
+        - name: Cache-Control
+          value: public, must-revalidate, proxy-revalidate, max-age=0
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${self:custom.region}
+
+  role: ${self:custom.vars.lambdaExecutionRole}
+
+package:
+  exclude:
+    - .cache/**
+    - .serverless/**
+    - coverage/**
+    - images/**
+    - sass/**
+    - presenter/**
+    - views/**
+    - favicon/**
+    # - node_modules/**
+
+functions:
+  getLocations:
+    handler: environments/lambda/handlers.getLocations
+    environment:
+      GIS_TABLE: ${self:service}-gis-${opt:stage}
+      API_KEY: ${self:custom.apiKey}
+    timeout: 30
+    events:
+      - http:
+          path: ${self:custom.fullstack.apiPath}/v1/get-locations
+          method: get
+          cors: true
+
+  saveLocation:
+    handler: environments/lambda/handlers.saveLocation
+    environment:
+      GIS_TABLE: ${self:service}-gis-${opt:stage}
+      API_KEY: ${self:custom.apiKey}
+      CAPTCHA_KEY: ${self:custom.captchaKey}
+      IMAGE_BUCKET: ${self:custom.imageBucket}
+      EMAIL_USER: ${self:custom.emailUser}
+      EMAIL_PW: ${self:custom.emailPW}
+      DOMAIN_NAME: ${self:custom.domain}
+    timeout: 30
+    events:
+      - http:
+          path: ${self:custom.fullstack.apiPath}/v1/save-location/
+          method: post
+          cors: true
+  getLocation:
+    handler: environments/lambda/handlers.getLocation
+    environment:
+      GIS_TABLE: ${self:service}-gis-${opt:stage}
+    timeout: 30
+    events:
+      - http:
+          path: ${self:custom.fullstack.apiPath}/v1/get-location
+          method: get
+          cors: true
+  updateLocationApproval:
+    handler: environments/lambda/handlers.updateLocationApproval
+    environment:
+      GIS_TABLE: ${self:service}-gis-${opt:stage}
+      CAPTCHA_KEY: ${self:custom.captchaKey}
+      EMAIL_USER: ${self:custom.emailUser}
+      EMAIL_PW: ${self:custom.emailPW}
+      DOMAIN_NAME: ${self:custom.domain}
+    timeout: 30
+    events:
+      - http:
+          path: ${self:custom.fullstack.apiPath}/v1/update-location
+          method: post
+          cors: true
+
+resources:
+  Outputs:
+    FullstackDomain:
+      Value: ${self:custom.domain}
+  Resources:
+    GisTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-gis-${opt:stage}
+        BillingMode: PAY_PER_REQUEST
+        KeySchema:
+          - AttributeName: hashKey
+            KeyType: HASH
+          - AttributeName: rangeKey
+            KeyType: RANGE
+        AttributeDefinitions:
+          - AttributeName: hashKey
+            AttributeType: N
+          - AttributeName: rangeKey
+            AttributeType: S
+          - AttributeName: geohash
+            AttributeType: N
+          - AttributeName: city
+            AttributeType: S
+          - AttributeName: adminId
+            AttributeType: S
+          - AttributeName: updateId
+            AttributeType: S
+        LocalSecondaryIndexes:
+          - IndexName: geohash-index
+            KeySchema:
+              - AttributeName: hashKey
+                KeyType: HASH
+              - AttributeName: geohash
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        GlobalSecondaryIndexes:
+          - IndexName: cityName-index
+            KeySchema:
+              - AttributeName: city
+                KeyType: HASH
+              - AttributeName: geohash
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: adminId-index
+            KeySchema:
+              - AttributeName: adminId
+                KeyType: HASH
+              - AttributeName: geohash
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: updateId-index
+            KeySchema:
+              - AttributeName: updateId
+                KeyType: HASH
+              - AttributeName: geohash
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL

@@ -1,0 +1,151 @@
+service: chi-bill-bot
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: ${opt:stage, 'dev'}
+  region: us-east-2
+  environment:
+    TWITTER_CONSUMER_KEY: ${ssm:/${self:provider.stage}/${self:service}/twitter/consumer-key~true}
+    TWITTER_CONSUMER_SECRET: ${ssm:/${self:provider.stage}/${self:service}/twitter/consumer-secret~true}
+    TWITTER_ACCESS_TOKEN: ${ssm:/${self:provider.stage}/${self:service}/twitter/access-token~true}
+    TWITTER_ACCESS_SECRET: ${ssm:/${self:provider.stage}/${self:service}/twitter/access-secret~true}
+    RDS_DB_NAME: ${ssm:/${self:provider.stage}/${self:service}/db/name~true}
+    RDS_USERNAME: ${ssm:/${self:provider.stage}/${self:service}/db/user~true}
+    RDS_PASSWORD: ${ssm:/${self:provider.stage}/${self:service}/db/password~true}
+    SENTRY_DSN: ${ssm:/${self:provider.stage}/${self:service}/sentry/dsn~true}
+  tags:
+    project: chi-bill-bot
+    environment: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource:
+        - Ref: SNSTopic
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+plugins:
+  - serverless-prune-plugin
+
+custom:
+  topicName: ${self:service}-${self:provider.stage}-events
+  AURORA:
+    DB_NAME: ${ssm:/${self:provider.stage}/${self:service}/db/name~true}
+    USERNAME: ${ssm:/${self:provider.stage}/${self:service}/db/user~true}
+    PASSWORD: ${ssm:/${self:provider.stage}/${self:service}/db/password~true}
+    HOST: ${ssm:/${self:provider.stage}/${self:service}/db/host~true}
+    PORT: ${ssm:/${self:provider.stage}/${self:service}/db/port~true}
+  vpc:
+    securityGroupIds:
+      - ${ssm:/${self:provider.stage}/${self:service}/vpc/security-group/id~true}
+    subnetIds:
+      - ${ssm:/${self:provider.stage}/${self:service}/vpc/subnet/a~true}
+      - ${ssm:/${self:provider.stage}/${self:service}/vpc/subnet/b~true}
+  prune:
+    automatic: true
+    number: 3
+
+functions:
+  migrate:
+    handler: bin/migrate
+    timeout: 120
+    environment:
+      RDS_HOST: ${self:custom.AURORA.HOST}
+    vpc: ${self:custom.vpc}
+  query_mentions:
+    handler: bin/query_mentions
+    timeout: 120
+    environment:
+      SNS_TOPIC_ARN:
+        Ref: SNSTopic
+    events:
+      - schedule: rate(10 minutes)
+  handle_tweet:
+    handler: bin/handle_tweet
+    timeout: 300
+    environment:
+      SNS_TOPIC_ARN:
+        Ref: SNSTopic
+      RDS_HOST: ${self:custom.AURORA.HOST}
+    vpc: ${self:custom.vpc}
+    events:
+      - sns:
+          arn:
+            Ref: SNSTopic
+          topicName: ${self:custom.topicName}
+          filterPolicy:
+            feed:
+              - handle_tweet
+  post_tweet:
+    handler: bin/post_tweet
+    timeout: 120
+    environment:
+      SNS_TOPIC_ARN:
+        Ref: SNSTopic
+    events:
+      - sns:
+          arn:
+            Ref: SNSTopic
+          topicName: ${self:custom.topicName}
+          filterPolicy:
+            feed:
+              - post_tweet
+  save_bill:
+    handler: bin/save_bill
+    timeout: 120
+    environment:
+      SNS_TOPIC_ARN:
+        Ref: SNSTopic
+      RDS_HOST: ${self:custom.AURORA.HOST}
+    vpc: ${self:custom.vpc}
+    events:
+      - sns:
+          arn:
+            Ref: SNSTopic
+          topicName: ${self:custom.topicName}
+          filterPolicy:
+            feed:
+              - save_bill
+  query_bills:
+    handler: bin/query_bills
+    timeout: 120
+    environment:
+      SNS_TOPIC_ARN:
+        Ref: SNSTopic
+      RDS_HOST: ${self:custom.AURORA.HOST}
+    vpc: ${self:custom.vpc}
+    events:
+      - schedule: cron(3 2,14,17,20,23 * * ? *)
+  update_bill:
+    handler: bin/update_bill
+    timeout: 120
+    environment:
+      SNS_TOPIC_ARN:
+        Ref: SNSTopic
+    events:
+      - sns:
+          arn:
+            Ref: SNSTopic
+          topicName: ${self:custom.topicName}
+          filterPolicy:
+            feed:
+              - update_bill
+
+resources:
+  Resources:
+    SNSTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${self:provider.stage}-events
+        DisplayName: ChiBillBotEvents
+        Tags:
+          - Key: project
+            Value: ${self:service}
+          - Key: environment
+            Value: ${self:provider.stage}

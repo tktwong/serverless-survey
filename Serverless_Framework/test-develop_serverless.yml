@@ -1,0 +1,109 @@
+service: test-develop
+
+provider:
+  name: aws
+  runtime: java8
+  region: us-east-2
+  stage: ${opt:stage,'dev'}
+  deploymentBucket:
+    name: bb-${opt:stage,'dev'}-cc-related-person-deploy
+  vpc:
+    securityGroupIds:
+      - 'Fn::ImportValue': ${ssm:/bb-${opt:stage,'dev'}/cc/related-psn-srv/vpc/security-group}
+    subnetIds:
+      - 'Fn::ImportValue': ${ssm:/bb-${opt:stage,'dev'}/cc/related-psn-srv/vpc/subnet-private-a}
+      - 'Fn::ImportValue': ${ssm:/bb-${opt:stage,'dev'}/cc/related-psn-srv/vpc/subnet-private-b}
+  apiGateway:
+    restApiId: ${env:API_ID}
+    restApiRootResourceId: ${env:API_ROOT_ID}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+
+plugins:
+  - serverless-ssm-seed
+  - serverless-plugin-tracing
+  - serverless-deployment-bucket
+  - serverless-prune-plugin
+
+custom:
+  tableName: bb-${self:provider.stage}-tree-db
+  autorizerId: ${ssm:/bb-${opt:stage,'dev'}/cc/share/cognito/autorizer-id}
+  prune:
+    automatic: true
+    number: 5
+
+defaults:
+
+package:
+  individually: true
+
+functions:
+  binary-tree-service:
+    handler: co.com.bocc.controllers.BinaryTreeController
+    memorySize: 512
+    timeout: 30
+    environment:
+      dynamoTreeTable: ${self:custom.tableName}
+    package:
+      artifact: ${file(build/serverlessVersion.yml):tree-binary}
+    events:
+      - http:
+          path: /binary-tree
+          method: post
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: ${self:custom.autorizerId}
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Date
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - x-adl-bank-id
+              - x-adl-channel
+              - x-adl-transaction-id
+              - x-adl-ip-addr
+            allowCredentials: false
+
+resources:
+  Resources:
+    dynamoTreeTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: idType
+            AttributeType: S
+          - AttributeName: idNumber
+            AttributeType: S
+        KeySchema:
+          - AttributeName: idType
+            KeyType: HASH
+          - AttributeName: idNumber
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    ApiGatewayMethodRelatedDashpersonPost:
+      Type: "AWS::ApiGateway::Method"
+      Properties:
+        AuthorizationScopes:
+          - "bocc-busicapa-api/read"
+    ApiGatewayMethodBinaryDashtreePost:
+      Type: "AWS::ApiGateway::Method"
+      Properties:
+        AuthorizationScopes:
+          - "bocc-busicapa-api/read"

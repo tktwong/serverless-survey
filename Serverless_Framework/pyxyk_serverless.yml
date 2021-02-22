@@ -1,0 +1,126 @@
+service: pyxyk
+plugins:
+  - serverless-python-requirements
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  tableNamePools: 'pools-table-${self:provider.stage}'
+  tableNameSwaps: 'swaps-table-${self:provider.stage}'
+  dynamodb:
+    stages:
+      dev
+    start:
+      migrate: true
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - .idea/**
+    - .requirements/**
+    - openapi/**
+    - .travis.yml
+    - README.md
+    - LICENSE
+    - package.json
+    - package-lock.json
+    - requirements.txt
+    - setup.py
+    - test-requirements.txt
+    - tox.ini
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: eu-central-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["PoolsDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["SwapsDynamoDBTable", "Arn" ] }
+  environment:
+    POOLS_TABLE: ${self:custom.tableNamePools}
+    SWAPS_TABLE: ${self:custom.tableNameSwaps}
+
+functions:
+  addPool:
+    handler: api/controllers/write_controller.add_liquidity
+    events:
+      - http:
+          path: liquidity/add
+          method: post
+          cors: true
+  drainPool:
+    handler: api/controllers/write_controller.drain_liquidity
+    events:
+      - http:
+          path: liquidity/drain
+          method: post
+          cors: true
+  tokenSwap:
+    handler: api/controllers/write_controller.swap_tokens
+    events:
+      - http:
+          path: swap
+          method: post
+          cors: true
+  getPools:
+    handler: api/controllers/read_controller.get_liquidity_pools
+    events:
+      - http:
+          path: liquidity/pools
+          method: get
+          cors: true
+  getSwaps:
+    handler: api/controllers/read_controller.get_token_swaps
+    events:
+      - http:
+          path: swaps
+          method: get
+          cors: true
+  getRate:
+    handler: api/controllers/read_controller.get_swap_rate
+    events:
+      - http:
+          path: swap
+          method: get
+          cors: true
+
+
+resources:
+  Resources:
+    PoolsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: token_symbol
+            AttributeType: S
+        KeySchema:
+          - AttributeName: token_symbol
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableNamePools}
+    SwapsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableNameSwaps}

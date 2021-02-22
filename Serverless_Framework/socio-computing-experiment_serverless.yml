@@ -1,0 +1,85 @@
+service: socio-computing-experiment
+
+provider:
+  name: aws
+  runtime: python3.8
+
+  custom:
+    pythonRequirements:
+      dockerizePip: true
+  
+  plugins:
+    - serverless-python-requirements
+  
+  package:
+    exclude:
+      - requirements.txt
+      - serverless.yml
+      - README.md
+
+  iamRoleStatements:
+    # SSM Parameter
+    - Effect: Allow
+      Action:
+        - ssm:GetParameters
+        - ssm:GetParameter
+      Resource: "arn:aws:ssm:us-east-1:*:parameter/*"
+
+    # DynamoDB Parameter
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource: 'arn:aws:dynamodb:us-east-1:*:*'
+
+    # SES
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+      Resource:
+        - "arn:aws:ses:us-east-1:*:*"
+      Condition:
+        StringEquals:
+          ses:FromAddress:
+            - "sociocomputing22@gmail.com"
+
+functions:
+  data-collector:
+    handler: handler.dataCollector
+    events:
+      - schedule: rate(2 hours)
+      
+resources: 
+  Resources:
+    tweetsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: tweet_info
+        AttributeDefinitions:
+          - AttributeName: tweet_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tweet_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: user_info
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

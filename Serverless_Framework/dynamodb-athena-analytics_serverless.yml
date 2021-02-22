@@ -1,0 +1,105 @@
+service: dynamodb-athena-analytics
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  memorySize: 128
+  timeout: 300
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+        - s3:*
+        - kinesis:*
+        - firehose:*
+      Resource: "*"
+
+package:
+  exclude:
+    - node_modules/aws-sdk/**
+    - node_modules/lodash/**
+    - node_mules/moment/**
+    - node_modules/crypto-browserify/**
+
+functions:
+  produce:
+    handler: dynamo-producer.insert
+    events:
+      - schedule: rate(5 minutes)
+  consume-from-dynamo:
+    handler: dynamo-stream-handler.write_to_kinesis
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - DynamoDbTable
+              - StreamArn
+          batchSize: 100
+
+resources:  
+  Resources:
+    FirehoseDeliveryRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: firehoseDeliveryRole
+        Path: /
+        AssumeRolePolicyDocument: 
+          Version: "2012-10-17"
+          Statement: 
+            - Effect: Allow
+              Principal:
+                Service:
+                  - firehose.amazonaws.com
+              Action: 
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: allow
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:*
+                  Resource: "*"
+      
+    S3BucketAthena:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: james-athena-analytics-bucket
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: dynamo-table-name
+        AttributeDefinitions:
+          - AttributeName: event_uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: event_uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 5
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+
+    MessageDeliveryStream:
+        Type: "AWS::KinesisFirehose::DeliveryStream"
+        Properties: 
+          DeliveryStreamName: dynamo-s3-delivery-stream
+          S3DestinationConfiguration:
+            BucketARN: 
+              Fn::Join:
+              - ''
+              - - 'arn:aws:s3:::'
+                - Ref: S3BucketAthena
+            BufferingHints: 
+              IntervalInSeconds: "60"
+              SizeInMBs: "1"
+            CompressionFormat: "UNCOMPRESSED"
+            Prefix: "Dynamo/"
+            RoleARN:
+              Fn::GetAtt: 
+                - "FirehoseDeliveryRole"
+                - "Arn"

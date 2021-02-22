@@ -1,0 +1,84 @@
+org: claytonweller
+app: maestro
+service: DGSS
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  timeout: 500
+  websocketsApiName: maestro-socket
+  websocketsApiRouteSelectionExpression: $request.body.action # custom routes are selected by the value of the action property in the body
+  environment:
+    POSTGRES_URL: ${ssm:/maestro/postgres-url~true}
+
+layers:
+  maestroDependecies:
+    path: ./
+    compatibleRuntimes:
+      - nodejs12.x
+    package:
+      include:
+        - nodejs/node_modules/**
+      exclude:
+        - ./**
+
+package:
+  individually: true
+
+functions:
+  connectHandler:
+    handler: app/handlers/connect.handler
+    events:
+      - websocket:
+          route: $connect
+    layers:
+      - { Ref: MaestroDependeciesLambdaLayer }
+    package:
+      include:
+        - app/handlers/connect.js
+        - db/**
+        - app/actions/**
+        - config.js
+      exclude:
+        - ./**
+        - node_modules/**
+
+  disconnectHandler:
+    handler: app/handlers/disconnect.handler
+    events:
+      - websocket:
+          route: $disconnect
+    layers:
+      - { Ref: MaestroDependeciesLambdaLayer }
+    package:
+      include:
+        - app/handlers/disconnect.js
+        - db/**
+        - app/actions/**
+        - config.js
+      exclude:
+        - ./**
+        - node_modules/**
+
+  defaultHandler:
+    handler: app/handlers/default.handler
+    events:
+      - websocket: $default #simple event definition without extra route property
+    layers:
+      - { Ref: MaestroDependeciesLambdaLayer }
+    package:
+      include:
+        - app/handlers/default.js
+        - app/actions/**
+        - db/**
+        - config.js
+      exclude:
+        - ./**
+        - node_modules/**
+  # customFooHandler:
+  #   handler: handler.fooHandler
+  #   events:
+  #     - websocket:
+  #         route: foo # will trigger if $request.body.action === "foo"
+  #   layers:
+  #     - { Ref: MaestroDependeciesLambdaLayer }

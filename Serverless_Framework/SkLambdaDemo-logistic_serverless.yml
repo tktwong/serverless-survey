@@ -1,0 +1,120 @@
+service: sklambdademo
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: python3.6
+  stage: dev
+  credentials:
+    accessKeyId: 
+    secretAccessKey: 
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource:
+       Fn::Join:
+         - ""
+         - - "arn:aws:s3:::"
+           - ${self:provider.environment.BUCKET}
+           - "/*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - lambda:InvokeFunction 
+        - lambda:GetLayerVersion
+        - sagemaker:UpdateEndpoint
+        - sagemaker:CreateModel
+        - sagemaker:CreateEndpointConfig
+        - sagemaker:DescribeEndpoint
+        - sagemaker:CreateTrainingJob
+        - sagemaker:InvokeEndpoint
+      Resource:
+        - arn:aws:dynamodb:eu-west-1:*:*
+        - arn:aws:lambda:eu-west-1:*:* 
+        - arn:aws:dynamodb:us-east-1:*:*
+        - arn:aws:lambda:us-east-1:*:* 
+        - arn:aws:iam::014011337545:user/serverless
+
+  environment:
+    BUCKET: serverless-ml-1
+
+functions:
+  upload:
+    handler: upload.uploadHandler
+    layers:
+      - arn:aws:lambda:us-east-1:446751924810:layer:python-3-6-scikit-learn-0-22-0:4
+    timeout: 30
+    memorySize: 3008
+    events:
+      - http:
+          path: upload
+          method: post
+
+  trainsklearn:
+    handler: trainsklearn.trainsklearnHandler
+    layers:
+      #- arn:aws:lambda:us-east-1:446751924810:layer:python-3-7-scikit-learn-0-23-1:2
+      - arn:aws:lambda:us-east-1:446751924810:layer:python-3-6-scikit-learn-0-22-0:4
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          path: trainsklearn
+          method: post
+
+  infersklearn:
+    handler: infersklearn.infersklearnHandler
+    layers:
+       - arn:aws:lambda:us-east-1:446751924810:layer:python-3-6-scikit-learn-0-22-0:4
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          path: infersklearn
+          method: post
+              
+#  inferqueue:
+#    handler: inferqueue.inferqueueHandler
+#    layers:
+       #- arn:aws:lambda:us-east-1:446751924810:layer:python-3-7-scikit-learn-0-23-1:2
+#    memorySize: 3008
+#    timeout: 900
+#    events:
+#      - http:
+#          path: inferqueue
+#          method: post
+
+
+plugins:
+  - serverless-python-requirements
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    zip: true
+    slim: false
+    noDeploy:
+      - boto3
+      - botocore
+      - docutils
+      - jmespath
+      - pip
+      - python-dateutil
+      - s3transfer
+      - setuptools
+      - six
+      - tensorboard
+
+resources:
+  Resources:
+    SageBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.BUCKET}

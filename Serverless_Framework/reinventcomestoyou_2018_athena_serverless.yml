@@ -1,0 +1,38 @@
+service: reinventcomestoyou
+
+package:
+  individually: true
+
+plugins:
+  - serverless-plugin-browserifier
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-1
+  logRetentionInDays: 30
+  environment: ${file(env.yml):${self:custom.stage}}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:GetObject"
+      Resource:
+        - "arn:aws:s3:::reinventcomestoyou-${opt:stage}/*"
+
+custom:
+  stage: "${opt:stage, self:provider.stage}"
+
+functions:
+  processRawFile:
+    handler: processRawFile/index.processRawFile
+    memorySize: 3008
+    timeout: 900
+    events:
+      - s3:
+          bucket: reinventcomestoyou-${opt:stage}
+          events:
+            - s3:ObjectCreated:*
+          rules:
+            - prefix: incoming/
+            - suffix: .json

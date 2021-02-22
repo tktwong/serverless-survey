@@ -1,0 +1,80 @@
+service:
+  name: chatbot
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  documentation:
+    api:
+      info:
+        version: 1.0.0
+        title: Chatbot
+    models:
+      - name: GetAirports
+        contentType: application/json
+        schema: ${file(validation/get-airports.json)}
+      - name: GetFlights
+        contentType: application/json
+        schema: ${file(validation/get-flights.json)}
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-north-1'}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+functions:
+  getAirports:
+    handler: http/getAirports.handler
+    events:
+      - http:
+          method: get
+          path: airports
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Get all airports
+            description: get all airports
+            requestModels:
+              "application/json": GetAirports
+
+  getFlights:
+    handler: http/getFlights.handler
+    events:
+      - http:
+          method: get
+          path: flights
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Get flights for a given iata
+            description: Get flights for a given iata
+            requestModels:
+              "application/json": GetFlights
+
+resources:
+  Resources:
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: "request-body-validator"
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false

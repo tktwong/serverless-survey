@@ -1,0 +1,137 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: s1ss-sls02
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: s1ss_sls
+  stage: dev
+  region: us-west-2
+  tracing: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - states:StartExecution
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+      - "sns:Publish"
+      Resource: "*"
+
+functions:
+  searchAsyncApi:
+    handler: handler.searchAsyncApi
+    memorySize: 128
+    environment:
+      statemachine_arn: ${self:resources.Outputs.Search.Value}
+    events:
+      - http:
+          path: search
+          method: post
+  searchAsync:
+    handler: handler.searchAsync
+    memorySize: 128
+    environment:
+      statemachine_arn: ${self:resources.Outputs.Search.Value}
+  start:
+    handler: handler.start
+    memorySize: 128
+  poll:
+    handler: handler.poll
+    memorySize: 128
+  dumpMessages:
+    handler: handler.dumpMessages
+    memorySize: 128
+    timeout: 900
+  dumpRecords:
+    handler: handler.dumpRecords
+    memorySize: 128
+    timeout: 900
+
+stepFunctions:
+  stateMachines:
+    sumosearch:
+      name: 'sumosearch'
+      definition:
+        Comment: "Run a Sumo Logic query and get the results in an S3 object"
+        StartAt: Start
+        States:
+          Start:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage, self:provider.stage}-start"
+            Next: Wait
+          Wait:
+            Type: Wait
+            Seconds: 1
+            Next: Poll
+          Poll:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage, self:provider.stage}-poll"
+            Next: CheckDone
+          CheckDone:
+            Type: Choice
+            Choices:
+              - Variable: $.state
+                StringEquals: "DONE GATHERING RESULTS"
+                Next: Dump
+            Default: Wait
+          Dump:
+            Type: Parallel
+            Next: Fin
+            Branches:
+              - StartAt: DumpMessages
+                States:
+                  DumpMessages:
+                    Type: Task
+                    Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage, self:provider.stage}-dumpMessages"
+                    TimeoutSeconds: 300
+                    HeartbeatSeconds: 60
+                    End: true
+              - StartAt: DumpRecords
+                States:
+                  DumpRecords:
+                    Type: Task
+                    Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage, self:provider.stage}-dumpRecords"
+                    TimeoutSeconds: 300
+                    HeartbeatSeconds: 60
+                    End: true
+          Fin:
+            Type: Pass
+            End: true
+
+plugins:
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+  - serverless-log-forwarding
+
+custom:
+  logForwarding:
+    destinationARN: ${env:LOG_FORWARDING_LAMBDA}
+    filterPattern: "-\"RequestId: \""
+
+resources:
+  Outputs:
+    Search:
+      Description: The ARN of the state machine
+      Value:
+        Ref: Sumosearch # Sic! First letter needs to be uppercase...

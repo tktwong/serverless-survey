@@ -1,0 +1,187 @@
+service: bigmouth
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-iam-roles-per-function
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+functions:
+  homepage:
+    handler: functions/get-index.handler
+    events:
+      - http:
+          path: /
+          method: get
+    environment:
+      restaurants_api: ${ssm:/bigmouth/dev/restaurants_api~true}
+      orders_api: ${ssm:/bigmouth/dev/orders_api~true}
+      cognitoUserPoolId: ${ssm:/bigmouth/dev/cognitoUserPoolId~true}
+      cognitoClientId: ${ssm:/bigmouth/dev/cognitoClientId~true}
+      cognitoServerId: ${ssm:/bigmouth/dev/cognitoServerId~true}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: execute-api:invoke
+        Resource: arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:*/*/GET/restaurants
+
+  restaurants:
+    handler: functions/get-restaurants.handler
+    events:
+      - http:
+          path: /restaurants
+          method: get
+          authorizer: aws_iam
+    environment:
+      restaurants_table: restaurants
+    iamRoleStatements:
+     - Effect: Allow
+       Action: dynamodb:scan
+       Resource: arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/restaurants
+
+  search-restaurants:
+    handler: functions/search-restaurants.handler
+    events:
+      - http:
+          path: /restaurants/search
+          method: post
+          authorizer:
+            arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/bigmouth/dev/cognitoUserPoolId~true}
+    environment:
+      restaurants_table: restaurants
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:scan
+        Resource: arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/restaurants
+      - Effect: Allow
+        Action: execute-api:invoke
+        Resource: arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:*/*/GET/restaurants
+
+  place-order:
+    handler: functions/place-order.handler
+    events:
+      - http:
+          path: /orders
+          method: post
+          authorizer: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/bigmouth/dev/cognitoUserPoolId~true}
+    environment:
+      order_events_stream: order-events
+    iamRoleStatements:
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource:
+          - arn:aws:kinesis:#{AWS::Region}:#{AWS::AccountId}:stream/order-events
+
+  notify-restaurant:
+    handler: functions/notify-restaurant.handler
+    events:
+      - stream:
+          arn: arn:aws:kinesis:#{AWS::Region}:#{AWS::AccountId}:stream/order-events
+    environment:
+      order_events_stream: order-events
+      restaurant_notification_topic: arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:restaurant-notification
+      restaurant_retry_notification_topic: arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:restaurant-retry-notification
+    iamRoleStatements:
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource:
+          - arn:aws:kinesis:#{AWS::Region}:#{AWS::AccountId}:stream/order-events
+      - Effect: Allow
+        Action: sns:Publish
+        Resource:
+          - arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:restaurant-notification
+          - arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:restaurant-retry-notification
+
+  retry-notify-restaurant:
+    handler: functions/retry-notify-restaurant.handler
+    events:
+      - sns: restaurant-retry-notification
+    environment:
+      restaurant_dlq_notification_topic: arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:restaurant-notification-dlq
+    onError: arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:restaurant-notification-dlq
+    iamRoleStatements:
+      - Effect: Allow
+        Action: sns:Publish
+        Resource:
+          - arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:restaurant-notification-dlq
+
+  accept-order:
+    handler: functions/accept-order.handler
+    events:
+      - http:
+          path: /orders/accept
+          method: post
+    environment:
+      order_events_stream: order-events
+    iamRoleStatements:
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource:
+          - arn:aws:kinesis:#{AWS::Region}:#{AWS::AccountId}:stream/order-events
+
+  notify-user:
+    handler: functions/notify-user.handler
+    events:
+      - stream:
+          arn: arn:aws:kinesis:#{AWS::Region}:#{AWS::AccountId}:stream/order-events
+    environment:
+      order_events_stream: order-events
+      user_notification_topic : arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:user-notification
+    iamRoleStatements:
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource:
+          - arn:aws:kinesis:#{AWS::Region}:#{AWS::AccountId}:stream/order-events
+      - Effect: Allow
+        Action: sns:Publish
+        Resource:
+          - arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:user-notification
+
+  fulfill-order:
+    handler: functions/fulfill-order.handler
+    events:
+      - http:
+          path: /orders/complete
+          method: post
+    environment:
+      order_events_stream: order-events
+
+resources:
+  Resources:
+    restaurantsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: restaurants
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    orderEventsStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: order-events
+        ShardCount: 1
+
+    restaurantNotification:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: restaurant-notification
+        TopicName: restaurant-notification
+
+    restaurantNotificationDlq:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: restaurant-notification-dlq
+        TopicName: restaurant-notification-dlq
+
+    userNotification:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: user-notification
+        TopicName: user-notification

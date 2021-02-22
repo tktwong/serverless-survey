@@ -1,0 +1,71 @@
+service: corona-supplies
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ap-southeast-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: { Fn::GetAtt: [SuppliesDynamoDB, Arn] }
+
+functions:
+  scrape:
+    handler: lambdas/scrape.handler
+    timeout: 180
+    events:
+      - http: GET /scrape
+  api:
+    handler: lambdas/api.get
+    events:
+      - http: GET /api
+
+resources:
+  Resources:
+    SuppliesDynamoDB:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: 'coronasupplies'
+        AttributeDefinitions:
+          - AttributeName: 'ProductType'
+            AttributeType: 'S'
+          - AttributeName: 'StoreNo#ProductID'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'ProductType'
+            KeyType: HASH
+          - AttributeName: 'StoreNo#ProductID'
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Comment: Corona Supplies CDN
+          DefaultCacheBehavior:
+            TargetOriginId: CoronaSuppliesOrigin
+            ViewerProtocolPolicy: 'redirect-to-https'
+            DefaultTTL: 1800 # 30 minutes
+            ForwardedValues:
+              QueryString: false
+          Enabled: true
+          Origins:
+            - Id: CoronaSuppliesOrigin
+              DomainName:
+                Fn::Join:
+                  - '.'
+                  - - Ref: ApiGatewayRestApi
+                    - execute-api.ap-southeast-2.amazonaws.com
+              OriginPath: /dev
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+plugins:
+  - serverless-offline

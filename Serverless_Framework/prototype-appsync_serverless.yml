@@ -1,0 +1,102 @@
+service:
+  name: appsync-example
+  publish: false # disable auto-publishing to the Serverless platform
+
+plugins:
+  - serverless-appsync-plugin
+  - serverless-appsync-offline
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-west-2
+
+functions:
+  graphql:
+    handler: handler.graphqlHandler
+
+custom:
+  appsync-offline:
+    port: 62222
+    dynamodb:
+      client:
+        endpoint: http://dynamodb:8000
+        region: eu-west-2
+        accessKeyId: test
+        secretAccessKey: test
+  accountId: 247222723249
+  appSync:
+    name:  test-deploy
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      awsRegion: eu-west-2
+      defaultAction: ALLOW
+      userPoolId: eu-west-2_6Mn0M2i9C
+    mappingTemplates:
+      - dataSource: CollectionFiles
+        type: Query
+        field: getCollection
+        request: "get-collection-request-mapping-template.vtl"
+        response: "get-collection-response-mapping-template.vtl"
+      - dataSource: CollectionFiles
+        type: Mutation
+        field: createCollection
+        request: "create-collection-request-mapping-template.vtl"
+        response: "create-collection-response-mapping-template.vtl"
+    schema: 
+      - schemas/queries.graphql
+      - schemas/collections.graphql
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: CollectionFiles
+        description: 'CollectionFiles Table'
+        config:
+          tableName: { Ref: CollectionFilesTable }
+          serviceRoleArn: { Fn::GetAtt: [AppSyncDynamoDBServiceRole, Arn] }
+
+resources:
+  Resources:
+    CollectionFilesTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'CollectionFilesTest'
+    AppSyncDynamoDBServiceRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "Dynamo-CollectionFilesTest"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          -
+            PolicyName: "Dynamo-CollectionFilesTest-Policy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action:
+                    - "dynamodb:Query"
+                    - "dynamodb:GetItem"
+                    - "dynamodb:Scan"
+                  Resource:
+                    - "arn:aws:dynamodb:eu-west-2:${self:custom.accountId}:table/CollectionFilesTest"
+ 

@@ -1,0 +1,203 @@
+service: aqts-capture-trigger
+
+provider:
+  name: aws
+  rolePermissionsBoundary:
+    Fn::Sub:
+      - "arn:aws:iam::${accountId}:policy/csr-Developer-Permissions-Boundary"
+      - accountId:
+         Ref: "AWS::AccountId"
+  vpc: ${self:custom.vpc}
+  region: ${opt:region, 'us-west-2'}
+  stage: ${opt:stage, 'TEST'}
+  runtime: python3.8
+  memorySize: 128
+  timeout: 20
+  logRetentionInDays: 90
+  deploymentBucket:
+    name: ${opt:bucket, 'iow-cloud-applications'}
+  stackTags:
+    "wma:project_id": "aqtscapture"
+    "wma:subSystem": "aqtscapture"
+    "wma:application_id": "Aquarius TS Capture Trigger"
+    "wma:contact": "Andrew Yan ayan@usgs.gov"
+    "wma:role": etl
+    "wma:system": NWIS
+    "wma:environment": ${self:provider.stage}
+    "wma:taggingVersion": 0.0.1
+    "wma:costCenter": TBD
+    "wma:organization": IOW
+    "displayName": "Capture Trigger"
+    commitIdentifier: ${git:sha1}
+
+custom:
+  exportGitVariables: false
+  vpc:
+    securityGroupIds: ${ssm:/iow/aqts-capture-trigger/${self:provider.stage}/securityGroupIds~split}
+    subnetIds: ${ssm:/iow/aws/vpc/${self:provider.stage}/subnetIds~split}
+  environments:
+    DEV: dev
+    TEST: test
+    QA: qa
+    PROD-EXTERNAL: prod-external
+  esLogs:
+    endpoint: ${ssm:/iow/aws/vpc/${self:provider.stage}/elasticsearchEndpoint}
+    index: ${self:service}
+    retentionInDays: 90
+    filterPattern: "?ERROR ?CRITICAL"
+
+functions:
+  aqtsCaptureTrigger:
+    handler: trigger.handler.lambda_handler
+    role:
+      Fn::Sub:
+        - arn:aws:iam::${accountId}:role/csr-Lambda-Role
+        - accountId:
+            Ref: AWS::AccountId
+    onError:
+      Ref: snsTopic
+    events:
+      - sqs:
+          arn:
+            Fn::Join:
+              - ':'
+              - - arn
+                - aws
+                - sqs
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - aqts-capture-error-queue-${self:provider.stage}
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - triggerQueue
+              - Arn
+    reservedConcurrency: 10
+    environment:
+      STATE_MACHINE_ARN:
+        Fn::Sub:
+          - arn:aws:states:${self:provider.region}:${accountId}:stateMachine:aqts-capture-state-machine-${self:provider.stage}
+          - accountId:
+              Ref: AWS::AccountId
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      OBJECT_SIZE_LIMIT: 150000000
+      STAGE: ${self:provider.stage}
+      LOG_LEVEL: ERROR
+
+resources:
+  Resources:
+    snsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: ${self:service}-${self:provider.stage}-topic
+        TopicName: ${self:service}-${self:provider.stage}-topic
+    concurrencyAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-concurrency-alarm
+        AlarmDescription: Notify when concurrency exceeds the specified threshold
+        Namespace: 'AWS/Lambda'
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AqtsCaptureTriggerLambdaFunction
+        MetricName: ConcurrentExecutions
+        Statistic: Maximum
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        Threshold: 22
+        Period: 60
+        EvaluationPeriods: 1
+        AlarmActions:
+          - Ref: snsTopic
+    errorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-error-alarm
+        AlarmDescription: Notify when number of errors exceeds the specified threshold
+        Namespace: 'AWS/Lambda'
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AqtsCaptureTriggerLambdaFunction
+        MetricName: Errors
+        Statistic: Sum
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        Threshold: 10
+        Period: 60
+        EvaluationPeriods: 1
+        AlarmActions:
+          - Ref: snsTopic
+    S3BucketTriggering:
+      Type: AWS::S3::Bucket
+      DependsOn:
+        - triggerQueue
+        - triggerQueuePolicy
+      Properties:
+        BucketName: iow-retriever-capture-${self:custom.environments.${self:provider.stage}}
+        AccessControl: Private
+        LifecycleConfiguration:
+          Rules:
+            - ExpirationInDays: 4
+              Status: Enabled
+        NotificationConfiguration:
+          QueueConfigurations:
+            - Event: s3:ObjectCreated:Put
+              Filter:
+                S3Key:
+                  Rules:
+                    - Name: suffix
+                      Value: .json
+              Queue:
+                Fn::GetAtt:
+                  - triggerQueue
+                  - Arn
+    triggerQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: aqts-capture-trigger-queue-${self:provider.stage}
+        MessageRetentionPeriod: 345600
+        VisibilityTimeout: 36  # set to six-times the lambda timeout mitigate concurrency issues; serverless defaults to 6 seconds
+    triggerQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: triggerQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal: '*'  # restricting this to the account causes a failure when the S3 bucket tries to verify in can reach the queue.
+              Action: 'SQS:SendMessage'
+              Resource:
+                Fn::GetAtt:
+                  - triggerQueue
+                  - Arn
+              Condition:
+                ArnLike:
+                  aws:SourceArn: ["arn:aws:s3:*:*:${self:resources.Resources.S3BucketTriggering.Properties.BucketName}", "arn:aws:s3:*:*:iow-retriever-capture-load"]
+    choppingQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: aqts-capture-chopping-queue-${self:provider.stage}
+        MessageRetentionPeriod: 345600
+
+
+Outputs:
+    Value:
+      Ref: triggerQueue
+    Export:
+      Name: triggerQueueName
+
+plugins:
+  - serverless-plugin-git-variables
+  - serverless-python-requirements
+  - serverless-es-logs
+
+package:
+  exclude:
+    - node_modules/**
+    - Dockerfile
+    - .dockerignore
+    - Jenkinsfile
+    - package.json
+    - package-lock.json

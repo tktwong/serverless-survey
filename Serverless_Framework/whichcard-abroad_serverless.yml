@@ -1,0 +1,211 @@
+service: whichcard-abroad
+
+plugins:
+  - serverless-s3-sync
+  - serverless-apigw-binary
+  - serverless-dotenv-plugin
+  # - serverless-domain-manager
+  - serverless-offline
+
+package:
+  individually: true
+  excludeDevDependencies: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${env:DYANMODB_REGION}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${env:DYANMODB_TABLE}"
+
+custom:
+  #######################################
+  # Unique ID included in resource names.
+  # Replace it with a random value for every first distribution.
+  # https://www.random.org/strings/?num=1&len=6&digits=on&loweralpha=on&unique=on&format=html&rnd=new
+  stackId: 67x5z3
+  #######################################
+
+  buckets:
+    ASSETS_BUCKET_NAME: ${self:service}-${self:custom.stackId}-${self:provider.stage}-assets
+    STATIC_BUCKET_NAME: ${self:service}-${self:custom.stackId}-${self:provider.stage}-static
+  s3Sync:
+    - bucketName: ${self:custom.buckets.ASSETS_BUCKET_NAME}
+      localDir: .nuxt/dist/client
+    - bucketName: ${self:custom.buckets.STATIC_BUCKET_NAME}
+      localDir: static
+  apigwBinary:
+    types:
+      - '*/*'
+  dotenv:
+    basePath: ./src/
+
+  # customDomain:
+  #   domainName: whichcard-${self:provider.stage}.xingoxu.com
+  #   stage: ${self:provider.stage}
+  #   endpointType: 'regional'
+  #   securityPolicy: tls_1_2
+  #   apiType: rest
+
+functions:
+  renderer:
+    name: ${self:service}-${self:custom.stackId}-${self:provider.stage}-renderer
+    handler: .nuxt/dist/serverless.handler
+    memorySize: 2048
+    timeout: 30
+    environment:
+      NODE_ENV: production
+    package:
+      include:
+        - .nuxt/dist/serverless.js
+        - .nuxt/dist/server/**
+      exclude:
+        - .nuxt/**
+        - src/**
+        - app.js
+        - nuxt.config.js
+        - nuxt.d.ts
+        - README.md
+        - server.js
+        - serverless.js
+        - serverless.yml
+        - tsconfig.json
+        - webpack.config.js
+        - yarn-error.log
+    events:
+      - http:
+          path: /
+          method: any
+      - http:
+          path: /sw.js
+          method: any
+          integration: http-proxy
+          request:
+            uri: https://${self:custom.buckets.STATIC_BUCKET_NAME}.s3.${self:provider.region}.amazonaws.com/sw.js
+            parameters:
+              paths:
+                proxy: true
+      - http:
+          path: /{proxy+}
+          method: any
+      - http:
+          path: /_nuxt/{proxy+}
+          method: any
+          integration: http-proxy
+          request:
+            uri: https://${self:custom.buckets.ASSETS_BUCKET_NAME}.s3.${self:provider.region}.amazonaws.com/{proxy}
+            parameters:
+              paths:
+                proxy: true
+      - http:
+          path: /static/{proxy+}
+          method: any
+          integration: http-proxy
+          request:
+            uri: https://${self:custom.buckets.STATIC_BUCKET_NAME}.s3.${self:provider.region}.amazonaws.com/{proxy}
+            parameters:
+              paths:
+                proxy: true
+
+resources:
+  Resources:
+    CurrencyTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${env:DYANMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: ${env:DYANMODB_PRIMARY_KEY}
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ${env:DYANMODB_PRIMARY_KEY}
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    ClientAssetsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.ASSETS_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - HEAD
+                - PUT
+                - POST
+                - DELETE
+              MaxAge: 3000
+              ExposedHeaders:
+                - x-amz-server-side-encryption
+                - x-amz-request-id
+                - x-amz-id-2
+    ClientAssetsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: ClientAssetsBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement: [
+            {
+              Action: ['s3:GetObject'],
+              Effect: 'Allow',
+              Resource: {
+                Fn::Join: ['', ['arn:aws:s3:::', { Ref: 'ClientAssetsBucket' }, '/*']],
+              },
+              Principal: '*'
+            },
+          ]
+    ClientStaticBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.STATIC_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - HEAD
+                - PUT
+                - POST
+                - DELETE
+              MaxAge: 3000
+              ExposedHeaders:
+                - x-amz-server-side-encryption
+                - x-amz-request-id
+                - x-amz-id-2
+    ClientStaticBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: ClientStaticBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement: [
+            {
+              Action: ['s3:GetObject'],
+              Effect: 'Allow',
+              Resource: {
+                Fn::Join: ['', ['arn:aws:s3:::', { Ref: 'ClientStaticBucket' }, '/*']],
+              },
+              Principal: '*'
+            },
+          ]

@@ -1,0 +1,176 @@
+service: ApiGatewayAndCognitoUserPool
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'} # Set the default stage used. Default is dev
+  region: us-east-2
+
+
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  webpack:
+    packager: 'yarn'   
+
+functions:
+  cognitoLambdaHandler:
+    handler: handler.lambdaHandler
+    events:
+      - http:
+          path: "user/pass"
+          method: get
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer           
+
+resources:
+  Resources:
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: Token-Authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [UserPool, Arn]       
+    UserPool:
+      Type: "AWS::Cognito::UserPool"
+      Description: "A Cognito user pool for authenticating API Gateway users"
+      Properties:
+        UserPoolName: !Sub ${self:service}-user-pool
+        Schema:
+          - Name: name
+            AttributeDataType: String
+            Mutable: true
+            Required: true
+            DeveloperOnlyAttribute: false
+            # NumberAttributeConstraints: 
+            #   MaxValue: String
+            #   MinValue: String
+            # StringAttributeConstraints: 
+            #   MaxLength: String
+            #   MinLength: String
+          - Name: email
+            AttributeDataType: String
+            Mutable: false
+            Required: true
+            DeveloperOnlyAttribute: false
+            # NumberAttributeConstraints: 
+            #   MaxValue: String
+            #   MinValue: String
+            # StringAttributeConstraints: 
+            #   MaxLength: String
+            #   MinLength: String            
+          - Name: phone_number
+            AttributeDataType: String
+            Mutable: false
+            Required: true
+            DeveloperOnlyAttribute: false
+            # NumberAttributeConstraints: 
+            #   MaxValue: String
+            #   MinValue: String
+            # StringAttributeConstraints: 
+            #   MaxLength: String
+            #   MinLength: String
+        # UserPoolTags: Json    
+        # UsernameAttributes: String    
+        # AdminCreateUserConfig:    
+        #     AllowAdminCreateUserOnly: Boolean
+        #     InviteMessageTemplate: 
+        #       EmailMessage: String
+        #       EmailSubject: String
+        #       SMSMessage: String
+        #     UnusedAccountValidityDays: Double
+        # AliasAttributes: 
+        #   - String
+        # AutoVerifiedAttributes: 
+        #   - String
+        # DeviceConfiguration: 
+        #   ChallengeRequiredOnNewDevice: Boolean
+        #   DeviceOnlyRememberedOnUserPrompt: Boolean
+        # EmailConfiguration: 
+        #   EmailSendingAccount: String
+        #   ReplyToEmailAddress: String
+        #   SourceArn: String
+        # EmailVerificationMessage: String
+        # EmailVerificationSubject: String
+        # LambdaConfig: 
+        #   CreateAuthChallenge: String
+        #   CustomMessage: String
+        #   DefineAuthChallenge: String
+        #   PostAuthentication: String
+        #   PostConfirmation: String
+        #   PreAuthentication: String
+        #   PreSignUp: String
+        #   VerifyAuthChallengeResponse: String          
+        #   MfaConfiguration: String
+        # Policies: 
+        #   PasswordPolicy: 
+        #     MinimumLength: Integer
+        #     RequireLowercase: Boolean
+        #     RequireNumbers: Boolean
+        #     RequireSymbols: Boolean
+        #     RequireUppercase: Boolean
+        #     TemporaryPasswordValidityDays: Double
+        # SmsAuthenticationMessage: String
+        # SmsConfiguration: 
+        #   ExternalId: String
+        #   SnsCallerArn: String
+        # SmsVerificationMessage: String    
+    UserPoolClientOne:
+      Type: "AWS::Cognito::UserPoolClient"
+      Description: "App Client used by AWS AppSync"
+      Properties:
+        ClientName: !Sub ${self:service}-App-client-1
+        GenerateSecret: true
+        ExplicitAuthFlows: 
+            - ADMIN_NO_SRP_AUTH
+        UserPoolId: !Ref UserPool
+        # ReadAttributes: 
+        #   - String
+        # WriteAttributes:
+        #   - String
+        # RefreshTokenValidity: Double    
+    UserPoolClientTwo:
+      Type: "AWS::Cognito::UserPoolClient"
+      Description: "App Client used by AWS AppSync"
+      Properties:
+        ClientName: !Sub ${self:service}-App-client-2
+        GenerateSecret: true
+        ExplicitAuthFlows: 
+            - ADMIN_NO_SRP_AUTH
+        UserPoolId: !Ref UserPool
+        # ReadAttributes: 
+        #   - String
+        # WriteAttributes:
+        #   - String
+        # RefreshTokenValidity: Double            
+
+Outputs:
+  CognitoUserPoolId:
+    Description: The Pool ID of the Cognito User Pool
+    Value: !Ref UserPool
+  CognitoUserPoolClientId:
+    Description: The Client ID for AWS AppSync Auth
+    Value: !Ref UserPoolClientOne, UserPoolClientTwo 
+

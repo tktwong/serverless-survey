@@ -1,0 +1,82 @@
+service: netauto-slack-bot
+
+provider:
+  name: aws
+  runtime: python3.8
+  memorySize: 128
+  versionFunctions: false
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-west-2'}
+  logRetentionInDays: 30
+  iamRoleStatements: ${file(serverless/iam_policies.yml):iamRoleStatements}
+  environment:
+    queue_url: "https://sqs.${opt:region, self:provider.region}.amazonaws.com/${file(config.yml):account_name}/SlackBotSQS"
+    sns_arn: "arn:aws:sns:${opt:region, self:provider.region}:${file(config.yml):account_name}:SlackBotSNS"
+    secret_name: ${file(config.yml):secret_name}
+    region_name: ${opt:region, 'us-west-2'}
+
+functions:
+  api_v1_slack_switchport_enable:
+    timeout: 25
+    handler: handlers/api.switchport_enable
+    events:
+      - http:
+          path: api/v1/slack/switchport-enable
+          method: post
+          cors: true
+
+  api_v1_slack_switchport_disable:
+    timeout: 25
+    handler: handlers/api.switchport_disable
+    events:
+      - http:
+          path: api/v1/slack/switchport-disable
+          method: post
+          cors: true
+
+  api_v1_slack_show_version:
+    timeout: 25
+    handler: handlers/api.show_version
+    events:
+      - http:
+          path: api/v1/slack/show-version
+          method: post
+          cors: true
+
+  api_v1_slack_show_routes:
+    timeout: 25
+    handler: handlers/api.show_routes
+    events:
+      - http:
+          path: api/v1/slack/show-routes
+          method: post
+          cors: true
+
+  api_v1_slack_show_interface:
+    timeout: 25
+    handler: handlers/api.show_interface
+    events:
+      - http:
+          path: api/v1/slack/show-interface
+          method: post
+          cors: true
+
+  worker:
+    handler: handlers/worker.app
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - SlackBotSQS
+              - Arn
+
+  slack_notifier:
+    handler: handlers/notify_slack.app
+    events:
+      - sns: SlackBotSNS
+
+resources:
+  Resources: ${file(serverless/resources.yml):Resources}
+
+plugins:
+  - serverless-python-requirements

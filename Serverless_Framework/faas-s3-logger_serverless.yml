@@ -1,0 +1,81 @@
+service: faas-s3-logger
+
+plugins:
+  - serverless-offline
+  - serverless-dynamodb-local
+
+custom:
+  bucketName: 'fass-s3-logger-src-bucket-${self:provider.stage}'
+  dynamodb:
+    start:
+      port: 8000
+      migration: true
+    migration:
+      dir: offline/migrations
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  apiKeys:
+    - LOGS_API_KEY
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  createOnS3Put:
+    handler: dist/handler.createOnS3Put
+    description: Create log on S3 put object
+    events:
+      - s3:
+          bucket: ${self:custom.bucketName}
+          event: s3:ObjectCreated:*
+  list:
+    handler: dist/handler.list
+    description: Fetch logs
+    events:
+      - http:
+          path: logs
+          method: get
+          cors: true
+          private: true
+
+resources:
+  Resources:
+    S3LogsTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+package:
+  include:
+    - dist/**
+    - serverless.yml
+  exclude:
+    - src/**
+    - offline/**
+    - .vscode/**
+    - package*.json
+    - tsconfig.json
+    - test/**

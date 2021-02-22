@@ -1,0 +1,82 @@
+service: sls-static-website
+
+provider:
+  name: aws
+  runtime: provided
+  stage: dev
+  region: ap-northeast-1
+
+resources:
+  Resources:
+
+    WebsiteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: sls-static-website.umihi.co
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: 404.html
+      DeletionPolicy: Retain
+
+    WebsiteCloudfront:
+      Type: AWS::CloudFront::Distribution
+      DependsOn:
+      - WebsiteBucket
+      Properties:
+        DistributionConfig:
+          Origins:
+          - DomainName: sls-static-website.umihi.co.s3-website-ap-northeast-1.amazonaws.com
+            Id: S3Origin
+            CustomOriginConfig:
+              HTTPPort: '80'
+              HTTPSPort: '443'
+              OriginProtocolPolicy: http-only
+          Enabled: true
+          HttpVersion: 'http2'
+          DefaultRootObject: index.html
+          Aliases:
+          - sls-static-website.umihi.co
+          DefaultCacheBehavior:
+            AllowedMethods:
+            - GET
+            - HEAD
+            Compress: true
+            TargetOriginId: S3Origin
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+          PriceClass: PriceClass_All
+          ViewerCertificate:
+            # AcmCertificateArn: arn:aws:acm:us-east-1:123456789:certificate/xxxxxxxx-yyyy-zzzz-aaaa-123456789 # must be in us-east
+            AcmCertificateArn: ${ssm:usacmarn} # arn:aws:acm:us-east-1:123456789:certificate/xxxxxxxx-yyyy-zzzz-aaaa-123456789
+            SslSupportMethod: sni-only
+
+    WebsiteDNSName:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneName: umihi.co. # you need (.)period at the end
+        RecordSets:
+        - Name: sls-static-website.umihi.co. # you need (.)period at the end
+          Type: A
+          AliasTarget:
+            HostedZoneId: Z2FDTNDATAQYW2 #  This is always the hosted zone ID when you create an alias record that routes traffic to a CloudFront distribution.
+            # DNSName: ddddxxxxyyyyzzzzz.cloudfront.net # you can hard-code like this
+            DNSName:
+              Fn::GetAtt: [ WebsiteCloudfront, DomainName ]
+
+  Outputs: # You'll see if you deploy with -v option
+    WebsiteCloudfrontDistributionId:
+      Description: "How to invalidation: aws cloudfront create-invalidation --distribution-id XXXXXXXXXX --paths '/*'"
+      Value:
+        Ref: WebsiteCloudfront
+
+plugins:
+  - serverless-s3-sync
+
+custom:
+  s3Sync:
+    - bucketName: sls-static-website.umihi.co
+      localDir: static
+      acl: public-read

@@ -1,0 +1,61 @@
+service:
+  name: <service name>
+
+# Add the serverless-webpack plugin
+plugins:
+- serverless-webpack
+- serverless-offline
+- serverless-plugin-split-stacks
+- serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, self:custom.defaultStage} # Set the default stage used. Default is dev/ v1
+  region: ${opt:region, self:custom.defaultRegion} # Overwrite the default region used. Default is us-east-1
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  role: <role ARN>
+  environment:
+    APP_ENV: ${opt:stage, self:custom.defaultStage}
+    APP_REGION: ${opt:region, self:custom.defaultRegion}
+    APP_ENDPOINT: <API endpoint>
+
+functions:
+  - ${file(src/api/v1/Auth/Router/index.yml)}
+  - ${file(src/api/v1/Users/Router/index.yml)}
+  - ${file(src/api/v1/Roles/Router/index.yml)}
+  - ${file(src/api/v1/Organizations/Router/index.yml)}
+  - ${file(src/api/v1/Thumbnails/Router/index.yml)}
+  - ${file(src/api/v1/Distributors/Router/index.yml)}
+  - ${file(src/api/v1/Customers/Router/index.yml)}
+  - ${file(src/api/v1/Summary/Router/index.yml)}
+  - ${file(src/api/v1/Address/Router/index.yml)}
+  - ${file(src/api/v1/Seeder/Router/index.yml)}
+  - authorize:
+      handler: src/infrastructure/Middlewares/jwtAuth.handler
+      cors: true
+custom:
+  customDomain:
+    domainName: ${self:custom.domain.${self:provider.stage}}
+    basePath: 'user-svc'
+    stage: ${self:provider.stage}
+  splitStacks:
+    perFunction: true
+    perType: false
+  defaultStage: dev
+  defaultRegion: us-east-2
+  authorizer: <lambda ARN>
+  profiles:
+    dev: <name>Dev
+    stg: <name>Stg
+    prod: <name>Prod
+  domain:
+    dev: dev.<name>
+    stg: stage.<name>
+    prod: api.<name>
+  webpack:
+    includeModules:
+      forceInclude:
+      - pg
+resources:
+- ${file(resources/api-gateway-errors.yml)}

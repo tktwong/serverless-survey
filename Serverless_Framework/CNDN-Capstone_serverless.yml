@@ -1,0 +1,285 @@
+service:
+  name: registry-backend
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-aws-documentation
+  - serverless-reqvalidator-plugin
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  environment:
+    REGISTRY_TABLE: Registry-${self:provider.stage}
+    USER_ID_INDEX: UserIdIndex
+    S3_BUCKET: registry-backend-susanwang-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+    AUTH_0_SECRET_ID: Auth0Secret-${self:provider.stage}
+    AUTH_0_SECRET_FIELD: auth0Secret
+  
+  custom:
+    documentation:
+      api:
+        info:
+          version: v1.0.0
+          title: Registry API
+          description: Serverless application for building registry items
+      models:
+        - name: RegistryItemRequest
+          contentType: application/json
+          schema: ${file(src/validation/createRegistryItemRequest.json)}
+        - name: UpdateRegistryItemRequest
+          contentType: application/json
+          schema: ${file(src/validation/updateRegistryItemRequest.json)}
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref Auth0Secret
+      - Effect: Allow
+        Action:
+          - kms:Decrypt
+        Resource: !GetAtt KMSKey.Arn
+
+  GetRegistryItems:
+    handler: src/lambda/http/getRegistryItems.handler
+    events:
+      - http:
+          method: get
+          path: registryitems
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.REGISTRY_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.REGISTRY_TABLE}/index/${self:provider.environment.USER_ID_INDEX}
+
+  GetRegistryItemById:
+    handler: src/lambda/http/getRegistryItemById.handler
+    events:
+      - http:
+          method: get
+          path: registryitems/{registryItemId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.REGISTRY_TABLE}
+
+  CreateRegistryItem:
+    handler: src/lambda/http/createRegistryItem.handler
+    events:
+      - http:
+          method: post
+          path: registryitems
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new registry item
+            description: Create a new registry item
+            requestModels:
+              'application/json': RegistryItemRequest
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.REGISTRY_TABLE}
+    
+
+  UpdateRegistryItem:
+    handler: src/lambda/http/updateRegistryItem.handler
+    events:
+      - http:
+          method: patch
+          path: registryitems/{registryItemId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: update a registry item
+            description: update a registry item
+            requestModels:
+              'application/json': UpdateRegistryItemRequest
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.REGISTRY_TABLE}
+
+  DeleteRegistryItem:
+    handler: src/lambda/http/deleteRegistryItem.handler
+    events:
+      - http:
+          method: delete
+          path: registryitems/{registryItemId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.REGISTRY_TABLE}
+
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: registryitems/{registryItemId}/attachment
+          cors: true
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.REGISTRY_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*
+
+resources:
+  Resources:
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    RegistryTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+          - AttributeName: registryItemId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: registryItemId
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.USER_ID_INDEX}
+            KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.REGISTRY_TABLE}
+
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket
+
+    KMSKey:
+      Type: AWS::KMS::Key
+      Properties:
+        Description: KMS key to encrypt Auth0 secret
+        KeyPolicy:
+          Version: '2012-10-17'
+          Id: key-default-1
+          Statement:
+            - Sid: Allow administration of the key
+              Effect: Allow
+              Principal:
+                AWS:
+                  Fn::Join:
+                  - ':'
+                  - - 'arn:aws:iam:'
+                    - Ref: AWS::AccountId
+                    - 'root'
+              Action:
+                - 'kms:*'
+              Resource: '*'
+
+    KMSKeyAlias:
+      Type: AWS::KMS::Alias
+      Properties:
+        AliasName: alias/auth0Key-${self:provider.stage}
+        TargetKeyId: !Ref KMSKey
+
+    Auth0Secret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:provider.environment.AUTH_0_SECRET_ID}
+        Description: Auth0 secret
+        KmsKeyId: !Ref KMSKey
+

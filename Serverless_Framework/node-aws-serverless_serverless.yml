@@ -1,0 +1,131 @@
+service: ${env:SERVICE_NAME}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: us-east-1
+  stage: ${env:VERSION}
+  deploymentBucket: ${env:DEPLOYMENT_BUCKET}
+  tracing: true
+  apiGateway:
+    restApiId: 
+      'Fn::ImportValue': ${env:API_NAME}-${self:provider.stage}-restApiId
+    restApiRootResourceId:
+      'Fn::ImportValue': ${env:API_NAME}-${self:provider.stage}-rootResourceId
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - cloudwatch:*
+        - logs:*
+        - xray:*
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - sqs:*
+        - s3:*
+      Resource: "*"
+  vpc:
+    securityGroupIds:
+      - ${env:VPC_SECURITY_GROUP}
+    subnetIds:
+      - ${env:VPC_SUBNET_NAT_1}
+      - ${env:VPC_SUBNET_NAT_2}
+      - ${env:VPC_SUBNET_NAT_3}
+  environment:
+    NODE_ENV:                   ${env:NODE_ENV}
+    LOG_INFO_ENABLE:            ${env:LOG_INFO_ENABLE}
+    LOG_ERROR_ENABLE:           ${env:LOG_ERROR_ENABLE}
+    LOG_WARN_ENABLE:            ${env:LOG_WARN_ENABLE}
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-tracing
+  - serverless-prune-plugin
+
+custom:
+  serverless-offline:
+    apiKey: local
+    port: 3000
+  prune:
+    automatic: true
+    number: 3
+
+functions:
+  sample:
+    name: name-sample
+    handler: src/controllers/_handler.debug
+    description: Description
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: /
+          method: GET
+          cors: true
+          private: true
+          authorizer:
+            type: CUSTOM
+            authorizerId:
+              'Fn::ImportValue': ${env:API_NAME}-${env:VERSION}-authorizerId
+  
+resources:
+  Resources:
+    ## add a sqs queue dead
+    MessagesDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: queue-name-dead
+        MessageRetentionPeriod: 1209600
+
+    ## add a sqs queue
+    Messages:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: queue-name
+        MessageRetentionPeriod: 1209600
+        VisibilityTimeout: 60
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - MessagesDeadLetterQueue
+              - Arn
+          maxReceiveCount: 10
+      DependsOn: "MessagesDeadLetterQueue"
+
+    # add table on dynamo
+    DynamoDbTableUserError:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: table-name
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: N
+          - AttributeName: test
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: search-id-test
+            KeySchema:
+            - AttributeName: id
+              KeyType: HASH
+            - AttributeName: test
+              KeyType: RANGE
+            Projection:
+              NonKeyAttributes: []
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: '1'
+              WriteCapacityUnits: '1'

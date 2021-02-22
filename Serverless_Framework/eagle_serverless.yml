@@ -1,0 +1,174 @@
+service: blog
+
+plugins:
+  - serverless-appsync-plugin
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage}
+  region: eu-west-1
+
+# LAMBDAs
+functions:
+  getBlogs:
+    handler: handlers/get-blogs.handler
+
+custom:
+  accountId:
+    Ref: AWS::AccountId
+  appSync:
+    name: blog-appsync-api
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      awsRegion: eu-west-1
+      defaultAction: ALLOW
+      userPoolId:  { Ref: CognitoUserPool } 
+    mappingTemplates:
+      - dataSource: getBlogs
+        type: Query #Query, Mutation, Subscription
+        field: getBlogs
+        request: "default-lambda-request.vtl"
+        response: "default-lambda-response.vtl"
+    schema: schema.graphql
+    serviceRole: "AppSyncServiceRole"
+    dataSources:
+      - type: AWS_LAMBDA
+        name: getBlogs
+        description: 'Get List of Blogs'
+        config:
+          lambdaFunctionArn:
+            Fn::Join:
+              - ''
+              - - "arn:aws:lambda:eu-west-1:"
+                - Ref: AWS::AccountId
+                - :function:blog-dev-getBlogs
+
+          serviceRoleArn: { Fn::GetAtt: [AppSyncLambdaServiceRole, Arn] }
+
+# you can add CloudFormation resource templates here
+resources:
+ Resources:
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: blog-user-pool
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: blog-client
+      UserPoolId:
+        Ref: CognitoUserPool
+
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: blog_identity_pool
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId:
+            Ref: CognitoUserPoolClient
+          ProviderName:
+            Fn::GetAtt: [CognitoUserPool, ProviderName]
+
+    # Roles (IAM) - defines what services you have access to
+
+  CognitoIdentityPoolRoles:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId:
+        Ref: CognitoIdentityPool
+      Roles:
+        authenticated:
+          Fn::GetAtt: [CognitoAuthRole, Arn]
+        unauthenticated:
+          Fn::GetAtt: [CognitoUnauthRole, Arn]
+      
+  CognitoAuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: blog-auth-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Federated: "cognito-identity.amazonaws.com"
+            Action:
+            - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                  "cognito-identity.amazonaws.com:amr": authenticated
+      Policies:
+        - PolicyName: "CognitoAuthorizedPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "mobileanalytics:PutEvents"
+                  - "cognito-sync:*"
+                  - "cognito-identity:*"
+                Resource: "*"
+              - Effect: "Allow"
+                Action: 
+                  - "execute-api:Invoke"
+                Resource: "*"
+              
+  CognitoUnauthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: blog-unauth-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Federated: "cognito-identity.amazonaws.com"
+            Action:
+            - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                  "cognito-identity.amazonaws.com:amr": authenticated
+      Policies:
+        - PolicyName: "CognitoAuthorizedPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "mobileanalytics:PutEvents"
+                  - "cognito-sync:*"
+                  - "cognito-identity:*"
+                Resource: "*"
+
+  AppSyncLambdaServiceRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "Lambda-${self:custom.appSync.serviceRole}"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          - PolicyName: "Lambda-${self:custom.appSync.serviceRole}-Policy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "lambda:invokeFunction"
+                  Resource:
+                    - "*"
+              
+    
+      

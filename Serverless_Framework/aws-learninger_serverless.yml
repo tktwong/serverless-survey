@@ -1,0 +1,80 @@
+service: aws-learninger-notes-app
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ${self:custom.region}
+  stage: ${self:custom.stage}
+  # Default role for all lambdas, can also create roles in resources and give each lambda a specific one
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+      Resource: arn:aws:dynamodb:${self:custom.region}:*:*
+
+custom:
+  defaultRegion: eu-west-1
+  region: ${opt:region, self:custom.defaultRegion}
+  stage: ${opt:stage, env:USER}
+  objectPrefix: '${self:service}-${self:custom.stage}'
+  webpack:
+    config: ./webpack.config.serverless.js
+  assetsBucketName: ${self:custom.objectPrefix}-assets
+  assets:
+    auto: true # deploy each time with rest of app
+    targets:
+      - bucket: ${self:custom.assetsBucketName}
+        prefix: assets
+        files:
+          - source: dist/
+            globs:
+              - '**/*.js'
+              - '**/*.map'
+
+plugins:
+  - serverless-s3-deploy
+  - serverless-webpack
+  - serverless-offline
+
+functions:
+  notesShowAll:
+    handler: src/endpoints/show-notes.handler
+    environment:
+      TABLE_NAME: ${self:resources.Resources.NotesTable.Properties.TableName}
+      ASSETS_HOSTNAME: !GetAtt AssetsBucket.DomainName
+    events:
+      - http:
+          path: notes
+          method: get
+  notesCreate:
+    handler: src/endpoints/create-note.handler
+    environment:
+      TABLE_NAME: ${self:resources.Resources.NotesTable.Properties.TableName}
+    events:
+      - http:
+          path: notes
+          method: post
+
+resources:
+  Outputs:
+  Resources:
+    NotesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        TableName: '${self:custom.objectPrefix}-notes'
+    AssetsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.assetsBucketName}

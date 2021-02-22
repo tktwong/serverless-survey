@@ -1,0 +1,114 @@
+
+service: store-api # NOTE: update this with your service name
+
+provider:
+  name: aws
+  runtime: java8
+  stage: dev
+  region: us-east-1
+  apiName: store-api
+
+package:
+  artifact: target/store-dev.jar
+
+plugins:
+#  - serverless-import-swagger
+
+functions:
+  readProduct:
+    handler: com.serverless.requests.ReadProduct
+    role: arn:aws:iam::423672971386:role/DBA
+    environment:
+      TABLE_NAME: Product
+    events:
+      - http:
+          path: product
+          method: GET
+          integration: lambda
+          request:
+            parameters:
+              querystrings:
+                id: true
+            template:
+              application/json: '{"id":"$input.params(''id'')"}'
+
+  listProducts:
+    role: arn:aws:iam::423672971386:role/DBA
+    handler: com.serverless.requests.ListProducts
+    environment:
+      TABLE_NAME: Product
+    events:
+      - http:
+          path: product/all
+          method: get
+          integration: lambda-proxy
+
+  updateProduct:
+    handler: com.serverless.requests.UpdateProduct
+    role: arn:aws:iam::423672971386:role/DBA
+    environment:
+      TABLE_NAME: Product
+    events:
+      - http:
+          path: product
+          method: put
+          integration: lambda
+          request:
+            schema:
+              application/json: ${file(models/product.json)}    #crie o esquema json da classe produto dentro de pasta model
+            template:
+              application/json: $input.json('$')
+              
+                  
+
+  deleteProduct:
+    role: arn:aws:iam::423672971386:role/DBA
+    handler: com.serverless.requests.DeleteProduct
+    environment:
+      TABLE_NAME: Product
+    events:
+      - http:
+          path: product/{id}
+          method: delete
+          integration: lambda-proxy
+
+  saveProduct:
+    role: arn:aws:iam::423672971386:role/DBA
+    handler: com.serverless.requests.SaveProduct
+    environment:
+      TABLE_NAME: Product
+    events:
+      - http:
+          path: product
+          method: post
+          integration: lambda-proxy
+
+resources:
+  Resources:
+    ProductTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: Product
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: N
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    ApiGatewayRestApi:
+      Type: 'AWS::ApiGateway::RestApi'
+      Properties:
+        Name: ${self:provider.apiName}-${self:provider.stage}
+        Body:
+          ${file(api-doc-swagger.yml)}
+
+    ApiGatewayDeployment:
+      Type: AWS::ApiGateway::Deployment
+      Properties:
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        StageName: ${self:provider.stage}

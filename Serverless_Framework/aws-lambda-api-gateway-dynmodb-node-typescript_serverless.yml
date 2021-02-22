@@ -1,0 +1,91 @@
+service: star-ward-api-011
+custom:
+  documentation:
+    api:
+      info:
+        version: "1"
+        title: "star-ward-api"
+        description: "This API is use aws provider with serverless framework"
+        contact:
+          name: "Dany Carrillo"
+          email: "danycarrillojara@gmail.com"
+      tags:
+        - name: "GetAll"
+          description: "getAll starships"
+    resources:
+      - path: "api/starships"
+        description: "this request return all data starships API"
+      - path: "api/dynamo/starships"
+        description: "Post starships for dynamodb"
+      - path: "api/dynamo/starships/all"
+        description: "GetAll starships for dynamodb"
+      - path: "api/dynamo/starships/{id}"
+        description: "Get starships for dynamodb"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "*"
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+functions:
+  list:
+    handler: src/controllers/starships.list
+    events:
+      - http:
+          path: api/starships
+          method: GET
+          cors: true
+
+  save:
+    handler: src/controllers/dynamodb/save.save
+    events:
+      - http:
+          path: api/dynamo/starships
+          method: POST
+          cors: true
+
+  find:
+    handler: src/controllers/dynamodb/find.find
+    events:
+      - http:
+          path: api/dynamo/starships/all
+          method: GET
+          cors: true
+
+  findOne:
+    handler: src/controllers/dynamodb/find-one.findOne
+    events:
+      - http:
+          path: api/dynamo/starships/{ID}
+          method: GET
+          cors: true
+resources:
+  Resources:
+    DcjWardsDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

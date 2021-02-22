@@ -1,0 +1,136 @@
+service: coding-task
+
+frameworkVersion: ">=1.80.0"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-jest-plugin
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  endpoints:
+    dynamodb-url: 'http://localhost:8000'
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  timeout: 10
+  # memorySize: 128
+  logRetentionInDays: 14
+  deploymentPrefix: serverless
+  stackName: coding-task-stack
+  apiName: coding-task-api
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}-users
+    DYNAMODB_URL: ${self:custom.endpoints.dynamodb-url}
+    DYNAMODB_REGION: ${self:provider.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource: "*"
+  logs:
+    restApi: 
+      accessLogging: true 
+      format: 'requestId: $context.requestId' 
+      executionLogging: true 
+      level: INFO 
+      fullExecutionData: true
+package:
+ individually: true
+ include: 
+    - users/**
+    - commons/**
+
+functions:
+  create:
+    handler: users/create.create
+    events:
+      - http:
+          path: user
+          method: post
+          cors: true
+
+  list:
+    handler: users/list.list
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+        
+  get:
+    handler: users/get.get
+    events:
+      - http:
+          path: user
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                id: true
+                userId: true
+        
+  update:
+    handler: users/update.update
+    events:
+      - http:
+          path: user
+          method: put
+          cors: true       
+
+  delete:
+    handler: users/delete.delete
+    events:
+      - http:
+          path: user
+          method: delete
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                id: true
+                userId: true
+resources: 
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: userId
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        

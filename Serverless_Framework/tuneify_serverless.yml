@@ -1,0 +1,80 @@
+service: playlist-service
+provider:
+  name: aws
+  runtime: nodejs4.3
+  profile: personal-admin
+  region: eu-west-1
+functions:
+  getPlaylistsByUserId:
+    handler: handler.getPlaylistsByUserId
+    events:
+      - http:
+          path: playlists
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:lambda:eu-west-1:${env:AWS_ACCOUNT_NO}:function:authentication-service-dev-authorise
+  savePlaylist:
+    handler: handler.savePlaylist
+    events:
+      - http:
+          path: playlists
+          method: post
+          cors: true
+          authorizer:
+            arn: arn:aws:lambda:eu-west-1:${env:AWS_ACCOUNT_NO}:function:authentication-service-dev-authorise
+  updatePlaylist:
+    handler: handler.updatePlaylist
+    events:
+      - http:
+          path: playlists
+          method: put
+          cors: true
+          authorizer:
+            arn: arn:aws:lambda:eu-west-1:${env:AWS_ACCOUNT_NO}:function:authentication-service-dev-authorise
+resources:
+  Resources:
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: playlists
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: userid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        # Allow queries to get playlists by userID
+        GlobalSecondaryIndexes:
+          - IndexName: PlaylistUsers
+            KeySchema:
+              - AttributeName: userid
+                KeyType: HASH
+              - AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: DynamoDbTable
+      Properties:
+        PolicyName: lambda-dynamodb
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource:
+                - arn:aws:dynamodb:*:*:table/playlists
+                - arn:aws:dynamodb:*:*:table/playlists/index/*
+        Roles:
+          - Ref: IamRoleLambdaExecution

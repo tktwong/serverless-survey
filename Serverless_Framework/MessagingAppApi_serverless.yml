@@ -1,0 +1,119 @@
+# Messaging API
+
+service: messaging-app-api
+
+provider:
+  name: aws
+  memorySize: 128
+  #endpointType: PRIVATE
+  timeout: 12
+  stage: dev
+  region: us-east-1
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/*"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:Query"
+        - "dynamodb:Scan"
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/*/index/*"
+
+
+# packaging information here
+functions:
+  get-messages:
+    handler: getmessages/handler.getMessages
+    runtime: python3.7
+    timeout: 5
+    environment:
+      DYNAMODB_TABLE: "MessagingAppMessages"
+    events:
+      - http:
+          path:  messages/{groupId}
+          method: get
+          request:
+            parameters:
+              querystrings:
+                lastMessageId: false
+              paths:
+                groupId: true
+          cors: true
+            #origins:
+            #  - http://serverlessperformance.net
+            #headers:
+            #  - Content-Type
+            #  - X-Amz-Date
+            #  - Authorization
+            #  - X-Api-Key
+            #  - X-Amz-Security-Token
+            #  - X-Amz-User-Agent
+            #allowCredentials: false
+  put-message:
+    runtime: dotnetcore2.1
+    timeout: 30 # max for api-backed lambdas 
+    handler: CsharpHandlers::MessagingApi.Handler::SendMessage
+    package:
+      artifact: putmessage/bin/release/netcoreapp2.1/deploy-package.zip
+    events:
+      - http:
+          path: messages
+          method: post
+          request:
+            parameters:
+              paths:
+                groupId: true  
+          cors: true              
+    environment:
+      ACCEPTED_RUNTIMES: "python3,go,dotnet2,java8,node610,node810"
+
+resources:
+  Outputs:
+    MessagingApiUrl:
+      Description: The URL for the published API
+      Value:
+        Fn::Join:
+          - ""
+          - - "https://"
+            - Ref: ApiGatewayRestApi
+            - ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}"  
+      Export:
+        Name: MessagingApiUrl
+  Resources:
+    MessagesTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: "MessagingAppMessages"
+        AttributeDefinitions:
+          - AttributeName: groupId
+            AttributeType: S
+          #- AttributeName: message
+          #  AttributeType: S   
+          - AttributeName: messageDateTime
+            AttributeType: S                            
+        KeySchema:
+          - AttributeName: groupId
+            KeyType: HASH
+          - AttributeName: messageDateTime
+            KeyType: RANGE
+        # LocalSecondaryIndexes:
+        #   - IndexName: duration-index
+        #     KeySchema:
+        #       - AttributeName: LanguageRuntime
+        #         KeyType: HASH
+        #       - AttributeName: Duration
+        #         KeyType: RANGE
+        #     Projection:
+        #       ProjectionType: KEYS_ONLY
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

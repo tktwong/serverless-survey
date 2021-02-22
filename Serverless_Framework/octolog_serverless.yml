@@ -1,0 +1,160 @@
+service: octolog
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  timeout: 25
+  apiKeys: # List of API keys to be used by your service API Gateway REST API
+    - ${self:service}-${self:provider.stage}-key
+  stackTags:
+    octolog: ${self:provider.stage} # useful to create AWS group
+  stage: dev
+  region: ap-southeast-2
+  environment: # Service wide environment variables
+    BASICS_TABLE: ${self:resources.Resources.usersTable.Properties.TableName}
+    EXPERIENCES_TABLE: ${self:resources.Resources.experiencesTable.Properties.TableName}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:754380202678:table/${self:service}-*"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        - "arn:aws:s3:::${self:service}-*"
+
+functions:
+  updateBasics:
+    handler: lambda/basics.update
+    events:
+      - http:
+          path: people/{trigram}/cv/{name}
+          method: put
+          cors: true
+          private: true
+
+  getBasics:
+    handler: lambda/basics.get
+    events:
+      - http:
+          path: people/{trigram}/cv/{name}
+          method: get
+          cors: true
+          private: true
+
+
+  deleteBasics:
+    handler: lambda/basics.delete
+    events:
+      - http:
+          path: people/{trigram}/cv/{name}
+          method: delete
+          cors: true
+          private: true
+
+
+  getExperience:
+    handler: lambda/experiences.get
+    events:
+      - http:
+          path: people/{trigram}/experiences/{id}
+          method: get
+          cors: true
+          private: true
+
+  updateExperience:
+    handler: lambda/experiences.update
+    events:
+      - http:
+          path: people/{trigram}/experiences/{id}
+          method: put
+          cors: true
+          private: true
+
+  createExperience:
+    handler: lambda/experiences.create
+    events:
+      - http:
+          path: people/{trigram}/cv/{name}/experiences
+          method: post
+          cors: true
+          private: true
+
+  getExperiences:
+    handler: lambda/experiences.getAll
+    events:
+      - http:
+          path: people/{trigram}/cv/{name}/experiences
+          method: get
+          cors: true
+          private: true
+
+
+  deleteExperience:
+    handler: lambda/experiences.delete
+    events:
+      - http:
+          path: people/{trigram}/experiences/{id}
+          method: delete
+          cors: true
+          private: true
+
+  syncOctoExperiences:
+    handler: lambda/octopod.sync
+    environment:
+      CLIENT_ID: ${env:OCTOPOD_CLIENT_ID}
+      CLIENT_SECRET: ${env:OCTOPOD_CLIENT_SECRET}
+    events:
+      - http:
+          path: people/{trigram}/cv/{name}/octopod/sync
+          method: post
+          cors: true
+          private: true
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                id: true
+                name: true
+  syncBasics:
+    handler: lambda/askbob.sync
+    environment:
+      CLIENT_ASKBOB_ID: ${env:CLIENT_ASKBOB_ID}
+      CLIENT_ASKBOB_SECRET: ${env:CLIENT_ASKBOB_SECRET}
+    events:
+      - http:
+          path: people/{trigram}/cv/{name}/askbob/sync
+          method: post
+          cors: true
+          private: true
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                trigram: true
+                name: true
+
+  backupDb:
+    handler: lambda/tech/backup.backup
+    events:
+      - schedule: rate(12 hours)
+    environment:
+      BACKUP_BUCKET: ${self:resources.Resources.backup.Properties.BucketName}
+
+resources: ${file(./ops/cloud-formation.yml)}
+
+plugins:
+  - serverless-offline
+
+package:
+  exclude:
+    - tmp/**
+    - .git/**
+    - DynamoDBLocal.jar
+    - DynamoDBLocal_lib/**
+    - coverage/**
+    - shared-local-instance.db
+    - client

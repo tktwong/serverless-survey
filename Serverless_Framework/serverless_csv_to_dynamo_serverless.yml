@@ -1,0 +1,59 @@
+service: csv-upload
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:dynamodb:*:*:table/"
+            - Ref: JobsDynamoDbTable
+
+functions:
+  addData:
+    handler: handler.addData
+    events:
+      - s3:
+          bucket: faethm-jobmatching-csv-uploads
+          event: s3.ObjectCreated:*
+          rules: [{ suffix: .csv }]
+
+resources:
+  Resources:
+    S3BucketCSV:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: faethm-jobmatching-csv-uploads
+    LambdaPermissionS3:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        FunctionName: "addData"
+        Principal: "s3.amazonaws.com"
+        Action: "lambda:InvokeFunction"
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: "arn:aws:s3:::faethm-jobmatching-csv-uploads"
+    JobsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: roles
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

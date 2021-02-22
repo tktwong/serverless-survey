@@ -1,0 +1,69 @@
+service: tom-fischer-users
+
+plugins:
+  - serverless-offline-dotenv
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    port: 3002
+  cognito:
+    userPool:
+      name: tf-user-pool-${self:provider.stage}
+    client:
+      name: tf-fuser-pool-client-${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-east-1
+  stage: ${opt:stage, "prod"}
+  environment:
+    COGNITO_USER_POOL_ID:
+      Ref: CognitoUserPool
+    COGNITO_USER_POOL_CLIENT_ID:
+      Ref: CognitoUserPoolClient
+    COGNITO_USER_POOL_REGION: ${self:provider.region}
+
+functions:
+  login:
+    handler: src/index.handler
+    events:
+      - http:
+          path: /api/login
+          method: POST
+          cors: true
+  resetTemporaryPassword:
+    handler: src/index.handler
+    events:
+      - http:
+          path: /api/login/reset-temporary-password
+          method: POST
+          cors: true
+
+resources:
+  Resources:
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:custom.cognito.userPool.name}
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:custom.cognito.client.name}
+        UserPoolId:
+          Ref: CognitoUserPool
+        ExplicitAuthFlows:
+          - ADMIN_NO_SRP_AUTH
+        GenerateSecret: false
+  Outputs:
+    UserPoolId:
+      Value:
+        Ref: CognitoUserPool
+    UserPoolClientId:
+      Value:
+        Ref: CognitoUserPoolClient

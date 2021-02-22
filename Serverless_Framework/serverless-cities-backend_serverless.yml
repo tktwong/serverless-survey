@@ -1,0 +1,185 @@
+service: serverless-cities-backend
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - apigateway:GET
+        - apigateway:POST
+      Resource:
+        - "arn:aws:apigateway:${self:provider.region}::/restapis*"
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - "Fn::GetAtt": [ CitiesTable, Arn ]
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-aws-documentation
+  - serverless-stack-output
+
+package:
+  include:
+    src/**/!(*.spec).js
+  exclude:
+    - node_modules/**/*
+
+functions:
+  getSwaggerJson:
+    handler: src/swagger/swagger.getSwaggerJson
+    description: Returns the Swagger documentation of the API in JSON format.
+
+    environment:
+      REGION_NAME: ${self:provider.region}
+      REST_API_NAME: ${self:service}
+      STAGE_NAME: ${self:provider.stage}
+      API_INFO_VERSION: ${file(./swagger/documentation.yml):api.info.version}
+      API_INFO_TITLE: ${file(./swagger/documentation.yml):api.info.title}
+
+    events:
+      - http:
+          path: swagger.json
+          method: get
+          cors: true
+
+  getHealthCheck:
+    handler: src/health/health.getHealthCheck
+    description: Returns the result of a quick health check of the API.
+
+    events:
+      - http:
+          path: health/check
+          method: get
+          cors: true
+          documentation:
+            summary: Returns the result of a quick health check of the API.
+            tags:
+              - Health
+            description: Returns the result of a quick health check of the API.
+            methodResponses:
+              - statusCode: '200'
+                description: Returned when the operation is completed successfully.
+                responseModels:
+                  "application/json": GetHealthCheck
+              - ${file(./swagger/error-responses/internal-server-error.yml)}
+
+  getHealthCheckDetailed:
+    handler: src/health/health.getHealthCheckDetailed
+    description: Returns the result of a detailed health check of the API.
+
+    events:
+      - http:
+          path: health/detailed
+          method: get
+          cors: true
+          documentation:
+            summary: Returns the result of a detailed health check of the API.
+            tags:
+              - Health
+            description: Returns the result of a detailed health check of the API.
+            methodResponses:
+              - statusCode: '200'
+                description: Returned when the operation is completed successfully.
+                responseModels:
+                  "application/json": GetHealthCheckDetailed
+              - ${file(./swagger/error-responses/internal-server-error.yml)}
+
+  getCity:
+    handler: src/cities/cities.getCity
+    description: Returns a single city.
+    events:
+      - http:
+          path: cities/{id}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+          documentation:
+            summary: Get a city.
+            tags:
+              - City
+            description: Returns the specified city.
+            pathParams:
+              - name: id
+                description: The unique identifier of the city to retrieve.
+            methodResponses:
+              - statusCode: '200'
+                description: Returned when the operation is completed successfully.
+                responseModels:
+                  "application/json": GetCityResponse
+              - ${file(./swagger/error-responses/bad-request.yml)}
+              - ${file(./swagger/error-responses/forbidden.yml)}
+              - ${file(./swagger/error-responses/not-found.yml)}
+              - ${file(./swagger/error-responses/internal-server-error.yml)}
+  getAllCities:
+      handler: src/cities/cities.getAllCities
+      description: Returns a city list.
+      events:
+        - http:
+            path: cities
+            method: get
+            cors: true
+            documentation:
+              summary: Get all city.
+              tags:
+                - City
+              description: Returns the all city.
+              methodResponses:
+                - statusCode: '200'
+                  description: Returned when the operation is completed successfully.
+                  responseModels:
+                    "application/json": GetCityResponse
+                - ${file(./swagger/error-responses/bad-request.yml)}
+                - ${file(./swagger/error-responses/forbidden.yml)}
+                - ${file(./swagger/error-responses/not-found.yml)}
+                - ${file(./swagger/error-responses/internal-server-error.yml)}
+  createCity:
+      handler: src/cities/cities.createCity
+      description: Create a single city.
+      environment:
+        tableName: ${self:custom.tableName}
+      events:
+        - http:
+            path: cities
+            method: post
+            cors: true
+            documentation:
+              summary: Create a city.
+              tags:
+                - City
+              description: Create the specified city
+              methodResponses:
+                - statusCode: '200'
+                  description: Returned when the operation is completed successfully.
+                  responseModels:
+                    "application/json": GetCityResponse
+                - ${file(./swagger/error-responses/bad-request.yml)}
+                - ${file(./swagger/error-responses/forbidden.yml)}
+                - ${file(./swagger/error-responses/not-found.yml)}
+                - ${file(./swagger/error-responses/internal-server-error.yml)}
+
+
+custom:
+  documentation: ${file(./swagger/documentation.yml)}
+  output:
+    file: .serverless/output.json
+  tableName: ${self:custom.stage}-Cities
+  stage: ${opt:stage, self:provider.stage}
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+
+
+
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}

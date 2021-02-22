@@ -1,0 +1,185 @@
+org: tnntech
+app: let-meet
+service: server-side
+
+custom:
+  secret: ${file(secret.json)}
+  serverless-offline:
+    host: 0.0.0.0 # For host container hosting
+  dynamodb:
+    stages:
+      - ${self:custom.secret.STAGE}
+    start:
+      cors: true
+      inMemory: true
+      migrate: true
+      seed: true
+    seed: # Migrate data
+      dev:
+        sources:
+          - table: ${self:custom.secret.ACCOUNTS_TABLE}
+            sources: [./src/seeders/accounts.data.json]
+          - table: ${self:custom.secret.EVENTS_TABLE}
+            sources: [./src/seeders/events.data.json]
+          - table: ${self:custom.secret.GROUPS_TABLE}
+            sources: [./src/seeders/groups.data.json]
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  versionFunctions: false
+  stage: ${self:custom.secret.STAGE}
+  region: ${self:custom.secret.REGION}
+  environment:
+    ACCOUNTS_TABLE: ${self:custom.secret.ACCOUNTS_TABLE}
+    EVENTS_TABLE: ${self:custom.secret.EVENTS_TABLE}
+    GROUPS_TABLE: ${self:custom.secret.GROUPS_TABLE}
+    REGION: ${self:custom.secret.REGION}
+    STAGE: ${self:custom.secret.STAGE}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ accounts, Arn ]
+        - "Fn::GetAtt": [ events, Arn ]
+        - "Fn::GetAtt": [ groups, Arn ]
+        # - arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.ACCOUNTS_TABLE}
+        # - arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.EVENTS_TABLE}
+        # - arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.GROUPS_TABLE}
+
+functions:
+  # Test Function
+  test:
+    handler: src/controllers/test.controller.test
+    events:
+      - http: get v1/test
+
+  # Account Function
+  get_account_by_id:
+    handler: src/controllers/account.controller.getAccountById
+    events:
+      - http: get v1/account/{acctId}
+  delete_account_by_id:
+    handler: src/controllers/account.controller.deleteAccountById
+    events:
+      - http: delete v1/account/{acctId}
+  update_account_by_id:
+    handler: src/controllers/account.controller.updateAccountInfoById
+    events:
+      - http: put v1/account/{acctId}
+  create_account:
+    handler: src/controllers/account.controller.createAccount
+    events:
+      - http: post v1/account/
+  verify_account:
+    handler: src/controllers/account.controller.verifyAccount
+    events:
+      - http: post v1/account/verify
+  add_event:
+    handler: src/controllers/account.controller.addEventToAccount
+    events:
+      - http: post v1/account/addEvent
+  delete_event_from_account:
+    handler: src/controllers/account.controller.deleteAccountEventById
+    events:
+      - http: put v1/account/deleteEvent/{accId}
+
+  # Event Function
+  get_event_by_id:
+    handler: src/controllers/event.controller.getEventById
+    events:
+      - http: get v1/event/{eventId}
+  delete_event_by_id:
+    handler: src/controllers/event.controller.deleteEventById
+    events:
+      - http: delete v1/event/{eventId}
+  update_event_by_id:
+    handler: src/controllers/event.controller.updateEventById
+    events:
+      - http: put v1/event/{eventId}
+  get_event:
+    handler: src/controllers/event.controller.getEvents
+    events:
+      - http: get v1/event
+  create_event:
+    handler: src/controllers/event.controller.createEvent
+    events:
+      - http: post v1/event
+  search_event:
+    handler: src/controllers/event.controller.getSearchEvents
+    events:
+      - http: get v1/event/search/{queryString}
+
+  # Group Function
+  create_group:
+    handler: src/controllers/group.controller.createGroup
+    events:
+      - http: post v1/group
+  get_group_by_id:
+    handler: src/controllers/group.controller.getGroupById
+    events:
+      - http: get v1/group/{groupId}
+  get_all_group:
+    handler: src/controllers/group.controller.getAllGroup
+    events:
+      - http: get v1/group
+  delete_group_by_id:
+    handler: src/controllers/group.controller.deleteGroupById
+    events:
+      - http: delete v1/group/{groupId}
+  update_group_by_id:
+    handler: src/controllers/group.controller.updateGroupById
+    events:
+      - http: put v1/group/{groupId}
+
+resources:
+  Resources:
+    accounts:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.ACCOUNTS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    events:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.EVENTS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    groups:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.GROUPS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

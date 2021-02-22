@@ -1,0 +1,57 @@
+org: mallize
+app: sls-group-telegram-bot
+service: sls-group-telegram-bot
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  environment:
+    TELEGRAM_TOKEN: ${ssm:telegram-token~true} 
+    GROUP_TABLE: "group-bot-groups"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/*"
+
+functions:
+  process:
+    handler: src/handler.handle
+    events:
+      - http:
+          path: /
+          method: post
+
+resources:
+  Resources:
+    groupsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.environment.GROUP_TABLE}
+        AttributeDefinitions:
+          -
+            AttributeName: chatId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: chatId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true      
+
+

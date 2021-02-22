@@ -1,0 +1,304 @@
+plugins:
+  - serverless-iam-roles-per-function
+
+service: idv
+
+custom:
+  defaultStage: sls-dev
+  defaultRegion: eu-west-1
+  defaultVersion: 1.0.0-SNAPSHOT
+
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: ${opt:region, self:custom.defaultRegion}
+  version: ${opt:version, self:custom.defaultVersion}
+
+  lambdas:
+    postToken:
+      name: ${self:custom.stage}-post-token
+
+    authorizer:
+      name: ${self:custom.stage}-idv-authorizer
+
+    getIdentity:
+      name: ${self:custom.stage}-get-identity
+
+    postVerificationContext:
+      name: ${self:custom.stage}-post-verification-context
+
+    getVerificationContext:
+      name: ${self:custom.stage}-get-verification-context
+
+    postLockoutState:
+      name: ${self:custom.stage}-post-lockout-state
+
+    putResetLockoutState:
+      name: ${self:custom.stage}-put-reset-lockout-state
+
+    getLockoutState:
+      name: ${self:custom.stage}-get-lockout-state
+
+  dynamoTables:
+    identity:
+      name: ${self:custom.stage}-identity
+      arn: { "Fn::Join" : ["", ["arn:aws:dynamodb:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":table/${self:custom.dynamoTables.identity.name}" ] ] }
+
+    verificationContext:
+      name: ${self:custom.stage}-verification-context
+      arn: { "Fn::Join" : ["", ["arn:aws:dynamodb:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":table/${self:custom.dynamoTables.verificationContext.name}" ] ] }
+
+    idvIdVerificationAttempt:
+      name: ${self:custom.stage}-idv-id-verification-attempt
+      arn: { "Fn::Join": ["", ["arn:aws:dynamodb:${self:custom.region}:", { "Ref": "AWS::AccountId" }, ":table/${self:custom.dynamoTables.idvIdVerificationAttempt.name}" ] ] }
+
+    contextIdVerificationAttempt:
+      name: ${self:custom.stage}-context-id-verification-attempt
+      arn: { "Fn::Join": ["", ["arn:aws:dynamodb:${self:custom.region}:", { "Ref": "AWS::AccountId" }, ":table/${self:custom.dynamoTables.contextIdVerificationAttempt.name}" ] ] }
+
+  topics:
+    idvEvent:
+      name: ${self:custom.stage}-idv-event
+      arn: { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.topics.idvEvent.name}" ] ] }
+
+provider:
+  name: aws
+  runtime: java8
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+  timeout: 20
+  environment:
+    STAGE: ${self:custom.stage}
+    REGION: ${self:custom.region}
+    EVENT_TOPIC_ARN: ${self:custom.topics.idvEvent.arn}
+    AUTHORIZER_SECRET_KEY: idv-secret-key
+
+package:
+  individually: true
+
+functions:
+
+  postToken:
+    handler: uk.co.mruoc.idv.plugin.uk.awslambda.authorizer.UkJwtPostTokensHandler
+    package:
+      artifact: uk-authorizer-aws-lambda/build/distributions/uk-authorizer-aws-lambda-${self:custom.version}.zip
+    name: ${self:custom.lambdas.postToken.name}
+    events:
+      - http:
+          path: tokens
+          method: post
+
+  authorizer:
+    handler: uk.co.mruoc.idv.plugin.uk.awslambda.authorizer.UkJwtAuthorizerHandler
+    package:
+      artifact: uk-authorizer-aws-lambda/build/distributions/uk-authorizer-aws-lambda-${self:custom.version}.zip
+    name: ${self:custom.lambdas.authorizer.name}
+
+  getIdentity:
+    handler: uk.co.mruoc.idv.plugin.uk.awslambda.identity.UkGetIdentityHandler
+    package:
+      artifact: uk-identity-aws-lambda/build/distributions/uk-identity-aws-lambda-${self:custom.version}.zip
+    name: ${self:custom.lambdas.getIdentity.name}
+    events:
+      - http:
+          path: identities/{id}
+          method: get
+          authorizer: authorizer
+          resultTtlInSeconds: 0
+      - http:
+          path: identities
+          method: get
+          authorizer: authorizer
+          resultTtlInSeconds: 0
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:BatchWriteItem
+        Resource: ${self:custom.dynamoTables.identity.arn}
+
+  postVerificationContext:
+    handler: uk.co.mruoc.idv.plugin.uk.awslambda.verificationcontext.UkPostVerificationContextHandler
+    package:
+      artifact: uk-verification-context-aws-lambda/build/distributions/uk-verification-context-aws-lambda-${self:custom.version}.zip
+    name: ${self:custom.lambdas.postVerificationContext.name}
+    events:
+      - http:
+          path: verificationContexts
+          method: post
+          authorizer: authorizer
+          resultTtlInSeconds: 0
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: ${self:custom.dynamoTables.verificationContext.arn}
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:BatchWriteItem
+        Resource: ${self:custom.dynamoTables.identity.arn}
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamoTables.idvIdVerificationAttempt.arn}
+      - Effect: Allow
+        Action:
+          - sns:Publish
+        Resource: ${self:custom.topics.idvEvent.arn}
+
+  getVerificationContext:
+    handler: uk.co.mruoc.idv.plugin.uk.awslambda.verificationcontext.UkGetVerificationContextHandler
+    package:
+      artifact: uk-verification-context-aws-lambda/build/distributions/uk-verification-context-aws-lambda-${self:custom.version}.zip
+    name: ${self:custom.lambdas.getVerificationContext.name}
+    events:
+      - http:
+          path: verificationContexts/{id}
+          method: get
+          authorizer: authorizer
+          resultTtlInSeconds: 0
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamoTables.verificationContext.arn}
+
+  postLockoutState:
+    handler: uk.co.mruoc.idv.plugin.uk.awslambda.lockoutstate.UkPostVerificationAttemptHandler
+    package:
+      artifact: uk-lockout-state-aws-lambda/build/distributions/uk-lockout-state-aws-lambda-${self:custom.version}.zip
+    name: ${self:custom.lambdas.postLockoutState.name}
+    events:
+      - http:
+          path: lockoutStates
+          method: post
+          authorizer: authorizer
+          resultTtlInSeconds: 0
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamoTables.verificationContext.arn}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamoTables.idvIdVerificationAttempt.arn}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamoTables.contextIdVerificationAttempt.arn}
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamoTables.identity.arn}
+
+  putResetLockoutState:
+    handler: uk.co.mruoc.idv.plugin.uk.awslambda.lockoutstate.UkPutResetLockoutStateHandler
+    package:
+      artifact: uk-lockout-state-aws-lambda/build/distributions/uk-lockout-state-aws-lambda-${self:custom.version}.zip
+    name: ${self:custom.lambdas.putResetLockoutState.name}
+    events:
+      - http:
+          path: lockoutStates
+          method: put
+          authorizer: authorizer
+          resultTtlInSeconds: 0
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamoTables.idvIdVerificationAttempt.arn}
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamoTables.identity.arn}
+
+  getLockoutState:
+    handler: uk.co.mruoc.idv.plugin.uk.awslambda.lockoutstate.UkGetLockoutStateHandler
+    package:
+      artifact: uk-lockout-state-aws-lambda/build/distributions/uk-lockout-state-aws-lambda-${self:custom.version}.zip
+    name: ${self:custom.lambdas.getLockoutState.name}
+    events:
+      - http:
+          path: lockoutStates
+          method: get
+          authorizer: authorizer
+          resultTtlInSeconds: 0
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamoTables.idvIdVerificationAttempt.arn}
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamoTables.identity.arn}
+
+resources:
+  Resources:
+    identityTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: alias
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: alias
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.dynamoTables.identity.name}
+
+    verificationContextTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.dynamoTables.verificationContext.name}
+
+    idvIdVerificationAttemptTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: idvId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: idvId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.dynamoTables.idvIdVerificationAttempt.name}
+
+    contextIdVerificationAttemptTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: contextId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: contextId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.dynamoTables.contextIdVerificationAttempt.name}
+
+    idvEventTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.topics.idvEvent.name}

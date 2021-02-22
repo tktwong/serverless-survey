@@ -1,0 +1,221 @@
+service: astorgacollections-backend 
+
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle
+  - serverless-export-env
+  - serverless-stack-output
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  userPoolName: astorgacollections-${self:custom.stage}-user-pool
+  studentProfilesTableName: astorgacollections-studprofiles-${self:custom.stage}
+  studentISATableName: astorgacollections-studisa-${self:custom.stage}
+  staffProfilesTableName: astorgacollections-staffprofiles-${self:custom.stage}
+  studentUserGroupName: student
+  staffUserGroupName: staff
+  staffAdminUserGroupName: staffadmin
+  adminUserGroupName: admin
+  output:
+    file: .stackoutput-${self:custom.stage}.json
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+
+provider:
+  name: aws
+  stage: dev
+  runtime: nodejs10.x
+  region: eu-central-1
+
+  # These environment variables are made available to our functions under 
+  # process.env
+  environment:
+    userPoolName: ${self:custom.userPoolName}
+    studentProfilesTableName: ${self:custom.studentProfilesTableName}
+    staffProfilesTableName: ${self:custom.staffProfilesTableName}
+    studentUserGroupName: ${self:custom.studentUserGroupName}
+    staffUserGroupName: ${self:custom.staffUserGroupName}
+    staffAdminUserGroupName: ${self:custom.staffAdminUserGroupName}
+    adminUserGroupName: ${self:custom.adminUserGroupName}
+   
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - "Fn::GetAtt": [ StudentProfilesDynamoDBTable, Arn ]
+        - "Fn::GetAtt": [ StaffProfilesDynamoDBTable, Arn ]
+    - Effect: "Allow"
+      Action:
+        - cognito-idp:AdminGetUser
+        - cognito-idp:ListUsers
+        - cognito-idp:ListUsersInGroup
+        - cognito-idp:AdminListGroupsForUser
+        - cognito-idp:AdminAddUserToGroup
+        - cognito-idp:AdminCreateUser
+        - cognito-idp:AdminDeleteUser
+      Resource:
+        - "Fn::GetAtt": [ CognitoUserPool, Arn ] 
+
+functions:
+  user:
+    handler: handler.user
+    events:
+      - http:
+          path: user
+          method: get
+          cors: true
+          authorizer: aws_iam
+  
+  dashboard:
+    handler: handler.dashboard
+    events:
+      - http:
+          path: dashboard
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  listStaff:
+    handler: handler.listStaff
+    events:
+      - http:
+          path: staff
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  createStaff:
+    handler: handler.createStaff
+    events:
+      - http:
+          path: staff
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  getStaff:
+    handler: handler.getStaff
+    events:
+      - http:
+          path: staff/{staffId}
+          method: get
+          cors: true
+          authorizer: aws_iam 
+
+  updateStaff:
+    handler: handler.updateStaff
+    events:
+      - http:
+          path: staff/{staffId}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  deleteStaff:
+    handler: handler.deleteStaff
+    events:
+      - http:
+          path: staff/{staffId}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  listStudents:
+    handler: handler.listStudents
+    events:
+      - http:
+          path: student
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  createStudent:
+    handler: handler.createStudent
+    events:
+      - http:
+          path: student
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  getStudent:
+    handler: handler.getStudent
+    events:
+      - http:
+          path: student/{studentId}
+          method: get
+          cors: true
+          authorizer: aws_iam 
+
+  updateStudent:
+    handler: handler.updateStudent
+    events:
+      - http:
+          path: student/{studentId}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  deleteStudent:
+    handler: handler.deleteStudent
+    events:
+      - http:
+          path: student/{studentId}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  createStudentISA:
+    handler: handler.createStudentISA
+    events:
+      - http:
+          path: isa/{studentId}
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  getStudentISA:
+    handler: handler.getStudentISA
+    events:
+      - http:
+          path: isa/{studentId}
+          method: get
+          cors: true
+          authorizer: aws_iam 
+
+  updateStudentISA:
+    handler: handler.updateStudentISA
+    events:
+      - http:
+          path: isa/{studentId}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  deleteStudentISA:
+    handler: handler.deleteStudentISA
+    events:
+      - http:
+          path: isa/{studentId}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+resources:
+  - ${file(resources/api-gateway-errors.yml)}
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/s3-bucket.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

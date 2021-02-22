@@ -1,0 +1,126 @@
+service: insultbot
+
+plugins:
+  - serverless-plugin-scripts
+  - serverless-s3-sync
+
+custom:
+  region: ${self:provider.region}
+  stage: ${env:STAGE, self:custom.localConfig.stage, opt:stage, 'dev'}
+  prefixAuto: ${self:service}-${self:custom.stage}
+  prefix: ${env:PREFIX, self:custom.prefixAuto}
+  resourceNames:
+    queue: ${self:custom.prefix}-queue
+    sqs: ${self:custom.prefix}-queue-messages
+    staticBucket: ${self:custom.prefix}-site
+  scripts:
+    hooks:
+      'deploy:createDeploymentArtifacts': npm run build
+  s3Sync:
+    - bucketName: ${self:custom.resourceNames.staticBucket}
+      deleteRemoved: false
+      localDir: build
+      acl: public-read
+      defaultContentType: text/html
+      params:
+        - index.html:
+            CacheControl: 'no-cache'
+        - "*.js":
+            CacheControl: 'no-cache'
+            # CacheControl: 'public, max-age=31536000'
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+  environment:
+    LOG_LEVEL: ${env:LOG_LEVEL, "debug"}
+    HOSTNAME: ${env:HOSTNAME, "insultron.lmorchard.com"}
+    ACTOR_NAME: ${env:ACTOR_NAME, "Insultron2000"}
+    QUEUE_NAME: ${self:custom.resourceNames.sqs}
+    STATIC_BUCKET: ${self:custom.resourceNames.staticBucket}
+
+  iamRoleStatements:
+  - Effect: Allow
+    Resource:
+      - arn:aws:s3:::${self:custom.resourceNames.staticBucket}
+      - arn:aws:s3:::${self:custom.resourceNames.staticBucket}/*
+    Action:
+      - s3:*
+  - Effect: Allow
+    Resource: arn:aws:sqs:*:*:${self:custom.resourceNames.sqs}
+    Action:
+      - sqs:*
+
+resources:
+  Resources:
+
+    QueueMessages:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.resourceNames.sqs}
+        MessageRetentionPeriod: 1209600
+        VisibilityTimeout: 60
+
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.resourceNames.staticBucket}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [ "", [ "arn:aws:s3:::", { "Ref": "StaticSite" }, "/*" ] ]
+
+functions:
+
+  webfingerGet:
+    handler: functions/webfinger.get
+    name: ${self:custom.prefix}-webfingerGet
+    events:
+      - http: GET .well-known/webfinger
+
+  inboxPost:
+    handler: functions/inbox.post
+    name: ${self:custom.prefix}-inboxPost
+    events:
+      - http: POST inbox
+
+  outboxGet:
+    handler: functions/outbox.get
+    name: ${self:custom.prefix}-outboxGet
+    events:
+      - http: GET outbox
+
+  #periodic:
+  #  timeout: 60
+  #  handler: functions/periodic.handler
+  #  name: ${self:custom.prefix}-periodic
+  #  events:
+  #    - schedule: rate(1 hour)
+
+  queue:
+    timeout: 60
+    handler: functions/queue.handler
+    name: ${self:custom.resourceNames.queue}
+    reservedConcurrency: 3
+    events:
+      - sqs:
+          batchSize: 5
+          arn:
+            Fn::GetAtt:
+              - QueueMessages
+              - Arn

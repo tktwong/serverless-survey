@@ -1,0 +1,86 @@
+service: forklift
+frameworkVersion: "=1.12.1"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  profile: ${opt:profile}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:ListStreams
+        - dynamodb:GetShardIterator
+        - dynamodb:GetRecords
+        - dynamodb:DescribeStream
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/*"
+    - Effect: Allow
+      Action:
+        - sns:CreateTopic
+        - sns:Publish
+      Resource: "arn:aws:sns:us-east-1:*:*"
+
+functions:
+  createMessage:
+    handler: src/message/handler.create
+    events:
+      - http:
+          path: topics/{topicId}/messages
+          method: post
+          cors: true
+          authorizer:
+            arn: "arn:aws:cognito-idp:${self:provider.region}:651189268295:userpool/us-east-1_adJJylZfM"
+  createTopic:
+    handler: src/topic/handler.createTopic
+    events:
+      - http:
+          path: topics
+          method: post
+          cors: true
+          authorizer:
+            arn: "arn:aws:cognito-idp:${self:provider.region}:651189268295:userpool/us-east-1_adJJylZfM"
+  publishMessage:
+    handler: src/message/handler.publish
+    events:
+      - stream: arn:aws:dynamodb:us-east-1:651189268295:table/messages/stream/2017-03-26T22:58:37.106
+
+resources:
+  Resources:
+    MessagesTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        TableName: "messages"
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+    TopicsTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        TableName: "topics"
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+plugins:
+  - serverless-offline

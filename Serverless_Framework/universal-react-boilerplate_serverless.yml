@@ -1,0 +1,171 @@
+service: web-poc
+
+custom:
+  dev:
+    COOKIE_SECRET: ${ssm:web_cookie_secret_dev}
+    SESSION_TABLE_MIN_READ_TP: 1
+    SESSION_TABLE_MAX_READ_TP: 10
+    SESSION_TABLE_MIN_WRITE_TP: 1
+    SESSION_TABLE_MAX_WRITE_TP: 10
+    GOOGLE_TAG_MANAGER_ID: ''
+    AMPLITUDE_KEY: ${ssm:web_amplitude_dev_key}
+  uat:
+  prod:
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: eu-west-2
+  versionFunctions: false
+  environment:
+    NODE_PORT: 80
+    DYNAMODB_LIVE: true
+    STORYBOOK: true
+    LOG_LEVEL: info
+    STAGE: ${opt:stage, self:provider.stage}
+    DYNAMODB_SESSION_TABLE: ${opt:stage, self:provider.stage}-${self:service}-web-sessions-sse
+    COOKIE_SECRET: ${self:custom.${opt:stage, self:provider.stage}.COOKIE_SECRET}
+    GOOGLE_TAG_MANAGER_ID: ${self:custom.${opt:stage, self:provider.stage}.GOOGLE_TAG_MANAGER_ID}
+    AMPLITUDE_KEY: ${self:custom.${opt:stage, self:provider.stage}.AMPLITUDE_KEY}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:GetItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_SESSION_TABLE}"
+
+package:
+  excludeDevDependencies: false
+  exclude:
+    - '**/*'
+  include:
+    - node_modules/**
+    - dist/**
+    - config/**
+    - .env
+
+functions:
+  app:
+    handler: dist/server/lambda-index.handler
+    timeout: 30
+    reservedConcurrency: 100
+    events:
+      - http: 'ANY /'
+      - http: 'ANY {proxy+}'
+
+resources:
+  Resources:
+    TokenTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_SESSION_TABLE}
+        SSESpecification:
+          SSEEnabled: true
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        KeySchema:
+          - AttributeName: sessionId
+            KeyType: HASH
+        AttributeDefinitions:
+          - AttributeName: sessionId
+            AttributeType: S
+        TimeToLiveSpecification:
+          Enabled: true
+          AttributeName: expire
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseType: DEFAULT_5XX
+        ResponseTemplates:
+          text/html: ${file(./dist/server/error-page.js):html}
+        RestApiId: 
+          Ref: 'ApiGatewayRestApi'
+    WriteCapacityScalableTarget:
+      Type: AWS::ApplicationAutoScaling::ScalableTarget
+      Properties:
+        MaxCapacity: ${self:custom.${opt:stage, self:provider.stage}.SESSION_TABLE_MAX_WRITE_TP}
+        MinCapacity: ${self:custom.${opt:stage, self:provider.stage}.SESSION_TABLE_MIN_WRITE_TP}
+        ResourceId: 
+          Fn::Join: 
+            - /
+            - - table
+              - Ref: "TokenTable"
+        RoleARN:
+          Fn::GetAtt: "ScalingRole.Arn"
+        ScalableDimension: dynamodb:table:WriteCapacityUnits
+        ServiceNamespace: dynamodb
+    ReadCapacityScalableTarget:
+      Type: AWS::ApplicationAutoScaling::ScalableTarget
+      Properties:
+        MaxCapacity: ${self:custom.${opt:stage, self:provider.stage}.SESSION_TABLE_MAX_READ_TP}
+        MinCapacity: ${self:custom.${opt:stage, self:provider.stage}.SESSION_TABLE_MIN_READ_TP}
+        ResourceId: 
+          Fn::Join: 
+            - /
+            - - table
+              - Ref: "TokenTable"
+        RoleARN:
+          Fn::GetAtt: "ScalingRole.Arn"
+        ScalableDimension: dynamodb:table:ReadCapacityUnits
+        ServiceNamespace: dynamodb
+    ScalingRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - application-autoscaling.amazonaws.com
+              Action:
+                - "sts:AssumeRole"
+        Path: "/"
+        Policies:
+          -
+            PolicyName: "root"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action:
+                    - "dynamodb:DescribeTable"
+                    - "dynamodb:UpdateTable"
+                    - "cloudwatch:PutMetricAlarm"
+                    - "cloudwatch:DescribeAlarms"
+                    - "cloudwatch:GetMetricStatistics"
+                    - "cloudwatch:SetAlarmState"
+                    - "cloudwatch:DeleteAlarms"
+                  Resource: "*"
+    WriteScalingPolicy:
+      Type: AWS::ApplicationAutoScaling::ScalingPolicy
+      Properties:
+        PolicyName: WriteAutoScalingPolicy
+        PolicyType: TargetTrackingScaling
+        ScalingTargetId: 
+          Ref: "WriteCapacityScalableTarget"
+        TargetTrackingScalingPolicyConfiguration:
+          TargetValue: 50.0
+          ScaleInCooldown: 60
+          ScaleOutCooldown: 60
+          PredefinedMetricSpecification:
+            PredefinedMetricType: DynamoDBWriteCapacityUtilization
+    ReadScalingPolicy:
+      Type: AWS::ApplicationAutoScaling::ScalingPolicy
+      Properties:
+        PolicyName: ReadAutoScalingPolicy
+        PolicyType: TargetTrackingScaling
+        ScalingTargetId: 
+          Ref: "ReadCapacityScalableTarget"
+        TargetTrackingScalingPolicyConfiguration:
+          TargetValue: 50.0
+          ScaleInCooldown: 60
+          ScaleOutCooldown: 60
+          PredefinedMetricSpecification:
+            PredefinedMetricType: DynamoDBReadCapacityUtilization

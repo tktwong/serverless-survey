@@ -1,0 +1,75 @@
+service: website
+
+# CF Stack to create all AWS resources related to a specified stage for SadieLawsonPhotography.com.
+# For this stack to run properly, a Route53 domain must be created, and its hosted-zone-id specified
+# In the variable self:custom.hosted-zone-id
+
+# How to run:
+#  First, run 'serverless create_domain'
+#  Next, run 'serverless deploy'
+#  To remove a domain created in error, run 'serverless delete_domain'
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-domain-manager
+
+custom:
+  website-bucket-name: 'slp-website-${self:provider.stage}'
+  website-bucket-arn: 'arn:aws:s3:::${website-bucket-name}'
+  website-root-path: 'index.html'
+  website-error-page-path: 'error.html'
+  website-origin-path: 'dist' # Path inside the S3 bucket which the CloudFront distribution should point to for the default path
+  website-url:
+    prod: 'sadielawsonphotography.com'
+    development: 'development.${self:custom.website-url.prod}'
+    uat: 'uat.${self:custom.website-url.prod}'
+  hosted-zone-id: 'Z06541162AYJ7Y3J0OXJ7' # Hosted Zone ID from Route53 for sadielawsonphotography.com
+  cloudFront-hosted-zone-id: Z2FDTNDATAQYW2 # Hosted Zone ID for all CloudFront Distributions when used as an alias for a Route53 record
+  managedCachingOptimized-cache-policy-id: '658327ea-f89d-4fab-a63d-7e88639e58f6' # ID for the Cloud Front Policy 'Managed-CachingOptimized'
+  customDomain:
+    domainName: 'api.${self:custom.website-url.${self:provider.stage}}'
+    stage: ${self:provider.stage}
+    basePath: ''
+    certificateName: ''
+    createRoute53Record: true
+    hostedZoneId: ${self:custom.hosted-zone-id}
+    endpointType: 'regional'
+    securityPolicy: tls_1_2
+    apiType: 'http'
+    autoDomain: false
+
+# Valid Stages
+#  - development
+#  - uat
+#  - prod
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'development'}
+  region: us-east-1
+  tracing:
+    lambda: true
+  httpApi:
+    cors: true
+
+#  iamRoleStatements:
+#    - Effect: Allow
+#      Action:
+#        - 's3:PutObject'
+#        - 's3:GetBucketLocation'
+#        - 's3:ListAllMyBuckets'
+#      Resource:
+#        -  ${self:custom.website-bucket-arn}
+
+functions:
+  sendContactRequestEmail:
+    handler: lambdas/sendEmail/handler.handleContactRequest
+    events:
+      - httpApi:
+          path: /ex sendContactRequest
+          method: post
+
+resources:
+  - ${file(./src/cf/s3.yml)}
+  - ${file(./src/cf/cloudFront.yml)}
+  - ${file(./src/cf/r53.yml)}

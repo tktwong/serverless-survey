@@ -1,0 +1,67 @@
+service: sls-ki-synapse-bridge
+
+plugins:
+  - serverless-python-requirements
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${opt:stage, 'dev'}
+  profile: ${file(./private.sls.deploy.json):${self:provider.stage}.AWS_PROFILE}
+  region: ${file(./private.sls.deploy.json):${self:provider.stage}.AWS_REGION}
+  environment:
+    SERVICE_NAME: "${self:service}"
+    SERVICE_STAGE: "${self:provider.stage}"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+        - sqs:GetQueueUrl
+      Resource: "${self:custom.dispatchQueueArn}"
+    - Effect: "Allow"
+      Action:
+        - "sqs:ListQueues"
+      Resource: { "Fn::Join" : ["", ["arn:aws:sqs:${self:provider.region}:", { "Ref" : "AWS::AccountId" }, ":*" ] ]  }
+
+functions:
+  dispatcher:
+    handler: functions/dispatchers/dispatcher.handler
+    environment:
+      SQS_DISPATCH_QUEUE_URL: { "Fn::Join" : ["", ["https://sqs.${self:provider.region}.amazonaws.com/", { "Ref" : "AWS::AccountId" }, "/${self:custom.dispatchQueueName}" ] ] }
+    events:
+      - http:
+          path: v1/dispatch
+          method: post
+          cors: true
+    
+  worker:
+    handler: functions/workers/worker.handler
+    events:
+      - sqs:
+          arn: "${self:custom.dispatchQueueArn}"
+          batchSize: 1
+
+resources:
+  Resources:
+    dispatchQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:custom.dispatchQueueName}
+
+custom:
+  dispatchQueueName: "${self:service}-dispatch-queue-${self:provider.stage}"
+  dispatchQueueArn: { "Fn::GetAtt" : ["dispatchQueue", "Arn" ] }
+  pythonRequirements:
+    slim: true
+    noDeploy:
+      - pytest
+
+package:
+  exclude:
+    - private.*
+    - .venv/**
+    - node_modules/**
+    - __pycache__/**
+    - .pytest_cache/**
+    - requirements-dev.txt
+    - templates

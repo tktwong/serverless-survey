@@ -1,0 +1,198 @@
+service:
+  name: serverless-workout
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-central-1'}
+  environment:
+    WORKOUT_TABLE: trainingplan-v05-${self:provider.stage}
+    TRAININGPLAN_S3_BUCKET: sls-workout-img-v2-${self:provider.stage}
+  tracing:
+    lambda: true
+    apiGateway: true
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetSessions:
+    handler: src/lambda/http/getSessions.handler
+    events:
+      - http:
+          method: get
+          path: sessions
+          cors: True
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WORKOUT_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WORKOUT_TABLE}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  CreateSession:
+    handler: src/lambda/http/createSession.handler
+    events:
+      - http:
+          method: post
+          path: createsession
+          cors: True
+          authorizer: Auth
+          request:
+            schema:
+              application/json: ${file(src/models/create-todo-model.json)} # relative to where the serverless.yaml is
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WORKOUT_TABLE}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  UpdateSession:
+    handler: src/lambda/http/updateSession.handler
+    events:
+      - http:
+          method: patch
+          path: updatesession/{sessionId}
+          cors: True
+          authorizer: Auth
+          request:
+            schema:
+              application/json: ${file(src/models/create-todo-model.json)} # relative to where the serverless.yaml is
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WORKOUT_TABLE}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+        
+  DeleteSession:
+    handler: src/lambda/http/deleteSession.handler
+    events:
+      - http:
+          method: delete
+          path: deletesession/{sessionId}
+          cors: True
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow    
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WORKOUT_TABLE}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+          
+  genUpUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: trainingdata/attachment/{sessionId}
+          cors: True
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WORKOUT_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.TRAININGPLAN_S3_BUCKET}/*
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+resources:
+  Resources:
+    TododsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: sessionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: sessionId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.WORKOUT_TABLE}
+
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties: 
+        BucketName: ${self:provider.environment.TRAININGPLAN_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET 
+                - PUT 
+                - POST 
+                - DELETE 
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.TRAININGPLAN_S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false

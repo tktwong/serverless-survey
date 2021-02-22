@@ -1,0 +1,72 @@
+service: seek-iam-meeting-api
+useDotenv: true
+provider:
+  name: aws
+  stage: ${env:STAGE}
+  region: ap-southeast-2
+  runtime: nodejs12.x
+  timeout: 28
+  environment:
+    NODE_ENV: ${self:provider.stage}
+    REGION: ${self:provider.region}
+    AUTHORIZER_ARN: ${env:AUTHORIZER_ARN}
+plugins:
+  - serverless-offline
+custom:
+  serverless-offline:
+    port: 4000
+resources:
+  Resources:
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: '${self:service}-${self:provider.stage}-api'
+    SeekIamMeetingApiRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-lambda-role-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:service}-cloudwatch-policy-${self:provider.stage}
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    - logs:DescribeLogGroups
+                    - logs:DescribeLogStreams
+                  Resource:
+                    - arn:aws:logs:${self:provider.region}:${env:ACCOUNT_ID}:log-group:*:*:*
+functions:
+  createMeeting: 
+    handler: meeting-handler.createMeeting
+    role: SeekIamMeetingApiRole
+    events:
+      - http:
+          method: put
+          path: /
+          cors: true
+          authorizer:
+            arn: ${env:AUTHORIZER_ARN}
+            resultTtlInSeconds: 0
+  listMeetingsByUser: 
+    handler: meeting-handler.listMeetingsByUser #
+    role: SeekIamMeetingApiRole
+    events:
+      - http:
+          method: get
+          path: /
+          cors: true
+          authorizer:
+            arn: ${env:AUTHORIZER_ARN}
+            resultTtlInSeconds: 0

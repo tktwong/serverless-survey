@@ -1,0 +1,61 @@
+# Criação: serverless deploy --stage=dev --accountDeploy=dev -v
+service: workflow-<***NOME DO WORKFLOW***>
+
+frameworkVersion: ">=1.0.0 <2.0.0"
+
+provider:
+  name: aws
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+
+  deploymentBucket:
+    name: ${file(./serverless-env.yml):deploymentBucket}
+  role: ${file(./serverless-env-${self:provider.accountDeploy}.yml):role} 
+
+# Definição do step functions mais informações: https://github.com/serverless-operations/serverless-step-functions#readme
+stepFunctions:
+  stateMachines:
+    <***NOME DO WORKFLOW***>:
+      name: <***NOME DO WORKFLOW***>-${opt:stage}
+      definition:
+        Comment: "Workflow ..."
+        StartAt: FirstStep
+        States:
+          FirstStep:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:api-name-moduloName-hello:${self:provider.stage}
+            # Ações tomadas para caso de falha
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 60
+                MaxAttempts: 3
+                # BackoffRate: 2
+            Next: Choice? # next step
+
+          # Decisão para qual caminho seguir
+          Choice?:
+            Type: Choice
+            Choices:
+              # Para maiores informações sobre choices: https://docs.aws.amazon.com/step-functions/latest/dg/amazon-states-language-choice-state.html
+              - Variable: "$.statusCode"
+                NumericEquals: 200
+                Next: Success
+              - Not:
+                  Variable: "$.statusCode"
+                  NumericEquals: 200
+                Next: Failed
+            Default: Success
+
+          Failed:
+            Type: Fail
+            Cause: "Ocorreu Algum erro"
+
+          Success:
+            Type: Pass
+            Result: "Finalizado Com Sucesso"
+            End: true
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-step-functions

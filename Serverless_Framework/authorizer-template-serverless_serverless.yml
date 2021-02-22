@@ -1,0 +1,33 @@
+# Criação: serverless deploy --stage=dev --aws-profile <Usuário  AWS> -v
+service: ${self:provider.apiName}-${self:provider.stackName}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+
+  deploymentBucket:
+    name: ${file(./serverless-env.yml):deploymentBucket} # Nome do bucket S3 utilizado para armazenar os arquivos de deploy
+  role: ${file(./serverless-env.yml):role} # Define qual usuário IAM utilizado para permissões
+  vpc: ${file(./serverless-env.yml):${self:provider.stage}.vpc} # Define uma rede virtual para execução, é opcional mas quando definida necessita das informações contidas no arquivo serverless-env
+  
+  # O nome da API eh um Atributo obrigatório para o funcionamento da estrutura
+  apiName: api-name
+  stackName: authorizer # Esse nome deve ser único para deploys no mesmo modulo, pois eh ele que define o nome da stack criada na AWS, Sugestão utilizar o nome da primeira função criada
+
+custom:
+  # Para utilização do plugin para nomeação dos recursos
+  serverless-aws-resource-names:
+    source: ./configserverless/mapping.json
+    variables: # Variáveis para serem usadas dentro do mapping.json
+      apiNameMapping: ${self:provider.apiName}
+      stackNameMapping: ${self:provider.stackName}
+
+functions:
+  authorizer:
+    handler: src/handler.authorizer
+
+plugins:
+  - 'serverless-pseudo-parameters'
+  - 'serverless-aws-resource-names'

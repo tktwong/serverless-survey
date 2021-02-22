@@ -1,0 +1,60 @@
+frameworkVersion: ^2.0.0
+
+service: serverless-github-kanban-link
+
+# app and org for use with dashboard.serverless.com
+org: jameslaviron
+app: kanban-link-app
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'default'}
+  region: eu-west-1
+  tracing:
+    apiGateway: true
+    lambda: true
+
+functions:
+  update:
+    handler: handler.updateKanban
+    events:
+      - http:
+          path: webhook
+          method: POST
+    environment:
+      KANBAN_BASE_URL: 'https://zube.io/api/'
+      API_KEY: ${self:custom.mySecret.zubeApiKey}
+      KANBAN_CLIENT_ID: ${param:kanbanClientId}
+      WIP_STATE: ${param:inProgress}
+      RFR_STATE: ${param:readyForReview}
+      DEPLOYED_STATE: ${param:deployed}
+      DEPLOY_BRANCH: ${param:deployBranch,'master'}
+      WIP_LABEL: ${param:inProgressLabel}
+      RFR_LABEL: ${param:readyForReviewLabel}
+      PIVOT_CARD_NUMBER: ${param:pivotCardNumber, ''}
+
+plugins:
+  - '@serverless/safeguards-plugin'
+  - serverless-webpack
+
+custom:
+  safeguards:
+    - title: No secrets in lambda ENV VARs
+      safeguard: no-secret-env-vars
+
+    - title: Restrict regions
+      safeguard: allowed-regions
+      description: Only deployments in EU regions are allowed
+      enforcementLevel: error # if this policy fails, then BLOCK the deployment
+      config: # this configures the allowed-regions safeguard
+        - eu-west-1
+        - eu-west-2
+        - eu-west-3
+      stage: # this policy will only be enforced if you deploy to prod or qa
+        - prod
+  mySecret: ${ssm:/aws/reference/secretsmanager/${opt:stage, 'dev'}/kanban/zube~true}
+  webpack:
+    includeModules: true
+
+

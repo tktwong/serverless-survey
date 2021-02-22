@@ -1,0 +1,139 @@
+#service: exporo_sls_laravel_boilerplate
+service: exporo-sls-laravel
+
+provider:
+  name: aws
+  runtime: provided
+  region: eu-central-1
+  vpc:
+    securityGroupIds:
+    - Fn::GetAtt: ServerlessVPC.DefaultSecurityGroup
+    subnetIds:
+    - Ref: ServerlessSubnetA
+    - Ref: ServerlessSubnetB
+    - Ref: ServerlessSubnetC
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+    - sqs:SendMessage
+    - sqs:ReceiveMessage
+    Resource: !GetAtt SQSQueue.Arn
+  - Effect: Allow
+    Action:
+    - dynamodb:DescribeTable
+    - dynamodb:Query
+    - dynamodb:Scan
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    - dynamodb:DeleteItem
+    Resource:
+    - "Fn::GetAtt": [ DynamoDB, Arn ]
+  - Effect: Allow
+    Action:
+    - s3:*
+    Resource:
+    - !Join
+      - ''
+      - - "Fn::GetAtt": [ S3Bucket, Arn ]
+        - '/*'
+  - Effect: Allow
+    Action: 'secretsmanager:GetSecretValue'
+    Resource: !Ref DBSecret
+  environment:
+    # Laravel environment variables
+    #APP_DEBUG: true
+    APP_KEY: !Sub '{{resolve:secretsmanager:${self:custom.UUID}-APP_KEY}}'
+    APP_STORAGE: '/tmp'
+    DB_HOST:
+      Fn::GetAtt: [AuroraRDSCluster, Endpoint.Address]
+    DB_PASSWORD: !Sub '{{resolve:secretsmanager:${self:custom.UUID}-DB_PASSWORD}}'
+    LOG_CHANNEL: stderr
+    SQS_REGION: ${self:provider.region}
+    VIEW_COMPILED_PATH: /tmp/storage/framework/views
+    CACHE_DRIVER: dynamodb
+    SESSION_DRIVER: dynamodb
+    QUEUE_CONNECTION: sqs
+    SQS_QUEUE: !Ref SQSQueue
+    DYNAMODB_CACHE_TABLE: !Ref DynamoDB
+    FILESYSTEM_DRIVER: s3
+    AWS_BUCKET: !Ref S3Bucket
+    ASSET_URL: !Join ['', ['https://', !GetAtt [S3PublicAssetsBucket, DomainName]]]
+
+custom:
+  OFFICE_IP: 0.0.0.0/0
+  VPC_CIDR: 10
+  UUID: ${self:service.name}-${opt:stage, self:provider.stage}
+  REGION: ${opt:region, self:provider.region}
+  STAGE: ${opt:stage, self:provider.stage}
+
+  customDomain:
+    domainName: ${self:custom.customDomain.switch.${opt:stage, self:provider.stage}.domainName , '${self:custom.customDomain.switch.default.domainName}'}
+    switch:
+      baseDomain: techdev2.exporo.de
+      default:
+        domainName: ${opt:stage, self:provider.stage}.${self:custom.customDomain.switch.baseDomain}
+      production:
+        domainName: ${self:custom.customDomain.switch.baseDomain}
+
+  AURORA:
+    MIN_CAPACITY: 1
+    MAX_CAPACITY: 8
+    AUTO_PAUSE_SECONDS: 600
+    DELETE_PROTECTION: ${self:custom.AURORA.SWITCH.${opt:stage, self:provider.stage}.DELETE_PROTECTION , '${self:custom.AURORA.SWITCH.default.DELETE_PROTECTION}'}
+    AUTO_PAUSE: ${self:custom.AURORA.SWITCH.${opt:stage, self:provider.stage}.AUTO_PAUSE , '${self:custom.AURORA.SWITCH.default.AUTO_PAUSE}'}
+    SWITCH:
+      production:
+        AUTO_PAUSE: false
+        DELETE_PROTECTION: true
+      default:
+        AUTO_PAUSE: 'true'
+        DELETE_PROTECTION: 'false'
+
+functions:
+  website:
+    handler: application/public/index.php
+    timeout: 30
+    layers:
+    - 'arn:aws:lambda:eu-central-1:209497400698:layer:php-73-fpm:9'
+    events:
+    - http: 'ANY /'
+    - http: 'ANY {proxy+}'
+
+  artisan:
+    handler: application/artisan
+    timeout: 120
+    events:
+    - schedule:
+        rate: rate(1 minute)
+        input:
+          cli: "schedule:run >>/dev/stderr"
+    layers:
+    - 'arn:aws:lambda:eu-central-1:209497400698:layer:php-73:9' # PHP
+    - 'arn:aws:lambda:eu-central-1:209497400698:layer:console:9' # The "console" layer
+
+  queueListener:
+    handler: php/SQSBrefEvent.php
+    timeout: 120
+    events:
+    - sqs:
+        arn: !GetAtt SQSQueue.Arn
+    layers:
+    - 'arn:aws:lambda:eu-central-1:209497400698:layer:php-73:9' # PHP
+
+package:
+  exclude:
+  - '.git/**'
+  - 'node_modules/**'
+  - 'data/**'
+  - 'application/node_modules/**'
+  - 'application/.env'
+
+plugins:
+- serverless-pseudo-parameters
+- deploy-chain
+- serverless-domain-manager
+
+#AWS Resources
+resources:
+  - ${file(cloudformation.yml)}

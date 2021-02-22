@@ -1,0 +1,1035 @@
+service: premembers-backend 
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${env:STAGE}
+  region: ap-northeast-1 
+  memorySize: 256 
+  role: premembersLambdaRole
+  versionFunctions: false
+  environment: 
+    COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID}
+    STAGE: ${env:STAGE}
+    SERVICE_NAME: ${self:service}
+    SNS_ORGANIZATION_TOPIC: ${env:SNS_ORGANIZATION_TOPIC}
+    SQS_ORGANIZATION_QUEUE: ${env:SQS_ORGANIZATION_QUEUE}
+    S3_REPORT_BUCKET: ${env:S3_REPORT_BUCKET}
+    S3_CHECK_BUCKET: ${env:S3_CHECK_BUCKET}
+    NUM_OF_PROJECT_ITEMS_PER_1TIME: ${env:NUM_OF_PROJECT_ITEMS_PER_1TIME}
+    S3_BATCH_LOG_BUCKET: ${env:S3_BATCH_LOG_BUCKET}
+    S3_SETTING_BUCKET: ${env:S3_SETTING_BUCKET}
+    NOTIFY_CONFIG_CIS_RESULT_MAIL: ${env:NOTIFY_CONFIG_CIS_RESULT_MAIL}
+    SENDMAIL_ERROR_NOTIFY_TOPIC: ${env:SENDMAIL_ERROR_NOTIFY_TOPIC}
+    SECURITYCHECK_BATCH_ERROR_NOTIFY_TOPIC: ${env:SECURITYCHECK_BATCH_ERROR_NOTIFY_TOPIC}
+    SECURITYCHECK_EXECUTE_TOPIC: ${env:SECURITYCHECK_EXECUTE_TOPIC}
+    ALLOW_ORIGIN: ${env:ALLOW_ORIGIN}
+    RUNNING_STEP_FUNCTION: true
+
+
+resources:
+  Description: Premembers Backend Stack BRANCH is ${env:STAGE}
+  Resources:
+    premembersLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /insightwatch/
+        RoleName: ${self:service}-${env:STAGE}-lambdaRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - Ref: premembersLambdaRolePolicy
+    premembersLambdaRolePolicy:
+      Type: "AWS::IAM::ManagedPolicy"
+      Properties:
+        Path: "/insightwatch/"
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow # note that these rights are given in the default policy and are required if you want logs out of your lambda(s)
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource:
+                - 'Fn::Join':
+                  - ':'
+                  -
+                    - 'arn:aws:logs'
+                    - Ref: 'AWS::Region'
+                    - Ref: 'AWS::AccountId'
+                    - 'log-group:/cmpremembers/securitycheck/batch*:*:*'
+                - 'Fn::Join':
+                  - ':'
+                  -
+                    - 'arn:aws:logs'
+                    - Ref: 'AWS::Region'
+                    - Ref: 'AWS::AccountId'
+                    - 'log-group:/aws/lambda/${self:service}-${env:STAGE}*:*:*'
+            -  Effect: "Allow"
+               Action:
+                 - "sts:AssumeRole"
+               Resource: "*"
+            -  Effect: "Allow"
+               Action:
+                 - "s3:*"
+               Resource: "*"
+            -  Effect: "Allow"
+               Action:
+                 - "sqs:*"
+               Resource: "*"
+            -  Effect: "Allow"
+               Action:
+                 - "lambda:InvokeFunction"
+               Resource: "*"
+            -  Effect: "Allow"		
+               Action:		
+                 - "dynamodb:*"		
+               Resource: "*"
+            -  Effect: "Allow"		
+               Action:		
+                 - "sns:Publish"		
+               Resource: "*"
+            -  Effect: "Allow"		
+               Action:		
+                 - "batch:*"		
+               Resource: "*"
+            -  Effect: "Allow"
+               Action:
+                 - "cognito-idp:*"
+               Resource: "*"
+            -  Effect: "Allow"
+               Action:
+                 - "ses:SendEmail"
+                 - "ses:SendRawEmail"
+               Resource: "*"
+    GatewayResponse401:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId: 
+          Ref: 'ApiGatewayRestApi'
+    GatewayResponse403:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        ResponseType: ACCESS_DENIED 
+        RestApiId: 
+          Ref: 'ApiGatewayRestApi'
+    GatewayResponse5xx:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        ResponseType: DEFAULT_5XX
+        RestApiId: 
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '500'
+
+plugins:
+  - serverless-python-requirements
+  - serverless-plugin-split-stacks
+  - serverless-step-functions
+
+functions:
+  get_organization:
+    handler: premembers/organizations/handler/organizations.get_organization_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  create_organization:
+    handler: premembers/organizations/handler/organizations.create_organization_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  update_organization:
+    handler: premembers/organizations/handler/organizations.update_organization_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/name
+          method: put
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  delete_organization:
+    handler: premembers/organizations/handler/organizations.delete_organization_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}
+          method: delete
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  count_myorganizations:
+    handler: premembers/organizations/handler/myorganizations.count_myorganizations_handler
+    timeout: 60
+    events:
+      - http:
+          path: myorganizations/count
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_myorganizations:
+    handler: premembers/organizations/handler/myorganizations.get_myorganizations_handler
+    timeout: 60
+    events:
+      - http:
+          path: myorganizations
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_project:
+    handler: premembers/organizations/handler/projects.get_project_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  list_projects:
+    handler: premembers/organizations/handler/projects.list_projects_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  create_project:
+    handler: premembers/organizations/handler/projects.create_project_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  update_project:
+    handler: premembers/organizations/handler/projects.update_project_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}
+          method: patch
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  delete_project:
+    handler: premembers/organizations/handler/projects.delete_project_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}
+          method: delete
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  create_awscoop:
+    handler: premembers/organizations/handler/awscoops.create_awscoop_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}/awscoops
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  delete_awscoop:
+    handler: premembers/organizations/handler/awscoops.delete_awscoop_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}/awscoops/{coop_id}
+          method: delete
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_awscoop:
+    handler: premembers/organizations/handler/awscoops.get_awscoop_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}/awscoops/{coop_id}
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  list_awscoops:
+    handler: premembers/organizations/handler/awscoops.list_awscoops_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}/awscoops
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  update_awscoop:
+    handler: premembers/organizations/handler/awscoops.update_awscoop_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}/awscoops/{coop_id}
+          method: patch
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  list_reports:
+    handler: premembers/reports/handler/reports.list_reports_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}/reports
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_report:
+    handler: premembers/reports/handler/reports.get_report_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}/reports/{report_id}
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  delete_report:
+    handler: premembers/reports/handler/reports.delete_report_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}/reports/{report_id}
+          method: delete
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  create_report:
+    handler: premembers/reports/handler/reports.create_report_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}/reports
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_report_url:
+    handler: premembers/reports/handler/reports.get_report_url_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/projects/{project_id}/reports/{report_id}/output
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  request_output_report:
+    handler: premembers/reports/handler/reports.request_output_report_handler
+    timeout: 60
+    events:
+      - http:
+          path: /organizations/{organization_id}/projects/{project_id}/reports/{report_id}/output
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  list_users:
+    handler: premembers/organizations/handler/organizations.list_users_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/users
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  delete_user:
+    handler: premembers/organizations/handler/organizations.delete_user_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/users/{user_id}
+          method: delete
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  update_authority:
+    handler: premembers/organizations/handler/organizations.update_authority_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/users/{user_id}/authority
+          method: put
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  create_invite:
+    handler: premembers/organizations/handler/organizations.create_invite_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/invites
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  accept_invite:
+    handler: premembers/organizations/handler/organizations.accept_invite_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/invites/{user_id}/accept
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  reject_invite:
+    handler: premembers/organizations/handler/organizations.reject_invite_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/invites/{user_id}/reject
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  execute_force_invites:
+    handler: premembers/organizations/handler/organizations.execute_force_invites_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/force_invites
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_user_attributes:
+    handler: premembers/user/handler/user.get_user_attributes_handler
+    timeout: 60
+    events:
+      - http:
+          path: myself/attribute
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  update_user_attributes:
+    handler: premembers/user/handler/user.update_user_attributes_handler
+    timeout: 60
+    events:
+      - http:
+          path: myself/attribute
+          method: put
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_security_check_summary:
+    handler: premembers/check/handler/awschecks.get_security_check_summary_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/results/summary
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_security_check_detail:
+    handler: premembers/check/handler/awschecks.get_security_check_detail_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/results
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_securitycheck_awsacntsummary:
+    handler: premembers/check/handler/awschecks.get_securitycheck_awsacntsummary_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/results/awsaccountsummary
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  execute_security_check:
+    handler: premembers/check/handler/awschecks.execute_security_check_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/results
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_security_check_webhook:
+    handler: premembers/check/handler/awschecks.get_security_check_webhook_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/webhooks
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  generate_security_check_webhook:
+    handler: premembers/check/handler/awschecks.generate_security_check_webhook_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/webhooks
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  update_security_check_webhook:
+    handler: premembers/check/handler/awschecks.update_security_check_webhook_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/webhooks/{webhook_path}
+          method: put
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  execute_security_check_webhook:
+    handler: premembers/check/handler/awschecks.execute_security_check_webhook_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/webhooks/{webhook_path}
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          # URLを秘匿情報とするためauthorizerは不要
+
+  get_security_check_report_url:
+    handler: premembers/check/handler/awschecks.get_security_check_report_url_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/results/{history_id}/output
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  list_security_check_reports:
+    handler: premembers/check/handler/awschecks.list_security_check_reports_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/results/history
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_security_check_resource:
+    handler: premembers/check/handler/awschecks.get_security_check_resource_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/results/{coop_id}/{check_item_code}/abnormalresources
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  delete_notifymail:
+    handler: premembers/organizations/handler/notifymail.delete_notifymail_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/nofitymail/destinations
+          method: delete
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_notifymail:
+    handler: premembers/organizations/handler/notifymail.get_notifymail_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/nofitymail/destinations
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  create_notifymail:
+    handler: premembers/organizations/handler/notifymail.create_notifymail_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/nofitymail/destinations
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  create_notifyslack:
+    handler: premembers/organizations/handler/notifymail.create_notifyslack_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/notifyslack/destinations
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_notifyslack:
+    handler: premembers/organizations/handler/notifymail.get_notifyslack_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/notifyslack/destinations
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  delete_notifyslack:
+    handler: premembers/organizations/handler/notifymail.delete_notifyslack_handler
+    timeout: 60
+    events:
+      - http:
+          path: organizations/{organization_id}/notifyslack/destinations
+          method: delete
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  execute_change_email:
+    handler: premembers/user/handler/user.execute_change_email_handler
+    timeout: 60
+    events:
+      - http:
+          path: myself/changeemail/{apply_id}
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+
+  execute_delete_organization:
+    handler: premembers/organizations/batch/organizations.execute_delete_organization_handler
+    timeout: 300
+
+  execute_delete_project:
+    handler: premembers/organizations/batch/projects.execute_delete_project_handler
+    timeout: 300
+
+  execute_delete_report:
+    handler: premembers/reports/batch/reports.execute_delete_report_handler
+    timeout: 300
+
+  execute_confirm_awscoop:
+    handler: premembers/organizations/batch/awscoops.execute_confirm_awscoop_handler
+    timeout: 300
+
+  execute_delete_organization_user:
+    handler: premembers/organizations/batch/users.execute_delete_organization_user_handler
+    timeout: 300
+
+  execute_organization_task_controller:
+    handler: premembers/organizations/batch/organizations.execute_organization_task_controller_handler
+    timeout: 300
+    events:
+      - schedule:
+          rate: rate(10 minutes)
+          enabled: false
+
+  execute_delete_invalid_user:
+    handler: premembers/user/batch/users.execute_delete_invalid_user_handler
+    timeout: 300
+    events:
+      - schedule:
+          rate: cron(0 21 * * ? *)
+          enabled: false
+
+  execute_check_job_launcher:
+    handler: premembers/check/batch/dailycheck.execute_check_job_launcher_handler
+    timeout: 300
+
+  execute_send_result_email:
+    handler: premembers/check/batch/awschecks.execute_send_result_email_handler
+    timeout: 300
+
+  execute_send_checkerror_email:
+    handler: premembers/check/batch/awschecks.execute_send_checkerror_email_handler
+    timeout: 300
+
+  execute_send_result_slack:
+    handler: premembers/check/batch/awschecks.execute_send_result_slack_handler
+    timeout: 300
+
+  create_excluesion_item:
+    handler: premembers/check/handler/checkitemsettings.create_excluesion_item_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/exclusionitems/{check_item_code}
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_excluesion_item:
+    handler: premembers/check/handler/checkitemsettings.get_excluesion_item_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/exclusionitems/{check_item_code}
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  delete_excluesion_item:
+    handler: premembers/check/handler/checkitemsettings.delete_excluesion_item_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/exclusionitems/{check_item_code}
+          method: delete
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  create_excluded_resources:
+    handler: premembers/check/handler/checkitemsettings.create_excluded_resources_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/{check_item_code}/excludedresources
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  delete_excluded_resources:
+    handler: premembers/check/handler/checkitemsettings.delete_excluded_resources_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/{check_item_code}/excludedresources
+          method: delete
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_excluded_resources:
+    handler: premembers/check/handler/checkitemsettings.get_excluded_resources_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/{check_item_code}/excludedresources
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  get_assessment_item:
+    handler: premembers/check/handler/checkitemsettings.get_assessment_item_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/assessments/{check_item_code}
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  create_assessment_item:
+    handler: premembers/check/handler/checkitemsettings.create_assessment_item_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/assessments/{check_item_code}
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  delete_assessment_item:
+    handler: premembers/check/handler/checkitemsettings.delete_assessment_item_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/assessments/{check_item_code}
+          method: delete
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  list_item_settings:
+    handler: premembers/check/handler/checkitemsettings.list_item_settings_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/itemsettings
+          method: get
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  execute_copy_item_setting:
+    handler: premembers/check/handler/checkitemsettings.execute_copy_item_setting_handler
+    timeout: 60
+    events:
+      - http:
+          path: check/securitycheck/{organization_id}/{project_id}/{coop_id}/itemsettings/_copy
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  apply_change_email:
+    handler: premembers/user/handler/user.apply_change_email_handler
+    timeout: 60
+    events:
+      - http:
+          path: myself/applychangeemail
+          method: post
+          cors:
+            origin: ${env:ALLOW_ORIGIN}
+          authorizer:
+            arn: arn:aws:cognito-idp:ap-northeast-1:${env:AWS_ACCOUNT_ID}:userpool/${env:COGNITO_USER_POOL_ID}
+
+  execute_securitycheck_statemachine:
+    handler: premembers/check/batch/awssecuritychecks.execute_securitycheck_statemachine_handler
+    timeout: 300
+
+  get_check_awsaccounts:
+    handler: premembers/check/batch/awssecuritychecks.get_check_awsaccounts_handler
+    timeout: 300
+
+  check_effective_awsaccount:
+    handler: premembers/check/batch/awssecuritychecks.check_effective_awsaccount_handler
+    timeout: 900
+
+  execute_cis_check:
+    handler: premembers/check/batch/awssecuritychecks.execute_cis_check_handler
+    timeout: 900
+
+  execute_asc_check:
+    handler: premembers/check/batch/awssecuritychecks.execute_asc_check_handler
+    timeout: 900
+
+  execute_ibp_check:
+    handler: premembers/check/batch/awssecuritychecks.execute_ibp_check_handler
+    timeout: 900
+
+  execute_securitycheck_aggregate:
+    handler: premembers/check/batch/awssecuritychecks.execute_securitycheck_aggregate_handler
+    timeout: 300
+
+  create_report_batch_job:
+    handler: premembers/check/batch/awssecuritychecks.create_report_batch_job_handler
+    timeout: 300
+
+stepFunctions:
+  stateMachines:
+    SecurityCheckExecute:
+      name: ${self:service}-${env:STAGE}-SecurityCheckExec
+      definition:
+        StartAt: get_check_awsaccounts
+        States:
+          get_check_awsaccounts:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [get_check_awsaccounts, Arn]
+            Next: execute_securitycheck_group
+          execute_securitycheck_group:
+            Type: Map
+            ItemsPath: $.AWSAccounts
+            ResultPath: $.securitycheck_group
+            MaxConcurrency: 1
+            Next: execute_securitycheck_aggregate
+            Iterator:
+              StartAt: check_effective_awsaccount
+              States:
+                check_effective_awsaccount:
+                  Type: Task
+                  ResultPath: $.effective_awsaccount
+                  Resource:
+                    Fn::GetAtt: [check_effective_awsaccount, Arn]
+                  Next: execute_cis_check
+                execute_cis_check:
+                  Type: Task
+                  ResultPath: $.cis_check
+                  Resource:
+                    Fn::GetAtt: [execute_cis_check, Arn]
+                  Next: execute_asc_check
+                execute_asc_check:
+                  Type: Task
+                  ResultPath: $.asc_check
+                  Resource:
+                    Fn::GetAtt: [execute_asc_check, Arn]
+                  Next: execute_ibp_check
+                execute_ibp_check:
+                  Type: Task
+                  ResultPath: $.ibp_check
+                  Resource:
+                    Fn::GetAtt: [execute_ibp_check, Arn]
+                  End: true
+          execute_securitycheck_aggregate:
+            Type: Task
+            ResultPath: $.securitycheck_aggregate
+            Resource:
+              Fn::GetAtt: [execute_securitycheck_aggregate, Arn]
+            Next: create_report_batch_job
+          create_report_batch_job:
+            Type: Task
+            ResultPath: $.report_batch_job
+            Resource:
+              Fn::GetAtt: [create_report_batch_job, Arn]
+            End: true
+
+custom:
+  defaultStage: dev
+  profiles:
+    dev: premembers 
+    staging: premem-staging
+    prod: prodProfile
+    deploy: default
+  splitStacks:
+    perFunction: true
+    perType: true
+
+package:
+  exclude:
+    - .git/**
+    - tests/**
+    - node_modules
+    - node_modules/**
+    - event.json
+    - README.md
+    - __pycache__
+    - shell/**

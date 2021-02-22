@@ -1,0 +1,111 @@
+service: twitchoji-ebs
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  deploymentBucket:
+    name: twitchoji-deployment
+    serverSideEncryption: AES256
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+        - dynamodb:GetItem
+      Resource:
+        - ${self:custom.moodsTableArn}
+        - Fn::Join:
+            - '/'
+            - - ${self:custom.moodsTableArn}
+              - '*'
+  environment:
+    TABLE_NAME: ${self:custom.moodsTableName}
+    JWT_SECRET: ${self:custom.env.JWT_SECRET}
+    TWITCH_CLIENT_ID: ${self:custom.env.TWITCH_CLIENT_ID}
+    TWITCH_API_ENDPOINT: https://api.twitch.tv/extensions
+    TWITCH_OWNER_ID: ${self:custom.env.TWITCH_OWNER_ID}
+    MAX_GET_LIMIT: 600
+    MAX_UPDATES: 100
+
+plugins:
+  - serverless-plugin-epsagon
+  - serverless-dynamodb-local
+  - serverless-offline
+
+functions:
+  api:
+    handler: src/api/index.handler
+    memorySize: 128
+    timeout: 5
+    events:
+      - http:
+          path: moods
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Token
+            allowCredentials: true
+      - http:
+          path: moods
+          method: get
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Token
+            allowCredentials: true
+package:
+  exclude:
+    - .dynamodb/**
+
+custom:
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+  epsagon:
+    token: ${self:custom.env.EPSAGON_TOKEN}
+    appName: ${self:service}
+  moodsTableArn:
+    Fn::GetAtt: [MoodsTable, Arn]
+  moodsTableName:
+    Ref: MoodsTable
+  dynamodb:
+    start:
+      port: 8001
+      inMemory: true
+      migrate: true
+
+resources:
+  Resources:
+    MoodsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-moods
+        SSESpecification:
+          SSEEnabled: true
+        AttributeDefinitions:
+          - AttributeName: streamId
+            AttributeType: S
+          - AttributeName: datetime
+            AttributeType: S
+        KeySchema:
+          - AttributeName: streamId
+            KeyType: HASH
+          - AttributeName: datetime
+            KeyType: RANGE
+        StreamSpecification:
+          StreamViewType: KEYS_ONLY
+        BillingMode: PAY_PER_REQUEST

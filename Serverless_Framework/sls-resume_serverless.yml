@@ -1,0 +1,86 @@
+service: serverless-resume
+
+plugins:
+  - serverless-webpack
+  - serverless-dotenv-plugin
+  - serverless-aws-documentation
+  - serverless-domain-manager
+  - serverless-offline
+
+functions:
+  auth:
+    handler: src/Handler.server
+    events:
+      - http:
+          path: /about
+          method: get
+      - http:
+          path: /about
+          method: put
+      - http:
+          path: /education
+          method: get
+      - http:
+          path: /education/{id}
+          method: put
+      - http:
+          path: /education
+          method: post
+      - http:
+          path: /experience
+          method: get
+      - http:
+          path: /experience/{id}
+          method: put
+      - http:
+          path: /experience
+          method: post
+          
+provider:
+  name: aws
+  region: us-east-2
+  runtime: nodejs12.x
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["ResumeDynamoDBTable", "Arn"] }
+  environment:
+    RESUME_TABLE: ${self:custom.ResumeTableName}
+    NODE_ENV: ${self:provider.stage}
+
+resources:
+  Resources:
+    ResumeDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:custom.ResumeTableName}
+        AttributeDefinitions:
+          - AttributeName: sectionName
+            AttributeType: S
+        KeySchema:
+          - AttributeName: sectionName
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+custom:
+  ResumeTableName: "resume-table-${self:provider.stage}"
+  customDomain:
+    domainName: resume.pathuri.net
+    certificateName: "resume.pathuri.net"
+    createRoute53Record: true
+    endpointType: "regional"
+    securityPolicy: tls_1_2
+  documentation:
+    api: ${file(docs/swagger.yml)}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true

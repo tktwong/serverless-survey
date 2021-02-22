@@ -1,0 +1,52 @@
+service: benchmark
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${opt:region}
+  timeout:  30
+  memorySize: 3008
+  tracing:
+    lambda: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:*
+      Resource: "arn:aws:sqs:us-east-1:${env:AWS_ACCOUNT}:spa-web-vitals"
+  environment:
+    SQS_URL: "https://sqs.us-east-1.amazonaws.com/${env:AWS_ACCOUNT}/spa-web-vitals"
+
+plugins:
+  - serverless-prune-plugin
+
+package:
+  individually: true
+  exclude:
+    - node_modules/puppeteer/.local-chromium/**
+
+custom:
+  prune:
+    automatic: true
+    number: 3
+
+functions:
+  s3:
+    handler: handler.lighthouse
+    environment:
+      URL: "http://spa-xyz-s3.s3-website-us-east-1.amazonaws.com"
+    events:
+      - schedule: rate(1 day)
+
+  s3_acceleration:
+    handler: handler.lighthouse
+    environment:
+      URL: "https://spa-xyz-s3-acceleration.s3-accelerate.amazonaws.com/index.html"
+    events:
+      - schedule: rate(1 day)
+
+  s3_cloudfront:
+    handler: handler.lighthouse
+    environment:
+      URL: "https://us-east-1.singlepageapp.xyz"
+    events:
+      - schedule: rate(1 day)

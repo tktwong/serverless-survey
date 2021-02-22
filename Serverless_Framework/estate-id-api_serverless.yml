@@ -1,0 +1,158 @@
+service: estate-id-api
+frameworkVersion: '2'
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  lambdaHashingVersion: 20201221
+  stage: dev
+  region: ap-northeast-1
+  apiGateway:
+    shouldStartNameWithService: true
+  endpointType: REGIONAL
+  environment:
+    # App configs
+    ZOOM: ${self:custom.zoomLevel}
+    ACCESS_TOKEN_SALT: ${env:ACCESS_TOKEN_SALT}
+    # IPC configs
+    INCREMENTP_VERIFICATION_API_ENDPOINT: ${cf:estate-id-api-cdn-${self:custom.stage}.BackendCDNEndpoint}
+    INCREMENTP_VERIFICATION_API_KEY: ${env:INCREMENTP_VERIFICATION_API_KEY}
+    # Internal Stack Refs
+    AWS_DYNAMODB_API_KEY_TABLE_NAME: ${self:custom.awsDynamodbApiKeyTableName}
+    AWS_DYNAMODB_ESTATE_ID_TABLE_NAME: ${self:custom.awsDynamodbEstateIdTableName}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+      Resource:
+        - Fn::Join:
+            - ":"
+            - - arn:aws:dynamodb
+              - ${self:provider.region}
+              - Ref: "AWS::AccountId"
+              - table/${self:custom.awsDynamodbApiKeyTableName}
+
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource:
+        - Fn::Join:
+            - ":"
+            - - arn:aws:dynamodb
+              - ${self:provider.region}
+              - Ref: "AWS::AccountId"
+              - table/${self:custom.awsDynamodbEstateIdTableName}
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource:
+        - Fn::Join:
+            - ":"
+            - - arn:aws:dynamodb
+              - ${self:provider.region}
+              - Ref: "AWS::AccountId"
+              - table/${self:custom.awsDynamodbEstateIdTableName}/index/address-index
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource:
+        - Fn::Join:
+            - ":"
+            - - arn:aws:dynamodb
+              - ${self:provider.region}
+              - Ref: "AWS::AccountId"
+              - table/${self:custom.awsDynamodbEstateIdTableName}/index/tileXY-index
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  # [ATTENTION] All Estate IDs will be changed If zoom altered.
+  zoomLevel: 22
+  awsDynamodbApiKeyTableName: estate-id-api-key-${self:custom.stage}
+  awsDynamodbEstateIdTableName: estate-id-${self:custom.stage}
+
+package:
+  exclude:
+    - __tests__
+    - .*
+    - bin/
+    - docs/
+    - src/
+    - package.json
+    - README.md
+    - serverless.yml
+    - tsconfig.json
+    - yarn.lock
+    - package-lock.json
+
+resources:
+  Resources:
+    apiKeyTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.awsDynamodbApiKeyTableName}
+        AttributeDefinitions:
+          - AttributeName: apiKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: apiKey
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    estateIdTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.awsDynamodbEstateIdTableName}
+        AttributeDefinitions:
+          - AttributeName: estateId
+            AttributeType: S
+          - AttributeName: address
+            AttributeType: S
+          - AttributeName: tileXY
+            AttributeType: S
+          - AttributeName: serial
+            AttributeType: N
+        KeySchema:
+          - AttributeName: estateId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: address-index
+            KeySchema:
+              - AttributeName: address
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          - IndexName: tileXY-index
+            KeySchema:
+              - AttributeName: tileXY
+                KeyType: HASH
+              - AttributeName: serial
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+
+functions:
+  public:
+    handler: dist/public.handler
+    events:
+      - http:
+          path: '/'
+          method: get
+          integration: lambda-proxy
+
+  demo:
+    handler: dist/demo.handler
+    events:
+      - http:
+          path: '/demo'
+          method: get
+          integration: lambda-proxy

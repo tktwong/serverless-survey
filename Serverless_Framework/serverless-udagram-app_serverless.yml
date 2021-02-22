@@ -1,0 +1,267 @@
+service:
+  name: serverless-udagram-app
+
+frameworkVersion: "2"
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+  # documentation:
+  #   api:
+  #     info:
+  #       version: v1.0.0
+  #       title: Udagram API
+  #       description: Serverless application for images sharing
+  #   models:
+  #     - name: GroupRequest
+  #       contentType: application/json
+  #       schema: ${file(models/create-group-request.json)}
+  #     # - name: ImageRequest
+  #     #   contentType: application/json
+  #     #   schema: ${file(models/create-image-request.json)}
+
+plugins:
+  - serverless-webpack
+  # - serverless-reqvalidator-plugin
+  # - serverless-aws-documentation
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-south-1
+
+  #this will alow either use the stage parameter by provide it in the cli when we call deploy, or use dev by default
+  stage: ${opt:stage, 'dev'}
+
+  #setup the environment variable
+  environment:
+    # to set deferent environmet variable for each stage
+    GROUPS_TABLE: Groups-${self:provider.stage}
+    IMAGES_TABLE: Images-${self:provider.stage}
+    IMAGE_ID_INDEX: ImageIdIndex
+    IMAGES_S3_BUCKET: serverless-udagram-images-hashem-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+    CONNECTIONS_TABLE: Connections-${self:provider.stage}
+
+  # provide an IAM permissions to have access to the required resouces
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.GROUPS_TABLE}
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:PutItem
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}/index/${self:provider.environment.IMAGE_ID_INDEX}
+
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+      Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource: arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CONNECTIONS_TABLE}
+
+functions:
+  GetGroups:
+    handler: src/lambda/http/getGroups.handler
+    events:
+      - http:
+          method: get
+          path: groups
+          cors: true
+
+  CreateGroups:
+    handler: src/lambda/http/createGroups.handler
+    events:
+      - http:
+          method: post
+          path: groups
+          cors: true
+          request:
+            # Schema that will be used to validate incoming requests
+            schema:
+              application/json: ${file(models/create-group-request.json)}
+
+  GetImages:
+    handler: src/lambda/http/getImages.handler
+    events:
+      - http:
+          method: get
+          path: groups/{groupId}/images
+          cors: true
+
+  GetImage:
+    handler: src/lambda/http/getImage.handler
+    events:
+      - http:
+          method: get
+          path: images/{imageId}
+          cors: true
+
+  CreateImage:
+    handler: src/lambda/http/createImage.handler
+    events:
+      - http:
+          method: post
+          path: groups/{groupId}/images
+          cors: true
+          request:
+            # Schema that will be used to validate incoming requests
+            schema:
+              application/json: ${file(models/create-image-request.json)}
+
+  SendUploadNotifications:
+    handler: src/lambda/s3/sendNotifications.handler
+    environment:
+      STAGE: ${self:provider.stage}
+      API_ID: 4j974y0u7k
+
+  ConnectHandler:
+    handler: src/lambda/websocket/connect.handler
+    events:
+      - websocket:
+          route: $connect
+
+  DisconnectHandler:
+    handler: src/lambda/websocket/disconnect.handler
+    events:
+      - websocket:
+          route: $disconnect
+
+resources:
+  Resources:
+    GroupsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            #hash key is a partition key
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.GROUPS_TABLE}
+
+    ImagesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          # squired items to be added in the table
+          - AttributeName: groupId
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+          - AttributeName: imageId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: groupId
+            KeyType: HASH
+          - AttributeName: timestamp
+            # range key is the sort key
+            KeyType: RANGE
+        # this will enable the stream recording for this table
+        # to allow us to use other services to use the table items
+        # such as elasticSearch
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        # this will create a secondary table that will have image Id as its primary key
+        # and copy all other attributes to that table
+        # to allow us to query a single image faster without scaning all data
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.IMAGE_ID_INDEX}
+            KeySchema:
+              - AttributeName: imageId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.IMAGES_TABLE}
+
+    WebSocketConnectionsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.CONNECTIONS_TABLE}
+
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      # DependsOn: SNSTopicPolicy
+      Properties:
+        BucketName: ${self:provider.environment.IMAGES_S3_BUCKET}
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              # get the arn using the get attribute method of the cloud formation
+              Function: !GetAtt SendUploadNotificationsLambdaFunction.Arn
+              # Topic: !Ref ImagesTopic
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    # to aalow s3 bucket to send notification
+    SendUploadnotificationsPermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: !Ref SendUploadNotificationsLambdaFunction
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount: !Ref AWS::AccountId
+        SourceArn: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: "*"
+              Action: "s3:GetObject"
+              Resource: "arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*"
+        Bucket: !Ref AttachmentsBucket
+
+  # api gatewas resource to validate incoming request befor send it to functions
+  # RequestBodyValidator:
+  #   Type: AWS::ApiGateway::RequestValidator
+  #   Properties:
+  #     Name: "request-body-validator"
+  #     RestApiId:
+  #       Ref: ApiGatewayRestApi
+  #     ValidateRequestBody: true
+  #     ValidateRequestParameters: false

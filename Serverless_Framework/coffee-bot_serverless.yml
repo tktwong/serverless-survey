@@ -1,0 +1,70 @@
+service: coffee-bot
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: us-east-1
+  stage: production
+  stackTags:
+    Name: CoffeeBot
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        Fn::Join: ['', [Fn::GetAtt: [ CoffeeStatusBucket, Arn ], '/*'] ]
+  environment:
+    ZAPIER_URL: ${ssm:zapier-webhook-url~true}
+
+functions:
+  GetStatus:
+    handler: handler.GetStatus
+    description: Get the status of the coffee
+    events:
+      - http:
+          path: status
+          method: get
+          cors: true
+  UpdateStatus:
+    handler: handler.UpdateStatus
+    description: Update the status of the coffee
+    events:
+      - http:
+          path: status
+          method: post
+          cors: true
+  QuickActionOut:
+    handler: handler.QuickActionOut
+    description: Quickly mark the status as out
+    events:
+      - http:
+          path: quickaction/out
+          method: get
+  QuickActionIn:
+    handler: handler.QuickActionIn
+    description: Quickly mark the status as in
+    events:
+      - http:
+          path: quickaction/in
+          method: get
+
+resources:
+  Resources:
+    CoffeeStatusBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: coffee-status-bot-bucket
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-domain-manager
+
+custom:
+  customDomain:
+    domainName: coffeestatus.rthr.me
+    basePath: ''
+    stage: ${self:provider.stage}
+    certificateName: 'rthr.me'
+    createRoute53Record: false
+    endpointType: edge

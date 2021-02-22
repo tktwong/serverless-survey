@@ -1,0 +1,98 @@
+service:
+  name: serverless-image-processor
+
+plugins:
+  - serverless-webpack
+  - serverless-s3-local
+  - serverless-apigw-binary
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  endpointType: REGIONAL
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource:
+        Fn::Join: [ "", [ "arn:aws:s3:::", Ref: SourceBucket ] ]
+    - Effect: Allow
+      Action:
+        - s3:getObject
+      Resource:
+        Fn::Join: [ "", [ "arn:aws:s3:::", Ref: SourceBucket, "/*" ] ]
+
+custom:
+  bucketName: ${self:service.name}-bucket-${self:provider.stage}
+  s3:
+    host: 0.0.0.0
+    port: 5445
+    directory: .
+    cors: false
+  webpack:
+    includeModules:
+      forceInclude:
+        - sharp
+    packager: 'yarn'
+  apigwBinary:
+    types:
+      - '*/*'
+
+functions:
+  processor:
+    handler: src/index.handle
+    timeout: 15
+    memorySize: 3008
+    environment:
+      BUCKET: ${self:custom.bucketName}
+    events:
+      - http:
+          method: get
+          path: /{proxy+}
+
+resources:
+  Resources:
+    SourceBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketName}
+    WebDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - Id: ImageOrigin
+              DomainName:
+                Fn::Join:
+                  - ""
+                  - - Ref: ApiGatewayRestApi
+                    - ".execute-api."
+                    - ${self:provider.region}
+                    - ".amazonaws.com"
+              OriginPath: "/${self:provider.stage}"
+              CustomOriginConfig:
+                OriginProtocolPolicy: https-only
+          Enabled: true
+          HttpVersion: http2
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+            TargetOriginId: ImageOrigin
+            ForwardedValues:
+              QueryString: true
+              Headers:
+                - Accept
+            ViewerProtocolPolicy: allow-all
+  Outputs:
+    WebDistributionUrl:
+      Description: "Cloudfront url"
+      Value:
+        Fn::GetAtt: WebDistribution.DomainName
+    SourceBucketName:
+      Description: "Image bucket"
+      Value:
+        Ref: SourceBucket

@@ -1,0 +1,288 @@
+service:
+  name: serverless-shop-app
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+
+documentation:
+  api:
+    info:
+      version: v1.0.0
+      title: Shop API
+      description: serverless api for Item application
+  models:
+    - name: CreateItem
+      contentType: application/json
+      schema: ${file(src/validators/create-item-request.json)}
+    - name: UpdateItem
+      contentType: application/json
+      schema: ${file(src/validators/update-Item-request.json)}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  environment:
+    ITEM_TABLE: items-rbl-${self:provider.stage}
+    ITEM_TABLE_GSI: byUserIdGsi
+    ITEM_S3_BUCKET_NAME: items-rbl-attachments-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  # Item: Configure this function
+  GetItems:
+    handler: src/lambda/http/getItem.handler
+    events:
+      - http:
+          method: get
+          path: Items
+          authorizer: Auth
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEM_TABLE}/index/${self:provider.environment.ITEM_TABLE_GSI}
+      - Effect: Allow
+        Action:
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+          - xray:BatchGetTraces
+          - xray:GetServiceGraph
+          - xray:GetTraceGraph
+          - xray:GetTraceSummaries
+          - xray:GetGroups
+          - xray:GetGroup
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+
+  # Item: Configure this function
+  CreateItem:
+    handler: src/lambda/http/createItem.handler
+    events:
+      - http:
+          method: post
+          path: Items
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create Item
+            description: Create an item
+            requestModels:
+              'application/json': CreateItemRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:putItem
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEM_TABLE}
+      - Effect: Allow
+        Action:
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+          - xray:BatchGetTraces
+          - xray:GetServiceGraph
+          - xray:GetTraceGraph
+          - xray:GetTraceSummaries
+          - xray:GetGroups
+          - xray:GetGroup
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+
+  # Item: Configure this function
+  UpdateItem:
+    handler: src/lambda/http/updateItem.handler
+    events:
+      - http:
+          method: patch
+          path: Items/{ItemId}
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: update a Item item
+            description: update a Item item
+            requestModels:
+              'application/json': UpdateItem
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:updateItem
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEM_TABLE}
+      - Effect: Allow
+        Action:
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+          - xray:BatchGetTraces
+          - xray:GetServiceGraph
+          - xray:GetTraceGraph
+          - xray:GetTraceSummaries
+          - xray:GetGroups
+          - xray:GetGroup
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+
+  # Item: Configure this function
+  DeleteItem:
+    handler: src/lambda/http/deleteItem.handler
+    events:
+      - http:
+          method: delete
+          path: Items/{ItemId}
+          authorizer: Auth
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:deleteItem
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEM_TABLE}
+      - Effect: Allow
+        Action:
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+          - xray:BatchGetTraces
+          - xray:GetServiceGraph
+          - xray:GetTraceGraph
+          - xray:GetTraceSummaries
+          - xray:GetGroups
+          - xray:GetGroup
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+
+  # Item: Configure this function
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: Items/{ItemId}/attachment
+          authorizer: Auth
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.ITEM_S3_BUCKET_NAME}/*
+      - Effect: Allow
+        Action:
+          - dynamodb:updateItem
+        Resource:
+          - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEM_TABLE}
+      - Effect: Allow
+        Action:
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+          - xray:BatchGetTraces
+          - xray:GetServiceGraph
+          - xray:GetTraceGraph
+          - xray:GetTraceSummaries
+          - xray:GetGroups
+          - xray:GetGroup
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+
+resources:
+  Resources:
+    # Item: Add any necessary AWS resources
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PUT,PATCH'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.ITEM_S3_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.ITEM_S3_BUCKET_NAME}/*'
+        Bucket: !Ref AttachmentsBucket
+
+    ItemItemTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.ITEM_TABLE}
+        AttributeDefinitions:
+          - AttributeName: ItemId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ItemId
+            KeyType: HASH
+          - AttributeName: userId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.ITEM_TABLE_GSI}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL

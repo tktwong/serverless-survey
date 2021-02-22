@@ -1,0 +1,132 @@
+service: minions-backend
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  environment:
+    prodTable: products
+    orderTable: orders
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+    - Effect: Allow
+      Action:
+        - ses:*
+      Resource: "*"
+
+functions:
+  checkData:
+    handler: services/functions/checkData.main
+  updateItems:
+    handler: services/functions/updateItems.main
+    timeout: 60
+  signUpConfirm:
+    handler: services/functions/signUpConfirm.main
+    events:
+      - cognitoUserPool:
+          pool: minions-user-pool
+          trigger: PreSignUp
+          existing: true
+  listMinions:
+    handler: services/minions-api/listMinions.main
+    events:
+      - http:
+          path: minions
+          method: get
+          cors: true
+          authorizer: aws_iam
+  getMinion:
+    handler: services/minions-api/getMinion.main
+    events:
+      - http:
+          path: minions/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  listOrders:
+    handler: services/orders-api/listOrders.main
+    events:
+      - http:
+          path: orders
+          method: get
+          cors: true
+          authorizer: aws_iam
+  createOrder:
+    handler: services/orders-api/createOrder.main
+    events:
+      - http:
+          path: orders
+          method: post
+          cors: true
+          authorizer: aws_iam
+  sendEmail:
+    handler: services/mail-api/sendEmail.main
+    events:
+      - http:
+          path: send-email
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+stepFunctions:
+  stateMachines:
+    scrapper:
+      events:
+        - schedule:
+            rate: rate(20 hours)
+      name: Scrapper
+      definition:
+        Comment: "Populating dynamoDB with scrapped data"
+        StartAt: CheckData
+        States:
+          CheckData:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [checkData, Arn]
+            Next: isThereNewData
+          isThereNewData:
+            Type: Choice
+            Choices:
+              - Variable: "$.isNewData"
+                BooleanEquals: true
+                Next: Yes
+              - Variable: "$.isNewData"
+                BooleanEquals: false
+                Next: No
+            Default: No
+          Yes:
+            Type: Pass
+            Next: UpdateItems
+          No:
+            Type: Pass
+            End: true
+          UpdateItems:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [updateItems, Arn]
+            End: true
+
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}

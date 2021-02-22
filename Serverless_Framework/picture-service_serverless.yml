@@ -1,0 +1,75 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: picture-service
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-bundle
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ca-central-1
+  iamRoleStatements:
+    - ${file(iam/PhotoBucketIAM.yml):PhotoBucketIAM}
+    - ${file(iam/PhotoTableIAM.yml):PhotoTableIAM}
+
+resources:
+  Resources:
+    PhotoBucket: ${file(resources/PhotoBucket.yml):PhotoBucket}
+    PhotoBucketPolicy: ${file(resources/PhotoBucket.yml):PhotoBucketPolicy}
+    PhotoTable: ${file(resources/PhotoTable.yml):PhotoTable}
+
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          method: GET
+          path: /hello
+          cors: true
+
+  processPhoto:
+    handler: src/processPhoto.handler
+    events:
+      - s3:
+          bucket: !Ref PhotoBucket
+          event: s3:ObjectCreated:*
+          existing: true
+          rules:
+            - prefix: uploads/
+
+  getPhotos:
+    handler: src/getPhotos.handler
+    events:
+      - http:
+          method: GET
+          path: /photos
+
+
+custom:
+  bundle:
+    linting: false
+  PhotoBucket:
+    name: photos-bucket-#{AWS::AccountId}-${self:provider.stage}
+

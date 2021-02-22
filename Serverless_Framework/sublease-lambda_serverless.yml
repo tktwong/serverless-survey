@@ -1,0 +1,117 @@
+service: sublease-lambda
+
+plugins:
+  - serverless-step-functions
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+  stage: ${ opt:stage, 'development'}
+  region: ${ self:custom.globalConfig.AwsRegion }
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+      Resource:
+        - "Fn::GetAtt":
+          - PostTable
+          - Arn
+
+    - Effect: Allow
+      Action:
+        - cognito-idp:AdminCreateUser
+      Resource:
+        ${ self:custom.envConfig.arns.UserPool }
+        
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource:
+        - arn:aws:s3:::${ self:custom.envConfig.AppBucket }/*
+
+  environment:
+    NODE_ENV: ${ self:provider.stage }
+
+custom:
+  # Setup serverless plugins
+  webpackIncludeModules: true
+  serverless-offline:
+    port: 3000
+    babelOptions:
+      plugins: ["transform-es2015-modules-commonjs", "transform-object-rest-spread"]
+  
+  # Define configs
+  globalConfig: ${ file(./configs/config.global.json) }
+  envConfig: ${ file(./configs/config.env.json):${ self:provider.stage } }
+
+functions:
+  GraphQL:
+    handler: handler.graphqlHandler
+    events:
+      - http:
+          path: graphql
+          method: GET
+          cors: true
+      - http: 
+          path: graphql
+          method: POST
+          cors: true
+
+  PreRender:
+    handler: handler.preRenderHandler
+
+  SavePage:
+    handler: handler.savePageHandler
+  
+stepFunctions:
+  stateMachines:
+    checkout:
+      name: ${ self:provider.stage }-publish
+      definition:
+        Comment: Prerender post into static html and save on s3
+        StartAt: PreRender
+        States:
+          PreRender:
+            Type: Task
+            Resource: arn:aws:lambda:us-east-1:336626025201:function:${ self:service }-${ self:provider.stage }-PreRender
+            Next: SavePage
+            ResultPath: "$.html"
+            OutputPath: "$"
+          SavePage:
+            Type: Task
+            Resource: arn:aws:lambda:us-east-1:336626025201:function:${ self:service }-${ self:provider.stage }-SavePage
+            End: true
+
+resources:
+  Resources:
+    PostTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${ self:provider.stage }-${ self:custom.globalConfig.ResourceNames.PostTable }
+    
+    PostImagePool:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${ self:provider.stage }-${ self:custom.globalConfig.ResourceNames.PostImagePool }

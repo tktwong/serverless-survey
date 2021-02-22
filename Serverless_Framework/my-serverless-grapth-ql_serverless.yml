@@ -1,0 +1,67 @@
+service: urlshortener
+
+frameworkVersion: ">=1.8.0 <2.0.0"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  extra: ${file(vars/${self:custom.stage}.yml)}
+provider:
+  name: aws
+  runtime: nodejs4.3
+  environment:
+    SLS_STAGE: ${self:custom.stage}
+    DDB_TABLE: {Ref: LinkDB}
+  iamRoleStatements:
+    - Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        "Fn::Join":
+          - ""
+          -
+            - "arn:aws:dynamodb:"
+            - Ref: "AWS::Region"
+            - ":"
+            - Ref: "AWS::AccountId"
+            - ":table/"
+            - Ref: LinkDB
+      Effect: Allow
+
+functions:
+  main:
+    handler: main/index.handler
+    events:
+      - http:
+          path: /
+          method: get
+  create:
+    handler: create/index.handler
+    events:
+      - http:
+          path: /
+          method: post
+  redirect:
+    handler: redirect/index.handler
+    events:
+      - http:
+          path: /{slug}
+          method: get
+
+resources:
+  Resources:
+    LinkDB:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: slug
+            AttributeType: S
+        KeySchema:
+          - AttributeName: slug
+            KeyType: HASH
+        ProvisionedThroughput: ${self:custom.extra.DynamoCapacity}
+    CustomDomainMap:
+      Type: "AWS::ApiGateway::BasePathMapping"
+      Properties:
+        DomainName: ${self:custom.extra.Domain}
+        Stage: ${self:custom.stage}
+        RestApiId: {Ref: ApiGatewayRestApi}

@@ -1,0 +1,189 @@
+service: dmm-title-watcher
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ${env:AWS_DEFAULT_REGION}
+  stage: ${opt:stage, 'dev'}
+  timeout: 30
+  environment:
+    STAGE: ${self:provider.stage}
+    DMM_API_ID: ${env:DMM_API_ID}
+    DMM_AFFILIATE_ID: ${env:DMM_AFFILIATE_ID}
+    SLACK_TOKEN: ${env:SLACK_TOKEN}
+    SLACK_CHANNEL_ID: ${env:SLACK_CHANNEL_ID}
+    TABLE_PRODUCTS: ${self:custom.table.products}
+    TABLE_SUBSCRIPTIONS: ${self:custom.table.subscriptions}
+    TABLE_BOOKMARKS: ${self:custom.table.bookmarks}
+    TABLE_TORRENTS: ${self:custom.table.torrents}
+    GW_URL: ${self:custom.gw-url.${self:provider.stage}}
+    LAMBDA_NAME_SUBSCRIPTIONS_INDEX: ${self:service}-${self:provider.stage}-subscriptionsIndex
+    LAMBDA_NAME_SUBSCRIPTIONS_DELETE: ${self:service}-${self:provider.stage}-subscriptionsDelete
+    LAMBDA_NAME_SUBSCRIPTIONS_SUBSCRIBE_ACTRESS:
+      ${self:service}-${self:provider.stage}-subscriptionsSubscribeActerss
+    LAMBDA_NAME_SUBSCRIPTIONS_SUBSCRIBE_GENRE:
+      ${self:service}-${self:provider.stage}-subscriptionsSubscribeGenre
+    LAMBDA_NAME_SUBSCRIPTIONS_SEARCH_PRODUCTS: ${self:service}-${self:provider.stage}-subscriptionsSearchProducts
+    LAMBDA_NAME_BOOKMARKS_CREATE: ${self:service}-${self:provider.stage}-bookmarksCreate
+    LAMBDA_NAME_BOOKMARKS_DELETE: ${self:service}-${self:provider.stage}-bookmarksDelete
+    LAMBDA_NAME_BOOKMARKS_INDEX: ${self:service}-${self:provider.stage}-bookmarksIndex
+    LAMBDA_NAME_BOOKMARKS_SEARCH_TORRENT_AND_NOTIFY:
+      ${self:service}-${self:provider.stage}-bookmarksSearchTorrentAndNotify
+    LAMBDA_NAME_TORRENTS_DOWNLOAD: ${self:service}-${self:provider.stage}-torrentsDownload
+    BUCKET_TRANSMISSION_PROJECT: ${env:BUCKET_TRANSMISSION_PROJECT}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource:
+        - "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:GetObject"
+        - "s3:PutObject"
+        - "s3:DeleteObject"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - ${self:provider.environment.BUCKET_TRANSMISSION_PROJECT}
+            - "/*"
+
+package:
+  exclude:
+    - script/**
+    - test/**
+    - Dockerfile
+
+plugins:
+  - serverless-offline
+  - serverless-mocha-plugin
+
+custom:
+  table:
+    products: ${self:service}-${self:provider.stage}-products
+    subscriptions: ${self:service}-${self:provider.stage}-subscriptions
+    bookmarks: ${self:service}-${self:provider.stage}-bookmarks
+    torrents: ${self:service}-${self:provider.stage}-torrents
+  gw-url:
+    prod:
+      Fn::Join:
+        - ""
+        - - https://
+          - Ref: ApiGatewayRestApi
+          - .execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}
+    dev: http://localhost:3000
+    test: http://localhost:3001
+  serverless-offline-dynamodb-streams:
+    endpoint: http://dynamodb:8000
+    region: ${self:provider.region}
+    accessKeyId: root
+    secretAccessKey: root
+    skipCacheInvalidation: false
+
+functions:
+  subscriptionsSubscribeActerss:
+    handler: subscriptions.subscribeActress
+  subscriptionsSubscribeGenre:
+    handler: subscriptions.subscribeGenre
+  subscriptionsIndex:
+    handler: subscriptions.index
+  subscriptionsDelete:
+    handler: subscriptions.delete
+  subscriptionsSearchProducts:
+    handler: subscriptions.searchProducts
+  subscriptionsBulkSearchProducts:
+    handler: subscriptions.bulkSearchProducts
+    events:
+      - schedule: cron(45 23 * * ? *) # JST 8:45 AM
+  bookmarksCreate:
+    handler: bookmarks.create
+  bookmarksDelete:
+    handler: bookmarks.delete
+  bookmarksIndex:
+    handler: bookmarks.index
+  bookmarksSearchAllTorrentable:
+    handler: bookmarks.searchAllTorrentable
+    events:
+      - schedule: cron(50 23 * * ? *) # JST 8:50 AM
+  bookmarksSearchTorrentAndNotify:
+    handler: bookmarks.searchTorrentAndNotify
+  torrentsDownload:
+    handler: torrents.download
+  slackActionEndpoint:
+    handler: slack.actionEndpoint
+    events:
+      - http:
+          path: /slack/action-endpoint
+          method: post
+  slackCommand:
+    handler: slack.command
+    events:
+      - http:
+          path: /slack/command
+          method: post
+
+resources:
+  Resources:
+    ProductsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.table.products}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    SubscriptionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.table.subscriptions}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    BookmarksTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.table.bookmarks}
+        AttributeDefinitions:
+          - AttributeName: productId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: productId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    TorrentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.table.torrents}
+        AttributeDefinitions:
+          - AttributeName: productId
+            AttributeType: S
+          - AttributeName: torrentId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: productId
+            KeyType: HASH
+          - AttributeName: torrentId
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

@@ -1,0 +1,136 @@
+service: ${self:provider.environment.SLSDEPLOY_SERVICE_NAME}
+
+frameworkVersion: ">=1.21.1 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${self:provider.environment.SLSDEPLOY_STAGE}
+  region: ${self:provider.environment.SLSDEPLOY_REGION}
+  environment:
+    SLSDEPLOY_STAGE: ${env:SLSDEPLOY_STAGE, 'poc'}
+    SLSDEPLOY_REGION: ${env:SLSDEPLOY_REGION, env:AWS_REGION, 'us-east-1'}
+    SLSDEPLOY_SERVICE_NAME: ${env:SLSDEPLOY_SERVICE_NAME, 'slsdeploy'}
+    SLSDEPLOY_LOGS_S3_BUCKET_NAME: ${env:SLSDEPLOY_LOGS_S3_BUCKET_NAME, 'slsdeploy-logs'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "s3:*"
+      Resource:
+        - { "Fn::Join" : ["", ["arn:aws:s3:::", "${self:provider.environment.SLSDEPLOY_LOGS_S3_BUCKET_NAME}"] ] }
+        - { "Fn::Join" : ["", ["arn:aws:s3:::", "${self:provider.environment.SLSDEPLOY_LOGS_S3_BUCKET_NAME}", "/*"] ] }
+    - Effect: Allow
+      Action:
+        - "lambda:InvokeFunction"
+        - "lambda:InvokeAsync"
+      Resource:
+        - "arn:aws:lambda:${self:provider.region}:*:function:${self:service}-${self:provider.stage}-deploy"
+    - Effect: Allow
+      Action:
+        - "codebuild:CreateProject"
+        - "codebuild:ListBuildsForProject"
+        - "codebuild:StartBuild"
+        - "iam:PassRole"
+      Resource:
+        - "*"
+
+plugins:
+  - serverless-s3-remover
+  - serverless-prune-plugin
+
+custom:
+  remover:
+     buckets:
+       - ${self:provider.environment.SLSDEPLOY_LOGS_S3_BUCKET_NAME}
+
+functions:
+  index:
+    handler: src/handlers/index.handler
+    events:
+      - http:
+          path: /
+          method: get
+  status:
+    handler: src/handlers/status.handler
+    events:
+      - http:
+          path: /status/{hash}
+          method: get
+          integration: lambda-proxy
+  getBuildLog:
+    handler: src/handlers/buildlog.get
+    events:
+      - http:
+          path: /buildlog/{hash}
+          method: get
+          integration: lambda-proxy
+  postBuildLog:
+    handler: src/handlers/buildlog.post
+    events:
+      - http:
+          path: /buildlog/{hash}
+          method: post
+          integration: lambda-proxy
+  setenv:
+    handler: src/handlers/setenv.handler
+    events:
+      - http:
+          path: /{owner}/{repo}
+          method: get
+          integration: lambda-proxy
+  build:
+    handler: src/handlers/build.handler
+    timeout: 30
+    events:
+      - http:
+          path: /{owner}/{repo}
+          method: post
+          integration: lambda-proxy
+
+resources:
+  Resources:
+    DeployLogBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.SLSDEPLOY_LOGS_S3_BUCKET_NAME}
+        AccessControl: Private
+        LifecycleConfiguration:
+          Rules:
+            - ExpirationInDays: 1
+              Prefix: builds/
+              Status: Enabled
+    CodeBuildIamRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName:
+          "${self:service}-${self:provider.stage}-${self:provider.region}-CodeBuildIamRole"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - "codebuild.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          - PolicyName:
+              "${self:service}-${self:provider.stage}-${self:provider.region}-CodeBuildIamRolePolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "s3:GetObject"
+                    - "s3:GetObjectVersion"
+                    - "s3:Put*"
+                  Resource:
+                    - { "Fn::Join" : ["", ["arn:aws:s3:::", "${self:provider.environment.SLSDEPLOY_LOGS_S3_BUCKET_NAME}"] ] }
+                    - { "Fn::Join" : ["", ["arn:aws:s3:::", "${self:provider.environment.SLSDEPLOY_LOGS_S3_BUCKET_NAME}", "/*"] ] }
+                - Effect: "Allow"
+                  Action:
+                    - "logs:CreateLogGroup"
+                    - "logs:CreateLogStream"
+                    - "logs:PutLogEvents"
+                  Resource:
+                    - "*"

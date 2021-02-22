@@ -1,0 +1,386 @@
+service: livle-server
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ap-northeast-2
+  stage: dev
+  profile: livle-serverless
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - ec2:CreateNetworkInterface
+        - ec2:DescribeNetworkInterfaces
+        - ec2:DeleteNetworkInterface
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::livle"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::livle/*"
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+      Resource: "*"
+  environment:
+    DB_NAME: ${file(./keys.yml):DB_NAME}
+    DB_HOST: ${file(./keys.yml):DB_HOST}
+    DB_PORT: ${file(./keys.yml):DB_PORT}
+    DB_USER: ${file(./keys.yml):DB_USER}
+    DB_PASS: ${file(./keys.yml):DB_PASS}
+    IMP_KEY: ${file(./keys.yml):IMP_KEY}
+    IMP_SECRET: ${file(./keys.yml):IMP_SECRET}
+    PUSHER_KEY: ${file(./keys.yml):PUSHER_KEY}
+    PUSHER_SECRET: ${file(./keys.yml):PUSHER_SECRET}
+    FCM_SERVER_KEY: ${file(./keys.yml):FCM_SERVER_KEY}
+  vpc:
+    securityGroupIds:
+      - "Fn::GetAtt": LivleSecurityGroup.GroupId
+    subnetIds:
+      - Ref: LivleSubnetA
+      - Ref: LivleSubnetC
+
+plugins:
+  - serverless-domain-manager
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  customDomain:
+    domainName: 'api.livle.kr'
+    certificateName: '*.livle.kr'
+    basePath: ${self:provider.stage}
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  webpackIncludeModules:
+    forceInclude:
+      - mysql2
+
+package:
+  individually: true
+
+functions:
+  userRouter:
+    handler: handler.userRouter
+    events:
+      - http:
+          path: user
+          method: any
+          cors: true
+      - http:
+          path: user/session
+          method: post
+          cors: true
+      - http:
+          path: user/facebook
+          method: post
+          cors: true
+      - http:
+          path: user/password
+          method: any
+          cors: true
+      - http:
+          path: user/list
+          method: get
+          cors: true
+  userUnsuspend:
+    handler: handler.userUnsuspend
+    events:
+      - http:
+          path: user/{userId}/suspend
+          method: delete
+          cors: true
+  partnerRouter:
+    handler: handler.partnerRouter
+    events:
+      - http:
+          path: partner
+          method: any
+          cors: true
+  partnerSignin:
+    handler: handler.partnerSignin
+    events:
+      - http:
+          path: partner/session
+          method: post
+          cors: true
+  partnerList:
+    handler: handler.partnerList
+    events:
+      - http:
+          path: partner/list
+          method: get
+          cors: true
+  partnerApprove:
+    handler: handler.partnerApprove
+    events:
+      - http:
+          path: partner/{partnerId}/approve
+          method: post
+          cors: true
+  ticketRouter:
+    handler: handler.ticketRouter
+    events:
+      - http:
+          path: ticket
+          method: any
+          cors: true
+  ticketList:
+    handler: handler.ticketList
+    events:
+      - http:
+          path: ticket/list
+          method: get
+          cors: true
+  ticketUpdate:
+    handler: handler.ticketUpdate
+    events:
+      - http:
+          path: ticket/{ticketId}
+          method: patch
+          cors: true
+  ticketDestroy:
+    handler: handler.ticketDestroy
+    events:
+      - http:
+          path: ticket/{ticketId}
+          method: delete
+          cors: true
+  ticketStats:
+    handler: handler.ticketStats
+    events:
+      - http:
+          path: ticket/{ticketId}/stats
+          method: get
+          cors: true
+  ticketReserve:
+    handler: handler.ticketReserve
+    events:
+      - http:
+          path: ticket/{ticketId}/reserve
+          method: post
+          cors: true
+  fileUpload:
+    handler: handler.fileUpload
+    events:
+      - http:
+          path: file
+          method: get
+          cors: true
+  subscriptionRouter:
+    handler: handler.subscriptionRouter
+    events:
+      - http:
+          path: subscription
+          method: any
+          cors: true
+  subscriptionLimit:
+    handler: handler.subscriptionLimit
+    events:
+      - http:
+          path: subscription/{subscriptionId}/limit
+          method: patch
+          cors: true
+  subscriptionRestore:
+    handler: handler.subscriptionRestore
+    events:
+      - http:
+          path: subscription/restore
+          method: post
+          cors: true
+  reservationRouter:
+    handler: handler.reservationRouter
+    events:
+      - http:
+          path: reservation
+          method: get
+          cors: true
+      - http:
+          path: reservation/{reservationId}
+          method: delete
+          cors: true
+      - http:
+          path: reservation/{reservationId}/check
+          method: post
+          cors: true
+  subscriptionRenew:
+    handler: handler.subscriptionRenew
+    events:
+      - schedule: cron(0 12 * * ? *) # Everyday 12pm UTC
+  noshowChecker:
+    handler: handler.noshowChecker
+    events:
+      - schedule: rate(1 hour) # Every hour
+  userDestroyer:
+    handler: handler.userDestroyer
+    events:
+      - schedule: cron(0 0 * * ? *) # Everyday 12am UTC
+
+resources:
+  Resources:
+    LivleVPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: "10.0.0.0/16"
+        EnableDnsHostnames: true # For RDS to be publicly accessible
+    LivleSubnetA:
+      DependsOn: LivleVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: LivleVPC
+        AvailabilityZone: ${self:provider.region}a
+        CidrBlock: "10.0.0.0/24"
+        Tags:
+          - Key: 'Name'
+            Value: 'LivleSubnetA'
+    LivleSubnetC:
+      DependsOn: LivleVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: LivleVPC
+        AvailabilityZone: ${self:provider.region}c
+        CidrBlock: "10.0.1.0/24"
+        Tags:
+          - Key: 'Name'
+            Value: 'LivleSubnetC'
+    LivleSubnetIgw:
+      DependsOn: LivleVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: LivleVPC
+        AvailabilityZone: ${self:provider.region}c
+        CidrBlock: "10.0.2.0/24"
+        Tags:
+          - Key: 'Name'
+            Value: 'LivleSubnetIgw'
+    LivleInternetGateway:
+      Type: AWS::EC2::InternetGateway
+    LivleIgwAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        InternetGatewayId:
+          Ref: LivleInternetGateway
+        VpcId:
+          Ref: LivleVPC
+    LivleIgwRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:
+          Ref: LivleVPC
+        Tags:
+          - Key: 'Name'
+            Value: 'LivleIgwRouteTable'
+    LivleIgwRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        DestinationCidrBlock: '0.0.0.0/0'
+        GatewayId:
+          Ref: LivleInternetGateway
+        RouteTableId:
+          Ref: LivleIgwRouteTable
+    LivleIgwRTSubnet:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId:
+          Ref: LivleIgwRouteTable
+        SubnetId:
+          Ref: LivleSubnetIgw
+    LivleNatEIP:
+      Type: AWS::EC2::EIP
+      Properties:
+        Domain: 'vpc'
+    LivleNatGateway:
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId:
+          "Fn::GetAtt": LivleNatEIP.AllocationId
+        SubnetId:
+          Ref: LivleSubnetIgw
+    LivleNatRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:
+          Ref: LivleVPC
+        Tags:
+          - Key: 'Name'
+            Value: 'LivleNatRouteTable'
+    LivleNatRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        DestinationCidrBlock: '0.0.0.0/0'
+        NatGatewayId:
+          Ref: LivleNatGateway
+        RouteTableId:
+          Ref: LivleNatRouteTable
+    LivleNatSubnetA:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId:
+          Ref: LivleNatRouteTable
+        SubnetId:
+          Ref: LivleSubnetA
+    LivleNatSubnetC:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId:
+          Ref: LivleNatRouteTable
+        SubnetId:
+          Ref: LivleSubnetC
+    LivleSecurityGroup:
+      DependsOn: LivleVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SecurityGroup for Serverless Functions
+        VpcId:
+          Ref: LivleVPC
+    LivleStorageSecurityGroup:
+      DependsOn: LivleVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Ingress for Memcached Cluster & RDS Instance
+        VpcId:
+          Ref: LivleVPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: '3306'
+            ToPort: '3306'
+            CidrIp: '0.0.0.0/0' # For development purpose
+          - IpProtocol: tcp
+            FromPort: '3306'
+            ToPort: '3306'
+            SourceSecurityGroupId:
+              Ref: LivleSecurityGroup
+          - IpProtocol: tcp
+            FromPort: '11211'
+            ToPort: '11211'
+            SourceSecurityGroupId:
+              Ref: LivleSecurityGroup
+    LivleRDSSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: "RDS Subnet Group"
+        SubnetIds:
+          - Ref: LivleSubnetA
+          - Ref: LivleSubnetC
+          - Ref: LivleSubnetIgw
+    LivleRDSCluster:
+      DependsOn: LivleStorageSecurityGroup
+      Type: AWS::RDS::DBInstance
+      Properties:
+        Engine: mariadb
+        DBName: ${file(./keys.yml):DB_NAME}
+        MasterUsername: ${file(./keys.yml):DB_USER}
+        MasterUserPassword: ${file(./keys.yml):DB_PASS}
+        DBInstanceClass: db.t2.micro
+        AllocatedStorage: 10
+        VPCSecurityGroups:
+        - "Fn::GetAtt": LivleStorageSecurityGroup.GroupId
+        DBSubnetGroupName:
+          Ref: LivleRDSSubnetGroup
+        PubliclyAccessible: true

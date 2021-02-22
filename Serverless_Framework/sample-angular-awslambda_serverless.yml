@@ -1,0 +1,79 @@
+service:
+  name: sfa-backend
+#app: your-app-name
+#tenant: your-tenant-name
+
+resources:
+  - ${file(resources/admin-cognito-user-pool.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/dynamodb/seq-manage.yml)}
+  - ${file(resources/dynamodb/admin/company.yml)}
+  - ${file(resources/dynamodb/admin/user.yml)}
+  - ${file(resources/dynamodb/general/customer.yml)}
+  - ${file(resources/dynamodb/general/case.yml)}
+  - ${file(resources/dynamodb/general/manhour.yml)}
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-stack-output
+  - serverless-alexa-skills
+custom:
+  config: ${file(./config.yml)}
+  output:
+    handler: .build/output.handler
+  alexa:
+    vendorId: ${self:custom.config.alexa.vendorId}
+    clientId: ${self:custom.config.alexa.clientId}
+    clientSecret: ${self:custom.config.alexa.clientSecret}
+    skills:
+      - id: ${self:custom.config.alexa.skillId}
+        manifest:
+          publishingInformation:
+            locales:
+              ja-JP:
+                name: SFA-case
+          apis:
+            custom:
+              endpoint:
+          manifestVersion: '1.0'
+        models:
+          ja-JP:
+            interactionModel:
+              languageModel:
+                invocationName: 案件管理
+                intents:
+                  - name: GetListIntent
+                    samples:
+                      - '一覧を教えて'
+                      - '担当を教えて'
+                      - '私の担当を教えて'
+                  - name: AMAZON.StopIntent
+                    samples:
+                      - '止めて'
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  environment:
+    USER_POOL_ID:
+      Ref: CognitoUserPool
+  region: ap-northeast-1
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - cognito-idp:*
+      Resource: "*"
+
+functions:
+  - ${file(src/alexa-handler/case/_serverless.yml)}
+  - ${file(src/handler/company/_serverless.yml)}
+  - ${file(src/handler/user/_serverless.yml)}
+  - ${file(src/handler/customer/_serverless.yml)}
+  - ${file(src/handler/case/_serverless.yml)}
+  - ${file(src/handler/manhour/_serverless.yml)}

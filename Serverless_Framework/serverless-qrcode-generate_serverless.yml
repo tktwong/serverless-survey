@@ -1,0 +1,51 @@
+service: qrcode
+
+plugins:
+  - serverless-domain-manager
+
+custom:
+  # change this, so it's unique for your setup
+  qrcodeBucket: ${self:service}.${self:provider.stage,opt:stage}
+  stageVariables:
+    bucketName: ${self:custom.qrcodeBucket}
+  customDomain:
+    domainName: qrcode.pho.im
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:PutObject"
+        - "s3:PutObjectAcl"
+      Resource:
+        - "arn:aws:s3:::${self:custom.qrcodeBucket}"
+        - "arn:aws:s3:::${self:custom.qrcodeBucket}/*"
+
+functions:
+  create:
+    handler: handler.create
+    events:
+      - http:
+          path: /
+          method: get
+          timeout: 15
+    environment:
+      bucketName: ${self:custom.qrcodeBucket}
+
+resources:
+  Resources:
+    PackageStorage:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.qrcodeBucket}
+        LifecycleConfiguration:
+          Rules:
+            - ExpirationInDays: 1
+              Status: Enabled

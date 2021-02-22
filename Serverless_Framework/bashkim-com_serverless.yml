@@ -1,0 +1,311 @@
+service: bashkim-com
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin
+  - serverless-sentry
+  - serverless-ignore
+  - serverless-jetpack
+
+package:
+  individually: true
+
+custom:
+  stage: ${opt:stage, env:SLS_STAGE, 'production'}
+  region: ${opt:region, env:AWS_DEFAULT_REGION, 'eu-west-1'}
+  styleguide: ${self:custom.env.${self:custom.stage}.styleguide}
+  website: ${self:custom.env.${self:custom.stage}.website}
+
+  sentry:
+    dsn: ${env:SENTRY_DSN, ''}
+    environment: ${self:custom.stage}
+
+  ignore:
+    file: .slsignore
+
+  env:
+    production:
+      styleguide:
+        certificateArn: "arn:aws:acm:us-east-1:409535992503:certificate/931d3c5c-33c6-410e-a01f-f45176fb0b99"
+        domainName: styleguide.bashkim.com
+        bucketName: bashkim-com-${self:custom.stage}-styleguide
+      website:
+        certificateArn: "arn:aws:acm:us-east-1:409535992503:certificate/931d3c5c-33c6-410e-a01f-f45176fb0b99"
+        commitHash: ${env:CIRCLE_SHA1, ''}
+        domainName: www.bashkim.com
+        bucketName: bashkim-com-${self:custom.stage}-website
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+  memorySize: 512
+  timeout: 15
+  environment:
+    APP_ENV: ${self:custom.stage}
+    GIT_COMMIT: ${self:custom.website.commitHash}
+    NODE_ENV: ${self:custom.stage}
+    LAMBDA_ENV: true
+    SENTRY_DSN: ${self:custom.sentry.dsn}
+
+functions:
+  application:
+    handler: packages/application/lambda.handler
+    jetpack:
+      roots:
+        - "packages/application"
+        - "packages/config"
+        - "packages/prismic"
+    events:
+      - http:
+          method: ANY
+          path: /
+      - http:
+          method: ANY
+          path: /about
+      - http:
+          method: ANY
+          path: /portfolio
+      - http:
+          method: ANY
+          path: /portfolio/{any+}
+      - http:
+          method: ANY
+          path: /legal/cookie-policy
+  sitemap:
+    handler: packages/sitemap/build/lambda.handler
+    jetpack:
+      roots:
+        - "packages/config"
+        - "packages/prismic"
+        - "packages/sitemap"
+    events:
+      - http:
+          method: GET
+          path: /robots.txt
+      - http:
+          method: GET
+          path: /sitemap.xml
+      - http:
+          method: GET
+          path: /sitemap/{any+}
+  seo:
+    handler: packages/seo/build/lambda.handler
+    events:
+      - http:
+          method: ANY
+          path: /{any+}
+
+resources:
+  Description: bashkim-com
+  extensions:
+    ApplicationLogGroup:
+      Properties:
+        RetentionInDays: "3"
+    SeoLogGroup:
+      Properties:
+        RetentionInDays: "3"
+    SitemapLogGroup:
+      Properties:
+        RetentionInDays: "3"
+
+  Resources:
+    WebsiteCloudFrontOriginAccessIdentity:
+      Type: "AWS::CloudFront::CloudFrontOriginAccessIdentity"
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment:
+            Fn::Join:
+              - ""
+              - - Ref: AWS::StackName
+                - "-website-origin-access-identity"
+
+    WebsiteCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      DependsOn:
+        - WebsiteBucket
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          HttpVersion: http2
+          PriceClass: PriceClass_100
+          Aliases:
+            - ${self:custom.website.domainName}
+          ViewerCertificate:
+            AcmCertificateArn: ${self:custom.website.certificateArn}
+            MinimumProtocolVersion: TLSv1.1_2016
+            SslSupportMethod: sni-only
+          Origins:
+            - DomainName:
+                Fn::GetAtt: [WebsiteBucket, DomainName]
+              Id: WebsiteBucket
+              S3OriginConfig:
+                OriginAccessIdentity:
+                  Fn::Join:
+                    - ""
+                    - - "origin-access-identity/cloudfront/"
+                      - Ref: WebsiteCloudFrontOriginAccessIdentity
+            - DomainName:
+                Fn::Join:
+                  - ""
+                  - - Ref: ApiGatewayRestApi
+                    - ".execute-api."
+                    - ${self:custom.region}
+                    - ".amazonaws.com"
+              Id: APIGWOrigin
+              OriginPath: "/${self:custom.stage}"
+              CustomOriginConfig:
+                OriginKeepaliveTimeout: 60
+                OriginReadTimeout: 15
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+                OriginSSLProtocols:
+                  - "TLSv1"
+                  - "TLSv1.1"
+                  - "TLSv1.2"
+          CacheBehaviors:
+            - PathPattern: /_next/*
+              AllowedMethods:
+                - GET
+                - HEAD
+                - OPTIONS
+              TargetOriginId: WebsiteBucket
+              Compress: true
+              ForwardedValues:
+                QueryString: false
+              ViewerProtocolPolicy: https-only
+            - PathPattern: /static/*
+              AllowedMethods:
+                - GET
+                - HEAD
+                - OPTIONS
+              TargetOriginId: WebsiteBucket
+              Compress: true
+              ForwardedValues:
+                QueryString: false
+              ViewerProtocolPolicy: https-only
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+            TargetOriginId: APIGWOrigin
+            Compress: true
+            MinTTL: 60
+            DefaultTTL: 60
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+
+    WebsiteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.website.bucketName}
+
+    WebsiteBucketPolicy:
+      Type: "AWS::S3::BucketPolicy"
+      DependsOn:
+        - WebsiteCloudFrontOriginAccessIdentity
+        - WebsiteBucket
+      Properties:
+        Bucket: ${self:custom.website.bucketName}
+        PolicyDocument:
+          Statement:
+            - Action:
+                - "s3:GetObject"
+              Effect: "Allow"
+              Resource:
+                Fn::Join:
+                  - ""
+                  - - Fn::GetAtt: [WebsiteBucket, Arn]
+                    - "/**"
+              Principal:
+                CanonicalUser:
+                  Fn::GetAtt:
+                    [WebsiteCloudFrontOriginAccessIdentity, S3CanonicalUserId]
+
+    ## Styleguide Configuration
+
+    StyleguideCloudFrontOriginAccessIdentity:
+      Type: "AWS::CloudFront::CloudFrontOriginAccessIdentity"
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment:
+            Fn::Join:
+              - ""
+              - - Ref: AWS::StackName
+                - "-styleguide-origin-access-identity"
+
+    StyleguideCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      DependsOn:
+        - StyleguideBucket
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          HttpVersion: http2
+          PriceClass: PriceClass_100
+          DefaultRootObject: index.html
+          Aliases:
+            - ${self:custom.styleguide.domainName}
+          ViewerCertificate:
+            AcmCertificateArn: ${self:custom.styleguide.certificateArn}
+            MinimumProtocolVersion: TLSv1.1_2016
+            SslSupportMethod: sni-only
+          Origins:
+            - DomainName:
+                Fn::GetAtt: [StyleguideBucket, DomainName]
+              Id: StyleguideBucket
+              S3OriginConfig:
+                OriginAccessIdentity:
+                  Fn::Join:
+                    - ""
+                    - - "origin-access-identity/cloudfront/"
+                      - Ref: StyleguideCloudFrontOriginAccessIdentity
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            TargetOriginId: StyleguideBucket
+            Compress: true
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+
+    StyleguideBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.styleguide.bucketName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+
+    StyleguideBucketPolicy:
+      Type: "AWS::S3::BucketPolicy"
+      DependsOn:
+        - StyleguideCloudFrontOriginAccessIdentity
+        - StyleguideBucket
+      Properties:
+        Bucket: ${self:custom.styleguide.bucketName}
+        PolicyDocument:
+          Statement:
+            - Action:
+                - "s3:GetObject"
+              Effect: "Allow"
+              Resource:
+                Fn::Join:
+                  - ""
+                  - - Fn::GetAtt: [StyleguideBucket, Arn]
+                    - "/**"
+              Principal:
+                CanonicalUser:
+                  Fn::GetAtt:
+                    [
+                      StyleguideCloudFrontOriginAccessIdentity,
+                      S3CanonicalUserId,
+                    ]

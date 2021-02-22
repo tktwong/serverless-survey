@@ -1,0 +1,67 @@
+org: keithrozario
+app: pycon-execution-times
+
+service: pycon
+
+custom:
+  s3BucketName: ${ssm:/pycon/random-bucket}
+
+provider:
+  name: aws
+  region: ap-southeast-1
+  runtime: python3.7
+  versionFunctions: false
+  logRetentionInDays: 1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+      Resource: arn:aws:s3:::${self:custom.s3BucketName}/*
+  environment:
+    DEST_BUCKET: ${self:custom.s3BucketName}
+    SOURCE_BUCKET: ${self:custom.s3BucketName}
+  tracing:
+    lambda: true
+
+functions:
+  
+  copy:
+    handler: memory_vs_disk.main
+    description: copy object from one S3 Bucket to another
+    memorySize: 256
+    timeout: 45
+    layers:
+      - arn:aws:lambda:ap-southeast-1:113088814899:layer:Klayers-python37-aws-xray-sdk:7
+
+  copy_big:
+    handler: memory_vs_disk.main
+    description: copy object from one S3 Bucket to another (larger memory)
+    memorySize: 2048
+    timeout: 45
+    layers:
+      - arn:aws:lambda:ap-southeast-1:113088814899:layer:Klayers-python37-aws-xray-sdk:7
+  lazy_load:
+    handler: lazy_load.main
+    description: Testing the effects of lazy loading in Lambda functions
+    memorySize: 256
+    timeout: 120
+  download_config_in_handler:
+    handler: download_config_in_handler.main
+    description: Download a configuration from a json file in S3
+    memorySize: 256
+    timeout: 5
+    layers:
+      - arn:aws:lambda:ap-southeast-1:113088814899:layer:Klayers-python37-aws-xray-sdk:7
+  download_config_outside_handler:
+    handler: download_config_outside_handler.main
+    description: Download a configuration from a json file in S3 (outside handler)
+    memorySize: 256
+    timeout: 5
+    layers:
+      - arn:aws:lambda:ap-southeast-1:113088814899:layer:Klayers-python37-aws-xray-sdk:7
+
+package:
+ exclude:
+   - venv/**
+   - terraform/**

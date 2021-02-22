@@ -1,0 +1,95 @@
+
+service: lambdaVPC
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: ap-southeast-1
+  memorySize: 256
+  timeout: 10
+  environment:
+    bucket_name: ${ssm:/security/endpoint_test_bucket_name}
+    parameter_name: /security/endpoint_test_bucket_name
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action: 
+      - s3:GetBucketAcl
+      - s3:GetBucketLogging
+      Resource: ${ssm:/security/endpoint_test_bucket_arn}
+    - Effect: 'Allow'
+      Action: 'ssm:GetParameter'
+      Resource: ${ssm:/security/bucket_name_parameter_arn}
+
+functions:
+  
+  # has internet access
+  private_with_nat:
+    handler: handler.test_s3
+    vpc:
+      securityGroupIds:
+        - ${ssm:/security/lambda_security_group}
+      subnetIds:
+        - ${ssm:/security/private_with_nat_subnet_id}
+  
+  private_with_nat_ssm:
+    handler: handler.test_ssm
+    vpc:
+      securityGroupIds:
+        - ${ssm:/security/lambda_security_group}
+      subnetIds:
+        - ${ssm:/security/private_with_nat_subnet_id}
+
+  # No internet with endpoint
+  private_no_internet_with_endpoint:
+    handler: handler.test_s3
+    vpc:
+      securityGroupIds:
+        - ${ssm:/security/lambda_security_group}
+      subnetIds:
+        - ${ssm:/security/private_no_internet_with_endpoint_subnet_id}
+
+  private_no_internet_with_endpoint_ssm:
+    handler: handler.test_ssm
+    vpc:
+      securityGroupIds:
+        - ${ssm:/security/lambda_security_group}
+      subnetIds:
+        - ${ssm:/security/private_no_internet_with_endpoint_subnet_id}
+
+  # No Internet No endpoint
+  private_no_internet_no_endpoint:
+    handler: handler.test_s3
+    vpc:
+      securityGroupIds:
+        - ${ssm:/security/lambda_security_group}
+      subnetIds:
+        - ${ssm:/security/private_no_internet_no_endpoint_subnet_id}
+
+  private_no_internet_no_endpoint_ssm:
+    handler: handler.test_ssm
+    vpc:
+      securityGroupIds:
+        - ${ssm:/security/lambda_security_group}
+      subnetIds:
+        - ${ssm:/security/private_no_internet_no_endpoint_subnet_id}
+  
+  # Won't work -- no network for lambdas in public subnets work
+  public_with_internet_no_endpoint:
+    handler: handler.test_s3
+    vpc:
+      securityGroupIds:
+        - ${ssm:/security/lambda_security_group}
+      subnetIds:
+        - ${ssm:/security/public_subnet_id}
+
+  # Testing Bash Commands in Network
+  bash_test:
+    handler: bash_test.handler
+    runtime: provided
+    vpc:
+      securityGroupIds:
+        - ${ssm:/security/lambda_security_group}
+      subnetIds:
+        - ${ssm:/security/private_with_nat_subnet_id}
+    layers:
+      - arn:aws:lambda:${self:provider.region}:744348701589:layer:bash:8

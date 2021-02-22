@@ -1,0 +1,417 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: venga-backend # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ${opt:region}
+  stage: ${opt:stage}
+  memorySize: ${opt:memory}
+  timeout: ${opt:timeout}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "arn:aws:s3:::venga-static"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "arn:aws:s3:::venga-static/*"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: { "Fn::Join" : ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/", {"Ref": "AccountsDynamo"}]]  }
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: { "Fn::Join" : ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/", {"Ref": "AccountsDynamo"}, "/index/host_id"]]  }
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: { "Fn::Join" : ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/", {"Ref": "DestinationsDynamo"}]]  }
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: { "Fn::Join" : ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/", {"Ref": "ExperiencesDynamo"}]]  }
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: { "Fn::Join" : ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/", {"Ref": "ExperiencesDynamo"}, "/index/host_id"]]  }
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: { "Fn::Join" : ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/", {"Ref": "TripsDynamo"}]]  }
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: { "Fn::Join" : ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/", {"Ref": "ReviewsDynamo"}]]  }
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: { "Fn::Join" : ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/", {"Ref": "HostsDynamo"}]]  }
+
+plugins:
+  - serverless-offline
+
+functions:
+  # authenticator
+  auth:
+    handler: functions/authentication/authenticator.run
+
+  # accounts
+  login:
+    handler: functions/accounts/login.run
+    events:
+      - http:
+          path: accounts/login
+          method: post
+          cors: true
+  signup:
+    handler: functions/accounts/signup.run
+    events:
+      - http:
+          path: accounts/signup
+          method: post
+          cors: true
+  update:
+    handler: functions/accounts/update.run
+    events:
+     - http:
+         path: accounts/{id}
+         method: put
+         authorizer: auth
+         cors: true
+  delete:
+    handler: functions/accounts/delete.run
+    events:
+      - http:
+          path: accounts/{id}
+          method: delete
+          authorizer: auth
+          cors: true
+  get:
+    handler: functions/accounts/get.run
+    events:
+      - http:
+          path: accounts/me
+          method: get
+          authorizer: auth
+          cors: true
+  reset:
+    handler: functions/accounts/reset.run
+    events:
+      - http:
+          path: accounts/reset
+          method: patch
+          authorizer: auth
+          cors: true
+
+  # experiences api endpoints
+  listDestinations:
+    handler: functions/destinations/list.run
+    events:
+      - http:
+          path: destinations
+          method: get
+          cors: true
+  listExperences:
+    handler: functions/destinations/experiences.run
+    events:
+      - http:
+          path: destinations/{destination}
+          method: get
+          cors: true
+  getExperience:
+    handler: functions/destinations/experience.run
+    events:
+      - http:
+          path: destinations/{destination}/{id}
+          method: get
+          cors: true
+  createExperience:
+    handler: functions/destinations/createExperience.run
+    events:
+      - http:
+          path: experience/create
+          method: post
+          authorizer: auth
+          cors: true
+
+   # trips api endpoints
+  listTrips:
+    handler: functions/trips/list.run
+    events:
+      - http:
+          path: trips
+          method: get
+          authorizer: auth
+          cors: true
+  createTrip:
+     handler: functions/trips/create.run
+     events:
+       - http:
+           path: trips
+           method: post
+           authorizer: auth
+           cors: true
+
+   # stripe api endpoint functions
+  customer:
+    handler: functions/stripe/customer.run
+    events:
+      - http:
+          path: customer
+          method: get
+          authorizer: auth
+          cors: true
+  customerSources:
+    handler: functions/stripe/customerSources.run
+    events:
+      - http:
+         path: customer/sources
+         method: post
+         authorizer: auth
+         cors: true
+  customerDefaultSource:
+     handler: functions/stripe/customerDefaultSource.run
+     events:
+       - http:
+          path: customer/default_source
+          method: post
+          authorizer: auth
+          cors: true
+  charge:
+      handler: functions/stripe/charge.run
+      events:
+        - http:
+            path: customer/charge
+            method: post
+            authorizer: auth
+            cors: true
+  charges:
+      handler: functions/stripe/charges.run
+      events:
+        - http:
+            path: customer/charges
+            method: get
+            authorizer: auth
+            cors: true
+# This is used to redirect from stripe to the mobile app. This is a security
+# concern to go straight to the mobile app.
+  redirect:
+    handler: functions/stripe/redirect.run
+    events:
+      - http:
+          path: stripe/redirect
+          method: get
+          cors: true
+
+  # Experience reviews functions
+  listReviews:
+    handler: functions/reviews/list.run
+    events:
+      - http:
+          path: reviews/{experience}
+          method: get
+          authorizer: auth
+          cors: true
+  createReview:
+    handler: functions/reviews/create.run
+    events:
+      - http:
+          path: reviews
+          method: post
+          authorizer: auth
+          cors: true
+  # Hosts endpoints
+  hostSignup:
+    handler: functions/hosts/signup.run
+    events:
+      - http:
+          path: hosts
+          method: post
+          authorizer: auth
+          cors: true
+  listHostExperences:
+    handler: functions/hosts/experiences.run
+    events:
+      - http:
+          path: hosts/experiences
+          method: get
+          authorizer: auth
+          cors: true
+  getHost:
+    handler: functions/hosts/get.run
+    events:
+      - http:
+          path: hosts/{host_id}
+          method: get
+          authorizer: auth
+          cors: true
+
+  # Images
+  ImageUrls:
+    handler: functions/images/urls.run
+    events:
+      - http:
+          path: images/urls
+          method: post
+          authorizer: auth
+          cors: true
+
+# resources
+resources:
+  Resources:
+    VengaStatic:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: venga-static
+        AccessControl: PublicRead
+    VengaStaticBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: venga-static
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:Get*'
+              Resource:
+                - arn:aws:s3:::venga-static/*
+                - arn:aws:s3:::venga-static
+    AccountsDynamo:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: "${opt:stage}-${opt:service}-accounts"
+        GlobalSecondaryIndexes:
+          -
+            IndexName: 'host_id'
+            KeySchema:
+              -
+                AttributeName: id
+                KeyType: 'HASH'
+            Projection:
+              ProjectionType: 'ALL'
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+    DestinationsDynamo:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: "${opt:stage}-${opt:service}-destinations"
+    ExperiencesDynamo:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: destination_id
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: host_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: destination_id
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          -
+            IndexName: 'host_id'
+            KeySchema:
+              -
+                AttributeName: host_id
+                KeyType: 'HASH'
+            Projection:
+              ProjectionType: 'ALL'
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: "${opt:stage}-${opt:service}-experiences"
+    TripsDynamo:
+       Type: AWS::DynamoDB::Table
+       Properties:
+         AttributeDefinitions:
+           - AttributeName: account_id
+             AttributeType: S
+           - AttributeName: id
+             AttributeType: S
+         KeySchema:
+           - AttributeName: account_id
+             KeyType: HASH
+           - AttributeName: id
+             KeyType: RANGE
+         ProvisionedThroughput:
+           ReadCapacityUnits: 1
+           WriteCapacityUnits: 1
+         TableName: "${opt:stage}-${opt:service}-trips"
+    ReviewsDynamo:
+         Type: AWS::DynamoDB::Table
+         Properties:
+           AttributeDefinitions:
+             - AttributeName: experience_id
+               AttributeType: S
+             - AttributeName: id
+               AttributeType: S
+           KeySchema:
+             - AttributeName: experience_id
+               KeyType: HASH
+             - AttributeName: id
+               KeyType: RANGE
+           ProvisionedThroughput:
+             ReadCapacityUnits: 1
+             WriteCapacityUnits: 1
+           TableName: "${opt:stage}-${opt:service}-reviews"
+    HostsDynamo:
+         Type: AWS::DynamoDB::Table
+         Properties:
+           AttributeDefinitions:
+             - AttributeName: stripe_user_id
+               AttributeType: S
+           KeySchema:
+             - AttributeName: stripe_user_id
+               KeyType: HASH
+           ProvisionedThroughput:
+             ReadCapacityUnits: 1
+             WriteCapacityUnits: 1
+           TableName: "${opt:stage}-${opt:service}-hosts"

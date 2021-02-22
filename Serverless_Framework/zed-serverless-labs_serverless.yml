@@ -1,0 +1,136 @@
+service: aws-iot-x-ray-tracing
+# app: serverless-observability
+# org: zed-labs
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-central-1
+
+  # By default all the AWS services have "pass through" tracing enabled.
+  # The following setting enables active tracing.
+  tracing:
+    lambda: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: "*"
+  environment:
+    STAGE: ${opt:stage, self:provider.stage}
+
+custom:
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+  records:
+    delimiter: "\n"
+
+functions:
+  transformRecords:
+    handler: handler.transformRecords
+    timeout: 60
+
+resources:
+  Resources:
+    IngestDataToFirehoseIoTRule:
+      Type: AWS::IoT::TopicRule
+      Properties:
+        RuleName: IngestDataToFirehose_${self:provider.stage}
+        TopicRulePayload:
+          AwsIotSqlVersion: '2016-03-23'
+          RuleDisabled: 'false'
+          Sql: !Sub 'SELECT * FROM "dt/serverless-observability/aws-iot-x-ray"'
+          Actions:
+            - Firehose:
+                DeliveryStreamName: !Ref DataDeliveryStream
+                RoleArn: { Fn::GetAtt: [ IngestDataToFirehoseRole, Arn ] }
+                Separator: ${self:custom.records.delimiter}
+
+    IngestDataToFirehoseRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument: # What does this policy do?
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - 'iot.amazonaws.com'
+              Action:
+                - 'sts:AssumeRole'
+        Policies:
+          - PolicyName: ingest-data-to-firehose-policy-${self:provider.stage}
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - firehose:DescribeDeliveryStream
+                    - firehose:ListDeliveryStreams
+                    - firehose:PutRecord
+                    - firehose:PutRecordBatch
+                  Resource: { Fn::GetAtt: [ DataDeliveryStream, Arn ] }
+
+    FirehoseToS3Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: firehose-to-s3-role-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - firehose.amazonaws.com
+            Action:
+            - sts:AssumeRole
+        Policies:
+        - PolicyName: firehose-to-s3-policy-${self:provider.stage}
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                - s3:AbortMultipartUpload
+                - s3:GetBucketLocation
+                - s3:GetObject
+                - s3:ListBucket
+                - s3:ListBucketMultipartUploads
+                - s3:PutObject
+                Resource:
+                  - arn:aws:s3:::#{DataBucket}
+                  - arn:aws:s3:::#{DataBucket}/*
+              - Effect: Allow
+                Action:
+                - lambda:InvokeFunction
+                - lambda:GetFunctionConfiguration
+                Resource: { Fn::GetAtt: ["TransformRecordsLambdaFunction", "Arn" ] }
+
+    DataBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: zed-labs-data-bucket-#{AWS::AccountId}-${self:provider.stage}
+
+    DataDeliveryStream:
+      Type: AWS::KinesisFirehose::DeliveryStream
+      Properties:
+        DeliveryStreamName: zed-labs-delivery-stream-${self:provider.stage}
+        ExtendedS3DestinationConfiguration:
+          BucketARN: arn:aws:s3:::#{DataBucket}
+          BufferingHints:
+            IntervalInSeconds: "60"
+            SizeInMBs: "1"
+          CompressionFormat: "UNCOMPRESSED"
+          Prefix: "data/"
+          RoleARN: { Fn::GetAtt: [ FirehoseToS3Role, Arn ] }
+          ProcessingConfiguration:
+            Enabled: 'true'
+            Processors:
+              - Parameters:
+                  - ParameterName: LambdaArn
+                    ParameterValue: { Fn::GetAtt: ["TransformRecordsLambdaFunction", "Arn" ] }
+                Type: Lambda

@@ -1,0 +1,70 @@
+service: serverless-twilio-minidrop-noitifcation
+
+custom:
+  bucket: minidropboxtwilio
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource: "*"
+
+functions:
+
+  insertfile:
+    handler: controller/insert.insertfile
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:Post
+
+  notification:
+    handler: controller/notification.notification
+    environment:
+      SID: ${file(./env.yml):dev.SID}
+      TOKEN: ${file(./env.yml):dev.TOKEN}
+      TONUMBER: ${file(./env.yml):dev.TONUMBER}
+      FROMNUMBER: ${file(./env.yml):dev.FROMNUMBER}
+
+  deletefile:
+    handler: controller/delete.deletefile
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectRemoved:*
+            
+resources:
+  Resources:
+    TwilioDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'Twilio'

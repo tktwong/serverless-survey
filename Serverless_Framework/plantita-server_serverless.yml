@@ -1,0 +1,66 @@
+service: api-gateway-plant
+
+app: plant-server
+
+frameworkVersion: "2"
+provider:
+  name: aws
+  runtime: python3.8
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: saludos/{name}
+          method: get
+  addMeasurement:
+    handler: handler.addMeasurement
+    events:
+      - http:
+          path: mreasurement/add
+          method: post
+  getAllMeasurement:
+    handler: handler.getAllMeasurement
+    events:
+      - http:
+          path: measurement/all
+          method: get
+
+resources:
+  Resources:
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: measurementTable
+        AttributeDefinitions:
+          - AttributeName: room_temperature
+            AttributeType: S
+          - AttributeName: soil_moisture
+            AttributeType: S
+        KeySchema:
+          - AttributeName: room_temperature
+            KeyType: HASH
+          - AttributeName: soil_moisture
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: DynamoDbTable
+      Properties:
+        PolicyName: lambda-dynamodb
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:DeleteItem
+                - dynamodb:Scan
+                - dynamodb:UpdateItem
+              Resource: arn:aws:dynamodb:*:*:table/measurementTable
+        Roles:
+          - Ref: IamRoleLambdaExecution

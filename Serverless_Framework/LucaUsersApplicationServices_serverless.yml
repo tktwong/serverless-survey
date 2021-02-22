@@ -1,0 +1,90 @@
+service: ${file(package.json):name}
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-prune-plugin
+
+custom:
+  secrets: ${file(config/secrets.json)}
+  webpack:
+    includeModules: true
+  dynamodb:
+    start:
+      port: 9000
+      inMemory: true
+      migrate: true
+  prune:
+    automatic: true
+    number: 2
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, "dev"}
+  region: ${opt:region, "us-west-2"}
+  stackName:
+    name: ${self:provider.stage}-${self:service}
+  memorySize: 128
+  environment:
+    jwtSecret: ${self:custom.secrets.jwtSecret}
+    usersTable: ${self:provider.stackName.name}-users
+  deploymentBucket:
+    name: ${self:provider.stage}-deployment-${self:service}
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:PutItem
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.usersTable}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.usersTable}/index/*"
+
+package:
+  individually: true
+
+functions:
+  register:
+    name: ${self:provider.stackName.name}-register
+    handler: src/application-services/register-handler.register
+    # Don't need the extra memory, but his bumps the CPU as well
+    memorySize: 256
+    events:
+      - http:
+          path: /users
+          method: POST
+          cors: true
+  authenticate:
+    name: ${self:provider.stackName.name}-authenticate
+    handler: src/application-services/authenticate-handler.authenticate
+    events:
+      - http:
+          path: /users/authenticated
+          method: POST
+          cors: true
+
+resources:
+  Resources:
+    UsersTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        TableName: ${self:provider.environment.usersTable}
+        GlobalSecondaryIndexes:
+          - IndexName: "ByEmail"
+            KeySchema:
+              - AttributeName: email
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL

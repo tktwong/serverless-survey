@@ -1,0 +1,164 @@
+# DEPLOYMENT ARGS
+# sls deploy --region us-east-1
+
+service: serverless-tlv-meetup-demo
+frameworkVersion: ">=1.47.0"
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: ${opt:region}
+  memorySize: 1024 # optional, in MB, default is 1024
+  versionFunctions: false
+  vpc:
+    securityGroupIds: ${file(config/env.yml):security_group_ids}
+    subnetIds: ${self:custom.subnets}
+  environment:
+    MYSQL_SECRET_KEY: !Ref ServerlessMeetupAuroraPass
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - secretsmanager:*
+      Resource: !Ref ServerlessMeetupAuroraPass
+    - Effect: "Allow"
+      Action:
+        - kms:Decrypt
+      Resource: "arn:aws:kms:us-east-1:858732462826:key/524cbbad-4673-4f22-b16a-450c1cf13e7e"
+
+functions:
+  helloWorld:
+    handler: functions/hello_world.handle
+    events:
+     - alb:
+        listenerArn:
+          Ref: HttpListener
+        priority: 5
+        conditions:
+          path: /hello
+  getRandomUser:
+    handler: functions/get_random_user.handle
+    events:
+     - alb:
+        listenerArn:
+          Ref: HttpListener
+        priority: 4
+        conditions:
+          path: /user/random
+  getRandomUserIdSlowly:
+    handler: functions/get_random_user_id_slowly.handle
+    timeout: 30
+    events:
+     - alb:
+        listenerArn:
+          Ref: HttpListener
+        priority: 6
+        conditions:
+          path: /user/random/id
+
+resources:
+  Resources:
+    FunctionsAlb:
+      Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+      Properties:
+        Name: serverless-tlv-meetup-alb
+        IpAddressType: ipv4
+        Scheme: internal
+        Type: application
+        SecurityGroups: ${file(config/env.yml):security_group_ids}
+        Subnets: ${self:custom.subnets}
+    HttpListener:
+      Type: AWS::ElasticLoadBalancingV2::Listener
+      DependsOn: FunctionsAlb
+      Properties:
+        DefaultActions:
+          - Type: fixed-response
+            Order: 1
+            FixedResponseConfig:
+              StatusCode: 404
+              ContentType: 'application/json'
+              MessageBody: '{ "errorType": "InvalidRoute" }'
+        LoadBalancerArn:
+          Ref: FunctionsAlb
+        Port: 80
+        Protocol: HTTP
+    PrivateDBSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: Private DB Subnet Group
+        SubnetIds: ${self:custom.subnets}
+
+    DBClusterParameterGroup:
+      Type: AWS::RDS::DBClusterParameterGroup
+      Properties:
+        Description: "parameter group for db"
+        Family: 'aurora-mysql5.7'
+        Parameters:
+          autocommit: 0
+
+    ServerlessMeetupAuroraPass:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Description: 'This is the secret for my Aurora Cluster'
+        GenerateSecretString:
+          SecretStringTemplate: '{"username": "sls", "dbname": "sls_demo"}'
+          GenerateStringKey: 'password'
+          PasswordLength: 32
+          ExcludeCharacters: '"@/\'
+
+    SecretRDSInstanceAttachment:
+      Type: AWS::SecretsManager::SecretTargetAttachment
+      DependsOn: AuroraInstance
+      Properties:
+        SecretId: !Ref ServerlessMeetupAuroraPass
+        TargetId: !Ref AuroraCluster
+        TargetType: AWS::RDS::DBCluster
+
+    MySecretRotationSchedule:
+      Type: AWS::SecretsManager::RotationSchedule
+      DependsOn: SecretRDSInstanceAttachment
+      Properties:
+        SecretId: !Ref ServerlessMeetupAuroraPass
+        # Remember to update this place holder with the ARN of your rotation lambda
+        RotationLambdaARN: arn:aws:lambda:us-east-1:858732462826:function:SecretsManagermysql-rotation-lambda
+        RotationRules:
+          AutomaticallyAfterDays: 30
+
+    AuroraCluster:
+      Type: AWS::RDS::DBCluster
+      Properties:
+        Engine: aurora-mysql
+        EngineVersion: 5.7.12
+        DatabaseName: !Join ['', ['{{resolve:secretsmanager:', !Ref ServerlessMeetupAuroraPass, ':SecretString:dbname}}' ]]
+        MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref ServerlessMeetupAuroraPass, ':SecretString:username}}' ]]
+        MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref ServerlessMeetupAuroraPass, ':SecretString:password}}' ]]
+        DBClusterParameterGroupName:
+          Ref: DBClusterParameterGroup
+        DBSubnetGroupName:
+          Ref: PrivateDBSubnetGroup
+        VpcSecurityGroupIds: ${file(config/env.yml):security_group_ids}
+
+    AuroraInstance:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        Engine: aurora-mysql
+        CopyTagsToSnapshot: false
+        MultiAZ: false
+        StorageEncrypted: false
+        DBInstanceClass: db.t2.small
+        DBClusterIdentifier:
+          Ref: AuroraCluster
+
+plugins:
+  - serverless-plugin-epsagon
+  - serverless-python-requirements
+
+
+custom:
+  subnets: ${file(config/env.yml):subnet_ids}
+  epsagon:
+    token: ${file(config/env.yml):epsagon_token}
+    appName: serverless-tlv-meetup-demo

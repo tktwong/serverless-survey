@@ -1,0 +1,381 @@
+service: blog-backend
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  profile: serverless
+  region: ap-northeast-1
+  vpc:
+    subnetIds:
+      - subnet-0ef677a1c6f78431d
+    securityGroupIds:
+      - sg-07c16821b87a150de
+  timeout: 300
+  logRetentionInDays: 7
+
+package:
+  exclude:
+    - .vscode
+    - alembic
+    - node_modules
+    - .devcontainer.json
+    - .dockerignore
+    - .flake8
+    - .gitignore
+    - alembic.ini
+    - Dockerfile
+    - Makefile
+    - serverless.yml
+    - package-lock.json
+    - package.json
+
+plugins:
+  - serverless-python-requirements
+  - serverless-domain-manager
+
+custom:
+  defaultStage: dev
+  envFile: ${file(./.env.yml)}
+  pythonRequirements:
+    dockerizePip: false
+    usePoetry: false
+  customDomain:
+    domainName: ${self:custom.envFile.CUSTOM_DOMAIN}
+    basePath: ""
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    certificateName: ${self:custom.envFile.CUSTOM_DOMAIN}
+
+functions:
+  app:
+    handler: apps.main.handler
+    events:
+      - http:
+          path: /{path+}
+          method: ANY
+          private: false
+          cors: true
+    environment:
+      MYSQL_DATABASE_URL: ${self:custom.envFile.DB_URL}
+      DB_NAME: ${self:custom.envFile.DB_NAME}
+      DB_USER: ${self:custom.envFile.MASTER_USER}
+      DB_PASSWORD: ${self:custom.envFile.MASTER_USER_PASSWORD}
+      SECRET_KEY: ${self:custom.envFile.SecretKey}
+      CORS_ALLOWED_ORIGIN: ${self:custom.envFile.CORS_ALLOWED_ORIGIN}
+      PROJECT_NAME: blogs
+      DEBUG: False
+
+# resources:
+#   Resources:
+#     VPC:
+#       Type: AWS::EC2::VPC
+#       DeletionPolicy: Delete
+#       Properties:
+#         CidrBlock: 10.0.0.0/16
+#         Tags:
+#           - Key: Name
+#             Value: ${self:provider.stage}-VPC
+
+#     InternetGateway:
+#       Type: AWS::EC2::InternetGateway
+#       Properties:
+#         Tags:
+#           - Key: Name
+#             Value: ${self:provider.stage}-IG
+
+#     VPCGatewayAttachment:
+#       Type: AWS::EC2::VPCGatewayAttachment
+#       Properties:
+#         VpcId:
+#           Ref: VPC
+#         InternetGatewayId:
+#           Ref: InternetGateway
+
+#     ElasticIp:
+#       Type: AWS::EC2::EIP
+#       Properties:
+#         Domain: vpc
+
+#     PublicSubnet1a:
+#       DependsOn: [VPC]
+#       Type: AWS::EC2::Subnet
+#       Properties:
+#         VpcId:
+#           Ref: VPC
+#         CidrBlock: 10.0.1.0/24
+#         Tags:
+#           - Key: Name
+#             Value: ${self:provider.stage}-PublicSubnet1a
+
+#     PublicSubnet1c:
+#       DependsOn: [VPC]
+#       Type: AWS::EC2::Subnet
+#       Properties:
+#         VpcId:
+#           Ref: VPC
+#         CidrBlock: 10.0.2.0/24
+#         Tags:
+#           - Key: Name
+#             Value: ${self:provider.stage}-PublicSubnet1c
+
+#     PrivateSubnet1a:
+#       DependsOn: [VPC]
+#       Type: AWS::EC2::Subnet
+#       Properties:
+#         VpcId:
+#           Ref: VPC
+#         AvailabilityZone: ap-northeast-1a
+#         CidrBlock: 10.0.3.0/24
+#         Tags:
+#           - Key: Name
+#             Value: ${self:provider.stage}-PrivateSubnet1a
+
+#     PrivateSubnet1c:
+#       DependsOn: [VPC]
+#       Type: AWS::EC2::Subnet
+#       Properties:
+#         VpcId:
+#           Ref: VPC
+#         AvailabilityZone: ap-northeast-1c
+#         CidrBlock: 10.0.4.0/24
+#         Tags:
+#           - Key: Name
+#             Value: ${self:provider.stage}-PrivateSubnet1c
+
+#     PublicRouteTable:
+#       Type: AWS::EC2::RouteTable
+#       Properties:
+#         VpcId:
+#           Ref: VPC
+#         Tags:
+#           - Key: Name
+#             Value: ${self:provider.stage}-PublicRouteTable
+
+#     PublicRoute:
+#       Type: AWS::EC2::Route
+#       Properties:
+#         RouteTableId:
+#           Ref: PublicRouteTable
+#         DestinationCidrBlock: 0.0.0.0/0
+#         GatewayId:
+#           Ref: InternetGateway
+
+#     SubnetRouteTableAssociationPublicSubnet1a:
+#       Type: AWS::EC2::SubnetRouteTableAssociation
+#       Properties:
+#         SubnetId:
+#           Ref: PublicSubnet1a
+#         RouteTableId:
+#           Ref: PublicRouteTable
+
+#     SubnetRouteTableAssociationPublicSubnet1c:
+#       Type: AWS::EC2::SubnetRouteTableAssociation
+#       Properties:
+#         SubnetId:
+#           Ref: PublicSubnet1c
+#         RouteTableId:
+#           Ref: PublicRouteTable
+
+#     ApiGateway:
+#       Type: AWS::ApiGateway::RestApi
+#       DeletionPolicy: Delete
+#       Properties:
+#         EndpointConfiguration:
+#           Types:
+#             - REGIONAL
+#         Name: ${self:provider.stage}-ApiGateway
+
+#     SGForDB:
+#       DependsOn: VPC
+#       Type: AWS::EC2::SecurityGroup
+#       Properties:
+#         GroupDescription: ${self:provider.stage} SG for DB
+#         GroupName: ${self:provider.stage}-SG-DB
+#         SecurityGroupIngress:
+#           - IpProtocol: tcp
+#             FromPort: 3306
+#             ToPort: 3306
+#             SourceSecurityGroupId:
+#               Ref: SGForLambda
+#         VpcId:
+#           Ref: VPC
+
+#     SGForLambda:
+#       DependsOn: VPC
+#       Type: AWS::EC2::SecurityGroup
+#       Properties:
+#         GroupDescription: ${self:provider.stage} SG for Lambda
+#         GroupName: ${self:provider.stage}-SG-Lambda
+#         SecurityGroupIngress:
+#           - IpProtocol: tcp
+#             FromPort: 443
+#             ToPort: 443
+#             CidrIp: 0.0.0.0/0
+#         VpcId:
+#           Ref: VPC
+
+#     DBSubnetGroup:
+#       Type: AWS::RDS::DBSubnetGroup
+#       Properties:
+#         DBSubnetGroupDescription: ${self:provider.stage} DB Subnet Group
+#         SubnetIds:
+#           - !Ref PrivateSubnet1a
+#           - !Ref PrivateSubnet1c
+
+#     DBParameterGroup:
+#       Type: AWS::RDS::DBClusterParameterGroup
+#       Properties:
+#         Description: ${self:provider.stage} Parameter Group for Aurora Serverless
+#         Family: aurora5.6
+#         Parameters:
+#           server_audit_logging: 0
+#           character_set_client: utf8mb4
+#           character_set_connection: utf8mb4
+#           character_set_database: utf8mb4
+#           character_set_results: utf8mb4
+#           character_set_server: utf8mb4
+#           skip-character-set-client-handshake: 1
+
+#     DBCluster:
+#       DependsOn: DBSubnetGroup
+#       Type: AWS::RDS::DBCluster
+#       Properties:
+#         DBClusterIdentifier: DBCluster
+#         DatabaseName: blog
+#         DBSubnetGroupName:
+#           Ref: DBSubnetGroup
+#         DBClusterParameterGroupName:
+#           Ref: DBParameterGroup
+#         DeletionProtection: false
+#         Engine: aurora
+#         EngineMode: serverless
+#         EngineVersion: 5.6.10a
+#         StorageEncrypted: true
+#         EnableHttpEndpoint: true
+#         ScalingConfiguration:
+#           MinCapacity: 1
+#           AutoPause: true
+#           MaxCapacity: 2
+#           SecondsUntilAutoPause: 1800
+#         MASTER_USER: ${self:custom.envFile.MASTER_USER}
+#         MASTER_USER_PASSWORD: ${self:custom.envFile.MASTER_USER_PASSWORD}
+#         Port: 3306
+#         VpcSecurityGroupIds:
+#           - !Ref SGForDB
+
+#     DomainHostedZone:
+#       Type: AWS::Route53::HostedZone
+#       Properties:
+#         HostedZoneConfig:
+#           Comment: ${self:provider.stage} Domain Hosted Zone.
+#         HostedZoneTags: 
+#           - Key: "Environment"
+#             Value: ${self:provider.stage}
+#         Name: ${self:custom.envFile.FRONTEND_DOMAIN}
+
+#     # BackendACM:
+#     #   Type: AWS::CertificateManager::Certificate
+#     #   Properties: 
+#     #     DomainName: ${self:custom.envFile.CUSTOM_DOMAIN}
+#     #     DomainValidationOptions: 
+#     #       - DomainName: ${self:custom.envFile.CUSTOM_DOMAIN}
+#     #         HostedZoneId: !Ref DomainHostedZone
+#     #     Tags: 
+#     #       - Key: "Name"
+#     #         Value: ${self:provider.stage}-backend-acm
+#     #     ValidationMethod: "DNS"
+#     #   DependsOn: DomainHostedZone
+    
+#     FrontendACM:
+#       Type: AWS::CertificateManager::Certificate
+#       Properties: 
+#         DomainName: ${self:custom.envFile.FRONTEND_DOMAIN}
+#         DomainValidationOptions: 
+#           - DomainName: ${self:custom.envFile.FRONTEND_DOMAIN}
+#             HostedZoneId: !Ref DomainHostedZone
+#         Tags: 
+#           - Key: "Name"
+#             Value: ${self:provider.stage}-frontend-acm
+#         ValidationMethod: "DNS"
+#       DependsOn: DomainHostedZone
+
+#     FrontendBucket:
+#       Type: "AWS::S3::Bucket"
+#       Properties:
+#         BucketName: ${self:provider.stage}-frontend-origin
+#         PublicAccessBlockConfiguration:
+#           BlockPublicAcls: true
+#           BlockPublicPolicy: true
+#           IgnorePublicAcls: true
+#           RestrictPublicBuckets: true
+#         Tags:
+#           - Key: "Name"
+#             Value: ${self:provider.stage}-frontend-origin
+
+    # CloudFront:
+    #   Type: AWS::CloudFront::Distribution
+    #   Properties: 
+    #     DistributionConfig:
+    #       PriceClass: PriceClass_200
+    #       Aliases:
+    #       - ${self:custom.envFile.FRONTEND_DOMAIN}
+    #       Origins:
+    #       - DomainName: !GetAtt FrontendBucket.DomainName
+    #         Id: ${self:provider.stage}-Frontend-origin
+    #         S3OriginConfig:
+    #           OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}"
+    #       DefaultRootObject: index.html
+    #       DefaultCacheBehavior:
+    #         TargetOriginId: ${self:provider.stage}-Frontend-origin
+    #         ViewerProtocolPolicy: redirect-to-https
+    #         AllowedMethods:
+    #         - GET
+    #         - HEAD
+    #         CachedMethods:
+    #         - GET
+    #         - HEAD
+    #         DefaultTTL: 3600
+    #         MaxTTL: 86400
+    #         MinTTL: 60
+    #         Compress: true
+    #         ForwardedValues:
+    #           Cookies:
+    #             Forward: none
+    #           QueryString: false
+    #       ViewerCertificate:
+    #         SslSupportMethod: sni-only
+    #         MinimumProtocolVersion: TLSv1.2_2019
+    #         AcmCertificateArn: !Sub "arn:aws:acm:us-east-1:${AWS::AccountId}:certificate/${CFSSLCertificateId}"
+    #       HttpVersion: http2
+    #       Enabled: true
+
+    # CloudFrontOriginAccessIdentity:
+    #   Type: "AWS::CloudFront::CloudFrontOriginAccessIdentity"
+    #   Properties:
+    #     CloudFrontOriginAccessIdentityConfig:
+    #       Comment: ${self:provider.stage} OAI
+
+    # BucketPolicy:
+    #   Type: "AWS::S3::BucketPolicy"
+    #   Properties:
+    #     Bucket: !Ref FrontendBucket
+    #     PolicyDocument:
+    #       Statement:
+    #       - Action: "s3:GetObject"
+    #         Effect: Allow
+    #         Resource: !Sub "arn:aws:s3:::${FrontendBucket}/*"
+    #         Principal:
+    #           CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+    
+    # FrontendRecord:
+    #   Type: AWS::Route53::RecordSet
+    #   Properties:
+    #     HostedZoneName: !Ref 'DomainHostedZone'
+    #     Comment: ${self:provider.stage} Frontend record.
+    #     Name: ${self:custom.envFile.FRONTEND_DOMAIN}
+    #     Type: A
+    #     TTL: '900'
+    #     ResourceRecords:
+    #     - !GetAtt CloudFront.DomainName

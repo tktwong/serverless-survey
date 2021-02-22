@@ -1,0 +1,139 @@
+service: cidaen-proyectofinal-back 
+
+plugins:
+  - serverless-ephemeral
+  - serverless-pseudo-parameters
+
+package:
+  exclude:
+    - ./**
+  include:
+    - handlers/**
+    - classes/**
+
+custom:
+  ephemeral:
+    libraries:
+    - packager:
+        compose: tf-packager/docker-compose.yml
+        service: packager
+        output: /tmp/lambda_package.zip
+
+provider:
+  name: aws
+  apiKeys:
+    - ${opt:nameKeySecret}
+  usagePlan:
+    quota:
+      limit: 50
+      period: DAY
+    throttle:
+      burstLimit: 5
+      rateLimit: 5
+  runtime: python3.6
+  stage: dev
+  region: eu-west-1
+  memorySize: 3008
+  timeout: 300
+
+  environment:
+    S3_BUCKET: inputimages-${self:provider.stage}.#{AWS::AccountId}
+    DYNAMODB_TABLE: ProcessedImages-${self:provider.stage}.#{AWS::AccountId}
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action: 
+        - 'rekognition:*'
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+
+  cloud-tags:
+    handler: handlers/handler.get_cloud_tags
+    events:
+      - http:
+          path: cloudtags
+          method: get
+          cors: true
+          private: true
+  
+  list-celebrities:
+    handler: handlers/handler.list_celebrities
+    events:
+      - http:
+          path: celebrities/{date}
+          method: get
+          cors: true
+          private: true
+  
+  count-celebrities:
+    handler: handlers/handler.countCelebritiesByNewspaper
+    events:
+      - http:
+          path: countCelebrities
+          method: get
+          cors: true
+          private: true
+
+  s3-get-url:
+    handler: handlers/handler.s3_get_url
+    events:
+      - http:
+          path: key/{key}
+          method: get
+          cors: true
+          private: true
+    
+  download-images:
+    handler: handlers/handler.download_images
+    events:
+      - schedule: cron(00 06 * * ? *)
+
+  s3-new-image:
+    handler: handlers/handler.image_uploaded
+    events:
+     - s3:
+          bucket: ${self:provider.environment.S3_BUCKET}
+          event: s3:ObjectCreated:*
+
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: daymonthYear
+            AttributeType: S
+          -
+            AttributeName: idimagen
+            AttributeType: S
+
+        KeySchema:
+          -
+            AttributeName: daymonthYear
+            KeyType: HASH
+          -
+            AttributeName: idimagen
+            KeyType: RANGE
+
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

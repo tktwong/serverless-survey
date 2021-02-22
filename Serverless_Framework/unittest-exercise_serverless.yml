@@ -1,0 +1,91 @@
+service: testability-workshop
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: ap-northeast-1
+  environment:
+    STAGE: ${self:provider.stage}
+    TABLE_NAME: ${self:service}-ec2_resource_table-${self:provider.stage}
+    ACTION_STREAM: ${self:service}-SomethingActionStream-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+    - Effect: "Allow"
+      Action:
+        - "kinesis:*"
+      Resource: "*"        
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:PutItem"
+        - "dynamodb:BatchWrite*"
+        - "dynamodb:BatchGet*"
+        - "dynamodb:Get*"
+        - "dynamodb:Query"
+        - "dynamodb:Scan"
+        - "dynamodb:Update*"
+      Resource:
+        - Fn::Join:
+          - ""
+          - - "arn:aws:dynamodb:*:*:table/"
+            - ${self:provider.environment.TABLE_NAME}
+        - Fn::Join:
+          - ""
+          - - "arn:aws:dynamodb:*:*:table/"
+            - ${self:provider.environment.TABLE_NAME}
+            - "/*"
+
+plugins:
+  # - serverless-dotenv-plugin
+  - serverless-python-requirements
+
+package:
+ exclude:
+   - tests/**
+   - node_modules/**
+
+functions:
+  Ec2Collector:
+    handler: ec2collector/functions/collector.collect
+    events:
+      - schedule: cron(0 17 * * ? *)
+  SomethingAction:
+    handler: ec2collector/functions/collector.something_action
+    events:
+      - schedule: cron(0 18 * * ? *)
+  DoSomething:
+    handler: ec2collector/functions/action.do_something
+    event:
+      - stream:
+          type: kinesis
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt: [ SomethingStream , Arn ]
+
+resources:
+  Resources:
+    EC2ResourceTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: InstanceId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: InstanceId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    SomethingStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${self:provider.environment.ACTION_STREAM}
+        ShardCount: 1
+  Outputs:
+    EC2ResourceTable:
+      Description: Table ARN
+      Value: 
+        Fn::GetAtt: [ EC2ResourceTable, Arn ]

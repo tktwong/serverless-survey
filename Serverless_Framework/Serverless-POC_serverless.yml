@@ -1,0 +1,136 @@
+service: Serverless-POC 
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  versionLambda: false
+  stage: ${opt:stage, 'alpha'}
+  region: ap-south-1
+  apiName: Serverless-POC
+  environment:
+    sqsName: 
+      Fn::GetAtt: 
+        - "FirstQueue"
+        - "QueueName" 
+    sqsURL: 
+      Ref: "FirstQueue"
+    sqsARN:  
+      Fn::GetAtt: 
+        - "FirstQueue"
+        - "Arn"
+    secondQURL: 
+      Ref: "SecondQueue"
+    secondQARN:  
+      Fn::GetAtt: 
+        - "SecondQueue"
+        - "Arn"
+    
+  iamRoleStatements:
+  # SQS Permissions
+    - Effect: "Allow"
+      Action:
+        - sqs:ReceiveMessage
+        - sqs:SendMessage
+      Resource: 
+        - "Fn::GetAtt": [ FirstQueue, Arn ]
+        - "Fn::GetAtt": [ SecondQueue, Arn ]
+  # DynamoDb Permissions
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ TestTable, Arn ] 
+  # RDS Permissions  
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+        - logs:DescribeLogStreams
+        - logs:GetLogEvents
+        - ec2:CreateNetworkInterface
+        - ec2:DescribeNetworkInterfaces
+        - ec2:DeleteNetworkInterface
+        - ec2:DescribeAccountAttributes
+        - ec2:DescribeAvailabilityZones
+        - ec2:DescribeInternetGateways
+        - ec2:DescribeSecurityGroups
+        - ec2:DescribeSubnets
+        - ec2:DescribeVpcAttribute
+        - ec2:DescribeVpcs
+        - rds:CreateDBInstance
+        - rds:ModifyDBInstance
+        - rds:RestoreDBInstanceFromDBSnapshot
+      Resource: "*"
+  # Lambda Invoke Permissions  
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*"
+
+custom:
+  stage: ${self:provider.stage}
+  API: ${self:service}
+  prefix: ${self:service}-${self:provider.stage}-
+  tableName: ${self:custom.prefix}Test-Table
+  
+
+
+functions:
+  # Create-User:
+  - ${file(./services/Create-User/Create-User.yml)}
+  # Get-Data:
+  - ${file(./services/Get-Data/Get-Data.yml)}
+  # Put-Data:
+  - ${file(./services/Put-Data/Put-Data.yml)}
+  # lambda-integration:
+  - ${file(./services/lambda-integration/lambda-integration.yml)}
+  # utility
+  - ${file(./services/utility/utility.yml)}
+  # lambda-invoke
+  - ${file(./services/lambda-invoke/lambda-invoke.yml)}
+  # sqs-msg-sender
+  - ${file(./services/sqs-msg-sender/sqs-msg-sender.yml)}
+  # sqs-msg-receiver
+  - ${file(./services/sqs-msg-receiver/sqs-msg-receiver.yml)}
+  # Db-connection
+  - ${file(./services/Db-connection/Db-connection.yml)}
+
+resources:
+  Resources:
+  # SQS Queue1
+    FirstQueue:
+      Type: AWS::SQS::Queue
+      Properties: 
+        QueueName: ${self:custom.prefix}Queue1
+  # SQS Queue2
+    SecondQueue:
+      Type: AWS::SQS::Queue
+      Properties: 
+        QueueName: ${self:custom.prefix}Queue2
+  # DynamoDb Table
+    TestTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: sessionId
+            AttributeType: S
+          - AttributeName: status
+            AttributeType: S
+        KeySchema:
+          - AttributeName: sessionId
+            KeyType: HASH
+          - AttributeName: status
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+          

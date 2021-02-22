@@ -1,0 +1,190 @@
+service: circadia
+
+plugins:
+  - serverless-plugin-scripts
+  - serverless-dotenv-plugin
+  - serverless-dynamodb-local
+  - serverless-offline
+
+frameworkVersion: '>=1.38.0 <2.0.0'
+
+custom:
+  version: 'v01'
+  corsOrigin: '*'
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-southeast-2'}
+  namespace: ${self:service}-${self:custom.version}-${self:custom.stage}
+  apiBasepath: api/${self:custom.version}
+  dbTable_Users: ${self:custom.namespace}-users
+  dbTable_wsConnections: ${self:custom.namespace}-wsConnections
+  scripts:
+    hooks:
+      'deploy:finalize': sls invoke -f refreshSlackMembers
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${self:custom.region}
+  stage: ${self:custom.stage}
+  stackName: ${self:custom.namespace}
+  apiName: ${self:custom.namespace}-apigw
+  websocketsApiName: ${self:custom.namespace}-apigw-websocket
+  websocketsApiRouteSelectionExpression: $request.body.action
+  environment:
+    CORS_ORIGIN: ${self:custom.corsOrigin}
+    REGION: ${self:custom.region}
+    USER_TABLE: ${self:custom.dbTable_Users}
+    WS_CONNECTIONS_TABLE: ${self:custom.dbTable_wsConnections}
+    WEBSOCKET_API_ENDPOINT: !Join ['', ['https://', !Ref WebsocketsApi, '.execute-api.', '${self:custom.region}', '.amazonaws.com/', '${self:custom.stage}/']]
+    AUTH0_CLIENT_ID: ${file(./auth0.json):AUTH0_CLIENT_ID}
+    AUTH0_CLIENT_PUBLIC_KEY: ${file(./public_key)}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'execute-api:ManageConnections'
+      Resource:
+        - 'arn:aws:execute-api:${opt:region, self:provider.region}:*:**/@connections/*'
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - 'Fn::Join':
+            - ':'
+            - - 'arn:aws:dynamodb'
+              - Ref: 'AWS::Region'
+              - Ref: 'AWS::AccountId'
+              - 'table/${self:custom.dbTable_wsConnections}'
+        - 'Fn::Join':
+            - ':'
+            - - 'arn:aws:dynamodb'
+              - Ref: 'AWS::Region'
+              - Ref: 'AWS::AccountId'
+              - 'table/${self:custom.dbTable_Users}'
+# functions
+functions:
+  #### Main Handlers for Web Application ####
+  auth:
+    handler: handler.auth
+    cors: true
+  listUsers:
+    handler: handler.listUsers
+    events:
+      - http:
+          path: ${self:custom.apiBasepath}/users/list
+          method: get
+          cors: true
+          authorizer: auth
+  messageWebSocketClients:
+    handler: handler.sendMessage
+    events:
+      - http:
+          path: ${self:custom.apiBasepath}/sockets/sendMessage
+          method: post
+          cors: true
+          authorizer: auth
+  #### Handlers for interfacing with external data sources ####
+  onSlackEvent:
+    handler: handler.onSlackEvent
+    events:
+      - http:
+          path: ${self:custom.apiBasepath}/external/slack/event
+          method: post
+          cors: true
+  refreshSlackMembers:
+    handler: handler.refreshSlackMembers
+    events:
+      - schedule:
+          rate: rate(6 hours)
+          enabled: true
+      - http:
+          path: ${self:custom.apiBasepath}/external/slack/members
+          method: get
+          cors: true
+          authorizer: auth
+  refreshSlackMemberPresence:
+    handler: handler.refreshSlackMemberPresence
+    timeout: 30
+    events:
+      - schedule:
+          rate: rate(10 minutes)
+          enabled: true
+      - http:
+          path: ${self:custom.apiBasepath}/external/slack/memberPresence
+          method: get
+          cors: true
+          authorizer: auth
+  #### Main Handlers for WebSocket API ####
+  wsConnectionHandler:
+    handler: handler.handleSocketConnect
+    events:
+      - websocket:
+          route: $connect
+  wsDisconnectionHandler:
+    handler: handler.handleSocketDisconnect
+    events:
+      - websocket:
+          route: $disconnect
+  wsDefaultHandler:
+    handler: handler.defaultSocketHandler
+    events:
+      - websocket:
+          route: $default
+
+### AWS RESOURCES
+resources:
+  Resources:
+    # This response is needed for custom authorizer failures cors support ¯\_(ツ)_/¯
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    WSClientsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: connectionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: connectionId
+            KeyType: HASH
+        TableName: ${self:custom.dbTable_wsConnections}
+    UserStatusTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:custom.dbTable_Users}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+logs:
+  restApi:
+    level: INFO
+  websocket:
+    level: INFO

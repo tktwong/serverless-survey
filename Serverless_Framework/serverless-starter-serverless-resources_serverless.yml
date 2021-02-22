@@ -1,0 +1,95 @@
+service: __PACKAGE_NAME__-database
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  __USERS_TABLE_NAME__TableName: ${self:custom.stage}-__USERS_TABLE_NAME__
+  socketConnectionsTableName: ${self:custom.stage}-socketConnections
+
+provider:
+  name: aws
+  stage: dev
+  region: __AWS_REGION__
+
+resources:
+  Resources:
+    __USERS_TABLE_NAME__Table:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        # Generate a name based on the stage
+        TableName: ${self:custom.__USERS_TABLE_NAME__TableName}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: N
+          - AttributeName: updatedAt
+            AttributeType: N
+          - AttributeName: globalSort
+            AttributeType: N
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: __USERS_TABLE_NAME___globalSort_createdAt_gsi
+            KeySchema:
+              - AttributeName: globalSort
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: __USERS_TABLE_NAME___globalSort_updatedAt_gsi
+            KeySchema:
+              - AttributeName: globalSort
+                KeyType: HASH
+              - AttributeName: updatedAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: __USERS_TABLE_NAME___email_gsi
+            KeySchema:
+              - AttributeName: email
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        # Set the capacity to auto-scale
+        BillingMode: PAY_PER_REQUEST
+        # StreamSpecification:
+        #   StreamViewType: NEW_AND_OLD_IMAGES
+    SocketConnectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.socketConnectionsTableName}
+        AttributeDefinitions:
+          - AttributeName: connectionId
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+        KeySchema:
+          - AttributeName: connectionId
+            KeyType: HASH
+        SSESpecification:
+          SSEEnabled: true
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+  Outputs:
+    __USERS_TABLE_NAME__TableArn:
+      Value:
+        Fn::GetAtt:
+          - __USERS_TABLE_NAME__Table
+          - Arn
+      Export:
+        Name: ${self:custom.stage}-__USERS_TABLE_NAME__TableArn
+    SocketConnectionsTableArn:
+      Value:
+        Fn::GetAtt:
+          - SocketConnectionsTable
+          - Arn
+      Export:
+        Name: ${self:custom.stage}-SocketConnectionsTableArn

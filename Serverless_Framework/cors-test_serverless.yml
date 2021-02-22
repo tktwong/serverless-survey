@@ -1,0 +1,88 @@
+# serverless.yml
+
+service: cors-test
+
+# -------------------------------------
+plugins:
+  - serverless-finch
+  - serverless-dynamodb-local
+  - serverless-offline # serverless-offline needs to be last in the list
+
+# -------------------------------------
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  region: 'us-east-1'
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource: '*'
+
+  environment:
+    NODE_ENV: ${self:provider.stage}
+
+# -------------------------------------
+custom:
+  stage: ${self:provider.stage}
+
+# Package -------------------------
+package:
+  include:
+    - './config/**'
+  exclude:
+    - .circleci
+    - .git
+    - secrets.yml
+    - test
+
+# Functions -----------------------
+functions:
+  index:
+    handler: src/index.handler
+    warmup: true
+    events:
+      - http:
+          path: /
+          method: any
+          cors: true
+
+      - http:
+          path: /{proxy+}
+          method: any
+          cors: true
+
+## Resources ---------------------------
+resources:
+  Resources:
+    # This response is needed for custom authorizer failures cors support ¯\_(ツ)_/¯
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'

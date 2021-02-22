@@ -1,0 +1,149 @@
+service: data-api
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-2
+  stage: production
+  timeout: 30
+  environment:
+    VALUES_TABLE: "${self:service}-${opt:stage, self:provider.stage}-values"
+    GROUPS_TABLE: "${self:service}-${opt:stage, self:provider.stage}-groups"
+    MAIN_USER: ${ssm:/data-api/production/MAIN_USER}
+    PASS_HASH: ${ssm:/data-api/production/PASS_HASH}
+    JWT_SECRET: ${ssm:/data-api/production/JWT_SECRET}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-offline-ssm
+
+custom:
+  dynamodb:
+    stages:
+      - production
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+
+functions:
+  listGroups:
+    handler: lambda.listGroups
+    events:
+      - http:
+          path: groups
+          method: get
+          cors: true
+  createGroup:
+    handler: lambda.createGroup
+    events:
+      - http:
+          path: groups
+          method: post
+          cors: true
+  getGroup:
+    handler: lambda.getGroup
+    events:
+      - http:
+          path: groups/{groupId}
+          method: get
+          cors: true
+  listGroupKeys:
+    handler: lambda.listGroupKeys
+    events:
+      - http:
+          path: groups/{groupId}/keys
+          method: get
+          cors: true
+  deleteGroupKey:
+    handler: lambda.deleteGroupKey
+    events:
+      - http:
+          path: groups/{groupId}/keys/{keyId}
+          method: delete
+          cors: true
+  updateGroup:
+    handler: lambda.updateGroup
+    events:
+      - http:
+          path: groups/{groupId}
+          method: put
+          cors: true
+  createMetrics:
+    handler: lambda.createMetrics
+    events:
+      - http:
+          path: groups/{groupId}/metrics
+          method: post
+          cors: true
+  getMetric:
+    handler: lambda.getMetric
+    description: Main handler for data api
+    events:
+      - http:
+          path: groups/{groupId}/metrics/{metricId}
+          method: get
+          cors: true
+  login:
+    handler: lambda.login
+    description: Main handler for data api
+    events:
+      - http:
+          path: login
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    ValuesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: groupId
+            AttributeType: S
+          -
+            AttributeName: metricTime
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: groupId
+            KeyType: HASH
+          - AttributeName: metricTime
+            KeyType: RANGE
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamEnabled: false
+        TableName: ${self:provider.environment.VALUES_TABLE}
+    GroupsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamEnabled: false
+        TableName: ${self:provider.environment.GROUPS_TABLE}

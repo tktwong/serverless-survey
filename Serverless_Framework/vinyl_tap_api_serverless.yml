@@ -1,0 +1,82 @@
+service: vinyl-tap-api
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-dynamodb-local
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  create:
+    handler: records/create.create
+    events:
+      - http:
+          path: records
+          method: post
+          cors: true
+
+  list:
+    handler: records/list.list
+    events:
+      - http:
+          path: records
+          method: get
+          cors: true
+
+  get:
+    handler: records/get.get
+    events:
+      - http:
+          path: records/{id}
+          method: get
+          cors: true
+
+  update:
+    handler: records/update.update
+    events:
+      - http:
+          path: records/{id}
+          method: put
+          cors: true
+
+  delete:
+    handler: records/delete.delete
+    events:
+      - http:
+          path: records/{id}
+          method: delete
+          cors: true
+
+resources:
+  Resources:
+    RecordsDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

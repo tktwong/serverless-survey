@@ -1,0 +1,86 @@
+# serverless.yml
+# Configuration of our Databse and different endpoint of the app
+
+service: mission-impossible
+
+custom:
+  tableName: 'products-${self:provider.stage}'
+  dynamodb:
+    stages:
+      - dev
+    start:
+      migrate: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["ProductsDynamoDBTable", "Arn" ] }
+  environment:
+    PRODUCTS_TABLE: ${self:custom.tableName}
+
+functions:
+  app:
+    handler: index.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+  getProductById:
+    handler: index.handler
+    events:
+      - http:
+          method: GET
+          path: /product/{IDPRODUIT+}
+          request:
+            parameters:
+              path:
+                IDPRODUIT+: true
+
+  getProductByName:
+    handler: index.handler
+    events:
+      - http:
+          method: GET
+          path: /productByName/{NOMCOMMERCIAL+}
+          request:
+            parameters:
+              path:
+                NOMCOMMERCIAL+: true
+
+  addProducts:
+    handler: index.handler
+    events:
+      - http: 'POST /add-products'
+      
+resources:
+  Resources:
+    ProductsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - 
+            AttributeName: IDPRODUIT
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: IDPRODUIT
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline

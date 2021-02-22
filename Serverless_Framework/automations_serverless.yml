@@ -1,0 +1,70 @@
+service: ticnsp-automations-api
+
+# Create an optimized package for our functions 
+# package:
+#   individually: true
+
+# plugins:
+  # - serverless-bundle # Package our functions with Webpack
+  # - serverless-offline
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt.stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  studentsTableName: automations-students-${self:custom.stage}
+  semestersTableName: automations-semesters-${self:custom.stage}
+  enrollmentsTableName: automations-enrollments-${self:custom.stage}
+  tutorsTableName: automations-tutors-${self:custom.stage}
+  coordinatorsTableName: automations-coordinators-${self:custom.stage}
+  contactsTableName: automations-contacts-${self:custom.stage}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: development
+  region: us-east-1
+
+  environment:
+    studentsTableName: automations-students-${self:custom.stage}
+    semestersTableName: automations-semesters-${self:custom.stage}
+    enrollmentsTableName: automations-enrollments-${self:custom.stage}
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ CoordinatorsTable, Arn ]
+        - "Fn::GetAtt": [ StudentsTable, Arn ]
+        - "Fn::GetAtt": [ SemestersTable, Arn ]
+        - "Fn::GetAtt": [ EnrollmentsTable, Arn ]
+        - "Fn::GetAtt": [ ContactsTable, Arn ]
+
+functions:
+  - ${file(serverless/functions/coordinators.yml)}
+  - ${file(serverless/functions/students.yml)}
+  - ${file(serverless/functions/semesters.yml)}
+  - ${file(serverless/functions/contacts.yml)}
+  - ${file(serverless/functions/enrollments.yml)}
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(serverless/resources/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(serverless/resources/dynamodb-table.yml)}
+  # S3
+  - ${file(serverless/resources/s3-bucket.yml)}
+  # Cognito
+  - ${file(serverless/resources/cognito-user-pool.yml)}
+  - ${file(serverless/resources/cognito-identity-pool.yml)}

@@ -1,0 +1,152 @@
+service: thumbnail-resize
+app: thumbnail-resize
+org: archermcneill
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+
+  stage: ${opts:stage, "dev"}
+  region: ${opts:region, "us-east-1"}
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+plugins:
+  - serverless-webpack
+
+package:
+  individually: true
+  exclude:
+    - node_modules/**
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules:
+      forceExclude:
+        - aws-sdk
+        - uuid
+
+  prefix: ${self:service.name}-${self:provider.stage}
+  s3Prefix: ${self:custom.prefix}-s3
+  lambdaPrefix: ${self:custom.prefix}-lambda
+
+layers:
+  nodeDeps:
+    path: layers/node_deps
+    name: ${self:custom.prefix}-node-deps
+
+functions:
+  upload:
+    environment:
+      UPLOAD_BUCKET: ${self:custom.s3Prefix}-images
+    name: ${self:custom.lambdaPrefix}-upload
+    handler: handlers/upload.handler
+    role: ImagesLambdaRole
+    layers:
+      - !Ref NodeDepsLambdaLayer
+    events:
+      - http:
+          path: images/upload
+          method: post
+
+  resize:
+    environment:
+      THUMBNAILS_BUCKET: ${self:custom.s3Prefix}-thumbnails
+    name: ${self:custom.lambdaPrefix}-resize
+    handler: handlers/resize.handler
+    role: ThumbnailsLambdaRole
+    layers:
+      - !Ref NodeDepsLambdaLayer
+    events:
+      - s3:
+          bucket: ${self:custom.s3Prefix}-images
+          event: s3:ObjectCreated:*
+
+resources:
+  Resources:
+    ThumbnailBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3Prefix}-thumbnails
+    ImagesLambdaRole:
+      DependsOn:
+        - ImagesLambdaPolicy
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.prefix}-ImagesLambdaRole
+        ManagedPolicyArns:
+          - Ref: ImagesLambdaPolicy
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+    ImagesLambdaPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:custom.prefix}-ImagesLambdaPolicy
+        Description: Managed policy to allow Thumbnails lambda to access the Images S3 bucket.
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource:
+                - arn:aws:s3:::${self:custom.s3Prefix}-images/*
+    ThumbnailsLambdaRole:
+      DependsOn:
+        - ThumbnailsLambdaPolicy
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.prefix}-ThumbnailsLambdaRole
+        ManagedPolicyArns:
+          - !Ref ThumbnailsLambdaPolicy
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+    ThumbnailsLambdaPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        ManagedPolicyName: ${self:custom.prefix}-ThumbnailsLambdaPolicy
+        Description: Managed policy to allow Thumbnails lambda to access the Thumbnails S3 bucket.
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - arn:aws:s3:::${self:custom.s3Prefix}-images/*
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource:
+                - arn:aws:s3:::${self:custom.s3Prefix}-thumbnails/*

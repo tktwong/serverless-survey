@@ -1,0 +1,94 @@
+
+
+service: deckbuilder
+
+plugins:
+  - serverless-domain-manager
+
+provider: 
+  name: aws
+  runtime: dotnetcore3.1
+  stage: ${opt:stage, 'test'}
+  profile: ${opt:profile, 'YithrilProfile'}
+  logRetentionInDays: 7
+  memorySize: 512
+  region: us-east-2
+  apiKeys:
+    - ${self:provider.stage}-ApiKey
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action: 
+        - 'logs:CreateLogGroup'
+        - 'logs:CreateLogStream'
+        - 'logs:PutLogEvents'
+      Resource: '*'
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:*'
+      Resource:
+        - { 'Fn::GetAtt': ['DataTable', 'Arn'] }
+        - Fn::Join:
+            - '/'
+            - - { 'Fn::GetAtt': ['DataTable', 'Arn'] }
+              - 'index/*'
+
+custom:
+  deckPostLambdaName: ${self:service}-Deck-Post-${self:provider.stage}
+  tableName: ${self:service}-Data-Table-${self:provider.stage}
+  DomainMap:
+    test: 'test.api.mtgdeckguru.com'
+    prod: 'api.mtgdeckguru.com'
+  CertMap:
+    test: 'test.api.mtgdeckguru.com'
+    prod: '*.mtgdeckguru.com'
+  serverless-offline:
+    host: 0.0.0.0
+  customDomain:
+    domainName: ${self:custom.DomainMap.${self:provider.stage}}
+    certificateName: ${self:custom.CertMap.${self:provider.stage}}
+    createRoute53Record: true
+    endpointType: 'regional'
+
+package:
+  artifact: build/deploy-package.zip
+  individually: true
+  excludeDevDependencies: true
+
+functions:
+  DeckPost:
+    name: ${self:custom.deckPostLambdaName}
+    handler: deckbuilder::deckbuilder.Handlers.DeckBuilderApiHandlers::Post
+    description: An example post lambda that will return hello world to you when you post it a message. It also logs everything you pass in
+    events:
+      - http:
+          path: /deck
+          method: POST
+          private: true
+
+
+resources:
+  Resources:
+    DataTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: Id
+            AttributeType: S
+          - AttributeName: DataType
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Id
+            KeyType: HASH
+          - AttributeName: DataType
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST  
+        GlobalSecondaryIndexes:
+          - IndexName: DataType_IDX
+            KeySchema:
+              - AttributeName: DataType
+                KeyType: HASH
+            Projection:
+              ProjectionType: 'ALL'

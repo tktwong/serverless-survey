@@ -1,0 +1,123 @@
+service: who-is-it
+
+provider:
+  name: aws
+  runtime: go1.x
+
+  environment:
+    Bucket: !Ref Storage
+    Table: !Ref Table
+    Region: eu-west-1
+
+  stage: main
+  region: eu-west-1
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "rekognition:RecognizeCelebrities"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:Scan"
+        - "dynamodb:UpdateItem"
+      Resource:
+        - !GetAtt Table.Arn
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:PutObjectAcl"
+      Resource:
+        - Fn::Join:
+            - ""
+            - - "arn:aws:s3:::"
+              - "Ref": "Storage"
+              - "/*"
+        - Fn::Join:
+            - ""
+            - - "arn:aws:s3:::"
+              - "Ref": "Storage"
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource:
+        {
+          "Fn::Join":
+            ["", ["arn:aws:s3:::", { "Ref": "ServerlessDeploymentBucket" }]],
+        }
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - "Ref": "ServerlessDeploymentBucket"
+            - "/*"
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+functions:
+  image-upload:
+    handler: bin/image-upload
+    events:
+      - http:
+          path: celeb
+          method: post
+  image-created:
+    handler: bin/image-created
+    reservedConcurrency: 4
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+            - Queue
+            - Arn
+  get-celebs:
+    handler: bin/get-celebs
+    events:
+      - http:
+          path: celeb
+          method: get
+resources:
+  Resources:
+    Storage:
+      Type: AWS::S3::Bucket
+      Properties:
+        NotificationConfiguration:
+          QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt Queue.Arn
+    Table:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: ID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ID
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    Queue:
+      Type: AWS::SQS::Queue
+      Properties:
+        VisibilityTimeout: 120
+    QueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+        - !Ref Queue
+        PolicyDocument:
+          Id: "SQSPolicy"
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service: "s3.amazonaws.com"
+            Action: "sqs:SendMessage"
+            Resource: !GetAtt Queue.Arn

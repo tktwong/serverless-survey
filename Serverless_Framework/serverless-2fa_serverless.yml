@@ -1,0 +1,102 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: serverless-2fa
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  stage: dev
+  region: us-west-2
+
+  # Authorization
+  apiKeys:
+    - ${self:service}-api-key
+
+  # Default IAM role access
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource:
+        - arn:aws:dynamodb:*:*:table/${self:custom.usersTableName}
+
+# Service wide environment variables
+  environment:
+    SERVICE_NAME: ${self:service}
+    REGION: ${self:provider.region}
+    USERS_TABLE_NAME: ${self:custom.usersTableName}
+
+# Custom variables
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  usersTableName: ${self:service}-users-${self:custom.stage}
+
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+
+  register:
+    description: Register a user for otp and return a QR code url
+    handler: functions/register.handler
+    events:
+      - http:
+          path: register
+          method: post
+          private: true
+
+  validate:
+    description: Validate a user supplied otp
+    handler: functions/validate.handler
+    events:
+      - http:
+          path: validate
+          method: post
+          private: true
+
+
+resources:
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.usersTableName}
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+
+
+
+
+

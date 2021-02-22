@@ -1,0 +1,52 @@
+service:
+  name: import-service
+
+plugins:
+  - serverless-dotenv-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-west-1
+  profile: personal
+
+  environment:
+    S3_BUCKET: ${env:S3_BUCKET}
+    SQS_URL: ${cf:product-service-${self:provider.stage}.SQSQueueUrl}
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action: 's3:ListBucket'
+      Resource:
+        - 'arn:aws:s3:::rs-school-uploader'
+    - Effect: 'Allow'
+      Action: 's3:*'
+      Resource:
+        - 'arn:aws:s3:::rs-school-uploader/*'
+    - Effect: 'Allow'
+      Action: 'sqs:*'
+      Resource:
+        - '${cf:product-service-${self:provider.stage}.SQSQueueArn}'
+
+functions:
+  importProductsFile:
+    handler: handler.importProductsFile
+    events:
+      - http:
+          method: get
+          path: import
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                name: true
+  importFileParser:
+    handler: handler.importFileParser
+    events:
+      - s3:
+          bucket: ${env:S3_BUCKET}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: uploaded/
+          existing: true

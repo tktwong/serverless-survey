@@ -1,0 +1,56 @@
+service: wellness
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-2
+  environment:
+    PHONE_NUMBERS_TABLE_NAME: ${self:service}-${opt:stage, self:provider.stage}-phone-numbers
+    AUTHY_KEY: ${ssm:/${self:provider.stage}/authyKey}
+    TWILIO_ACCOUNT_SID: ${ssm:/${self:provider.stage}/twilioAccountSid}
+    TWILIO_AUTH_TOKEN: ${ssm:/${self:provider.stage}/twilioAuthToken}
+    TWILIO_MESSAGING_SERVICE_SID: ${ssm:/${self:provider.stage}/twilioMessagingServiceSid}  
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:Scan
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PHONE_NUMBERS_TABLE_NAME}"
+
+functions:
+  sendSms:
+    handler: functions/sendSms.sendSms
+    events:
+      - schedule:
+          rate: rate(1 minute)
+          enabled: false
+  checkCode: 
+    handler: functions/checkCode.checkCode
+    events: 
+      - http: 
+          method: post
+          path: /code
+          cors: true
+  createSubscriber:
+    handler: functions/createSubscriber.createSubscriber
+    events: 
+      - http: 
+          method: post
+          path: /subscribers
+          cors: true
+
+resources:
+  Resources:
+    phoneNumbersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.PHONE_NUMBERS_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

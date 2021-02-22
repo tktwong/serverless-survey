@@ -1,0 +1,135 @@
+service: payment-service
+custom:
+  settings:
+    PAYMENTS_TABLE: Payment
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-1
+  memorySize: 128
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.PAYMENTS_TABLE}'
+functions:
+  createBuyerAccount:
+    handler: account.createBuyerAccount
+    events:
+      - http:
+          method: GET
+          path: api/v1/payment/account/createBuyerAccount
+          integration: lambda
+          request:
+            parameters:
+              querystrings:
+                id: true
+            template:
+              application/json: >
+                {
+                  "id": "$input.params('id')"
+                }
+  createSellerAccount:
+    handler: account.createSellerAccount
+    events:
+      - http:
+          method: GET
+          path: api/v1/payment/account/createSellerAccount
+          integration: lambda
+          request:
+            parameters:
+              querystrings:
+                id: true
+            template:
+              application/json: >
+                {
+                  "id": "$input.params('id')"
+                }
+  readBuyerAccounts:
+    handler: account.readBuyerAccounts
+    events:
+      - http:
+          method: GET
+          path: api/v1/payment/account/readBuyerAccounts
+          integration: lambda
+          request:
+            parameters:
+              querystrings:
+                id: true
+            template:
+              application/json: >
+                {
+                  "id": "$input.params('id')"
+                }
+  readSellerAccounts:
+    handler: account.readSellerAccounts
+    events:
+      - http:
+          method: GET
+          path: api/v1/payment/account/readSellerAccounts
+          integration: lambda
+          request:
+            parameters:
+              querystrings:
+                userName: true
+            template:
+              application/json: >
+                {
+                  "userName": "$input.params('userName')"
+                }
+  makePayment:
+    handler: handler.refundPayment
+    events:
+      - http:
+          path: api/v1/payment
+          integration: lambda
+          method: post
+          cors: true
+  getPayment:
+    handler: handler.getPayment
+    events:
+      - http:
+          path: api/v1/payment/{id}
+          integration: lambda
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                id: true
+            template:
+              application/json: >
+                {
+                  "id": "$input.params('id')"
+                }
+  resources:
+  Resources:
+    PaymentsTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: 'id'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'id'
+            KeyType: 'HASH'
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.settings.PAYMENTS_TABLE}
+  # createBuyerAccount: createBuyerAccount,
+  # createSellerAccount: createSellerAccount,
+  # readBuyerAccounts: readBuyerAccounts,
+  # getPayment: getPayment
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline

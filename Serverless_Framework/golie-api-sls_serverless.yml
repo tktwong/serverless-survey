@@ -1,0 +1,87 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: golie-api
+
+frameworkVersion: ">=1.0.0 <2.0.0"
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+
+
+custom:
+  stage: ${opt:stage}
+  tableName: golie-table-${opt:stage}
+  serverless-offline:
+    host: 127.0.0.1
+    port: 54224
+  webpack:
+    webpackConfig: 'webpack.config.js'   # Name of webpack configuration file
+    includeModules:   # Node modules configuration for packaging
+      forceExclude:
+        - aws-sdk
+    packager: 'npm'   # Packager that will be used to package your external modules
+    packagePath: '../package.json'
+
+
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage}
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["GolieDynamoDBTable", "Arn"]}
+  environment:
+    GOALIE_TABLE: ${self:custom.tableName}
+  apiKeys:
+    - ${self:service}-${self:custom.stage}-apikey
+
+
+# The `functions` block defines what code to deploy
+functions:
+  app:
+    handler: index.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors: true
+          private: true
+      - http:
+          path: '{proxy+}'
+          method: ANY
+          cors: true
+          private: true
+
+
+resources:
+  Resources:
+    GolieDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: golieId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: golieId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

@@ -1,0 +1,143 @@
+service: emptor-docs-processing
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-python-requirements
+
+package:
+  exclude:
+    - node_modules/**
+    - requirements/**
+    - README.md
+    - package.json
+    - package-lock.json
+    - requirements.txt
+
+custom:
+  app_acronym: emptor-response-bucket
+  default_stage: test
+  dynamodb_host: https://dynamodb.${self:custom.region}.amazonaws.com
+  stage: ${opt:stage, self:custom.default_stage}
+  region: ${opt:region, self:provider.region}
+  s3_bucket: ${opt:s3_bucket, self:custom.app_acronym}-${self:provider.stage}
+  s3_key_base: ${opt:s3_key_base, self:custom.stage}
+  s3_bucket_arn: arn:aws:s3:::${self:custom.s3_bucket}
+  s3_role_resource: ${self:custom.s3_bucket_arn}/${self:custom.s3_key_base}/*
+  lambda_arn: arn:aws:lambda:::${self:provider.environment.PROCESSING_LAMBDA}
+  dynamodb_table_arn: arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}
+  pythonRequirements:
+    dockerizePip: non-linux
+    fileName: requirements/requirements-dev.txt
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: eu-central-1
+  stage: prod
+  environment:
+    REGION: ${self:custom.region}
+    S3_BUCKET: ${self:custom.s3_bucket}
+    S3_KEY_BASE: ${self:custom.s3_key_base}
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    DYNAMODB_HOST: ${self:custom.dynamodb_host}
+    PROCESSING_LAMBDA: ${self:service}-${self:provider.stage}-create
+    IDENTIFIER_LAMBDA: ${self:service}-${self:provider.stage}-createId
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: ${self:custom.s3_role_resource}
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+        - dynamodb:ListStreams
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+      Resource: ${self:custom.dynamodb_table_arn}
+
+functions:
+  create:
+    handler: title/create.create
+    events:
+      - stream:
+         type: dynamodb
+         batchSize: 1
+         startingPosition: LATEST
+         arn:
+           Fn::GetAtt:
+             - TitleDynamoTable
+             - StreamArn
+    iamRoleStatements:
+      - Effect: Allow
+        Action: 
+          - dynamodb:ListStreams
+          - dynamodb:DescribeTable
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: ${self:custom.dynamodb_table_arn}
+
+  createId:
+    handler: identifier/create.create
+    events:
+      - http:
+          path: identifier
+          method: post
+          cors: true
+  getById:
+    handler: identifier/get.get
+    description: Get DynamoDB record by request identifier
+    events:
+      - http:
+          path: identifier/{request_id}
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    ResponseBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET}
+    ResponseBodyPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: ResponseBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement: [
+            {
+              Action: ['s3:GetObject', 's3:PutObject'],
+              Effect: 'Allow',
+              Resource: {
+                Fn::Join: ['', ['arn:aws:s3:::', { Ref: 'ResponseBucket' }, '/*']],
+              },
+              Principal: '*'
+            },
+          ]
+    TitleDynamoTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: request_id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: request_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        StreamSpecification:
+          StreamViewType: KEYS_ONLY

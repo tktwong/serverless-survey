@@ -1,0 +1,64 @@
+service: pomixy
+package:
+  individually: true
+  exclude:
+    - node_modules/**
+    - config/**
+    - tests/**
+    - gradle*/**
+    - .gradle*/**
+    - gradle*
+    - README.md
+    - swagger.json
+
+provider:
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-1
+  name: aws
+  tracing: false
+  runtime: python3.7
+  memorySize: 512
+  timeout: 3
+  profile: priv-admin
+  environment:
+    DYNAMODB_TABLE_ORDER: ${self:service}-${self:provider.stage}-order
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'dynamodb:GetItem'
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_ORDER}"
+plugins:
+  - serverless-offline
+functions:
+  getRecord:
+    handler: src.handler.get
+    reservedConcurrency: 2
+    events:
+      - http:
+          method: get
+          path: get/{table}/{id}
+          cors: true
+    name: ${self:service}-${self:provider.stage}-get-record
+  addRecord:
+    handler: src.handler.add
+    reservedConcurrency: 2
+    events:
+      - http:
+          method: post
+          path: add/{table}/{id}
+          cors: true
+    name: ${self:service}-${self:provider.stage}-add-record
+
+resources:
+  Resources:
+    OrderTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: experienceId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: experienceId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_ORDER}

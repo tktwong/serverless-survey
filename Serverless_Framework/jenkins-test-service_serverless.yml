@@ -1,0 +1,80 @@
+service: jenkins-test-service
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage,'dev'}
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "cloudwatch:*"
+        - "dynamodb:*"
+        - lambda:InvokeFunction
+      Resource: "*"
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+functions:
+  triggerScan:
+    handler: handler.triggerScan
+    events:
+      - schedule: cron(0 8-18 ? * MON-THU *)
+    environment:
+      TABLE_NAME: test_results-${self:provider.stage}
+      LOG_TABLE_NAME: test_results_log-${self:provider.stage}
+      COLLECT_LAMBDA_NAME: jenkins-test-service-${self:provider.stage}-collectTestResults
+  collectTestResults:
+    handler: handler.collectTestResults
+    events:
+      - http:
+          path: collect/{buildId}
+          method: get
+          request:
+            parameters:
+              paths:
+                buildId: true
+    timeout: 28
+    environment:
+      TABLE_NAME: test_results-${self:provider.stage}
+      LOG_TABLE_NAME: test_results_log-${self:provider.stage}
+
+resources: # CloudFormation template syntax
+  Resources:
+    testResults:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: test_results-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: test_name
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: test_name
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    testResultsLog:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: test_results_log-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: test_build
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: test_build
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+package:
+  exclude:
+    - .env

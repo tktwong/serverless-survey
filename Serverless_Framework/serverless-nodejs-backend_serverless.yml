@@ -1,0 +1,154 @@
+service: recipe-api-nodejs
+
+frameworkVersion: '2'
+
+plugins:
+  - serverless-offline
+  - serverless-domain-manager
+
+custom:
+  allowedHeaders:
+    - Accept
+    - Content-Type
+    - Content-Length
+    - Authorization
+    - X-Amz-Date
+    - X-Api-Key
+    - X-Amz-Security-Token
+    - X-Amz-User-Agent
+    - app_user_id
+    - app_user_name
+  domain:
+    dev: dev-recipeapi.iotcloudsolutions.com
+    prod: recipeapi.iotcloudsolutions.com
+  customDomain:
+    domainName: ${self:custom.domain.${opt:stage}}
+    basePath: ''
+    stage: ${self:provider.stage}
+    certificateName: iotcloudsolutions.com
+    createRoute53Record: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-2
+  memorySize: 128
+  timeout: 5
+  endpointType: regional
+  apiGateway:
+    shouldStartNameWithService: true
+  environment:
+    RECIPE_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+        - dynamodb:Scan
+        - dynamodb:UpdateItem
+        - dynamodb:GetItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.RECIPE_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource: "arn:aws:dynamodb:${self:region, self:provider.region}:*:table/${self:provider.environment.RECIPE_TABLE}/index/*"
+
+functions:
+  hello:
+    handler: src/hello.handler
+    events:
+        - http:
+            path: message
+            method: get
+
+  add-recipe:
+    handler: src/add-recipe.handler
+    description: POST /recipe
+    events:
+      - http:
+          path: recipe
+          method: post
+          cors: 
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+  update-recipe:
+    handler: src/update-recipe.handler
+    description: PATCH /recipe
+    events:
+      - http:
+          path: recipe
+          method: patch
+          cors: 
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+  get-recipes:
+    handler: src/get-recipes.handler
+    description: GET /recipes
+    events:
+      - http:
+          path: recipes
+          method: get
+          cors: 
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+  get-recipe:
+    handler: src/get-recipe.handler
+    description: GET /recipe/n/{recipe_id}
+    events:
+      - http:
+          path: recipe/n/{recipe_id}
+          method: get
+          cors: 
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+  delete-recipe:
+    handler: src/delete-recipe.handler
+    description: DELETE /recipe
+    events:
+      - http:
+          path: recipe/t/{timestamp}
+          method: delete
+          cors: 
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+resources:
+  Resources:
+    RecipeTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.environment.RECIPE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: N
+          - AttributeName: recipe_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: recipe_id-index
+            KeySchema:
+              - AttributeName: recipe_id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

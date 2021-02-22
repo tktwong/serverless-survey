@@ -1,0 +1,67 @@
+service: crest-api
+
+plugins:
+  - serverless-python-requirements
+  - serverless-offline
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${opt:stage, 'dev'}
+  memorySize: 2048
+  timeout: 30
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource: "arn:aws:s3:::nfwf-tool/*"
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource: "arn:aws:s3:::nfwf-tool-user-shapes/*"
+
+  environment:
+    STAGE: ${self:provider.stage}
+
+functions:
+  identify:
+    handler: identify.lambda_handler
+    events: 
+      - http: 
+          path: identify
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                region: true
+                lng: true
+                lat: true
+
+  zonal_stats:
+    handler: zonal_stats.handler
+    events: 
+      - http: 
+          path: zonal_stats
+          method: post
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                region: true
+
+  upload_shape:
+    handler: upload_shape.handler
+    events: 
+      - http: 
+          path: upload_shape
+          method: post
+          cors: true

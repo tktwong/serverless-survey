@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
+Description: "An AWS Serverless Application."
+
+Resources:
+  RoommateLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: "roommate-iot"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "iot:Connect"
+                  - "iot:Publish"
+                Resource:
+                  - "arn:aws:iot:*:*:topic/*"
+                  - "arn:aws:iot:*:*:client/*"
+
+  Get:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      Handler: "roommate-lambda::RoommateLambda.Functions::Get"
+      Runtime: "dotnetcore3.1"
+      CodeUri: ""
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt RoommateLambdaExecutionRole.Arn
+      Events:
+        GetResource:
+          Type: "Api"
+          Properties:
+            Path: "/"
+            Method: "GET"
+
+  CalendarUpdate:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      Handler: "roommate-lambda::RoommateLambda.Functions::CalendarUpdate"
+      Runtime: "dotnetcore3.1"
+      CodeUri: ""
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt RoommateLambdaExecutionRole.Arn
+      Events:
+        PutResource:
+          Type: "Api"
+          Properties:
+            Path: "/"
+            Method: "POST"
+
+  UpdateRequest:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      Handler: "roommate-lambda::RoommateLambda.Functions::UpdateRequest"
+      Runtime: "dotnetcore3.1"
+      CodeUri: ""
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt RoommateLambdaExecutionRole.Arn
+      Events:
+        UpdateRequest:
+          Type: IoTRule
+          Properties:
+            Sql: "SELECT * FROM 'update-request'"
+
+  ReservationRequest:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      Handler: "roommate-lambda::RoommateLambda.Functions::ReservationRequest"
+      Runtime: "dotnetcore3.1"
+      CodeUri: ""
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt RoommateLambdaExecutionRole.Arn
+      Events:
+        UpdateRequest:
+          Type: IoTRule
+          Properties:
+            Sql: "SELECT * FROM 'reservation-request'"
+
+  OnDeviceConnect:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      Handler: "roommate-lambda::RoommateLambda.Functions::OnDeviceConnect"
+      Runtime: "dotnetcore3.1"
+      CodeUri: ""
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt RoommateLambdaExecutionRole.Arn
+      Events:
+        UpdateRequest:
+          Type: IoTRule
+          Properties:
+            Sql: "SELECT * FROM '$aws/events/presence/connected/#'"
+
+  RenewWebhooks:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      Handler: "roommate-lambda::RoommateLambda.Functions::RenewWebhooks"
+      Runtime: "dotnetcore3.1"
+      CodeUri: ""
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt RoommateLambdaExecutionRole.Arn
+      Events:
+        RenewWebhooksEvent:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 2 * * ? *)
+
+Outputs:
+  ApiURL:
+    Description: "API endpoint URL for Prod environment"
+    Value:
+      Fn::Sub: "https://$ServerlessRestApi.execute-api.$AWS::Region.amazonaws.com/Prod/"

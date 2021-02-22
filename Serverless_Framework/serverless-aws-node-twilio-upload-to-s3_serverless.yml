@@ -1,0 +1,46 @@
+service: aws-node-twilio-upload-to-s3
+#app: your-app-name
+#org: your-org-name
+#frameworkVersion: "=X.X.X"
+
+custom:
+  bucket: <your-bucket-name>
+  twilioAuthToken: <your-twilio-auth-token>
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+
+functions:
+  save:
+    name: ${env:FUNC_PREFIX}-save-twilio-to-s3
+    handler: handler.save
+    environment:
+      BUCKET: ${self:custom.bucket}
+     events:
+       - http:  
+           path: twilio/save
+           method: post
+           integration: lambda
+           headers: X-Twilio-Signature
+           request:
+            passThrough: NEVER
+            template:
+              application/x-www-form-urlencoded: ${file(mapping/advanced-twilio-request-template)}
+           response:
+            headers:
+              Content-Type: "'text/xml'"
+            template:
+              application/xml: ${file(mapping/twilio-response-template)}
+
+  environment:
+    TWILIO_AUTH_TOKEN: ${self:custom.twilioAuthToken}
+    URL: { "Fn::Join" : ["", [" https://", { "Ref" : "ApiGatewayRestApi" }, ".execute-api.${self:custom.region}.amazonaws.com/${self:custom.stage}" ] ]  }

@@ -1,0 +1,57 @@
+org: alphaser
+app: worklogger
+service: worklogger
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:GetObject"
+      Resource: "arn:aws:s3:::worklogger/*"
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+      Resource: "*"
+
+functions:
+  logTimesheets:
+    handler: lambdaHandler.logTimesheets
+    name: worklogger-logTimesheets-${self:provider.stage}
+    description: Logs timesheets from different sources
+    memorySize: 128
+    timeout: 60
+    package:
+      include:
+        - "*.js"
+        - "app/**/*.js"
+    events:
+      # TODO make these configurable per deployment
+      - schedule:
+          rate: cron(0 23 * * ? *)
+          enabled: true
+          description: Daily run
+          input:
+            s3: worklogger
+            c: daily_configuration.json
+      - schedule:
+          rate: cron(0 23 1 * ? *)
+          enabled: true
+          description: Monthly run
+          input:
+            s3: worklogger
+            c: monthly_configuration.json
+      - schedule:
+          rate: rate(1 minute)
+          enabled: false
+          description: Test hook for quick usage
+          input:
+            s3: worklogger
+            c: test_config.json
+
+plugins:
+  - serverless-offline
+  - serverless-event-constant-inputs

@@ -1,0 +1,57 @@
+service: hp-vault-slash-cmd
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+  environment:
+    CLIENT_ID: ${file(./serverless.env.yml):dev.SLACK_CLIENT_ID}
+    CLIENT_SECRET: ${file(./serverless.env.yml):dev.SLACK_CLIENT_SECRET}
+    CLIENT_SCOPES: ${file(./serverless.env.yml):dev.SLACK_CLIENT_SCOPES}
+    VERIFICATION_TOKEN: ${file(./serverless.env.yml):dev.SLACK_VERIFICATION_TOKEN}
+    ENABLE_LOGGING: ${file(./serverless.env.yml):dev.SLACK_ENABLE_LOGGING}
+    SLACK_ADMINS: ${file(./serverless.env.yml):dev.SLACK_ADMINS}
+    SLACK_BOT_USER_OAUTH_ACCESS_TOKEN: ${file(./serverless.env.yml):dev.SLACK_BOT_USER_OAUTH_ACCESS_TOKEN}
+    TABLE_NAME: ${file(./serverless.env.yml):dev.SLACK_TABLE_NAME}
+    HP_API_ENDPOINT: ${file(./serverless.env.yml):dev.HP_API_ENDPOINT}
+
+functions:
+  slack:
+    handler: build/index.handler
+    events:
+      ## Slash Commands, Events, and Interactive Messages
+      - http:
+          path: ${file(./serverless.env.yml):dev.SLACK_EVENT_PATH}
+          method: post
+          integration: lambda
+          response:
+            template: $input.path('$')
+
+resources:
+  Resources:
+    TeamsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${file(./serverless.env.yml):dev.SLACK_TABLE_NAME}

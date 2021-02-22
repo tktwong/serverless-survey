@@ -1,0 +1,92 @@
+service: hilton-reservations
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-stack-output
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: api
+  region: us-west-2
+  #  apiGateway:
+  #    restApiId: ja8ibi4phg
+  #    restApiRootResourceId: t5ufn3pwec
+  #  deploymentBucket:
+  #    name: hilton-reservations
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-west-2:*:table/reservations"
+
+package:
+  include:
+    - src/**/!(*.spec).js
+    - src/**/!(*.spec).ts
+    - src/**/*.graphql
+
+functions:
+  # The GraphQL version of the API
+  graphql:
+    handler: src/graphql.endpoint
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+  # The RESTful version of the API
+  reservations:
+    handler: src/rest.reservations
+    events:
+      - http:
+          path: reservations
+          method: get
+          cors: true
+  getReservation:
+    handler: src/rest.getReservation
+    events:
+      - http:
+          path: reservations/{id}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+  createReservation:
+    handler: src/rest.createReservation
+    events:
+      - http:
+          path: reservations
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    ReservationsDynamoTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: reservations
+
+custom:
+  output:
+    file: .serverless/output.json
+  webpackIncludeModules: true

@@ -1,0 +1,293 @@
+service: ${self:provider.stackName}
+
+plugins:
+  - serverless-deployment-bucket
+  - serverless-pseudo-parameters
+  - serverless-iam-roles-per-function
+  - build-apps
+  - deploy-apps
+  - setup-cognito-saml
+
+provider:
+  name: aws
+  profile: ${opt:profile}
+  stackName: flemancotulsa-${self:provider.stage}
+  runtime: nodejs12.x
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage}
+  config: ${file(config/${self:provider.stage}.yml)}
+  deploymentBucket:
+    name: deploybucket-${self:provider.stackName}
+
+custom:
+  productTable: ${self:provider.stackName}-productTable
+  contentTable: ${self:provider.stackName}-contentTable
+  cognitoDomain: ${self:provider.config.cognitoDomain}
+  webAppConfig:
+    website:
+      webAppEntryPoint: apps/website
+      webAppDeploymentBucket: website-${self:provider.stackName}
+
+package:
+  individually: true
+  exclude:
+    - ./**
+
+functions:
+  products:
+    name: ${self:provider.stackName}products
+    handler: lambdas/products.handler
+    iamRoleStatementsName: ${self:provider.stackName}-productslambda-role
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:DeleteItem
+          - dynamodb:Query
+          - dynamodb:Scan
+        Resource:
+          - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.productTable}
+          - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.contentTable}
+    environment:
+      PRODUCT_TABLE: ${self:custom.productTable}
+      CONTENT_TABLE: ${self:custom.contentTable}
+    package:
+      include:
+        - lambdas/products.js
+    events:
+      - http:
+          method: POST
+          path: /products
+          cors: ${self:provider.config.cors}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+      - http:
+          method: GET
+          path: /products
+          cors: ${self:provider.config.cors}
+
+  blog:
+    name: ${self:provider.stackName}blog
+    handler: lambdas/blog.handler
+    iamRoleStatementsName: ${self:provider.stackName}-bloglambda-role
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:DeleteItem
+          - dynamodb:Query
+          - dynamodb:Scan
+        Resource:
+          - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.contentTable}
+    environment:
+      CONTENT_TABLE: ${self:custom.contentTable}
+    package:
+      include:
+        - lambdas/blog.js
+    events:
+      - http:
+          method: POST
+          path: /blog
+          cors: ${self:provider.config.cors}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+      - http:
+          method: GET
+          path: /blog
+          cors: ${self:provider.config.cors}
+      - http:
+          method: DELETE
+          path: /blog
+          cors: ${self:provider.config.cors}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  enroll:
+    name: ${self:provider.stackName}enroll
+    handler: lambdas/enroll.handler
+    iamRoleStatementsName: ${self:provider.stackName}-enrolllambda-role
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:DeleteItem
+          - dynamodb:Query
+          - dynamodb:Scan
+        Resource:
+          - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.contentTable}
+      - Effect: "Allow"
+        Action:
+          - ses:SendEmail
+        Resource:
+          - arn:aws:ses:#{AWS::Region}:#{AWS::AccountId}:identity/*
+    environment:
+      CONTENT_TABLE: ${self:custom.contentTable}
+      ADMIN_EMAIL: ${self:provider.config.adminEmail}
+      SITE_EMAIL: ${self:provider.config.siteEmail}
+    package:
+      include:
+        - lambdas/enroll.js
+    events:
+      - http:
+          method: POST
+          path: /enroll
+          cors: ${self:provider.config.cors}
+      - http:
+          method: GET
+          path: /enroll
+          cors: ${self:provider.config.cors}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+resources:
+  Resources:
+    ProductTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.productTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+
+    ContentTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.contentTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: ContentType
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ContentType
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+
+    CognitoUserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        UserPoolName: ${self:provider.stackName}-UserPool
+        AutoVerifiedAttributes:
+          - email
+        MfaConfiguration: "OFF"
+        Schema:
+          - Name: email
+            AttributeDataType: String
+            Mutable: true
+            Required: true
+
+    CognitoUserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        GenerateSecret: false
+        UserPoolId:
+          Ref: CognitoUserPool
+
+    CognitoIdentityPool:
+      Type: "AWS::Cognito::IdentityPool"
+      Properties:
+        IdentityPoolName: ${self:provider.stackName}${self:provider.stage}Identity
+        AllowUnauthenticatedIdentities: false
+        CognitoIdentityProviders:
+          - ClientId:
+              Ref: CognitoUserPoolClient
+            ProviderName:
+              Fn::GetAtt: [ CognitoUserPool, ProviderName ]
+
+    CognitoPoolDomain:
+      Type: AWS::Cognito::UserPoolDomain
+      Properties:
+        Domain: ${self:provider.config.cognitoDomain}
+        UserPoolId:
+          Ref: CognitoUserPool
+
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: cognito-authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [CognitoUserPool, Arn]
+
+    CognitoAuthorizedRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName:  aa${self:provider.stackName}-AuthRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
+              Action:
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: CognitoIdentityPool
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": authenticated
+        Policies:
+          - PolicyName: "CognitoAuthorizedPolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "lex:*"
+                    - "lambda:*"
+                    - "mobileanalytics:PutEvents"
+                    - "cognito-sync:*"
+                    - "cognito-identity:*"
+                  Resource: "*"
+
+    IdentityPoolRoleMapping:
+      DependsOn: CognitoIdentityPool
+      Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+      Properties:
+        IdentityPoolId:
+          Ref: CognitoIdentityPool
+        Roles:
+          authenticated:
+            Fn::GetAtt: [CognitoAuthorizedRole, Arn]
+
+  Outputs:
+    CognitoUserPoolId:
+      Value:
+        Ref: CognitoUserPool
+    CognitoUserPoolClientId:
+      Value:
+        Ref: CognitoUserPoolClient
+    CognitoIdentityPoolId:
+      Value:
+        Ref: CognitoIdentityPool
+    CognitoDomain:
+      Value: ${self:custom.cognitoDomain}
+    IdentityProviderName:
+      Value: ${self:provider.config.identityProviderName}
+    WebDomain:
+      Value: ${self:provider.config.webDomain}
+    Region:
+      Value: ${self:provider.region}

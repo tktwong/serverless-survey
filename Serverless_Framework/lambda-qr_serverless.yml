@@ -1,0 +1,84 @@
+# serverless.yml
+
+# https://docs.serverless.com
+# https://medium.com/nextfaze/binary-responses-with-serverless-framework-and-api-gateway-5fde91376b76
+# https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html
+
+service: "lambda-qr"
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+frameworkVersion: ">=1.28.0 <2.0.0"
+
+# you can overwrite defaults here
+stage: dev
+region: us-east-1
+
+plugins:
+  - serverless-apigw-binary
+  - serverless-apigwy-binary
+  - serverless-api-cloudfront
+
+custom:
+  domain: qr.ryanparman.com
+  bucket: qr-ryanparman-com
+  certificate: arn:aws:acm:us-east-1:133904017518:certificate/ae20acba-5cb6-4833-8946-1ace80a118a2
+  apigwBinary:
+    types:
+      - "image/png"
+      - "*/*"
+  apiCloudFront:
+    domain: ${self:custom.domain}
+    certificate: ${self:custom.certificate}
+    logging:
+      bucket: ${self:custom.bucket}.s3.amazonaws.com
+      prefix: ${self:provider.stage}
+    cookies: none
+    querystring:
+      - size
+      - body
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: ${opt:stage, 'dev'}
+  memorySize: 128
+  timeout: 10
+  # tags:
+
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+
+functions:
+  qr-png:
+    handler: bin/qr
+    events:
+      - http:
+          path: qr.png
+          method: get
+          contentHandling: CONVERT_TO_BINARY
+  qr-svg:
+    handler: bin/qr
+    environment:
+      QR_SVG: "true"
+    events:
+      - http:
+          path: qr.svg
+          method: get
+          contentHandling: CONVERT_TO_BINARY
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    NewResource:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucket}
+  Outputs:
+     ApiDistribution:
+       Description: "ApiDistribution"
+       Value: ApiDistribution

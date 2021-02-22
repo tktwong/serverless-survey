@@ -1,0 +1,177 @@
+service: beans-api
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-webpack
+  - serverless-appsync-plugin
+  - serverless-step-functions
+  - serverless-appsync-offline
+  - serverless-offline-step-functions
+  - serverless-offline
+
+custom:
+  webpack:
+    includeModules: true
+    keepOutputDirectory: true
+  serverless-offline:
+    port: ${env:OFFLINE_PORT}
+  serverless-offline-step-functions:
+    port: ${env:STEPFUNCTIONS_OFFLINE_PORT}
+  appsync-offline:
+    # port: ${env:APPSYNC_OFFLINE_PORT}
+    port: 9003
+    dynamodb:
+      server:
+        # port: ${env:DYNAMODB_LOCAL_PORT}
+        port: 9004
+  appSync:
+    name: ${self:service}-api
+    schema: ./__generated__/schema.graphql
+    authenticationType: API_KEY
+    # userPoolConfig:
+    #   defaultAction: DENY # required # ALLOW or DENY
+    #   userPoolId: # required # user pool ID
+    # additionalAuthenticationProviders:
+    #   - authenticationType: AWS_IAM
+    mappingTemplates:
+      - dataSource: Pings
+        type: Query
+        field: listPings
+        request: listPings-request.vtl
+        response: listPings-response.vtl
+      # - dataSource: Pings
+      #   type: Query
+      #   field: getPing
+      #   request: getPing-request.vtl
+      #   response: getPing-response.vtl
+      - dataSource: Pings
+        type: Mutation
+        field: createPing
+        request: createPing-request.vtl
+        response: createPing-response.vtl
+      # - dataSource: Pings
+      #   type: Mutation
+      #   field: updatePing
+      #   request: updatePing-request.vtl
+      #   response: updatePing-response.vtl
+      # - dataSource: Pings
+      #   type: Mutation
+      #   field: deletePing
+      #   request: deletePing-request.vtl
+      #   response: deletePing-response.vtl
+      - dataSource: Pings
+        type: Query
+        field: listPings
+        request: listPings-request.vtl
+        response: listPings-response.vtl
+      - dataSource: Genomes
+        type: Query
+        field: genomes
+        request: genomes-request.vtl
+        response: genomes-response.vtl
+      - dataSource: Genomes
+        type: Query
+        field: genome
+        request: genome-request.vtl
+        response: genome-response.vtl
+      - dataSource: Genomes
+        type: Mutation
+        field: addGenome
+        request: addGenome-request.vtl
+        response: addGenome-response.vtl
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: Pings
+        description: "Pings table"
+        config:
+          tableName: PingsTable
+          serviceRoleArn: !GetAtt AppSyncDynamoDBServiceRole.Arn
+      - type: AMAZON_DYNAMODB
+        name: Genomes
+        description: "Genomes"
+        config:
+          tabelName: ${self:service}-genomes
+          serviceRoleArn: !GetAtt AppSyncDynamoDBServiceRole.Arn
+
+functions:
+  hello:
+    handler: src/graphql/handler.handler
+    events:
+      - http:
+          path: hello
+          method: get
+      - http:
+          path: hello
+          method: post
+
+stepFunctions:
+  stateMachines:
+    helloSm:
+      definition:
+        StartAt: Hello
+        States:
+          Hello:
+            Type: Task
+            Resource: !GetAtt hello.Arn
+            End: true
+
+resources:
+  Resources:
+    UserTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: PingsTable
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+
+    GenomesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-genomes
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+
+    AppSyncDynamoDBServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - appsync.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: AppSyncDynamoDBPermissions
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Query
+                    - dynamodb:BatchWriteItem
+                    - dynamodb:GetItem
+                    - dynamodb:DeleteItem
+                    - dynamodb:PutItem
+                    - dynamodb:Scan
+                    - dynamodb:UpdateItem
+                  Resource: "*"

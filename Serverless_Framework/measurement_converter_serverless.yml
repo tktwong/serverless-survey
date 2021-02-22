@@ -1,0 +1,68 @@
+service: measurement-converter
+
+frameworkVersion: '>=1.55.0 <2.0.0'
+
+plugins:
+  - serverless-domain-manager
+  - serverless-python-requirements
+  - serverless-offline-python
+  - serverless-api-gateway-throttling
+
+provider:
+  name: aws
+  timeout: 30
+  memorySize: 512
+  runtime: python3.8
+  stage: dev
+  region: us-east-1
+  environment:
+
+custom:
+  customDomain:
+    # replace with your registered domain name
+    domainName: 'www.example.com'
+    basePath: 'api'
+    # replace with your certificate name
+    certificateName: '*.example.com'
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    endpointType: 'regional'
+    securityPolicy: tls_1_2
+  apiGatewayThrottling:
+    maxRequestsPerSecond: 100
+    maxConcurrentRequests: 50
+
+resources:
+  - ${file(./resources.yml)}
+
+functions:
+
+  TemperatureAPI:
+    handler: handler.convert_temperatures
+    role: Role1MeasurementConverter
+    events:
+      - http:
+          path: temperature/{input}/{output}/{from_unit}/{to_unit}
+          method: get
+          cors: true
+
+  VolumeAPI:
+    handler: handler.convert_volumes
+    role: Role1MeasurementConverter
+    events:
+      - http:
+          path: volume/{input}/{output}/{from_unit}/{to_unit}
+          method: get
+          cors: true
+
+
+
+Outputs:
+  ApiUrl:
+    Description: "The API Gateway URL"
+    Value:
+      Fn::Join:
+        - ""
+        - - "https://"
+          - Ref: ApiGatewayRestApi
+          - ".execute-api.us-east-1.amazonaws.com/dev"

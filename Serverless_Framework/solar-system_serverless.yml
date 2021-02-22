@@ -1,0 +1,38 @@
+service: logging
+
+provider:
+  name: aws
+  runtime: dotnetcore1.0
+  region: ${env:AWS_REGION}
+  stage: ${env:SOME_ENV}
+  environment:
+    SOME_ENV: ${env:SOME_ENV}
+  iamRoleStatements:
+
+    # allow the lambda to write logs
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource: 
+        - "Fn::Join": ["", ["arn:aws:logs:", {"Ref": "AWS::Region"}, ":*:*"]]
+
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}        
+        
+package:
+  artifact: src/Logging.Api/bin/Release/netcoreapp1.0/publish/logging-api.zip
+
+functions:
+  endpoint:
+    handler: Logging.Api::Logging.Api.LambdaEntryPoint::FunctionHandlerAsync
+    events:
+      - http:
+          path: /
+          method: ANY
+      - http:
+          path: /{proxy+}
+          method: ANY

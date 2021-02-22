@@ -1,0 +1,73 @@
+service: serverless-cms # NOTE: update this with your service name
+
+#provider information
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}    
+
+#custom variables to use with this stack
+custom:
+  ${file(resources/variables.yml)}
+
+#service-wide environment variables
+environment:
+  pagesTable: ${self:custom.pagesTableName}
+  usersTable: ${self:custom.usersTableName}
+  categoriesTable: ${self:custom.categoriesTableName}
+  siteTable: ${self:custom.siteTableName}
+  userPool: ${self:custom.cognitoPoolName}
+
+# you can add packaging information here
+package:
+  individually: true
+  exclude:
+    - resources/**
+    - node_modules/**
+    - lambdas/**
+    - tests/**
+
+# now, onto your app
+functions:
+  # the function to get and return page data
+  getPage:
+    role: readOnly
+    package:
+      include:
+        - 'lambdas/getPage.js'
+    handler: 'lambdas/getPage.handler'
+    environment:
+      DYNAMODB_TABLE: ${self:custom.pagesTableName}
+    events:
+     - http:
+        path: getpage/
+        method: get
+     - http:
+        path: getpage/{proxy+}
+        method: get
+  # the function for writing a new page
+  writePage:
+    role: writePage
+    handler: 'lambdas/writePage.handler'
+    environment:
+      DYNAMODB_TABLE: ${self:custom.pagesTableName}
+    package:
+      include:
+        - 'lambdas/writePage.js'
+        - 'lambdas/validateWrite.js'
+    events:  
+     - http:
+        path: /writePage/
+        method: post
+        
+
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb.yml)}
+  
+  # IAM roles for functions
+  - ${file(resources/roles.yml)} 
+
+  # Cognito Userpool for admins
+  - ${file(resources/cognito.yml)}

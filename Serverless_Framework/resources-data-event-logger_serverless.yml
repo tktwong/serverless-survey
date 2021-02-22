@@ -1,0 +1,41 @@
+service: "resources-data-event-logger"
+frameworkVersion: ">=1.8.0"
+
+enableLocalInstallationFallback: true
+
+plugins:
+  - serverless-webpack
+  - serverless-prune-plugin
+  - serverless-iam-roles-per-function
+  - serverless-offline
+custom:
+  webpack:
+    webpackConfig: "./webpack.config.js"
+    includeModules: true
+  prune:
+    automcatic: true
+    number: 1
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+functions:
+  eventLogger:
+    handler: src/functions/resource-data-event-logger.entrypoint
+    events:
+      - http:
+          path: resources/logs
+          method: POST
+          cors: true
+          request:
+            schema:
+              application/json: ${file(src/resources/request-body-schema.json)}
+    iamRoleStatementsName: resource-data-event-log-role
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "events:PutEvents"
+        Resource: "arn:aws:events:us-east-1:054813453645:event-bus/handle-resource-data-log-events"

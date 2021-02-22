@@ -1,0 +1,125 @@
+service: the-asterisk-lounge-api
+
+# Use serverless-webpack plugin to transpile ES6/ES7
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+# Enable auto-packing of external modules
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set our DynamoDB throughput for prod and all other non-prod stages.
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  # Load our webpack config
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  # Load our secret environment variables based on the current stage.
+  # Fallback to default if it is not in prod.
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-west-2
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName:
+      Ref: GamesTable
+    stripeSecretKey: ${self:custom.environment.stripeSecretKey}
+
+  # 'iamRoleStatement' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - "Fn::GetAtt": [ GamesTable, Arn ]
+
+
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  - ${file(resources/s3-bucket.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}
+
+functions:
+
+  # Defines an HTTP API endpoint that calls the main function in get.js
+  # - path: url path is /games/{id}
+  # - method: GET request
+  get:
+    handler: get.main
+    events:
+      - http:
+          path: games/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  # Defines an HTTP API endpoint that calls the main function in list.js
+  # - path: url path is /games
+  # - method: GET request
+  list:
+    handler: list.main
+    events:
+      - http:
+          path: games
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  # Defines an HTTP API endpoint that calls the main function in update.js
+  # - path: url path is /games/{id}
+  # - method: PUT request
+  update:
+    handler: update.main
+    events:
+      - http:
+          path: games/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  # Defines an HTTP API endpoint that calls the main function in delete.js
+  # - path: url path is /games/{id}
+  # - method: DELETE request
+  delete:
+    handler: delete.main
+    events:
+      - http:
+          path: games/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  billing:
+    handler: billing.main
+    events:
+      - http:
+          path: billing
+          method: post
+          cors: true
+          authorizer: aws_iam

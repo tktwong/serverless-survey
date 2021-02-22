@@ -1,0 +1,58 @@
+service: forexgangceen
+
+frameworkVersion: "<=1.25.0"
+
+custom:
+  namespace: ${self:service}-${self:custom.stage}
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  stage: dev
+  region: ap-southeast-1
+  environment:
+    CLIENT_ID: '305703264613.309344447746'
+    CLIENT_SECRET: 67fa87052d7c6170a5926e6f0decff87
+    VERIFICATION_TOKEN: hL6XbqVqCBWp7q8HklkS7P29
+    INSTALL_SUCCESS_URL: http://s3-ap-southeast-1.amazonaws.com/forexgangceen/index.html
+    INSTALL_ERROR_URL: http://s3-ap-southeast-1.amazonaws.com/forexgangceen/error.html
+    NAMESPACE: ${self:custom.namespace}
+    TEAMS_TABLE: ${self:custom.namespace}-teams
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.TEAMS_TABLE}
+
+functions:
+  events:
+    handler: events.handler
+    events:
+      - http:
+          path: events
+          method: post
+  install:
+    handler: install.handler
+    events:
+      - http:
+          path: install
+          method: get
+
+resources:
+  Resources:
+    TeamsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TEAMS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: team_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: team_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

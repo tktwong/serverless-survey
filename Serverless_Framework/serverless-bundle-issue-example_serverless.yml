@@ -1,0 +1,49 @@
+service: test-service
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-central-1'}
+  memorySize: 256
+  timeout: 5
+  versionFunctions: false
+  environment:
+    DDB_TABLE: test
+    NODE_PATH: "./:/opt/node_modules"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/*"
+
+functions:
+  latest:
+    handler: handler.latest
+    events:
+      - http:
+          path: latest
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    DynamoDB:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: test
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+plugins:
+  - serverless-bundle

@@ -1,0 +1,101 @@
+service: scheduler
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'states:StartExecution'
+        - 'states:StopExecution'
+        - 'dynamodb:PutItem'
+        - 'dynamodb:GetItem'
+        - 'dynamodb:Query'
+      Resource: '*'
+  environment:
+    STATEMACHINE_ARN: { Fn::GetAtt: ["SchedulerDash${self:provider.stage}Dashstates", Arn] }
+    TABLE_NAME: { Ref: SchedulerTable }
+  apiKeys:
+    - ${self:service}-${self:provider.stage}
+functions:
+  createSchedule:
+    handler: app/handler/create.handler
+    events:
+      - http:
+          path: createSchedule
+          method: post
+          private: true
+          cors: true
+  cancelSchedule:
+    handler: app/handler/cancel.handler
+    events:
+      - http:
+          path: cancelSchedule
+          method: post
+          private: true
+          cors: true
+  listSchedules:
+    handler: app/handler/list.handler
+    events:
+      - http:
+          path: listSchedules
+          method: post
+          cors: true
+          private: true
+    
+  publishToSF:
+    handler: app/handler/publish.handler
+    events:
+      - stream:
+            type: dynamodb
+            arn:
+              Fn::GetAtt: [SchedulerTable, StreamArn]
+
+plugins:
+  - serverless-step-functions
+
+stepFunctions:
+  stateMachines:
+    adHocSchedulerDev:
+      name: scheduler-${self:provider.stage}-states
+      definition:
+        StartAt: WaitForSchedule
+        States:
+          WaitForSchedule:
+            Type: Wait
+            TimestampPath: $.scheduledTime
+            Next: publishToSns
+          publishToSns:
+            Type: Task
+            Resource: "arn:aws:states:::sns:publish"
+            Parameters:
+              TopicArn.$: $.topicArn
+              Message.$: $.data
+            End: true
+
+resources:
+  Resources:
+    SchedulerTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "type"
+            AttributeType: "S"
+          -
+            AttributeName: "createdAt"
+            AttributeType: "N"
+        KeySchema:
+          - 
+            AttributeName: "type"
+            KeyType: 'HASH'
+          - 
+            AttributeName: "createdAt"
+            KeyType: "RANGE"
+        StreamSpecification:
+          StreamViewType: "OLD_IMAGE"
+        TimeToLiveSpecification:
+          AttributeName: "ttl"
+          Enabled: true
+        BillingMode: "PAY_PER_REQUEST"
+        TableName: ${self:service}-${self:provider.stage}-Table

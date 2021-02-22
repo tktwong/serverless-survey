@@ -1,0 +1,52 @@
+service: juryou-api
+
+plugins:
+  - serverless-dotenv-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: sa-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - SNS:Publish
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:sns:${self:provider.region}:"
+            - Ref: "AWS::AccountId"
+            - ":${self:custom.sendInvoiceTopic}"
+  httpApi:
+    cors: true
+    authorizers:
+      juryouApiAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl: https://cognito-idp.${self:custom.cognitoPoolRegion}.amazonaws.com/${self:custom.cognitoPoolId}
+        audience:
+          - ${self:custom.cognitoClientId}
+
+
+custom:
+  stage: ${opt:stage}
+  cognitoPoolRegion: ${env:COGNITO_POOL_REGION}
+  cognitoPoolId: ${env:COGNITO_POOL_ID}
+  cognitoClientId: ${env:COGNITO_CLIENT_ID}
+  sendInvoiceTopic: "donaronline-send-invoice-${self:custom.stage}"
+
+functions:
+  invoice:
+    handler: handler.handleInvoice
+    events:
+      - httpApi:
+          path: /invoice
+          method: post
+          authorizer:
+            name: juryouApiAuthorizer
+    environment:
+      SNS_ARN:
+        Fn::Join:
+          - ""
+          - - "arn:aws:sns:${self:provider.region}:"
+            - Ref : "AWS::AccountId"
+            - ":${self:custom.sendInvoiceTopic}"

@@ -1,0 +1,101 @@
+service: tweet-sister-bot
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: ap-northeast-1
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "kms:*"
+      Resource: "arn:aws:kms:*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:*"
+
+package:
+  individually: true
+  include:
+    - src/**
+  exclude:
+    - src/credentials.yml
+
+plugins:
+  - serverless-python-requirements
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  defaultStage: development
+  pythonRequirements:
+    dockerizePip: true
+  dynamodb:
+    stages:
+      - development
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+      development:
+        sources:
+          - table: "Blacklists"
+            sources: [./migrations/sample_blacklists.json]
+
+functions:
+  execute:
+    handler: src/main.lambda_handler
+    runtime: python3.8
+    timeout: 60
+    events:
+      - schedule: 
+          rate: rate(30 minutes)
+          enabled: true
+          inputTransformer:
+            inputPathsMap:
+              eventTime: '$.time'
+            inputTemplate: '{"time": <eventTime>, "env": "aws"}'
+
+resources:
+  Resources:
+    BlacklistTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: "Blacklists"
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: name
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+          -
+            AttributeName: name
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: nameGSI
+            KeySchema:
+              - AttributeName: name
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

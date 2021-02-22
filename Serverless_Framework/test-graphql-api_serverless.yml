@@ -1,0 +1,108 @@
+service: testGraphqlApi
+
+# This is our Appsync infrastructure, consumed by the serverless-appsync-plugin:
+custom:
+  accountId: { Ref: AWS::AccountId }
+  appSync:
+    name: ${self:provider.apiname}
+    region: ${self:provider.region}
+    authenticationType: API_KEY
+    serviceRole: 'AppSyncServiceRole'
+    schema: 'schema.graphql'
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: testGraphqlApiTableDS
+        config:
+          tableName: { Ref: testGraphqlApiTable }
+          serviceRoleArn: { Fn::GetAtt: [ DynamoDBRole, Arn ] }
+    mappingTemplates:
+      - dataSource: testGraphqlApiTableDS
+        type: Query
+        field: allUsers
+        request: 'allusers-request.vtl'
+        response: 'list-response.vtl'
+      - dataSource: testGraphqlApiTableDS
+        type: Query
+        field: getUser
+        request: 'getuser-request.vtl'
+        response: 'common-response.vtl'
+      - dataSource: testGraphqlApiTableDS
+        type: Mutation
+        field: saveUser
+        request: 'saveuser-request.vtl'
+        response: 'common-response.vtl'
+      - dataSource: testGraphqlApiTableDS
+        type: Mutation
+        field: deleteUser
+        request: 'deleteuser-request.vtl'
+        response: 'common-response.vtl'
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-central-1
+  apiname: ${opt:apiname, 'testGraphqlApi-dev'}
+  deploymentBucket:
+    name: 'serverless.bundesimmo.de'
+    serverSideEncryption: AES256
+
+# These are our normal Serverless Framework IaC:
+resources:
+  Resources:
+    # DynamoDB Table
+    testGraphqlApiTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.apiname}-kugelblitz-table
+        AttributeDefinitions:
+          - AttributeName: 'UserId'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'UserId'
+            KeyType: 'HASH'
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    # IAM Policy to access Dynamo by the service
+    AppSyncDynamoDBPolicy:
+      Type: 'AWS::IAM::ManagedPolicy'
+      Properties:
+        Path: /appsync/
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:DeleteItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+                - dynamodb:Scan
+              Resource:
+                - { Fn::Join: [ '', [ { Fn::GetAtt: [ testGraphqlApiTable, Arn ] }, '/*' ] ] }
+                - { Fn::GetAtt: [ testGraphqlApiTable, Arn ] }
+
+    # IAM Role for implementing the AppSync / DynamoDB policy
+    DynamoDBRole:
+      Type: 'AWS::IAM::Role'
+      DependsOn:
+        - AppSyncDynamoDBPolicy
+      Properties:
+        RoleName: ${self:provider.apiname}-appsync-dynamodb-role
+        ManagedPolicyArns:
+          - Ref: AppSyncDynamoDBPolicy
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Principal:
+                Service:
+                  - appsync.amazonaws.com
+
+plugins:
+  - serverless-appsync-plugin

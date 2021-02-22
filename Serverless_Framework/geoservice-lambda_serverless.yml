@@ -1,0 +1,84 @@
+# Welcome to Serverless!
+
+service: geoservice-lambda # NOTE: update this with your service name
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  environment:
+    ADDRESS_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    API_KEY: api_key
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+package:
+  include:
+    - utils/**
+functions:
+  hello:
+    handler: api/handler.hello
+    events:
+      - http:
+          path: hello
+          method: get
+  addressSubmission:
+    handler: api/address.submit
+    memorySize: 128
+    description: Submit address geocoding info and starts interview process.
+    events:
+      - http:
+          path: address
+          method: post
+  listAddress:
+    handler: api/address.list
+    memorySize: 128
+    description: List all address
+    events:
+      - http:
+          path: address
+          method: get
+  addressDetails:
+    handler: api/address.get
+    description: Get address detail
+    events:
+      - http:
+          path: address/{id}
+          method: get
+resources:
+  Resources:
+    AddressDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.ADDRESS_TABLE}

@@ -1,0 +1,188 @@
+service:
+  name: teg-game-backend
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  GAMES_TABLE: ${self:custom.stage}-teg-games
+  CONNECTION_IDS_TABLE: ${self:custom.stage}-connection-ids
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  dynamodb:
+    # If you only want to use DynamoDB Local in some stages, declare them here
+    stages:
+      - dev
+      - local
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+    # Uncomment only if you already have a DynamoDB running locally
+    # noStart: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'} # Set the default stage used. Default is dev
+  region: ${opt:region, 'ap-southeast-2'} # Overwrite the default region used. Default is ap-southeast-2
+  timeout: 30
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    GAMES_TABLE: ${self:custom.GAMES_TABLE}
+    CONNECTION_IDS_TABLE: ${self:custom.CONNECTION_IDS_TABLE}
+    STAGE: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ GamesTable, Arn ]
+        - "Fn::GetAtt": [ ConnectionIdsTable, Arn ]
+
+functions:
+# API Gateway
+  userRegistration:
+    handler: src/handler.newGameHandler
+    events:
+      - http:
+          path: new-game
+          method: post
+          cors: true
+
+# Web sockets
+  connectHandler:
+    handler: src/handler.connectHandler
+    events:
+      - websocket: $connect
+  disconnectHandler:
+    handler: src/handler.disconnectHandler
+    events:
+      - websocket:
+          route: $disconnect
+  joinGame:
+    handler: src/handler.joinGameHandler
+    events:
+      - websocket:
+          route: joinGame
+          routeResponseSelectionExpression: $default
+  getPlayers:
+    handler: src/handler.getPlayersHandler
+    events:
+      - websocket:
+          route: getPlayers
+          routeResponseSelectionExpression: $default
+  reConnect:
+    handler: src/handler.reConnectHandler
+    events:
+      - websocket:
+          route: reConnect
+          routeResponseSelectionExpression: $default
+  startGame:
+    handler: src/handler.startGameHandler
+    events:
+      - websocket:
+          route: startGame
+          routeResponseSelectionExpression: $default
+  finishRound:
+    handler: src/handler.finishRoundHandler
+    events:
+      - websocket:
+          route: finishRound
+          routeResponseSelectionExpression: $default
+  addTroops:
+    handler: src/handler.addTroopsHandler
+    events:
+      - websocket:
+          route: addTroops
+          routeResponseSelectionExpression: $default
+  attack:
+    handler: src/handler.attackHandler
+    events:
+      - websocket:
+          route: attack
+          routeResponseSelectionExpression: $default
+  moveTroops:
+    handler: src/handler.moveTroopsHandler
+    events:
+      - websocket:
+          route: moveTroops
+          routeResponseSelectionExpression: $default
+  getCard:
+    handler: src/handler.getCardHandler
+    events:
+      - websocket:
+          route: getCard
+          routeResponseSelectionExpression: $default
+  exchangeCard:
+    handler: src/handler.exchangeCardHandler
+    events:
+      - websocket:
+          route: exchangeCard
+          routeResponseSelectionExpression: $default
+  exchangeCards:
+    handler: src/handler.exchangeCardsHandler
+    events:
+      - websocket:
+          route: exchangeCards
+          routeResponseSelectionExpression: $default
+  chatMessage:
+    handler: src/handler.chatMessageHandler
+    events:
+      - websocket:
+          route: chatMessage
+          routeResponseSelectionExpression: $default
+
+resources: # CloudFormation template syntax
+  Resources:
+    GamesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.GAMES_TABLE}
+        AttributeDefinitions:
+          - AttributeName: UUID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: UUID
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    ConnectionIdsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.CONNECTION_IDS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: connectionId
+            AttributeType: S
+          #- AttributeName: gameId
+          #  AttributeType: S
+        KeySchema:
+          - AttributeName: connectionId
+            KeyType: HASH
+          #- AttributeName: gameId
+          #  KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-iam-roles-per-function
+  - serverless-create-global-dynamodb-table
+  - serverless-prune-plugin

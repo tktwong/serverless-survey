@@ -1,0 +1,83 @@
+service: serverless-aws-node-sample
+
+provider:
+    name: aws
+    runtime: nodejs10.x
+    stage: ${opt:stage,'dev'}
+    logRetentionInDays: 30
+    timeout: 30
+    tracing: true
+    environment: ${file(env.yml):${self:provider.stage}}
+    region: ${opt:region, 'us-east-1'}
+    iamRoleStatements:
+        - ${file(resources/xray.yml):iamRoleStatements}
+        # - ${file(resources/apigateway.yml):iamRoleStatements}
+        - ${file(resources/dynamodb.yml):iamRoleStatements}
+        - ${file(resources/sns.yml):iamRoleStatements}
+
+plugins:
+    - serverless-webpack
+    - serverless-offline
+    - serverless-aws-documentation
+    - serverless-stack-output
+    - serverless-pseudo-parameters
+    - serverless-plugin-tracing
+    - serverless-prune-plugin
+    - serverless-dotenv-plugin
+    # - serverless-domain-manager
+    - serverless-dynamodb-local
+    - serverless-offline-sns
+
+package:
+    individually: true
+    include: src/**/!.test.js
+    exclude:
+        - node_modules/**/*
+        - src/**/*.test.*
+        - src/**/*.ts
+        - "**/__tests__/*"
+
+functions:
+    - ${file(src/health/functions.yml)}
+    - ${file(src/swagger/functions.yml)}
+    - ${file(src/sample/functions.yml)}
+    - ${file(src/message/functions.yml)}
+
+resources:
+    - ${file(resources/dynamodb.yml):Resources}
+    - ${file(resources/cognito-user-pool.yml):Resources}
+    # - ${file(resources/s3-bucket.yml):Resources}
+    # - ${file(resources/api-gateway-errors.yml):Resources}
+
+custom:
+    documentation: ${file(swagger/documentation.yml)}
+    output:
+        file: .serverless/output.json
+    serverless-offline-sns:
+        port: 4002
+        debug: true
+    webpack:
+        webpackConfig: "webpack.config.js"
+        includeModules:
+            forceExclude:
+                - aws-sdk
+        packager: "npm"
+        excludeFiles:
+            - "**/__tests__/*"
+            - "**/*.test.*"
+            - "test/*"
+    prune:
+        automatic: true
+        number: 3
+    # customDomain:
+    #   basePath: "api"
+    #   stage: ${self:provider.stage}
+    #   domainName: serverless-aws-node-sample.dk
+    #   certificateName: serverless-aws-node-sample.dk
+    #   createRoute53Record: true
+    # userPoolName: test-user-pool-${self:provider.stage}
+    # userPoolClientName: test-user-pool-client-${self:provider.stage}
+    dynamodb: ${file(resources/dynamodb.yml):custom.dynamodb}
+    dynamodbTables: ${file(resources/dynamodb.yml):custom.dynamodbTables}
+    snsTopicArns: ${file(resources/sns.yml):custom.snsTopicArns}
+    snsTopics: ${file(resources/sns.yml):custom.snsTopics}

@@ -1,0 +1,50 @@
+service: mhub-serverless-go-template
+
+frameworkVersion: ">=1.28.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: ${opt:stage, 'dev'}
+  region: ap-southeast-1
+  timeout: "${file(.env/env.${self:provider.stage}.yml):${self:provider.stage}.TIMEOUT}"
+  environment: ${file(.env/env.${self:provider.stage}.yml):${self:provider.stage}}
+  iamRoleStatements:
+  # TODO: update statement based on the models you use
+    - ${file(vendor/go.mhub.my/models/image/image.yml):policyStatement}
+
+plugins:
+  - serverless-offline
+  - serverless-appsync-plugin
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+functions:
+  # TODO: rename handler to your service name
+  example-handler:
+    handler: bin/example-handler
+
+custom:
+  appName: ${file(.env/env.${self:provider.stage}.yml):${self:provider.stage}.APP_NAME}-${self:provider.stage}
+  accountId: ${file(.env/env.${self:provider.stage}.yml):${self:provider.stage}.ACCOUNT_ID}
+  appSync:
+      name: ${self:custom.appName}
+      authenticationType: AMAZON_COGNITO_USER_POOLS
+      userPoolConfig:
+        awsRegion: ${file(.env/env.${self:provider.stage}.yml):${self:provider.stage}.REGION}
+        defaultAction: ALLOW
+        userPoolId: ${file(.env/env.${self:provider.stage}.yml):${self:provider.stage}.COGNITO_USER_POOL_ID}
+      mappingTemplatesLocation: .schema/
+      mappingTemplates: ${file(.schema/mapping-templates.yml):templates}
+
+      serviceRole: "AppSyncServiceRole"
+      schema: schema.graphql
+      dataSources: ${file(.schema/data-sources.yml):dataSources}
+
+
+resources:
+  Resources: ${file(.schema/resources.yml):resources}

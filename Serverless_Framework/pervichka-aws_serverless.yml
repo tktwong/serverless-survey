@@ -1,0 +1,172 @@
+service: pervichka-aws
+
+#plugins:
+#  - serverless-apigw-binary
+
+#custom:
+#  apigwBinary:
+#    types:
+#      - 'image/*'
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  environment:
+    TEMP_FILES_TABLE: "temp-urls-${self:service}-${opt:stage, self:provider.stage}"
+    TEMP_FILES_BUCKET: "temp-files-${self:service}-${opt:stage, self:provider.stage}"
+    UPLOADED_FILES_TABLE: "uploaded-urls-${self:service}-${opt:stage, self:provider.stage}"
+    CUSTOMERS_TABLE: "${self:service}-${opt:stage, self:provider.stage}-customers"
+    SES_REGION: "us-east-1" #SES is not available in all regions
+    EMAIL_FROM_ADDRESS: "support@pervichka.online"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::${self:provider.environment.TEMP_FILES_BUCKET}/*"
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+        - ses:SendRawEmail
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource: "*"
+  
+  
+  stage: dev
+  region: us-east-2
+
+
+
+functions:
+  hello:
+    handler: handler.hello
+    events: 
+      - http: get hello
+  prepare-new-file-url:
+    handler: prepare-new-file-url.main
+    events: 
+      - http:  
+          path: prepare-new-file-url
+          method: get
+          cors: true
+  get-file:
+    handler: get-file.main
+    events: 
+      - http:  
+          path: get-file
+          method: get
+          cors: true
+  get-file-url:
+    handler: get-file-url.main
+    events: 
+      - http:  
+          path: get-file-url
+          method: get
+          cors: true
+  get-my-files-list:
+    handler: get-my-files-list.main
+    events: 
+      - http:  
+          path: get-my-files-list
+          method: get
+          cors: true    
+  new-customer:
+    handler: new-customer.main
+    events: 
+      - http:  
+          path: new-customer
+          method: post
+          cors: true
+
+
+
+
+resources:
+  Resources:
+    TempUserFilesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.TEMP_FILES_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, PUT, HEAD, POST, DELETE]
+            AllowedOrigins: ['*']   
+      DeletionPolicy: Retain
+
+
+    TempFilesDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.TEMP_FILES_TABLE}
+    
+    UploadedFilesDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"   
+          - AttributeName: "customer"
+            AttributeType: "S" 
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        GlobalSecondaryIndexes:
+          - IndexName: customer-index
+            KeySchema:
+              - AttributeName: customer
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.UPLOADED_FILES_TABLE}
+
+    CustomersDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.CUSTOMERS_TABLE}

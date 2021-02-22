@@ -1,0 +1,58 @@
+service: api-db-graalvm
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-prune-plugin
+
+custom:
+  appName: "api-db-graalvm"
+  prune:
+    automatic: true
+    number: 3
+
+provider:
+  name: aws
+  runtime: java8
+  stage: dev
+  region: eu-west-1
+  package:
+    individually: true
+  tracing:
+    apiGateway: true
+    lambda: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ messageTable, Arn ]
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: "*"
+
+
+functions:
+  messageFunction:
+    handler: io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest
+    reservedConcurrency: 10
+    timeout: 10
+    package:
+      artifact: build/distributions/dynamodb-api-lambda-graalvm-1.0-SNAPSHOT.zip
+#      artifact: build/libs/dynamodb-api-lambda-graalvm-1.0-SNAPSHOT-all.jar
+      individually: true
+    events:
+      - http:
+          path: message/{uuid}
+          method: get
+
+
+resources: # CloudFormation template syntax from here on.
+  - ${file(serverless/resources.yml)}

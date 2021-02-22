@@ -1,0 +1,67 @@
+service: aws-nodejs # NOTE: update this with your service name
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+
+functions:
+  oembed:
+    handler: handler.oembed
+
+    events:
+      - http:
+         path: oembed
+         method: get
+         cors: true
+
+  extract:
+    handler: handler.extract
+
+    events:
+      - http:
+         path: extract
+         method: get
+         cors: true
+
+resources:
+  Resources:
+    EmbedlyDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: embedly-urls
+        AttributeDefinitions:
+          - AttributeName: method
+            AttributeType: S
+          - AttributeName: url
+            AttributeType: S
+        KeySchema:
+          - AttributeName: method
+            KeyType: HASH
+          - AttributeName: url
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn:
+        - EmbedlyDynamoDbTable
+      Properties:
+        PolicyName: embedly-lambda-dynamodb
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:Scan
+                - dynamodb:DescribeTable
+                - dynamodb:Query
+              Resource:
+                - arn:aws:dynamodb:*:*:table/embedly-urls
+        Roles:
+          - Ref: IamRoleLambdaExecution

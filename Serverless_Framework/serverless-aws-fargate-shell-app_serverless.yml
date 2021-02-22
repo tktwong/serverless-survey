@@ -1,0 +1,118 @@
+service: simple-book-catalog
+
+plugins:
+  - serverless-python-requirements
+  - serverless-plugin-cloudwatch-dashboard
+  - serverless-fargate-tasks
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: eu-west-1
+
+package:
+    exclude:
+        - node_modules/**
+
+#1. deploy VPC and subnets where AWS Fargate cluster should be places
+resources:
+    Resources:
+        #Deploy IAM role which allows to trigger ECS Task in AWS Fargate
+        ecsTaskExecutionRole:
+            Type: AWS::IAM::Role
+            Properties:
+                RoleName: ecs-task-execution-role
+                ManagedPolicyArns:
+                      - "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+                AssumeRolePolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                        - Effect: Allow
+                          Action:
+                              - "sts:AssumeRole"
+                          Principal:
+                              Service:
+                                  - ecs-tasks.amazonaws.com
+
+        #Deploy VPS and subnets
+        VPC:
+            Type: AWS::EC2::VPC
+            Properties:
+                CidrBlock: 10.0.0.0/16
+        PublicSubnetOne:
+            Type: AWS::EC2::Subnet
+            Properties:
+                AvailabilityZone: ${self:provider.region}a
+                CidrBlock: 10.0.1.0/24
+                MapPublicIpOnLaunch: true
+                VpcId:
+                    Ref: VPC
+        PublicSubnetTwo:
+            Type: AWS::EC2::Subnet
+            Properties:
+                AvailabilityZone: ${self:provider.region}b
+                CidrBlock: 10.0.2.0/24
+                MapPublicIpOnLaunch: true
+                VpcId:
+                        Ref: VPC
+        # Setup networking resources for the public subnets. Containers
+        # in the public subnets have public IP addresses and the routing table
+        # sends network traffic via the internet gateway.
+        InternetGateway:
+          Type: AWS::EC2::InternetGateway
+        GatewayAttachement:
+          Type: AWS::EC2::VPCGatewayAttachment
+          Properties:
+            VpcId: !Ref 'VPC'
+            InternetGatewayId: !Ref 'InternetGateway'
+        PublicRouteTable:
+          Type: AWS::EC2::RouteTable
+          Properties:
+            VpcId: !Ref 'VPC'
+        PublicRoute:
+          Type: AWS::EC2::Route
+          DependsOn: GatewayAttachement
+          Properties:
+            RouteTableId: !Ref 'PublicRouteTable'
+            DestinationCidrBlock: '0.0.0.0/0'
+            GatewayId: !Ref 'InternetGateway'
+        PublicSubnetOneRouteTableAssociation:
+          Type: AWS::EC2::SubnetRouteTableAssociation
+          Properties:
+            SubnetId: !Ref PublicSubnetOne
+            RouteTableId: !Ref PublicRouteTable
+        PublicSubnetTwoRouteTableAssociation:
+          Type: AWS::EC2::SubnetRouteTableAssociation
+          Properties:
+            SubnetId: !Ref PublicSubnetTwo
+            RouteTableId: !Ref PublicRouteTable
+
+custom:
+  pythonRequirements:
+      dockerizePip: non-linux
+
+  #2. deploy SQLite database as ECS Task in AWS Fargate service 
+  fargate:
+      role: !Ref ecsTaskExecutionRole
+      vpc:
+          public-ip: ENABLED
+          subnets:
+              - !Ref PublicSubnetOne
+              - !Ref PublicSubnetTwo
+      tasks:
+          sqlite-database:
+              image: nouchka/sqlite3
+
+
+#3. deploy API using functions
+functions:
+  getCandidate:
+    handler: app/candidate.get_candidate
+    memorySize: 128
+    description: GET all candidates
+    events:
+      - http: 
+          path: candidates
+          method: get

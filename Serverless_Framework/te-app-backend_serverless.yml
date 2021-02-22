@@ -1,0 +1,130 @@
+service: triton-exchange
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-dynamodb-local
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+      Resource: 
+        - 'Fn::GetAtt': [ TEUsersTable, Arn ]
+        - 'Fn::GetAtt': [ TEListingsTable, Arn ]
+        - 'Fn::GetAtt': [ TETagsTable, Arn ]
+        - 'Fn::GetAtt': [ TEReportsTable, Arn ]
+
+functions:
+  main:
+    handler: index.default
+    events:
+      - http: ANY /
+        cors: true
+      - http: 'ANY {proxy+}'
+        cors: true
+    environment:
+      NODE_ENV: ${self:custom.nodeEnv.${opt:stage, self:provider.stage}}
+      ALG: RS256
+      PROJECT_ID: triton-exchange
+      PUBLIC_KEY_URL: https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com
+      ISS_URL: https://securetoken.google.com/triton-exchange
+
+resources:
+  Resources:
+    TEUsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: TEUsersTable
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    TEListingsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: TEListingsTable
+        AttributeDefinitions:
+          - AttributeName: listingId
+            AttributeType: S
+          - AttributeName: creationTime
+            AttributeType: N
+        KeySchema:
+          - AttributeName: listingId
+            KeyType: HASH
+          - AttributeName: creationTime
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+    TETagsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: TETagsTable
+        AttributeDefinitions:
+          - AttributeName: tag
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tag
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    TEReportsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: TEReportsTable
+        AttributeDefinitions:
+          - AttributeName: type
+            AttributeType: S
+          - AttributeName: reportId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: type
+            KeyType: HASH
+          - AttributeName: reportId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+    TEBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: triton-exchange-bucket-photos
+        AccessControl: PublicReadWrite
+        CorsConfiguration:
+          CorsRules:
+          - AllowedMethods:
+            - GET
+            - PUT
+            - POST
+            - DELETE
+            - HEAD
+            AllowedOrigins:
+            - '*'
+            AllowedHeaders:
+            - '*'
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+  nodeEnv:
+    dev: development
+    prod: production

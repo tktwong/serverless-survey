@@ -1,0 +1,84 @@
+service: ${self:custom.service}
+
+custom:
+  service: ${file(./config.json):service}
+  stage: ${opt:stage, '${file(./config.json):stage}'}
+  region: ${opt:region, '${file(./config.json):region}'}
+  reportsTable: ${self:service}-${file(./config.json):reportsTableName}-${opt:stage, '${file(./config.json):stage}'}
+  devicesTable: ${self:service}-${file(./config.json):devicesTableName}-${opt:stage, '${file(./config.json):stage}'}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'dynamodb:*'
+      Resource:
+        - { "Fn::GetAtt": ["reportsTable", "Arn" ] }
+        - { "Fn::GetAtt": ["devicesTable", "Arn" ] }
+  environment:
+    REPORTS_TABLE_NAME: ${self:custom.reportsTable}
+    DEVICES_TABLE_NAME: ${self:custom.devicesTable}
+
+functions:
+  getReports:
+    handler: index.handler
+    events:
+      - http:
+          path: /reports
+          method: GET
+          cors: true
+  getDevices:
+    handler: index.handler
+    events:
+      - http:
+          path: /devices
+          method: GET
+          cors: true
+  createDevice:
+    handler: index.handler
+    events:
+      - http:
+          path: /reports
+          method: POST
+          cors: true
+  uplodFile:
+    handler: index.handler
+    events:
+      - http:
+          path: /upload
+          method: POST
+          cors: true
+
+resources:
+  Resources:
+    reportsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.reportsTable}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    devicesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.devicesTable}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

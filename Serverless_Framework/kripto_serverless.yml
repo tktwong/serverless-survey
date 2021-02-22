@@ -1,0 +1,180 @@
+service: kripto
+
+custom:
+  secrets: ${file(secrets.json)}
+
+provider:
+  name: aws
+  stage: prod
+  profile: kripto
+  region: eu-west-1
+  logRetentionInDays: 14
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - "sns:Publish"
+      Resource:
+        - "arn:aws:sns:${self:provider.region}:${self:custom.secrets.awsAccountId}:Trade"
+        - "arn:aws:sns:${self:provider.region}:${self:custom.secrets.awsAccountId}:RateUpdate"
+    - Effect: "Allow"
+      Action:
+        - "sqs:ListQueues"
+      Resource: "arn:aws:sqs:${self:provider.region}:${self:custom.secrets.awsAccountId}:*"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*"
+  environment:
+    TOKEN: ${self:custom.secrets.token}
+    REGION: ${self:provider.region}
+    AWS_ACCOUNT_ID: ${self:custom.secrets.awsAccountId}
+    LUMIGO_TRACER_TOKEN: ${self:custom.secrets.lumigoToken}
+
+resources:
+  - ${file(serverless/resources.yml)}
+
+package:
+  individually: true
+  exclude:
+    - "*/**"
+
+functions:
+  data-reader:
+    runtime: go1.x
+    memorySize: 128
+    handler: services/data-storer/bin/data-reader
+    package:
+      include:
+        - services/data-storer/bin/data-reader
+    environment:
+      MONGO_URI: ${self:custom.secrets.mongoUri}
+  rate-writer:
+    runtime: go1.x
+    memorySize: 128
+    handler: services/data-storer/bin/rate-writer
+    package:
+      include:
+        - services/data-storer/bin/rate-writer
+    environment:
+      MONGO_URI: ${self:custom.secrets.mongoUri}
+    reservedConcurrency: 1
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - storeRateQueue
+              - Arn
+  trade-writer:
+    runtime: go1.x
+    memorySize: 128
+    handler: services/data-storer/bin/trade-writer
+    package:
+      include:
+        - services/data-storer/bin/trade-writer
+    environment:
+      MONGO_URI: ${self:custom.secrets.mongoUri}
+    reservedConcurrency: 1
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - storeTradeQueue
+              - Arn
+  rate-retriever:
+    runtime: nodejs12.x
+    memorySize: 128
+    handler: services/rate-retriever.handler
+    package:
+      include:
+        - services/rate-retriever/**
+    environment:
+      TOPIC: "arn:aws:sns:${self:provider.region}:${self:custom.secrets.awsAccountId}:RateUpdate"
+      QUEUE_URL: "https://sqs.${self:provider.region}.amazonaws.com/${self:custom.secrets.awsAccountId}/RateUpdate"
+      COINBASE_API_KEY: ${self:custom.secrets.coinbaseApiKey}
+      COINBASE_SECRET_KEY: ${self:custom.secrets.coinbaseSecretKey}
+    events:
+      - schedule: rate(1 minute)
+  trade:
+    runtime: go1.x
+    memorySize: 128
+    handler: services/trader/bin/trade
+    package:
+      include:
+        - services/trader/bin/trade
+    environment:
+      TOPIC: "arn:aws:sns:${self:provider.region}:${self:custom.secrets.awsAccountId}:Trade"
+      COINBASE_PRO_KEY: ${self:custom.secrets.coinbaseProApiKey}
+      COINBASE_PRO_PASSPHRASE: ${self:custom.secrets.coinbaseProPassphrase}
+      COINBASE_PRO_SECRET: ${self:custom.secrets.coinbaseProSecretKey}
+      COINBASE_PRO_SANDBOX_KEY: ${self:custom.secrets.coinbaseProSandboxApiKey}
+      COINBASE_PRO_SANDBOX_PASSPHRASE: ${self:custom.secrets.coinbaseProSandboxPassphrase}
+      COINBASE_PRO_SANDBOX_SECRET: ${self:custom.secrets.coinbaseProSandboxSecretKey}
+      MONGO_URI: ${self:custom.secrets.mongoUri}
+      MOCK_TRADE: true
+  get-wallet:
+    runtime: go1.x
+    memorySize: 128
+    handler: services/trader/bin/get-wallet
+    package:
+      include:
+        - services/trader/bin/get-wallet
+    environment:
+      COINBASE_PRO_KEY: ${self:custom.secrets.coinbaseProApiKey}
+      COINBASE_PRO_PASSPHRASE: ${self:custom.secrets.coinbaseProPassphrase}
+      COINBASE_PRO_SECRET: ${self:custom.secrets.coinbaseProSecretKey}
+      COINBASE_PRO_SANDBOX_KEY: ${self:custom.secrets.coinbaseProSandboxApiKey}
+      COINBASE_PRO_SANDBOX_PASSPHRASE: ${self:custom.secrets.coinbaseProSandboxPassphrase}
+      COINBASE_PRO_SANDBOX_SECRET: ${self:custom.secrets.coinbaseProSandboxSecretKey}
+      MONGO_URI: ${self:custom.secrets.mongoUri}
+      MOCK_TRADE: true
+  trade-decider:
+    runtime: python3.7
+    memorySize: 512
+    timeout: 120
+    module: services/trade-decider
+    handler: services/trade-decider/app.handler
+    package:
+      include:
+        - services/trade-decider/decision/**
+        - services/trade-decider/rate/**
+        - services/trade-decider/trade/**
+        - services/trade-decider/wallet/**
+        - services/trade-decider/app.py
+    environment:
+      GET_WALLET_FUNCTION_NAME: "${self:provider.profile}-${self:provider.stage}-get-wallet"
+      READER_FUNCTION_NAME: "${self:provider.profile}-${self:provider.stage}-data-reader"
+      TRADER_FUNCTION_NAME: "${self:provider.profile}-${self:provider.stage}-trade"
+    reservedConcurrency: 1
+    layers:
+      - arn:aws:lambda:eu-west-1:113088814899:layer:Klayers-python37-pandas:1
+      - arn:aws:lambda:eu-west-1:113088814899:layer:Klayers-python37-numpy:10
+      - arn:aws:lambda:eu-west-1:113088814899:layer:Klayers-python37-pytz:6
+    events:
+      - schedule: rate(2 minutes)
+  #      - sqs:
+  #          batchSize: 1
+  #          arn:
+  #            Fn::GetAtt:
+  #              - initiateTradeQueue
+  #              - Arn
+  receipt-emailer:
+    runtime: java11
+    memorySize: 512
+    timeout: 120
+    handler: com.cshep4.kripto.receiptemailer.handler.Handler
+    environment:
+      SEND_GRID_API_KEY: ${self:custom.secrets.sendGridApiKey}
+      RECEIPT_RECIPIENT: shepapps4@gmail.com
+      MONGO_URI: ${self:custom.secrets.mongoUri}
+    package:
+      artifact: services/receipt-emailer/build/libs/receipt-emailer-1.0.0.jar
+    reservedConcurrency: 1
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - emailReceiptQueue
+              - Arn

@@ -1,0 +1,80 @@
+# app and org for use with dashboard.serverless.com
+app: expensee
+org: randal
+
+service:
+  name: expensee-serverless
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+custom:
+  webpack:
+    includeModules: false
+    packager: "yarn"
+  dynamodb:
+    migration:
+      dir: dynamoDbMigrations
+    start:
+      port: 8005
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+      test:
+        sources:
+          - table: ${self:provider.environment.DYNAMODB_CATEGORIES_TABLE_NAME}
+            sources: [./dynamoDb/seeds/categories.json]
+    stages:
+      - dev
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ap-southeast-1
+  profile: serverless
+  stage: dev
+  stackName: expensee-stack-${self:provider.stage}
+  apiName: expensee-api-${self:provider.stage}
+  deploymentBucket:
+    name: expensee-serverless-${self:provider.region}-deploys
+    tags:
+      project: expensee
+  deploymentPrefix: expensee-serverless
+  versionFunctions: false
+  stackTags:
+    project: expensee
+  environment:
+    DYNAMODB_EXPENSES_TABLE_NAME: expensee-expenses-${opt:stage, self:provider.stage}
+    DYNAMODB_CATEGORIES_TABLE_NAME: expensee-categories-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_EXPENSES_TABLE_NAME}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_CATEGORIES_TABLE_NAME}"
+
+package:
+  individually: true
+  exclude:
+    - node_modules/**
+
+resources:
+  - ${file(./src/resources/dynamodb-tables.yml)}
+
+layers:
+  libNodeModule:
+    path: lib
+    description: "common node_module dependencies"
+
+functions:
+  - ${file(./src/functions/categories/functions.yml)}

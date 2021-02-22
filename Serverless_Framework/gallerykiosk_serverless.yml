@@ -1,0 +1,198 @@
+service: gallerykiosk
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${env:STAGE}
+  region: eu-central-1
+  environment:
+    DYNAMODB_LOCK_TABLE: !Ref LockTable
+    MEDIA_BUCKET: ${self:service}-${env:STAGE}-media
+    META_BUCKET: !Ref MetaBucket
+    UPLOADED_LOGS_BUCKET: !Ref UploadedLogsBucket
+    VERSIONS_BUCKET: !Ref VersionsBucket
+    NODE_ENV: production
+  apiKeys:
+    - testapikey-${env:STAGE}
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - dynamodb:GetItem
+      - dynamodb:UpdateItem
+      - dynamodb:PutItem
+      - dynamodb:Scan
+      - dynamodb:Query
+      - dynamodb:DeleteItem
+      - dynamodb:DescribeTable
+    Resource:
+      - "#{LockTable.Arn}"
+  - Effect: Allow
+    Action:
+      - s3:PutObject
+      - s3:GetObject
+      - s3:HeadObject
+      - s3:DeleteObject
+    Resource:
+      - "arn:aws:s3:::${self:provider.environment.MEDIA_BUCKET}/*"
+      - "#{MetaBucket.Arn}/*"
+      - "#{UploadedLogsBucket.Arn}/*"
+  - Effect: Allow
+    Action:
+      - s3:GetObject
+      - s3:HeadObject
+    Resource:
+      - "#{VersionsBucket.Arn}/*"
+  - Effect: Allow
+    Action:
+      - s3:ListBucket
+    Resource:
+      - "arn:aws:s3:::${self:provider.environment.MEDIA_BUCKET}"
+      - "#{MetaBucket.Arn}"
+      - "#{UploadedLogsBucket.Arn}"
+      - "#{VersionsBucket.Arn}"
+
+plugins:
+  - serverless-cf-vars
+  - serverless-plugin-log-retention
+
+custom:
+  logRetentionInDays: 180
+  stackName: ${self:service}-${env:STAGE}
+
+layers:
+  NodeModules:
+    path: backend_node_modules
+    package:
+      include:
+        - 'node_modules/**/*'
+      exclude:
+        - '**/test'
+        - '**/tests'
+        - '**/*.ts'
+
+package:
+  include:
+    - 'build/js/**/*.js'
+    - 'build/js/**/*.json'
+  exclude:
+    - 'node_modules/**'
+    - 'backend_node_modules/**'
+    - 'testdata/**'
+    - 'ts/**'
+    - '*'
+    - '**/*.sw?'
+    - 'serverless-*/*'
+    - 'dart/**'
+    - 'flutter/**'
+    - 'cordova/**'
+
+functions:
+  fileuploaded:
+    handler: build/js/backend/lambda_fileuploaded.handler
+    dependsOn:
+      - MediaBucket
+    events:
+      - s3:
+          bucket: "${self:provider.environment.MEDIA_BUCKET}"
+          event: s3:ObjectCreated:*
+          existing: true
+    layers:
+      - {Ref: NodeModulesLambdaLayer}
+  restapi:
+    timeout: 30
+    memorySize: 256
+    handler: build/js/backend/lambda_restapi.handler
+    layers:
+      - {Ref: NodeModulesLambdaLayer}
+    events:
+      - http:
+          path: "{proxy+}"
+          method: ANY
+          private: true
+          cors: true
+      - http:
+          path: /
+          method: ANY
+          private: true
+          cors: true
+
+resources:
+  Resources:
+    MediaBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "${self:provider.environment.MEDIA_BUCKET}"
+        AccessControl: Private
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - POST
+                - HEAD
+                - GET
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+    MetaBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - POST
+                - HEAD
+                - GET
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+    UploadedLogsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - POST
+                - HEAD
+                - GET
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+    VersionsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - POST
+                - HEAD
+                - GET
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+    LockTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: ID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ID
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+  Outputs:
+    MediaBucket:
+      Value: !Ref MediaBucket
+    MetaBucket:
+      Value: !Ref MetaBucket
+    UploadedLogsBucket:
+      Value: !Ref UploadedLogsBucket
+    VersionsBucket:
+      Value: !Ref VersionsBucket
+    LockTable:
+      Value: !Ref LockTable

@@ -1,0 +1,389 @@
+service:
+  name: serverless-inventory-app
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Inventory API
+        description: Serverless application for managing inventory and orders
+    models:
+      - name: BulkProductsRequest
+        contentType: application/json
+        schema: ${file(models/bulk-create-products-request.json)}
+      - name: ProductRequest
+        contentType: application/json
+        schema: ${file(models/create-product-request.json)}
+      - name: OrderRequest
+        contentType: application/json
+        schema: ${file(models/create-order-request.json)}
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-2'}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    PRODUCTS_TABLE: Products-${self:provider.stage}
+    ORDERS_TABLE: Orders-${self:provider.stage}
+    UNFULFILLED_ORDERS_TABLE: Unfulfilled_Orders-${self:provider.stage}
+    SHIPMENTS_TABLE: Shipments-${self:provider.stage}
+    IMAGES_S3_BUCKET: serverless-product-image-attachment-${self:provider.stage}
+    # PRODUCT_NAME_INDEX: ProductNameIndex
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    SIGNED_URL_EXPIRATION: 86400
+    ES_ENDPOINT: !GetAtt ProductsSearch.DomainEndpoint
+
+
+functions:
+  GetToken:
+    handler: src/lambda/auth/getToken.handler
+    events:
+      - http:
+          method: get
+          path: auth
+          cors: true
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetProducts:
+    handler: src/lambda/http/getProducts.handler
+    events:
+      - http:
+          method: get
+          path: products
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action: 
+          - dynamodb:Scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+        #/index/${self:provider.environment.PRODUCT_NAME_INDEX}
+
+  CreateProduct:
+    handler: src/lambda/http/createProduct.handler
+    events:
+      - http:
+          method: post
+          path: products
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new productItem
+            description: Create a new productItem
+            requestModels:
+              'application/json': ProductRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action: 
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+
+  BulkCreateProducts:
+    handler: src/lambda/http/bulkCreateProducts.handler
+    events:
+      - http:
+          method: post
+          path: products/bulk
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Bulk create a list of products
+            description: Bulk create a list of products
+            requestModels:
+              'application/json': BulkProductsRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action: 
+          - dynamodb:BatchWriteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+
+  UpdateProduct:
+    handler: src/lambda/http/updateProduct.handler
+    events:
+      - http:
+          method: patch
+          path: products/{productId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+
+  DeleteProduct:
+    handler: src/lambda/http/deleteProduct.handler
+    events:
+      - http:
+          method: delete
+          path: products/{productId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: products/{productId}/attachment
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+
+  SyncWithElasticsearch:  
+    # environment:
+    #   ES_ENDPOINT: !GetAtt ProductsSearch.DomainEndpoint 
+    handler: src/lambda/dynamoDb/elasticSearchSync.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt ProductsDynamoDBTable.StreamArn
+
+  SearchProducts:
+    # environment:
+    #   ES_ENDPOINT: !GetAtt ProductsSearch.DomainEndpoint
+    handler: src/lambda/http/searchProducts.handler
+    events:
+      - http:
+          method: get
+          path: products/search
+          cors: true
+
+  CreateOrder:
+    handler: src/lambda/http/createOrder.handler
+    events:
+      - http:
+          method: post
+          path: orders
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new order
+            description: Create a new order
+            requestModels:
+              'application/json': OrderRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action: 
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ORDERS_TABLE}
+
+  ProcessOrder:  
+    handler: src/lambda/dynamoDb/processOrder.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt OrdersDynamoDBTable.StreamArn
+    iamRoleStatements:
+      - Effect: Allow
+        Action: 
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCTS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SHIPMENTS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.UNFULFILLED_ORDERS_TABLE}
+
+
+
+resources:
+  Resources:
+
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.IMAGES_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+    
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket
+
+
+    ProductsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties: 
+        AttributeDefinitions:
+          - AttributeName: productId
+            AttributeType: S
+          # - AttributeName: addedAt
+          #   AttributeType: S
+          # - AttributeName: productName
+          #   AttributeType: S
+        KeySchema:
+          - AttributeName: productId
+            KeyType: HASH
+          # - AttributeName: addedAt
+          #   KeyType: RANGE
+        # LocalSecondaryIndexes:
+        #   - IndexName: ${self:provider.environment.PRODUCT_NAME_INDEX}
+        #     KeySchema:
+        #       - AttributeName: productId
+        #         KeyType: HASH
+        #       - AttributeName: productName
+        #         KeyType: RANGE
+        #     Projection:
+        #       ProjectionType: ALL # What attributes will be copied to an index
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        TableName: ${self:provider.environment.PRODUCTS_TABLE}
+
+    OrdersDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties: 
+        AttributeDefinitions:
+          - AttributeName: orderId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: orderId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        TableName: ${self:provider.environment.ORDERS_TABLE}
+
+    UnfulfilledOrdersDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties: 
+        AttributeDefinitions:
+          - AttributeName: orderId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: orderId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        TableName: ${self:provider.environment.UNFULFILLED_ORDERS_TABLE}
+
+    ShipmentsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties: 
+        AttributeDefinitions:
+          - AttributeName: shipmentId
+            AttributeType: S
+          - AttributeName: orderId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: shipmentId
+            KeyType: HASH
+          - AttributeName: orderId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        TableName: ${self:provider.environment.SHIPMENTS_TABLE}
+
+    ProductsSearch:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        ElasticsearchVersion: '6.3'
+        DomainName: products-search-${self:provider.stage}
+        ElasticsearchClusterConfig:
+          DedicatedMasterEnabled: false
+          InstanceCount: '2'
+          ZoneAwarenessEnabled: false
+          InstanceType: t2.small.elasticsearch
+        EBSOptions:
+          EBSEnabled: true
+          Iops: 0
+          VolumeSize: 10
+          VolumeType: 'gp2'
+
+        AccessPolicies:
+          Version: '2012-10-17'
+          Statement:
+            -
+              Effect: Allow
+              Principal:
+                AWS: '*'
+              Action: 'es:*'
+              Resource: '*'
+

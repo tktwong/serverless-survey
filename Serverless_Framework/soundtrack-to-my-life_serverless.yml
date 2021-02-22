@@ -1,0 +1,77 @@
+org: nathanglover
+app: soundtrack-to-my-life
+service: etl
+
+provider:
+  name: aws
+  runtime: python3.8
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter
+        - ssm:PutParameter
+      Resource: "arn:aws:ssm:us-east-1:596392234341:parameter/spotify-api-*"
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter
+      Resource: "arn:aws:ssm:us-east-1:596392234341:parameter/soundtrack-to-my-life-secrets"
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+      Resource: "arn:aws:s3:::spotify-api/*"
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource: "arn:aws:s3:::spotify-api"
+  memorySize: 128
+  timeout: 10
+  versionFunctions: false
+
+  package:
+    exclude:
+      - __pycache__/**
+      - .pytest_cache/**
+      - .serverless/**
+      - .venv/**
+      - etl/__pycache__/**
+      - etl/.pytest_cache/**
+      - etl/tests/**
+      - fixtures/**
+      - htmlcov/**
+      - node_modules/**
+      - tests/**
+      - .coverage
+      - .coveragerc
+      - cli.py
+      - conftest.py
+      - Dockerfile
+      - package.json
+      - README.md
+      - yarn.lock
+
+functions:
+  currently-playing:
+    handler: handlers.currently_playing
+    events:
+      - schedule:
+          name: call-spotify-currently-playing
+          rate: rate(3 minutes)
+  insert-timeline-documents:
+    handler: handlers.insert_timeline_documents
+    events:
+      - schedule:
+          name: call-insert-timeline-documents
+          rate: rate(15 minutes)
+    memorySize: 256
+    timeout: 60
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    dockerFile: Dockerfile
+    dockerEnv:
+      - https_proxy
+      - http_proxy

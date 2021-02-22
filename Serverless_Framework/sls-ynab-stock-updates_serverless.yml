@@ -1,0 +1,43 @@
+service: ynab-stock-update
+
+provider:
+  name: aws
+  region: eu-west-1
+  runtime: nodejs12.x
+  timeout: 5
+  versionFunctions: false
+  environment:
+    YNAB_API_TOKEN: ${file(serverless.env.yml):YNAB_API_TOKEN, env:YNAB_API_TOKEN}
+    AUTOMATIC_APPROVAL: ${file(serverless.env.yml):AUTOMATIC_APPROVAL, env:AUTOMATIC_APPROVAL}
+    AUTOMATIC_CURRENCY_CONVERSION: ${file(serverless.env.yml):AUTOMATIC_CURRENCY_CONVERSION, env:AUTOMATIC_CURRENCY_CONVERSION}
+
+custom:
+  alerts:
+    topics:
+      alarm:
+        topic: ${self:service}-alerts-alarm
+        notifications:
+          - protocol: email
+            endpoint: ${file(serverless.env.yml):ALARM_EMAIL, env:ALARM_EMAIL}
+    definitions:
+      functionErrors:
+        namespace: 'AWS/Lambda'
+        metric: Errors
+        threshold: 1
+        statistic: Sum
+        period: 86400 # 1 day
+        evaluationPeriods: 1
+        datapointsToAlarm: 1
+        comparisonOperator: GreaterThanOrEqualToThreshold
+        treatMissingData: notBreaching
+    alarms:
+      - functionErrors
+
+functions:
+  ynab-stock-update:
+    handler: src/index.run
+    events:
+      - schedule: cron(0 23 ? * 2-6 *)
+
+# plugins:
+#   - serverless-plugin-aws-alerts

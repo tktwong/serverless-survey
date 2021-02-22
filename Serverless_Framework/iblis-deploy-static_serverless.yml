@@ -1,0 +1,100 @@
+service:
+  name: iblis-deploy-static
+
+provider:
+  name: aws
+  stage: dev
+  region: us-east-1
+
+plugins:
+  - "@silvermine/serverless-plugin-cloudfront-lambda-edge"
+
+package:
+  exclude:
+    - "node_modules/**"
+    - "src/**"
+
+functions:
+  languageRedirectCloudFront:
+    handler: languageRedirectCloudFront.handler
+    runtime: nodejs8.10
+    memorySize: 128
+    timeout: 5
+    lambdaAtEdge:
+      distribution: "CloudFrontDistribution"
+      eventType: "viewer-request"
+
+resources:
+  Resources:
+    S3Bucket: # We use this name as Ref later
+      Type: AWS::S3::Bucket
+    CloudFrontOriginAccessIdentity: # We use this name as Ref later
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: CloudFront origin access identity
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      DependsOn:
+        - S3Bucket
+      Properties:
+        DistributionConfig:
+          Enabled: "true"
+          Origins:
+            - Id: !Join ["-", [!Ref S3Bucket, "s3"]]
+              DomainName: !Join [".", [!Ref S3Bucket, "s3.amazonaws.com"]]
+              S3OriginConfig:
+                OriginAccessIdentity:
+                  !Join [
+                    "/",
+                    [
+                      "origin-access-identity/cloudfront",
+                      !Ref CloudFrontOriginAccessIdentity,
+                    ],
+                  ]
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+            ViewerProtocolPolicy: redirect-to-https
+            TargetOriginId: !Join ["-", [!Ref S3Bucket, "s3"]]
+            ForwardedValues:
+              QueryString: false
+          DefaultRootObject: index.html
+          CustomErrorResponses: # For Single Page App
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+    S3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: { Ref: S3Bucket }
+        PolicyDocument:
+          Statement:
+            - Action:
+                - "s3:GetObject"
+              Effect: Allow
+              Resource:
+                { "Fn::Join": ["", ["arn:aws:s3:::", { Ref: S3Bucket }, "/*"]] }
+              Principal:
+                AWS:
+                  {
+                    "Fn::Join":
+                      [
+                        " ",
+                        [
+                          "arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity",
+                          { Ref: CloudFrontOriginAccessIdentity },
+                        ],
+                      ],
+                  }
+  Outputs:
+    BucketSiteName:
+      Value:
+        Ref: S3Bucket
+    CloudFrontDistributionId:
+      Value:
+        Ref: CloudFrontDistribution
+    CloudFrontDistributionDomain:
+      Value:
+        "Fn::GetAtt": [CloudFrontDistribution, DomainName]

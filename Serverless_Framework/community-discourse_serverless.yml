@@ -1,0 +1,228 @@
+service: discourse
+
+frameworkVersion: ">=1.2.0 <2.0.0"
+
+custom:
+  stage: "${opt:stage, self:provider.stage}"
+  kmsKeyArn: ${file(env.yml):${self:custom.stage}.KEY_ARN}
+  pythonRequirements:
+    dockerizePip: non-linux
+  BadgesTopic:
+    Fn::Join:
+      - ":"
+      - - arn
+        - aws
+        - sns
+        - Ref: AWS::Region
+        - Ref: AWS::AccountId
+        - Discourse-Badges
+  StoreBadgesTopic:
+    Fn::Join:
+      - ":"
+      - - arn
+        - aws
+        - sns
+        - Ref: AWS::Region
+        - Ref: AWS::AccountId
+        - Store-Discourse-Badges
+  GroupsTopic:
+    Fn::Join:
+      - ":"
+      - - arn
+        - aws
+        - sns
+        - Ref: AWS::Region
+        - Ref: AWS::AccountId
+        - Discourse-Groups
+  StoreGroupsTopic:
+    Fn::Join:
+      - ":"
+      - - arn
+        - aws
+        - sns
+        - Ref: AWS::Region
+        - Ref: AWS::AccountId
+        - Store-Discourse-Groups
+
+provider:
+  name: aws
+  runtime: python3.8
+  timeout: 30
+  environment: ${file(env.yml):${self:custom.stage}}
+  iamRoleStatements: # permissions for all of your functions can be set here
+    - Effect: Allow
+      Action:
+        - KMS:Decrypt
+      Resource:
+        - ${self:custom.kmsKeyArn}
+    - Effect: "Allow"
+      Action:
+        - "ssm:GetParameter"
+      Resource: "arn:aws:ssm:*:715633473519:parameter/com.neo4j.devrel.discourse.*"
+    - Effect: "Allow"
+      Action:
+        - "ssm:GetParameter"
+      Resource: "arn:aws:ssm:*:715633473519:parameter/com.neo4j.graphacademy.*"
+    - Effect: 'Allow'
+      Action:
+        - "ses:SendEmail"
+      Resource:
+        "arn:aws:ses:us-east-1:715633473519:identity/mark.needham@neo4j.com"
+    - Effect: 'Allow'
+      Action:
+        - "sns:Publish"
+      Resource:
+        - ${self:custom.BadgesTopic}
+    - Effect: 'Allow'
+      Action:
+        - "sns:Publish"
+      Resource:
+        - ${self:custom.StoreBadgesTopic}
+    - Effect: 'Allow'
+      Action:
+        - "sns:Publish"
+      Resource:
+        - ${self:custom.GroupsTopic}
+    - Effect: 'Allow'
+      Action:
+        - "sns:Publish"
+      Resource:
+        - ${self:custom.StoreGroupsTopic}
+
+
+plugins:
+  - serverless-python-requirements
+
+functions:
+  community-content:
+      name: Discourse-CommunityContentWebHook
+      handler: handler.community_content
+      timeout: 30
+      events:
+        - http: POST CommunityContent
+  import-posts-topics:
+      name: Discourse-ImportPostsTopics
+      handler: handler.import_posts_topics
+      events:
+        - http: POST ImportPostsTopics
+  user-events:
+      name: Discourse-UserEventsWebHook
+      handler: handler.user_events
+      timeout: 30
+      events:
+        - http: POST UserEvents
+  assign-edu-group:
+      name: Discourse-AssignEduGroup
+      handler: handler.assign_edu_group
+      timeout: 30
+      events:
+        - schedule: rate(24 hours)
+  send-edu-discourse-invites:
+      name: Discourse-SendEduDiscourse
+      handler: handler.send_edu_discourse_invites
+      timeout: 30
+      events:
+        - schedule: rate(24 hours)
+  import-twin4j:
+      name: Discourse-ImportTWIN4j
+      handler: handler.import_twin4j
+      events:
+        - schedule: cron(0 9 ? * 7 *)
+  update-profile:
+      name: Discourse-UpdateProfileWebHook
+      handler: handler.update_profile
+      timeout: 30
+      events:
+        - http: POST UpdateProfile
+  update-topics:
+      name: Discourse-UpdateTopics
+      handler: handler.update_topics
+      events:
+        - schedule: rate(1 hour)
+  update-categories:
+      name: Discourse-UpdateCategories
+      handler: handler.update_categories
+      events:
+        - schedule: rate(1 hour)
+  fetch-medium-posts:
+      name: Discourse-FetchMediumPosts
+      handler: handler.fetch_medium_posts
+      events:
+        - schedule: rate(10 minutes)
+  post-medium-to-discourse:
+      name: Discourse-PostMediumToDiscourse
+      handler: handler.post_medium_to_discourse
+      events:
+        - schedule: rate(5 minutes)
+  ninja-all:
+    name: Discourse-API-AllNinjas
+    handler: api.all_ninjas
+    events:
+      - http: GET AllNinjas
+  badges:
+    name: Discourse-AssignBadges
+    handler: handler.assign_badges
+    events:
+      - sns:
+          topicName: Discourse-Badges
+          displayName: Topic to handle assigning of badges
+  missing-badges:
+    name: Discourse-MissingBadges
+    handler: handler.missing_badges
+    events:
+      - schedule: rate(5 minutes)
+  find-users-badges:
+    name: Discourse-FindUsersAndBadges
+    handler: handler.find_users_badges
+    events:
+      - schedule: rate(1 minute)
+  store-badges:
+    name: Discourse-StoreBadges
+    handler: handler.store_badges
+    events:
+      - sns:
+          topicName: Store-Discourse-Badges
+          displayName: Topic to handle storing badges in Neo4j
+  assign-groups:
+    name: Discourse-AssignGroups
+    handler: handler.assign_groups
+    events:
+      - sns:
+          topicName: Discourse-Groups
+          displayName: Topic to handle assigning of groups
+  missing-groups:
+    name: Discourse-MissingGroups
+    handler: handler.missing_groups
+    events:
+      - schedule: rate(5 minutes)
+  find-users-groups:
+    name: Discourse-FindUsersAndGroups
+    handler: handler.find_users_groups
+    events:
+      - schedule: rate(1 minute)
+  store-groups:
+    name: Discourse-StoreGroups
+    handler: handler.store_groups
+    events:
+      - sns:
+          topicName: Store-Discourse-Groups
+          displayName: Topic to handle storing groups in Neo4j
+  poll-ninja-requests:
+    name: Discourse-PollNinjaRequests
+    handler: handler.poll_ninja_requests
+    events:
+      - schedule: rate(1 hour)
+  poll-ninja-recommended-questions:
+    name: Discourse-PollNinjaRecommendedQuestions
+    handler: handler.poll_ninja_recommended_questions
+    events:
+      - schedule: rate(1 hour)
+  clean-up-discourse-users:
+    name: Discourse-CleanUpDiscourseUsers
+    handler: handler.clean_up_discourse_users
+
+package:
+  exclude:
+    - node_modules/**
+    - a/**
+    - .git/**

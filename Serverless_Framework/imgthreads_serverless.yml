@@ -1,0 +1,77 @@
+org: cedmax
+app: img-threads
+service: imgthreads
+plugins:
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-1
+  runtime: nodejs12.x
+  environment:
+    ENV: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 's3:PutObject'
+        - 's3:PutObjectAcl'
+        - 's3:getObject'
+        - 's3:PutObjectAcl'
+      Resource:
+        - 'arn:aws:s3:::${file(./config/${self:provider.stage}.json):bucket}'
+        - 'arn:aws:s3:::${file(./config/${self:provider.stage}.json):bucket}/*'
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: arn:aws:dynamodb:*:*:table/${file(./config/${self:provider.stage}.json):dynamoTable}
+
+  s3:
+    destinationBucket:
+      name: ${file(./config/${self:provider.stage}.json):bucket}
+      AccessControl: PublicRead
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, PUT]
+            AllowedOrigins: ['*']
+
+functions:
+  upload:
+    handler: uploader.handler
+    events:
+      - http:
+          path: upload
+          method: post
+          cors: true
+  hide:
+    handler: hide.handler
+    events:
+      - http:
+          path: upload
+          method: delete
+          cors: true
+  process:
+    handler: process.handler
+    layers:
+      - arn:aws:lambda:eu-west-1:175033217214:layer:graphicsmagick:2
+    events:
+      - s3:
+          bucket: destinationBucket
+          event: s3:ObjectCreated:*
+resources:
+  Resources:
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(./config/${self:provider.stage}.json):dynamoTable}
+        AttributeDefinitions:
+          - AttributeName: Id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

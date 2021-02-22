@@ -1,0 +1,145 @@
+service: cognito-serverless-sample
+
+frameworkVersion: '>=1.29.2 <2.0.0'
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 512
+  region: ap-northeast-1
+  stage: v1
+  apiKeys:
+    - adminApiKey-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+        - cognito-idp:*
+      Resource:
+        - 'arn:aws:cognito-idp:${opt:region, self:provider.region}:*:userpool/${self:custom.userPoolId.${opt:stage, self:provider.stage}, self:custom.userpoolId.default}'
+  environment:
+    SAMPLE_APP_STAGE: ${opt:stage, self:provider.stage}
+    SAMPLE_APP_AWS_REGION: ${opt:region, self:provider.region}
+    SAMPLE_APP_AWS_COGNITO_USER_POOL_ID: ${self:custom.userPoolId.${opt:stage, self:provider.stage}, self:custom.userpoolId.default}
+    SAMPLE_APP_AWS_COGNITO_USER_POOLCLIENT_ID: ${self:custom.userPoolClientId.${opt:stage, self:provider.stage}, self:custom.userpoolClientId.default}
+
+# conditional selection of user pool id and user client id for each stage
+custom:
+  userPoolId:
+    default: ${env:SAMPLE_APP_AWS_COGNITO_USER_POOL_ID_V1}
+    v1: ${env:SAMPLE_APP_AWS_COGNITO_USER_POOL_ID_V1}
+    dev: ${env:SAMPLE_APP_AWS_COGNITO_USER_POOL_ID_DEV}
+  userPoolClient:
+    default: ${env:SAMPLE_APP_AWS_COGNITO_USER_POOL_CLIENT_ID_V1}
+    v1: ${env:SAMPLE_APP_AWS_COGNITO_USER_POOL_CLIENT_ID_V1}
+    dev: ${env:SAMPLE_APP_AWS_COGNITO_USER_POOL_CLIENT_ID_DEV}
+
+package:
+  exclude:
+    - .circleci/**
+    - .git/**
+    - bin/**
+    - test/**
+    - docs/**
+    - .*
+    - package-lock.json
+    - yarn.lock
+    - package.json
+    - README.md
+
+functions:
+  user:
+    handler: src/users.handler
+    events:
+      - http:
+          path: users
+          method: get
+          integration: lambda
+          private: true
+          cors:
+            origin: '*'
+          response:
+            statusCodes:
+              200:
+                pattern: ''
+              500:
+                pattern: '.*"statusCode":500,.*'
+                template: $input.path("$.errorMessage")
+
+      - http:
+          path: users/{user}
+          method: get
+          integration: lambda
+          private: true
+          cors:
+            origin: '*'
+          response:
+            statusCodes:
+              200:
+                pattern: ''
+              404:
+                pattern: '.*"statusCode":404,.*'
+                template: $input.path("$.errorMessage")
+              500:
+                pattern: '.*"statusCode":500,.*'
+                template: $input.path("$.errorMessage")
+
+      - http:
+          path: users
+          method: post
+          integration: lambda
+          private: true
+          cors:
+            origin: '*'
+          response:
+            statusCodes:
+              200:
+                pattern: ''
+              400:
+                pattern: '.*"statusCode":400,.*'
+                template: $input.path("$.errorMessage")
+              500:
+                pattern: '.*"statusCode":500,.*'
+                template: $input.path("$.errorMessage")
+
+      - http:
+          path: users/{user}
+          method: put
+          integration: lambda
+          private: true
+          cors:
+            origin: '*'
+          response:
+            statusCodes:
+              200:
+                pattern: ''
+              400:
+                pattern: '.*"statusCode":400,.*'
+                template: $input.path("$.errorMessage")
+              404:
+                pattern: '.*"statusCode":404,.*'
+                template: $input.path("$.errorMessage")
+              500:
+                pattern: '.*"statusCode":500,.*'
+                template: $input.path("$.errorMessage")
+
+      - http:
+          path: users/{user}
+          method: delete
+          integration: lambda
+          private: true
+          cors:
+            origin: '*'
+          response:
+            statusCodes:
+              200:
+                pattern: ''
+              404:
+                pattern: '.*"statusCode":404,.*'
+                template: $input.path("$.errorMessage")
+              500:
+                pattern: '.*"statusCode":500,.*'
+                template: $input.path("$.errorMessage")

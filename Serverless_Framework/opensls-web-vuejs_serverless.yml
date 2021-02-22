@@ -1,0 +1,91 @@
+service: opensls-web-vuejs
+
+provider:
+  name: aws
+  apiName: opensls-web-vuejs-${self:custom.stage}-api
+  stackName: opensls-web-vuejs-${self:custom.stage}-stack
+  runtime: nodejs10.x
+  stage: ${self:custom.stage}
+  region: ap-northeast-2
+  environment:
+    NODE_ENV: ${self:custom.stage}
+functions:
+  web:
+    name: opensls-web-vuejs-${self:custom.stage}-lambda
+    handler: server/handler.render
+    warmup: true
+    events:
+      - http: ANY /
+      - http: ANY /{proxy+}
+plugins:
+  - serverless-apigw-binary
+  - serverless-plugin-warmup
+  - serverless-s3-sync
+  - serverless-api-compression
+  - serverless-certificate-creator
+  - serverless-domain-manager
+resources:
+  - ${file(server/resources/lambda-warmup.yml)}
+  - ${file(server/resources/s3-bucket.yml)}
+package:
+  excludeDevDependencies: true
+  exclude: # 용량을 줄이기 위해서 static 폴더를 제외하고 불포함
+    - .**
+    - .**/*
+    - pages/**
+    - components/**
+    - store/**
+    - assets/**
+    - layouts/**
+    - plugins/**
+    - test/**
+    - middleware/**
+    - README.md
+    - package.json
+    - package-lock.json
+    - node_modules/**/*.md
+    - node_modules/**/bin/**
+  include:
+    - server/**
+    - nuxt.config.js
+    - .nuxt/**
+    - node_modules/autoprefixer/**
+    - node_modules/babel-runtime/**
+    - node_modules/babel-extract-comments/**
+custom:
+  stage: ${opt:stage, 'dev'}
+  contentCompression: 1024
+  apigwBinary:
+    types:
+      - '*/*'
+  warmup:
+    name: opensls-web-vuejs-${self:custom.stage}-warmup
+    memorySize: 256
+    role:  openslsWebVuejsWarmUpRole
+    schedule: "rate(10 minutes)"
+    prewarm: true
+  s3Sync:
+    - bucketName: opensls-web-vuejs-assets-${self:custom.stage} # required
+      localDir: assets # required
+      acl: public-read
+      params: # optional
+        - "**":
+            CacheControl: 'public, max-age=604800'
+  customCertificate:
+    certificateName: 'open-serverless.com'
+    hostedZoneNames: 'open-serverless.com.'
+    region: us-east-1
+    rewriteRecords: true
+    subjectAlternativeNames : 
+      - 'www.open-serverless.com'
+      - 'diet.open-serverless.com'
+      - 'console.open-serverless.com'
+      - 'open-serverless.com'
+  customDomain:
+    domainName: 'open-serverless.com'
+    certificateName: 'open-serverless.com'
+    stage: ${self:custom.stage}
+    createRoute53Record: true
+    endpointType: 'edge'
+    securityPolicy: tls_1_2
+    

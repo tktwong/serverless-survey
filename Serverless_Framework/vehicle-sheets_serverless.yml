@@ -1,0 +1,84 @@
+# https://serverless.com/framework/docs/
+
+service: streetmix-vehicle-profiles
+
+custom:
+  secrets: ${file(secrets.json)}
+
+provider:
+  name: aws
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+          - "s3:*"
+      Resource: arn:aws:s3:::ruhe-files/*
+  runtime: nodejs8.10
+  # stage: prod
+  stage: dev
+  # profile: personal
+  region: us-east-1
+  environment:
+    GDC_EMAIL: ${self:custom.secrets.gdcEmail} # Google sheets secret API key
+    GDC_SECRET_KEY: ${self:custom.secrets.gdcSecretKey} # Google sheets secret API key
+    SHEETS_SECRET_KEY: ${self:custom.secrets.sheetsSecretKey} # Google sheets secret API key
+    AUTH_CLIENT_ID: ${self:custom.secrets.authClientId} # Stripe secret API key
+    AUTH_CLIENT_SECRET: ${self:custom.secrets.authClientSecret} # Stripe secret API key
+    AUTH_SIGNING_SECRET: ${self:custom.secrets.authSigningSecret} # Stripe secret API key
+    AUTH_MANAGEMENT_SECRET: ${self:custom.secrets.authManagementSecret} # Stripe secret API key
+
+# The `functions` block defines what code to deploy
+functions:
+  auth:
+    handler: functions/auth.handler
+    cors: true
+    environment:
+      BUCKET: ${self:custom.secrets.bucket}
+  create:
+    handler: functions/createVehicle.handler
+    events:
+      - http:
+          path: vehicles
+          method: post
+          # authorizer: auth
+          cors: true
+  update:
+    handler: functions/updateVehicle.handler
+    events:
+      - http:
+          path: vehicles
+          method: put
+          # authorizer: auth
+          cors: true
+  vehicles:
+    handler: functions/getVehicles.handler
+    events:
+      - http:
+          path: vehicles
+          method: get
+          # authorizer: auth
+          cors: true
+
+
+resources:
+  Resources:
+    # This response is needed for custom authorizer failures cors support ¯\_(ツ)_/¯
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'

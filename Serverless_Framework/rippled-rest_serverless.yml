@@ -1,0 +1,96 @@
+service: ripple-api-gw
+
+
+
+# DRY constants: define all compound/generated names in one place
+# Override args are: .. defaults:
+# --app_acroym          ripple-api-gw
+# --s3_bucket           self:custom.app_acronym
+# --s3_key_base         self:custom.stage
+# --region              eu-central-1
+# --stage               test
+# --deletion_policy     delete
+
+
+custom: 
+
+  app_acronym: ripple-api-gw
+  default_stage: dev
+  stage: ${opt:stage, self:custom.default_stage}
+  default_region: us-west-1
+  region: ${opt:region, self:custom.default_region}
+  stack_name: ${self:custom.stage}-${self:custom.app_acronym}
+  account_aws_id: XXXX
+  deletion_policy: Delete
+
+  # ------------------DYNAMO SETTINGS------------------- #
+  dynamodb_host: https://dynamodb.${self:custom.region}.amazonaws.com
+  dynamodb_is_offline: false
+
+
+  # ------------------------------------- #
+  #           Settings cognito            #
+  # ------------------------------------- #
+  # cognito_pool_arn: arn:aws:cognito-idp:${self:custom.region}:${self:custom.account_aws_id}:userpool/${self:custom.cognito_pool_id}
+  # cognitoAuthorizer:
+  #   arn: ${self:custom.cognito_pool_arn}
+  # apigwBinary:
+  #   types:
+  #     - 'multipart/form-data'
+  #     - 'image/jpeg'
+  #     - 'application/pdf'
+  # For serverless-dynamodb-local
+  dynamodb:
+    start:
+      migrate: true
+  # For serverless-webpack
+  webpack:
+      webpackConfig: ./webpack.config.js
+      includeModules: true
+      packager: 'npm'
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+package:
+  exclude:
+    - .idea/**
+    - README.md
+    - .env
+    - .eslintignore
+    - .eslintrc.json
+    - apiary.apib
+    - docker-compose.yml
+    - Dockerfile
+    - yarn.lock
+    - scripts/**
+    - tests/**
+    - package.json
+    - package-lock.json
+
+
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${self:custom.region}
+  memorySize: 1024
+  timeout: 10
+  stage: ${self:custom.stage}
+  environment:
+    REGION: ${self:custom.region}
+    DYNAMO_DB_ENDPOINT: ${self:custom.dynamodb_host}
+    DYNAMO_DB_IS_OFFLINE: ${self:custom.dynamodb_is_offline}
+    RIPPLE_SERVER_ENDPOINT: 'wss://s.altnet.rippletest.net:51233'
+
+functions:
+  app:
+    handler: handler.main
+    events:
+      - http:
+          method : ANY
+          path : '/'
+      - http:
+          method: ANY
+          path: '{proxy+}'

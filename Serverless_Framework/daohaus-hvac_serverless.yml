@@ -1,0 +1,130 @@
+service: daohaus-hvac
+
+package:
+  exclude:
+    - test/**
+
+custom:
+  metadataBucket: daohaus-metadata
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: dev
+  environment:
+    AIRTABLE_API_KEY: ${file(./config.json):AIRTABLE_API_KEY}
+    AIRTABLE_BASE_ID: ${file(./config.json):AIRTABLE_BASE_ID}
+    HAUS_KEY: ${file(./config.json):HAUS_KEY}
+    PINATA_API_KEY: ${file(./config.json):PINATA_API_KEY}
+    PINATA_API_SECRET: ${file(./config.json):PINATA_API_SECRET}
+    DISCORD_BOT_TOKEN: ${file(./config.json):DISCORD_BOT_TOKEN}
+    DISCOURSE_URL: ${file(./config.json):DISCOURSE_URL}
+    DISCOURSE_API_KEY: ${file(./config.json):DISCOURSE_API_KEY}
+    DISCOURSE_API_USER: ${file(./config.json):DISCOURSE_API_USER}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource: "arn:aws:s3:::${self:custom.metadataBucket}/*"
+
+functions:
+  # api
+  getDao:
+    handler: api/get-dao.getDao
+    events:
+      - http:
+          path: dao/{id}
+          method: get
+          cors: true
+  getDaoBySlug:
+    handler: api/get-dao-slug.getDaoSlug
+    events:
+      - http:
+          path: dao/slug/{slug}
+          method: get
+          cors: true
+  updateDao:
+    handler: api/update-dao.updateDao
+    events:
+      - http:
+          path: dao/update
+          method: put
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Haus-Key
+            allowCredentials: false
+  updateBoost:
+    handler: api/update-boost.updateBoost
+    events:
+      - http:
+          path: dao/boost
+          method: post
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Haus-Key
+            allowCredentials: false
+  getIpfsKey:
+    handler: api/get-ipfs-key.getIpfsKey
+    events:
+      - http:
+          path: dao/ipfs-key
+          method: post
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Haus-Key
+            allowCredentials: false
+  getDiscordChannelStatus:
+    handler: api/get-discord-channel-status.getDiscordChannelStatus
+    events:
+      - http:
+          path: dao/discord-status/{channelId}
+          method: get
+          cors: true
+  getDiscourseTopics:
+    handler: api/get-discourse-topics.getDiscourseTopics
+    events:
+      - http:
+          path: dao/discourse-topics/{categoryId}
+          method: get
+          cors: true
+  createDiscourseTopic:
+    handler: api/create-discourse-topic.createDiscourseTopic
+    events:
+      - http:
+          path: dao/discourse-topic
+          method: post
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Haus-Key
+            allowCredentials: false
+
+  # jobs
+  s3Dump:
+    handler: jobs/s3-dump.s3Dump
+    events:
+      - schedule:
+          rate: rate(1 minute)
+          enabled: true
+  priceDump:
+    handler: jobs/price-dump.priceDump
+    events:
+      - schedule:
+          rate: rate(1 minute)
+          enabled: true
+
+resources:
+  Resources:
+    S3BucketMetadata:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.metadataBucket}

@@ -1,0 +1,203 @@
+service: visit-plannr
+
+custom:
+  s3HomePage: visitplannr-site-home
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 512
+  timeout: 10
+  environment:
+    EVENTS_TABLE: something_dynamic_here
+  tracing:
+    apiGateway: true
+    lambda: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        ...
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: "*"
+
+functions:
+  ProposeDestination:
+    handler: src/proposeDestination.handler
+    events:
+      - http:
+          path: /destination
+          method: post
+  ValidateGeolocation:
+    handler: src/validateGeolocation.handler
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:PutItem
+        Resource:
+          Fn::GetAtt: [EventsTable, StreamArn]
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [EventsTable, StreamArn]
+  UpdateDestinationReadModel:
+    handler: src/updateDestinationReadMode.handler
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:PutItem
+        Resource:
+          Fn::GetAtt: [ReadModelTable, StreamArn]
+      - Effect: "Allow"
+        Action:
+          - dynamodb:Query
+        Resource:
+          Fn::GetAtt: [EventsTable, StreamArn]
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [EventsTable, StreamArn]
+  HomePageGenerator:
+    handler: src/homePageGenerator.handler
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:Query
+        Resource:
+          Fn::GetAtt: [EventsTable, StreamArn]
+      - Effect: "Allow"
+        Action:
+          - s3:PutObject
+          - s3:PutObjectACL
+        Resource:
+          Fn::GetAtt: [EventsTable, StreamArn]
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [S3HomeBucket, Arn]
+  CloudFrontInvalidating:
+    handler: src/invalidateStaticFiles.handler
+    events:
+      - s3:
+          bucket: ${self:custom.s3HomePage}
+          event: s3:ObjectCreated:*
+      - s3:
+          bucket: ${self:custom.s3HomePage}
+          event: s3:ObjectRemoved:*
+
+resources:
+  Resources:
+    EventsTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: StreamName
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: StreamName
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+    ReadModelTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: type
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: type
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+    S3HomeBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.s3HomePage}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+      DeletionPolicy: Retain
+    BucketPolicy:
+      Type: 'AWS::S3::BucketPolicy'
+      Properties:
+        PolicyDocument:
+          Id: S3HomeBucketPolicy
+          Version: 2012-10-17
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.s3HomePage}/*
+        Bucket:
+          Ref: S3HomeBucket
+    ## Specifying the CloudFront Distribution to server your Web Application
+    WebAppCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName: ${self:custom.s3HomePage}.s3.amazonaws.com
+              ## An identifier for the origin which must be unique within the distribution
+              Id: WebApp
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+              ## In case you want to restrict the bucket access use S3OriginConfig and remove CustomOriginConfig
+              # S3OriginConfig:
+              #   OriginAccessIdentity: origin-access-identity/cloudfront/E127EXAMPLE51Z
+          Enabled: 'true'
+          ## Uncomment the following section in case you are using a custom domain
+          # Aliases:
+          # - mysite.example.com
+          DefaultRootObject: index.html
+          ## Since the Single Page App is taking care of the routing we need to make sure ever path is served with index.html
+          ## The only exception are files that actually exist e.h. app.js, reset.css
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            ## The origin id defined above
+            TargetOriginId: WebApp
+            ## Defining if and how the QueryString and Cookies are forwarded to the origin which in this case is S3
+            ForwardedValues:
+              QueryString: 'false'
+              Cookies:
+                Forward: none
+            ## The protocol that users can use to access the files in the origin. To allow HTTP use `allow-all`
+            ViewerProtocolPolicy: redirect-to-https
+          ## The certificate to use when viewers use HTTPS to request objects.
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: 'true'
+          ## Uncomment the following section in case you want to enable logging for CloudFront requests
+          # Logging:
+          #   IncludeCookies: 'false'
+          #   Bucket: mylogs.s3.amazonaws.com
+          #   Prefix: myprefix
+
+  ## In order to print out the hosted domain via `serverless info` we need to define the DomainName output for CloudFormation
+  Outputs:
+    WebAppCloudFrontDistributionOutput:
+      Value:
+        'Fn::GetAtt': [ WebAppCloudFrontDistribution, DomainName ]

@@ -1,0 +1,129 @@
+service: twitteranalyzer
+
+app: myapp
+org: aniks
+
+
+plugins:
+  - serverless-python-requirements
+  - serverless-offline
+
+custom:
+
+  pythonRequirements:
+    dockerizePip: non-linux
+
+provider:
+  name: aws
+  runtime: python3.8
+  environment:
+    queue: ${file(./config.yml):queue}
+    region_name: ${file(./config.yml):region_name}
+    tweet_table: ${file(./config.yml):tweet_table}
+    twitter_consumer_key: ${file(./config.yml):twitter_api.consumer_key}
+    twitter_consumer_secret: ${file(./config.yml):twitter_api.consumer_secret}
+    twitter_access_token: ${file(./config.yml):twitter_api.access_token}
+    twitter_access_token_secret: ${file(./config.yml):twitter_api.access_token_secret}
+    metric_namespace: ${file(./config.yml):metric_namespace}
+    stage:  ${file(./config.yml):stage}
+    service_name:  ${file(./config.yml):service_name}
+    twitter_stream_lambda:  ${file(./config.yml):twitter_stream_lambda}
+
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+        - sqs:SendMessage
+        - sqs:GetQueueUrl
+        - sqs:CreateQueue
+        - cloudwatch:GetMetricData
+        - cloudwatch:PutMetricData
+        - cloudwatch:GetMetricStatistics
+        - lambda:PutFunctionConcurrency
+      Resource: "*"
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+
+
+
+# you can add packaging information here
+package:
+  include:
+    - endpoint_lambda/*
+    - lambda/*
+
+functions:
+  # start tweet lambda function
+  start_tweet_flow:
+    handler: endpoint_lambda/start_flow.start_flow_handler
+    reservedConcurrency: 2
+    events:
+      - http:
+          path: tweets/start
+          method: get
+  # stop tweet endpoint lambda
+  stop_tweet_flow:
+    handler: endpoint_lambda/stop_flow.stop_flow_handler
+    events:
+      - http:
+          path: tweets/stop
+          method: get
+  # stream event triggered lambda
+  twitter_stream:
+    handler: lambda/twitter_stream_handler.twitter_stream_consumer
+    reservedConcurrency: 2
+  # sqs triggered lambda function that processes tweet
+  process_tweet:
+    handler: lambda/tweet_processor.tweet_processor_handler
+    environment:
+      QUEUE: ${file(./config.yml):queue}
+    events:
+      - sqs: arn:aws:sqs:us-east-1:702590935113:${file(./config.yml):queue}
+  # get tweets endpoint lambda function
+  get_tweets:
+    handler: endpoint_lambda/get_tweets.get_tweets
+    events:
+      - http:
+          path: tweets
+          method: get
+  # get metrics endpoint lambda function
+  get_metrics:
+    handler: endpoint_lambda/get_metrics.get_metrics_handler
+    events:
+      - http:
+          path: metrics
+          method: get
+
+resources:
+  Resources:
+    TweetssDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${file(./config.yml):tweet_table}
+    MyQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${file(./config.yml):queue}

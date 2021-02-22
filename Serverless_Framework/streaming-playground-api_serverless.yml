@@ -1,0 +1,188 @@
+service: streaming-playground-api
+
+package:
+  individually: true
+
+plugins:
+- serverless-dynamodb-local
+- serverless-bundle
+- serverless-offline
+- serverless-plugin-offline-dynamodb-stream
+- serverless-dotenv-plugin # Load .env as environment variables
+- ./plugins/offline-invalidate
+custom:
+  appName: streaming-playground
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  graphqlWebsocketConnectionsTableName: ${self:custom.appName}-${self:custom.stage}-graphql-websocket-connections
+  graphqlWebsocketSubscriptionsTableName: ${self:custom.appName}-${self:custom.stage}-graphql-websocket-subscriptions
+  graphqlWebsocketSubscriptionOperationsTableName: ${self:custom.appName}-${self:custom.stage}-graphql-websocket-subscription-operations
+  graphqlWebsocketEventsTableName: ${self:custom.appName}-${self:custom.stage}-graphql-websocket-events
+  websocketConnectionsTableName: ${self:custom.appName}-${self:custom.stage}-websocket-sessions
+  openTokEventsTableName: ${self:custom.appName}-${self:custom.stage}-opentok-events
+  userProfilesTableName: ${self:custom.appName}-${self:custom.stage}-user-profiles
+  poolsTableName: ${self:custom.appName}-${self:custom.stage}-pools
+  streamsTableName: ${self:custom.appName}-${self:custom.stage}-streams
+  graphqlEndpoint: /${self:custom.stage}/graphql
+  serverless-offline:
+    httpPort: 4000
+    websocketPort: 4001
+    host: 0.0.0.0
+  dynamodb:
+    stages:
+    - offline
+    start:
+      port: 8000
+      inMemory: false
+      migrate: true
+      dbPath: "dynamodb-offline"
+    migration:
+      dir: offline/migrations
+  dynamodbStream:
+    host: localhost
+    port: 8000
+    # this fixes the problem with missing region
+    region: eu-central-1
+    pollForever: true
+    streams:
+    - table: ${self:custom.graphqlWebsocketEventsTableName}
+      functions:
+      - dynamoDBStreamHandler
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-central-1
+  logs:
+    websocket: true
+    restApi: true
+  environment:
+    websocketPort: ${self:custom.serverless-offline.websocketPort}
+    graphqlWebsocketConnectionsTableName: ${self:custom.graphqlWebsocketConnectionsTableName}
+    graphqlWebsocketSubscriptionsTableName: ${self:custom.graphqlWebsocketSubscriptionsTableName}
+    graphqlWebsocketSubscriptionOperationsTableName: ${self:custom.graphqlWebsocketSubscriptionOperationsTableName}
+    graphqlWebsocketEventsTableName: ${self:custom.graphqlWebsocketEventsTableName}
+    websocketConnectionsTableName: ${self:custom.websocketConnectionsTableName}
+    openTokEventsTableName: ${self:custom.openTokEventsTableName}
+    userProfilesTableName: ${self:custom.userProfilesTableName}
+    poolsTableName: ${self:custom.poolsTableName}
+    streamsTableName: ${self:custom.streamsTableName}
+    openTokApiKey: ${env:OPEN_TOK_API_KEY}
+    openTokSecret: ${env:OPEN_TOK_SECRET}
+    stripeSecretKey: ${env:STRIPE_SECRET_KEY}
+
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+    - dynamodb:DeleteItem
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    Resource:
+    - "Fn::GetAtt": [ ConnectionsDynamoDBTable, Arn ]
+  - Effect: Allow
+    Action:
+    - dynamodb:DescribeStream
+    - dynamodb:GetRecords
+    - dynamodb:GetShardIterator
+    - dynamodb:ListStreams
+    - dynamodb:PutItem
+    Resource:
+    - "Fn::GetAtt": [ EventsDynamoDBTable, Arn ]
+  - Effect: Allow
+    Action:
+    - dynamodb:BatchWriteItem
+    - dynamodb:DeleteItem
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:Query
+    - dynamodb:Scan
+    Resource:
+    - "Fn::GetAtt": [ SubscriptionsDynamoDBTable, Arn ]
+  - Effect: Allow
+    Action:
+    - dynamodb:BatchWriteItem
+    - dynamodb:DeleteItem
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    Resource:
+    - "Fn::GetAtt": [ SubscriptionOperationsDynamoDBTable, Arn ]
+  - Effect: Allow
+    Action:
+    - dynamodb:DescribeTable
+    - dynamodb:Query
+    - dynamodb:Scan
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    - dynamodb:DeleteItem
+    Resource:
+    - "Fn::GetAtt": [ OpenTokEventsTable, Arn ]
+    - "Fn::GetAtt": [ UserProfilesTable, Arn ]
+    - "Fn::GetAtt": [ PoolsTable, Arn ]
+    - "Fn::GetAtt": [ StreamsTable, Arn ]
+  - Effect: Allow
+    Action:
+    - execute-api:Invoke
+    Resource:
+    - "Fn::Join": ["", ["arn:aws:execute-api:",{"Ref":"AWS::Region"},":",{"Ref":"AWS::AccountId"},":",{"Ref":"ApiGatewayRestApi"},"/${self:custom.stage}/*"]]
+  - Effect: Allow
+    Action:
+    - execute-api:ManageConnections
+    Resource:
+    - "Fn::Join": ["", ["arn:aws:execute-api:",{"Ref":"AWS::Region"},":",{"Ref":"AWS::AccountId"},":",{"Ref":"ApiGatewayRestApi"},"/${self:custom.stage}/POST/@connections/*"]]
+
+functions:
+
+  webSocketHandler:
+    handler: api/graphql/main.handleWebSocket
+    events:
+    - websocket:
+        route: $connect
+        cors: true
+    - websocket:
+        route: $disconnect
+        cors: true
+    - websocket:
+        route: $default
+        cors: true
+
+  dynamoDBStreamHandler:
+    handler: api/graphql/main.handleDynamoDBStream
+    events:
+    - stream:
+        enabled: true
+        type: dynamodb
+        arn:
+          Fn::GetAtt: [EventsDynamoDBTable, StreamArn]
+
+  graphqlHandler:
+    handler: api/graphql/main.handleHttp
+    events:
+    - http:
+        path: /graphql
+        method: any
+        cors: true
+        authorizer: aws_iam
+
+  opentok-callback:
+    handler: api/opentok/callback.main
+    events:
+    - http:
+        path: opentok/cb
+        method: post
+        cors: true
+
+resources:
+# API Gateway Errors
+- ${file(resources/api-gateway-errors.yml)}
+# DynamoDB
+- ${file(resources/dynamodb-table.yml)}
+- ${file(resources/graphql-websocket-dynamodb-table.yml)}
+# S3
+- ${file(resources/s3-bucket.yml)}
+# Cognito
+- ${file(resources/cognito-user-pool.yml)}
+- ${file(resources/cognito-identity-pool.yml)}

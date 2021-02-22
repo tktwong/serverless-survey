@@ -1,0 +1,189 @@
+service: wali-api
+
+plugins:
+  - serverless-webpack
+
+custom:
+  webpack:
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+      Resource: arn:aws:dynamodb:us-east-1:*:*
+
+functions:
+  graphql:
+    handler: lib/handler.graphql
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+  record:
+    handler: lib/handler.record
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - UsersDynamoDbTable
+              - StreamArn
+          batchSize: 1
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - ItemsDynamoDbTable
+              - StreamArn
+          batchSize: 1
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - AccountsDynamoDbTable
+              - StreamArn
+          batchSize: 1
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - TransactionsDynamoDbTable
+              - StreamArn
+          batchSize: 1
+
+resources:
+  Resources:
+    UsersDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: 'users'
+        AttributeDefinitions:
+          - AttributeName: 'user_id'
+            AttributeType: S
+        KeySchema:
+          - AttributeName: 'user_id'
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    ItemsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: 'items'
+        AttributeDefinitions:
+          - AttributeName: 'item_id'
+            AttributeType: S
+          - AttributeName: 'user_id'
+            AttributeType: S
+        KeySchema:
+          - AttributeName: 'item_id'
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: user-items
+            KeySchema:
+              - AttributeName: 'user_id'
+                KeyType: HASH
+              - AttributeName: 'item_id'
+                KeyType: RANGE
+            Projection:
+              ProjectionType: 'KEYS_ONLY'
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    AccountsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: 'accounts'
+        AttributeDefinitions:
+          - AttributeName: 'account_id'
+            AttributeType: S
+          - AttributeName: 'user_id'
+            AttributeType: S
+          - AttributeName: 'item_id'
+            AttributeType: S
+        KeySchema:
+          - AttributeName: 'account_id'
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: item-accounts
+            KeySchema:
+              - AttributeName: 'item_id'
+                KeyType: HASH
+              - AttributeName: 'account_id'
+                KeyType: RANGE
+            Projection:
+              ProjectionType: 'KEYS_ONLY'
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          - IndexName: user-accounts
+            KeySchema:
+              - AttributeName: 'user_id'
+                KeyType: HASH
+              - AttributeName: 'account_id'
+                KeyType: RANGE
+            Projection:
+              ProjectionType: 'KEYS_ONLY'
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    TransactionsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: 'transactions'
+        AttributeDefinitions:
+          - AttributeName: 'transaction_id'
+            AttributeType: S
+          - AttributeName: 'account_id'
+            AttributeType: S
+        KeySchema:
+          - AttributeName: 'transaction_id'
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: account-transactions
+            KeySchema:
+              - AttributeName: 'account_id'
+                KeyType: HASH
+              - AttributeName: 'transaction_id'
+                KeyType: RANGE
+            Projection:
+              ProjectionType: 'KEYS_ONLY'
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES

@@ -1,0 +1,133 @@
+service: 
+  name: delete-letter-queue 
+
+provider:
+  name: aws
+  tracing:
+    apiGateway: true
+    lambda: true
+  
+  logs:
+    restApi: true
+
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'} # Stage Default is dev
+  region: us-east-1
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTelemetryRecords
+        - xray:PutTraceSegments
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - sqs:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+        - ssm:GetParameter
+      Resource: "*"
+
+  environment: 
+    region: ${self:provider.region}
+    stage: ${self:provider.stage}
+    deleteLetterSlackPostPath: myslackURL
+
+plugins:
+  - serverless-webpack
+  - serverless-plugin-stage-variables
+  - serverless-pseudo-parameters
+  - api-gateway-stage-tag-plugin
+  - serverless-plugin-tracing
+
+custom:
+  webpack:
+    packager: 'yarn'   
+    includeModules:
+      # forceInclude:
+      #   - axios
+      forceExclude:
+        - aws-sdk
+
+functions:
+  expediteDeadLetter:
+    handler: src/handler.expediteDeadLetter
+    iamRoleStatementsInherit: true
+    events:
+      - sqs:
+          arn: !GetAtt MyDLQServiceDlqSQS.Arn
+        
+resources:
+  Description: Description of this CloudFormation stack.
+  Resources:
+    MyDLQServiceDlqSNSTopic:
+      Type: AWS::SNS::Topic
+
+    MyDLQServiceDlqSQS:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: my-test-queue
+
+    DlqSNSSubscription:
+      Type: 'AWS::SNS::Subscription'
+      Properties:
+        TopicArn: !Ref MyDLQServiceDlqSNSTopic
+        Endpoint: !GetAtt MyDLQServiceDlqSQS.Arn
+        Protocol: sqs
+        RawMessageDelivery: 'true'    
+
+    AllowLamda2SQSPolicy:
+          Type: AWS::SQS::QueuePolicy
+          Properties:
+            Queues: [!Ref 'MyDLQServiceDlqSQS']
+            PolicyDocument:
+              Statement:
+              - Effect: Allow
+                Principal: "*"
+                Action: 
+                  - SQS:*
+                Resource: "*"
+                
+        
+    MyDLQServiceDlqS3:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: mydlqservice-events-bucket 
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        PublicAccessBlockConfiguration: 
+          BlockPublicAcls: true
+          BlockPublicPolicy: false
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: false
+      DeletionPolicy: Retain  
+  Outputs:
+    MyDLQServiceDlqSNSTopicName:
+      Value:
+        !Ref MyDLQServiceDlqSNSTopic
+      Export:
+        Name: ${self:service}-SNS-${self:provider.stage}    
+    MyDLQServiceDlqS3Name:
+      Description: MyDLQService Dead Letter Queue S3 Bucket Name
+      Value: 
+        !Ref MyDLQServiceDlqS3
+    MyDLQServiceDlqSQSUrl:
+      Description: MyDLQService Dead Letter Queue SQS URL
+      Value: 
+        !Ref MyDLQServiceDlqSQS
+      Export:
+        Name: ${self:service}-SQS-${self:provider.stage}-URL
+    MyDLQServiceDlqSQSArn:
+        Description: Arn of MyDLQService Dead Letter Queue SQS
+        Value: 
+          !GetAtt MyDLQServiceDlqSQS.Arn
+        Export:
+          Name: ${self:service}-SQS-${self:provider.stage}-Arn

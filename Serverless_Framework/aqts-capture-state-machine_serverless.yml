@@ -1,0 +1,434 @@
+service: aqts-capture-state-machine
+
+provider:
+  name: aws
+  region: ${opt:region, 'us-west-2'}
+  stage: ${opt:stage, 'TEST'}
+  deploymentBucket:
+    name: ${opt:bucket, iow-cloud-applications}
+  stackTags:
+    "wma:project_id": "aqtscapture"
+    "wma:subSystem": "aqtscapture"
+    "wma:application_id": "Aquarius TS Capture State Machine"
+    "wma:contact": "Andrew Yan ayan@usgs.gov"
+    "wma:role": etl
+    "wma:system": NWIS
+    "wma:environment": ${self:provider.stage}
+    "wma:taggingVersion": 0.0.1
+    "wma:costCenter": TBD
+    "commitIdentifier": "${git:sha1}"
+    "wma:organization": IOW
+    "displayName": "State Machine"
+
+custom:
+  mailingList: ${ssm:/aws/reference/secretsmanager/AQTS-CAPTURE-MAILING-LISTS~true}
+  tier:
+    DEV:
+      parsed: DEV
+      lower: dev
+    TEST:
+      parsed: TEST
+      lower: test
+    QA:
+      parsed: QA
+      lower: qa
+    PROD-EXTERNAL:
+      parsed: PRODDashEXTERNAL
+      lower: prod-external
+
+stepFunctions:
+  stateMachines:
+    aqtsCaptureStateMachine:
+      type: EXPRESS
+      loggingConfig:
+        level: ALL
+        includeExecutionData: true
+        destinations:
+          - Fn::Join:
+              - ':'
+              - - arn
+                - aws
+                - logs
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - log-group
+                - step-functions-${self:custom.tier.${self:provider.stage}.lower}
+                - '*'
+      alarms:
+        topics:
+          alarm:
+            Ref: snsTopic
+        metrics:
+          - executionThrottled
+        treatMissingData: missing
+      role:
+        Fn::GetAtt:
+          - iamRole
+          - Arn
+      name: aqts-capture-state-machine-${self:provider.stage}
+      definition:
+        Comment: "State machine representing extract, transformation, and load from Aquarius"
+        StartAt: captureInitialLoadRouter
+        States:
+          captureInitialLoadRouter:
+            Type: Choice
+            Choices:
+              - Variable: "$.Record.s3.object.size"
+                NumericLessThanEquals: 23500000 # empirically selected value on 2020-11-05
+                Next: captureInitialLoadExtraSmall
+              - And:
+                - Variable: "$.Record.s3.object.size"
+                  NumericGreaterThan: 23500000
+                - Variable: "$.Record.s3.object.size"
+                  NumericLessThanEquals: 45000000
+                Next: captureInitialLoadSmall
+              - And:
+                - Variable: "$.Record.s3.object.size"
+                  NumericGreaterThan: 45000000  # empirically selected value on 2021-01-20
+                - Variable: "$.Record.s3.object.size"
+                  NumericLessThanEquals: 102400000
+                Next: captureInitialLoad
+              - Variable: "$.Record.s3.object.size"
+                NumericGreaterThan: 102400000
+                Next: captureInitialLoadMedium
+          captureInitialLoadExtraSmall:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-raw-load-${self:provider.stage}-iowCaptureExtraSmall
+                - accountId:
+                    Ref: "AWS::AccountId"
+            TimeoutSeconds: 120
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                Next: errorHandler
+            Next: tsTypeRouterTask
+          captureInitialLoadSmall:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-raw-load-${self:provider.stage}-iowCaptureSmall
+                - accountId:
+                    Ref: "AWS::AccountId"
+            TimeoutSeconds: 120
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                Next: errorHandler
+            Next: tsTypeRouterTask
+          captureInitialLoad:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-raw-load-${self:provider.stage}-iowCapture
+                - accountId:
+                    Ref: "AWS::AccountId"
+            TimeoutSeconds: 120
+            Catch:
+              - ErrorEquals:
+                - States.ALL
+                Next: errorHandler
+            Next: tsTypeRouterTask
+          captureInitialLoadMedium:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-raw-load-${self:provider.stage}-iowCaptureMedium
+                - accountId:
+                    Ref: "AWS::AccountId"
+            TimeoutSeconds: 120
+            Catch:
+              - ErrorEquals:
+                - States.ALL
+                Next: errorHandler
+            Next: tsTypeRouterTask
+          tsTypeRouterTask:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-ts-type-router-${self:provider.stage}-determineRoute
+                - accountId:
+                    Ref: "AWS::AccountId"
+            Parameters:
+              id.$: $.id
+              partitionNumber.$: $.partitionNumber
+            ResultPath: $.tsTypeRouterResult
+            TimeoutSeconds: 70
+            Catch:
+              - ErrorEquals:
+                - States.ALL
+                Next: errorHandler
+            Next: tsTypeRouterChoice
+          tsTypeRouterChoice:
+            Type: Choice
+            Choices:
+              - Variable: "$.tsTypeRouterResult.type"
+                StringEquals: tsDescriptionList
+                Next: tsDescriptionList
+              - Variable: "$.tsTypeRouterResult.type"
+                StringEquals: tsCorrectedData
+                Next: tsCorrectedData
+              - Variable: "$.tsTypeRouterResult.type"
+                StringEquals: fieldVisitData
+                Next: tsFieldVisit
+              - Variable: "$.tsTypeRouterResult.type"
+                StringEquals: fieldVisitReadings
+                Next: tsFieldVisitReadings
+            Default: defaultSuccess
+          tsDescriptionList:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-ts-description-${self:provider.stage}-processTsDescription
+                - accountId:
+                    Ref: "AWS::AccountId"
+            Parameters:
+              id.$: $.id
+              partitionNumber.$: $.partitionNumber
+            ResultPath: $.tsDescriptionResult
+            TimeoutSeconds: 70
+            Catch:
+              - ErrorEquals:
+                - States.ALL
+                Next: errorHandler
+            Next: defaultSuccess
+          tsCorrectedData:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-ts-corrected-${self:provider.stage}-preProcess
+                - accountId:
+                    Ref: "AWS::AccountId"
+            Parameters:
+              id.$: $.id
+              partitionNumber.$: $.partitionNumber
+            ResultPath: $.tsCorrectedResult
+            TimeoutSeconds: 100
+            Catch:
+              - ErrorEquals:
+                - States.ALL
+                Next: errorHandler
+            Next: tsDataTypeRouter
+          tsFieldVisit:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-ts-field-visit-${self:provider.stage}-preProcess
+                - accountId:
+                    Ref: "AWS::AccountId"
+            Parameters:
+              id.$: $.id
+              partitionNumber.$: $.partitionNumber
+            ResultPath: $.tsFieldVisitResult
+            TimeoutSeconds: 100
+            Catch:
+              - ErrorEquals:
+                - States.ALL
+                Next: errorHandler
+            Next: fieldVisitTransform
+          tsFieldVisitReadings:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-field-visit-metadata-${self:provider.stage}-preProcess
+                - accountId:
+                    Ref: "AWS::AccountId"
+            Parameters:
+              id.$: $.id
+              partitionNumber.$: $.partitionNumber
+            ResultPath: $.tsFieldVisitReadingsResult
+            TimeoutSeconds: 100
+            Catch:
+              - ErrorEquals:
+                - States.ALL
+                Next: errorHandler
+            Next: tsFieldVisit
+          fieldVisitTransform:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-field-visit-transform-${self:provider.stage}-transform
+                - accountId:
+                    Ref: "AWS::AccountId"
+            Parameters:
+              id.$: $.id
+              partitionNumber.$: $.partitionNumber
+              type.$: $.tsTypeRouterResult.type
+            ResultPath: $.fieldVisitTransformResult
+            TimeoutSeconds: 280
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                Next: errorHandler
+            Next: loadDiscreteGW
+          loadDiscreteGW:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-discrete-loader-${self:provider.stage}-loadDiscrete
+                - accountId:
+                    Ref: "AWS::AccountId"
+            Parameters:
+              locationIdentifier.$: $.fieldVisitTransformResult.locationIdentifier
+              monitoringLocationIdentifier.$: $.fieldVisitTransformResult.monitoringLocationIdentifier
+            ResultPath: $.loadDiscreteGWResult
+            TimeoutSeconds: 70
+            End: true
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                Next: errorHandler
+          tsDataTypeRouter:
+            Type: Choice
+            Choices:
+              - Variable: $.tsCorrectedResult.timeSeries.dataType
+                StringEquals: tsDailyValueStatisticalTransform
+                Next: tsDailyValueStatisticalTransform
+            Default: defaultSuccess
+          tsDailyValueStatisticalTransform:
+            Type: Task
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-dvstat-transform-${self:provider.stage}-transform
+                - accountId:
+                    Ref: "AWS::AccountId"
+            Parameters:
+              uniqueId.$: $.tsCorrectedResult.timeSeries.uniqueId
+              type.$: $.tsTypeRouterResult.type
+              id.$: $.id
+              partitionNumber.$: $.partitionNumber
+              dataType.$: $.tsCorrectedResult.timeSeries.dataType
+            ResultPath: $.dvstatTransformResult
+            TimeoutSeconds: 70
+            Catch:
+              - ErrorEquals:
+                - States.ALL
+                Next: errorHandler
+            Next: loadToObservationDb
+          loadToObservationDb:
+            Type: Task
+            Parameters:
+              uniqueId.$: $.tsCorrectedResult.timeSeries.uniqueId
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-ts-loader-${self:provider.stage}-loadTimeSeries
+                - accountId:
+                    Ref: "AWS::AccountId"
+            ResultPath: $.loadTimeSeriesResult
+            TimeoutSeconds: 70
+            End: true
+            Catch:
+              - ErrorEquals:
+                - States.ALL
+                Next: errorHandler
+          errorHandler:
+            Type: Task
+            Parameters:
+              "executionArn.$": "$$.Execution.Id"
+              "startInput.$": "$$.Execution.Input"
+              "cause.$": $.Cause
+            Resource:
+              Fn::Sub:
+                - arn:aws:lambda:${self:provider.region}:${accountId}:function:aqts-capture-error-handler-${self:provider.stage}-aqtsErrorHandler
+                - accountId:
+                    Ref: "AWS::AccountId"
+            TimeoutSeconds: 60
+            Catch:
+              - ErrorEquals:
+                - Lambda.Unknown
+                - Lambda.TooManyRequestsException
+                Next: sqsFailSafe
+            Next: defaultFail
+          sqsFailSafe:
+            Type: Task
+            Resource: arn:aws:states:::sqs:sendMessage
+            Parameters:
+              QueueUrl:
+                Fn::Sub:
+                  - https://sqs.${self:provider.region}.amazonaws.com/${accountId}/aqts-capture-error-queue-${self:provider.stage}
+                  - accountId:
+                      Ref: "AWS::AccountId"
+              MessageBody.$: "$$.Execution.Input"
+              DelaySeconds: 180
+            Next: defaultFail
+          defaultSuccess:
+            Type: Succeed
+          defaultFail:
+            Type: Fail
+
+resources:
+  Resources:
+    snsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: ${self:service}-${self:provider.stage}-topic
+        TopicName: ${self:service}-${self:provider.stage}-topic
+        Subscription:
+          - Protocol: email
+            Endpoint: ${self:custom.mailingList.CAPTURE_WARNINGS_LIST}
+    stateDurationAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-duration-alarm
+        AlarmDescription: Notify when duration exceeds a threshold
+        Namespace: 'AWS/States'
+        Dimensions:
+          - Name: StateMachineArn
+            Value:
+              Ref: AqtsDashcaptureDashstateDashmachineDash${self:custom.tier.${self:provider.stage}.parsed}
+        MetricName: ExecutionTime
+        Statistic: Maximum
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 295000  # just under 5 minutes
+        TreatMissingData: missing
+        AlarmActions:
+          - Ref: snsTopic
+    iamRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - states.amazonaws.com
+                  - events.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: startexecution
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - states:StartExecution
+                  Resource: "*"
+          - PolicyName: sendtosqs
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - sqs:SendMessage
+                  Resource:
+                    Fn::Sub:
+                      - arn:aws:sqs:${self:provider.region}:${accountId}:aqts-capture-error-queue-${self:provider.stage}
+                      - accountId:
+                          Ref: "AWS::AccountId"
+        RoleName: ${self:service}-${self:provider.stage}-role
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+          - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        PermissionsBoundary:
+          Fn::Sub:
+            - "arn:aws:iam::${accountId}:policy/csr-Developer-Permissions-Boundary"
+            - accountId:
+               Ref: "AWS::AccountId"
+
+plugins:
+  - serverless-step-functions
+  - serverless-plugin-git-variables

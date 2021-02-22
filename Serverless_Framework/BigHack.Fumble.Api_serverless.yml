@@ -1,0 +1,96 @@
+service: serverless-bighack-fumble-api
+
+plugins:
+  - serverless-pseudo-parameters
+
+custom:
+  airTableToken: ${env:AIRTABLE_TOKEN, ssm:/bighack-fumble-api/${self:provider.stage}/AIRTABLE_TOKEN}
+
+provider:
+  name: aws
+  runtime: dotnetcore3.1
+  stage: ${opt:stage, 'stage'}
+  region: eu-west-1
+  profile: bighack
+  endpointType: REGIONAL
+  timeout: 30
+  memorySize: 256
+  logRetentionInDays: 14
+  versionFunctions: false
+  feature: bighack-fumble-api
+  stackTags:
+    FEATURE: ${self:provider.feature}
+    ENVIRONMENT: ${self:provider.stage}
+  tags:
+    FEATURE: ${self:provider.feature}
+    ENVIRONMENT: ${self:provider.stage}
+    VERSION: ${env:VERSION}
+  tables:
+    cards: bighack-fumble-api-${self:provider.stage}-cards
+
+
+  environment:
+    ENVIRONMENT: ${self:provider.stage}
+    VERSION: ${env:VERSION}
+    DYNAMO_REGION: ${self:provider.region}
+    DYNAMO_CARDS_TABLE: ${self:provider.tables.cards}
+    AIRTABLE_TOKEN: ${self:custom.airTableToken}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - "#{CardsDynamoDBTable.Arn}"
+
+
+package:
+  artifact: package.zip
+
+functions:
+  getCards:
+    handler: BigHack.Fumble.Api::BigHack.Fumble.Api.LambdaFunctions::getCards
+    events:
+      - http:
+          method: GET
+          path: "/cards"
+          cors: true
+
+  updateCards:
+    handler: BigHack.Fumble.Api::BigHack.Fumble.Api.LambdaFunctions::updateCards
+    events:
+      - http:
+          method: PUT
+          path: "/cards"
+          cors: true
+
+  updateCardsFromAirtable:
+    handler: BigHack.Fumble.Api::BigHack.Fumble.Api.LambdaFunctions::updateFromAirtable
+    events:
+      - http:
+          method: POST
+          path: "/updateFromAirtable"
+          cors: true
+
+  scheduledAirtableUpdate:
+    handler: BigHack.Fumble.Api::BigHack.Fumble.Api.LambdaFunctions::scheduledAirtableUpdate
+    events:
+      - schedule:
+          rate: rate(10 minutes)
+          name: "bighack-fumble-api-${self:provider.stage}-airtable-update"
+          enabled: true
+
+resources:
+  Resources:
+    CardsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.tables.cards}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: Name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Name
+            KeyType: HASH
+

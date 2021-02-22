@@ -1,0 +1,69 @@
+service: drone-api
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-northeast-2'}
+  environment:
+    AUTH0_CLIENT_ID: '${file(./secrets.json):AUTH0_CLIENT_ID}'
+    AUTH0_CLIENT_PUBLIC_KEY: '${file(./public_key.pem)}'
+    MONGODB_URL: '${file(./${opt:stage, "dev"}_secrets.json):MONGODB_URL}'
+
+resources:
+  Resources:
+    # This response is needed for custom authorizer failures cors support
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    FailureGatewayResponse5XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_5XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+# npm run package
+package:
+  # excludes are added first
+  exclude:
+    - coverage/**
+    - .editorconfig
+    - .gitignore
+    - readme.md
+    - '*.{ts,js,json,yml}' # the rest of the configs
+
+  include:
+    - src/**
+    # exclude the tests and yml files from src
+    - '!src/**/*.spec.js'
+    - '!src/**/*.serverless.yml'
+
+functions:
+  - '${file(src/handlers/auth/auth.serverless.yml)}'
+  - '${file(src/handlers/users/users.serverless.yml)}'
+  - '${file(src/handlers/results/results.serverless.yml)}'
+  - '${file(src/handlers/maps/maps.serverless.yml)}'
+
+plugins:
+  - serverless-offline

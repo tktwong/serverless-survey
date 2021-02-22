@@ -1,0 +1,83 @@
+service: serverless-scaffold
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  profile: default
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    SESSION_KEY: ${file(./secrets.yml):dev.SESSION_KEY}
+    EMAIL_SERVICE_API_KEY: ${file(./secrets.yml):dev.EMAIL_SERVICE_API_KEY}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+custom: ${file(./secrets.yml)}
+
+functions:
+  create:
+    handler: src/create.create
+    events:
+      - http:
+          path: ${self:service}
+          method: post
+          cors: true
+
+  list:
+    handler: src/list.list
+    events:
+      - http:
+          path: ${self:service}
+          method: get
+          cors: true
+
+  get:
+    handler: src/get.get
+    events:
+      - http:
+          path: ${self:service}/{id}
+          method: get
+          cors: true
+
+  update:
+    handler: src/update.update
+    events:
+      - http:
+          path: ${self:service}/{id}
+          method: put
+          cors: true
+
+  delete:
+    handler: src/delete.delete
+    events:
+      - http:
+          path: ${self:service}/{id}
+          method: delete
+          cors: true
+
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

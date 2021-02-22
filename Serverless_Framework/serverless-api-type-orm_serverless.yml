@@ -1,0 +1,54 @@
+
+service: serverless-api-type-orm
+
+custom:
+  STAGE:
+    prod: prod
+    dev: dev
+
+
+provider:
+  name: aws
+  profile: awsmmcom
+  runtime: nodejs12.x
+  memorySize: 256 # MB
+  timeout: 30 # seconds
+  region: sa-east-1
+  stage: ${opt:stage, 'dev'}
+
+  environment:
+    STAGE: ${self:custom.STAGE.${self:provider.stage}}
+    TYPEORM_CONNECTION: sqlite
+    TYPEORM_HOST: ${ssm:${self:service.name}-${self:provider.stage}-typeorm_host}
+    TYPEORM_USERNAME: ${ssm:${self:service.name}-${self:provider.stage}-typeorm_username}
+    TYPEORM_PASSWORD: ${ssm:${self:service.name}-${self:provider.stage}-typeorm_password}
+    TYPEORM_DATABASE: ${ssm:${self:service.name}-${self:provider.stage}-typeorm_database}
+    TYPEORM_PORT: ${ssm:${self:service.name}-${self:provider.stage}-typeorm_port}
+    TYPEORM_SYNCHRONIZE: false
+    TYPEORM_LOGGING: false
+    TYPEORM_ENTITIES: src/**/*Entity.*
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sqs:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: "*"
+
+package:
+  exclude:
+    - src/**
+
+functions:
+  api:
+    handler: build/src/server.handler
+    #provisionedConcurrency: 1 # optional, Count of provisioned lambda instances
+    #reservedConcurrency: 2 # optional, reserved concurrency limit for this function. By default, AWS uses account concurrency limit
+    events:
+      - http:
+          method: any
+          path: /{proxy+}
+          cors: true

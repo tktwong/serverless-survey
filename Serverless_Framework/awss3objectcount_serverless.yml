@@ -1,0 +1,61 @@
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-plugin-tracing
+  - serverless-api-gateway-xray
+
+custom:
+  apiGatewayXray: true
+
+service: awss3objectcount
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: eu-central-1
+  tracing: true
+  cfLogs: true
+  apiKeys:
+    - AwsS3ObjectCountKey
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:ListAllMyBuckets"
+      Resource: "arn:aws:s3:::*"
+    - Effect: "Allow"
+      Action:
+        - "cloudwatch:GetMetricData"
+      Resource: "*"
+  iamManagedPolicies:
+    - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+  usagePlan:
+    quota:
+      limit: 100
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 20
+      rateLimit: 10
+
+functions:
+  awss3objectcount:
+    handler: handler.awss3objectcount
+    description: Main function to check s3 object count
+    memorySize: 128
+    timeout: 10
+    environment:
+      AWS_XRAY_CONTEXT_MISSING: LOG_ERROR
+      AWS_XRAY_TRACING_NAME: awss3objectcount
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true
+          private: true
+
+resources:
+  Resources:
+    Awss3objectcountLogGroup:
+      Properties:
+        RetentionInDays: 7

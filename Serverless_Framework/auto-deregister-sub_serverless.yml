@@ -1,0 +1,59 @@
+service:
+  name: deregister-sub
+
+package:
+  individually: true
+  exclude:
+    - '**/**'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stackName: ${self:service.name}-stack
+  stage: ${opt:stage, 'prod'}
+  region: eu-central-1
+  deploymentBucket:
+    name: kaskadi-serverless-deployment-bucket
+  stackTags: 
+    app: kaskadi
+  tags:
+    app: kaskadi
+    service: ${self:service.name}
+    logical-unit: push
+    type: eventBridge
+
+functions:
+  DeregisterSub:
+    handler: deregister-sub.handler
+    name: deregister-sub
+    layers:
+      - { Ref: LayerLambdaLayer }
+    package:
+      include:
+        - 'deregister-sub.js'
+        - 'helpers/**'
+    environment:
+      ES_ID: ${env:ES_ID}
+      ES_SECRET: ${env:ES_SECRET}
+      ES_ENDPOINT: ${env:ES_ENDPOINT}
+    events:
+      - eventBridge:
+          eventBus: ${env:EVENT_BUS_ARN}
+          pattern:
+            detail:
+              responsePayload:
+                hasDeadEndpoints:
+                  - true
+
+layers:
+  Layer:
+    path: layer
+    name: ${self:service.name}-layer
+    description: Layer for ${self:service.name}
+    compatibleRuntimes:
+      - nodejs10.x
+      - nodejs12.x
+    licenseInfo: MIT
+    package:
+      include:
+        - '**/**'

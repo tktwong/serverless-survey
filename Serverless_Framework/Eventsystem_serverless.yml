@@ -1,0 +1,135 @@
+custom:
+  stream: EventSystemTeam
+  prefix: firstaggregate
+
+service:
+  name: ${self:custom.prefix}-BusinessEventBus
+
+provider:
+  name: aws
+  runtime: dotnetcore1.0
+  memorySize: 1024
+  timeout: 300
+  stage: v1
+  region: ap-southeast-2
+  deploymentBucket: serverless.${opt:data-center}.deploys
+
+  environment:
+    SERVICE: ${self:service}
+    PREFIX: ${self:custom.prefix}
+    STREAM: ${self:custom.stream}
+    DATA_CENTER: ${opt:data-center}
+
+package:
+  artifact: src/BusinessEvents.SubscriptionEngine.Handlers/bin/release/netcoreapp1.0/publish/deploy-package.zip
+
+functions:
+
+  process-kinesis-stream:
+      handler: BusinessEvents.SubscriptionEngine.Handlers::BusinessEvents.SubscriptionEngine.Handlers.Handler::ProcessKinesisStream
+      memorySize: 1536
+      events:
+        - stream:
+            type: kinesis
+            arn:
+              Fn::GetAtt:
+                 - BusinessEventStream
+                 - Arn
+            batchSize: 280
+            startingPosition: LATEST
+            enabled: true
+      tags:
+        Stream: ${self:custom.stream}
+        Service: ${self:service}
+
+#  process-dynamodb-stream:
+#    handler: BusinessEvents.SubscriptionEngine.Handlers::BusinessEvents.SubscriptionEngine.Handlers.Handler::ProcessDynamoDbStream
+#    memorySize: 1536
+#    environment:
+#      NOTIFY_SUBSCRIBER_LAMBDA_NAME: ${self:service}-${opt:stage}-notify-subscriber
+#    events:
+#      - stream:
+#          type: dynamodb
+#          arn:
+#            Fn::GetAtt:
+#               - BusinessEventTable
+#               - StreamArn
+#          batchSize: 280
+#          startingPosition: LATEST
+#          enabled: true
+#    tags:
+#      Stream: ${self:custom.stream}
+#      Service: ${self:service}
+
+#  notify-subscriber:
+#      handler: BusinessEvents.SubscriptionEngine.Handlers::BusinessEvents.SubscriptionEngine.Handlers.Handler::NotifySubscriber
+#      environment:
+#        AUTH_CLIENT_ID: ${self:custom.vars.${opt:data-center}.AUTH_CLIENT_ID}
+#        AUTH_CLIENT_SECRET: ${self:custom.vars.${opt:data-center}.AUTH_CLIENT_SECRET}
+#      tags:
+#        Stream: ${self:custom.stream}
+#        Service: ${self:service}
+
+#  handle-dlq:
+#        handler: BusinessEvents.SubscriptionEngine.Handlers::BusinessEvents.SubscriptionEngine.Handlers.Handler::HandleDeadLetterQueue
+#        events:
+#          - schedule:
+#              rate: rate(1 minute)
+#              enabled: true
+#        tags:
+#          Stream: ${self:custom.stream}
+#          Service: ${self:service}
+
+resources:
+  Resources: ${file(cloudformation-resources.yml)}
+
+iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sns:*
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+        - logs:DescribeLogGroups
+        - logs:DescribeLogStreams
+        - s3:PutObject
+        - s3:GetObject
+        - s3:PutBucket
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - lambda:CreateAlias
+        - lambda:Get*
+        - lambda:Invoke*
+        - lambda:List*
+        - lambda:PublishVersion
+        - lambda:TagResource
+        - lambda:UntagResource
+        - lambda:Update*
+      Resource: arn:aws:lambda:*:*:function:*
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - arn:aws:dynamodb:*:*:table/${self:custom.prefix}-BusinessEvent
+        - arn:aws:dynamodb:*:*:table/${self:custom.prefix}-BusinessEvent/stream/*
+        - arn:aws:dynamodb:*:*:table/${self:custom.prefix}-BusinessEvent/index/*
+    - Effect: Allow
+      Action:
+        - kinesis:*
+      Resource:
+        Fn::GetAtt:
+          - BusinessEventStream
+          - Arn
+    - Effect: Allow
+      Action:
+        - sqs:*
+      Resource:
+        Fn::GetAtt:
+          - BusinessEventDeadLetterQueue
+          - Arn
+    - Effect: Allow
+      Action:
+        - xray:PutTelemetryRecords
+        - xray:PutTraceSegments
+      Resource: "*"

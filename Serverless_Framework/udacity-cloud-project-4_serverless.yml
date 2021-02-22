@@ -1,0 +1,214 @@
+service:
+  name: serverless-todo-app
+
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+
+
+package:
+  individually: true
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  environment:
+    TODOS_TABLE: Todos-${self:provider.stage}
+    TODOS_ID_INDEX: TodosIdIndex
+    TODOS_IMAGES_S3_BUCKET: todos-images-s3-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+
+
+custom:
+  documentation:
+    api:
+      info:
+        version: v0.0.1
+        title: Serverless ToDo API
+        description: Serverless app to handle todo's
+    models:
+      - name: CreateTodoRequest
+        contentType: application/json
+        schema: ${file(src/requests/create-todo-request.json)}
+      - name: UpdateTodoRequest
+        contentType: application/json
+        schema: ${file(src/requests/update-todo-request.json)}
+
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+
+  GetTodos:
+    handler: src/lambda/http/getTodos.handler
+    events:
+      - http:
+          method: get
+          authorizer: Auth
+          path: todos
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}/index/${self:provider.environment.TODOS_ID_INDEX}
+
+
+  CreateTodo:
+    handler: src/lambda/http/createTodo.handler
+    events:
+      - http:
+          method: post
+          authorizer: Auth
+          path: todos
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new ToDo
+            description: Create a new ToDo
+            requestModels:
+              'application/json': CreateTodoRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamoDB:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+
+
+  UpdateTodo:
+    handler: src/lambda/http/updateTodo.handler
+    events:
+      - http:
+          method: patch
+          authorizer: Auth
+          path: todos/{todoId}
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update existing ToDo
+            description: Update existing ToDo
+            requestModels:
+              'application/json': UpdateTodoRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamoDB:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+
+
+  DeleteTodo:
+    handler: src/lambda/http/deleteTodo.handler
+    events:
+      - http:
+          method: delete
+          authorizer: Auth
+          path: todos/{todoId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamoDB:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+
+
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          authorizer: Auth
+          path: todos/{todoId}/attachment
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamoDB:Query
+          - dynamoDB:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.TODOS_IMAGES_S3_BUCKET}/*
+  
+
+resources:
+  Resources:
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.TODOS_IMAGES_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+    
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.TODOS_IMAGES_S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket
+
+    TodosDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+          - AttributeName: todoId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: todoId
+            KeyType: HASH
+          - AttributeName: userId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.TODOS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.TODOS_ID_INDEX}
+            KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+            Projection:
+              ProjectionType: ALL

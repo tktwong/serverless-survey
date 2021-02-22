@@ -1,0 +1,54 @@
+service: schedule-change
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage}
+  region: ap-southeast-1
+  environment:
+    SLS_STAGE: ${opt:stage}
+    TABLE_NAME: schedule-change-${opt:stage}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "arn:aws:dynamodb:ap-southeast-1:*:*"
+
+functions:
+  sgdq2018:
+    handler: build/sgdq2018.default
+  esa2018-one:
+    handler: build/esa2018.one
+    events:
+      - schedule: cron(0/10 * * * ? *)
+    memorySize: 128
+  esa2018-two:
+    handler: build/esa2018.two
+    events:
+      - schedule: cron(0/10 * * * ? *)
+    memorySize: 128
+
+resources:
+  Resources:
+    scheduleChangeTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: schedule-change-${opt:stage}
+        AttributeDefinitions:
+          - AttributeName: eventName
+            AttributeType: S
+        KeySchema:
+          - AttributeName: eventName
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2
+
+package:
+  exclude:
+    - "**"
+    - "!build/**/*"
+    - "!config/${opt:stage}.json"
+    - "!node_modules/**"
+  excludeDevDependencies: true

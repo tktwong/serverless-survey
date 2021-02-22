@@ -1,0 +1,68 @@
+service:
+  name: shani-borsch
+custom:
+  stage: { env:NODE_ENV }
+  dotenv:
+    path: ./.env
+    basePath: ./
+    logging: false
+    include:
+      - NODE_ENV
+      - DB_URL
+      - DB_NAME
+      - DB_HOST
+      - DB_PASS
+      - AWS_REGION_STR
+      - AUTH0_CLIENT_ID_STR
+      - AUTH0_CLIENT_SECRET_STR
+      - AWS_BUCKET_NAME
+      - TOKEN_SECRET
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  serverless-offline:
+    httpPort: 4000
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+package:
+  individually: true
+
+resources:
+  Resources:
+    DemoBucketUpload:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${env:AWS_BUCKET_NAME}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${self:custom.stage}
+  region: ${env:AWS_REGION_STR}
+  memorySize: 128
+  timeout: 6
+  apiGateway:
+    minimumCompressionSize: 1024
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+
+functions:
+  getProducts:
+    handler: src/endpoints/handler.handler
+    events:
+      - http:
+          path: /
+          method: GET
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent

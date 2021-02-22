@@ -1,0 +1,128 @@
+
+service: artletter-subscription 
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: eu-west-1
+  environment:
+    SUBSCRIPTION_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+functions:
+
+  createSubscription:
+    handler: api/subscription.create
+    memorySize: 128
+    description: Creates a new email subscription.
+    events:
+      - http: 
+          path: subscriptions
+          method: post
+
+  getSubscriptionByID:
+    handler: api/subscription.get
+    memorySize: 128
+    description: Get a subscription by id
+    events:
+      - http:
+          path: subscriptions/{id}
+          method: get
+          cors:
+            origin: '*'
+            headers:
+                - Authorization
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: 
+              Ref: ApiGatewayAuthorizer
+
+  deleteSubscription:
+    handler: api/subscription.delete
+    memorySize: 128
+    description: Delete a subscription by it's id
+    events:
+      - http:
+          path: subscriptions/{id}
+          method: delete
+          cors:
+            origin: '*'
+            headers:
+                - Authorization
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: 
+              Ref: ApiGatewayAuthorizer
+  
+  updateSubscription:
+    handler: api/subscription.update
+    memorySize: 128
+    description: Update a subscription 
+    events:
+      - http:
+          path: subscriptions/{id}
+          method: put
+          cors:
+            origin: '*'
+            headers:
+                - Authorization
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: 
+              Ref: ApiGatewayAuthorizer
+              
+  listSubscriptions:
+    handler: api/subscription.getAll
+    memorySize: 128
+    description: List all subscriptions
+    events:
+      - http: 
+          path: subscriptions
+          method: get  
+          cors:
+            origin: '*'
+            headers:
+                - Authorization
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: 
+              Ref: ApiGatewayAuthorizer
+resources:
+  Resources:
+    ApiGatewayAuthorizer: 
+      Type: AWS::ApiGateway::Authorizer
+      Properties: 
+        AuthorizerResultTtlInSeconds: 300
+        IdentitySource: method.request.header.Authorization
+        Name: rest-api-authorizer
+        RestApiId: 
+          Ref: "ApiGatewayRestApi"
+        Type: COGNITO_USER_POOLS
+        ProviderARNs: 
+          - arn:aws:cognito-idp:eu-west-1:628118338207:userpool/eu-west-1_S0mlIAwY4
+    SubscriptionsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.SUBSCRIPTION_TABLE}

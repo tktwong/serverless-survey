@@ -1,0 +1,61 @@
+service: serverless-cicd
+
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  stage: dev
+  region: eu-west-1
+  memorySize: 512
+  environment:
+    USER_TABLE: ${self:service}-user-${self:custom.stage}
+    AWS_STAGE: ${self:custom.stage}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "*"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+
+package:
+  individually: true
+  include:
+    - node_modules/co/**
+    - node_modules/bluebird/**
+    - node_modules/chance/**
+  exclude:
+    - node_modules/**
+
+functions:
+  registerUser:
+    handler: api/users/post.handle
+    events:
+      - http:
+          path: users
+          method: post
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+resources:
+  Resources: 
+    userTable: 
+      Type: "AWS::DynamoDB::Table"
+      Properties: 
+        AttributeDefinitions: 
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema: 
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput: 
+          ReadCapacityUnits: "1"
+          WriteCapacityUnits: "1"
+        TableName: ${self:provider.environment.USER_TABLE}

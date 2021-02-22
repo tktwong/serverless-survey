@@ -1,0 +1,68 @@
+service: earnings-ready-api
+
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  tableName: data-${self:custom.stage}
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+  emailSender: "arn:aws:ses:us-west-2:879705463659:identity/support@earningsready.com"
+
+  serverless-offline:
+    port: 3001
+
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: false
+    stages:
+      - dev
+    seed:
+      test:
+        sources:
+          - table: ${self:custom.tableName}
+            sources: [./seed.json]
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: serverless
+  stage: dev
+  region: us-west-2
+  versionFunctions: false
+
+  environment:
+    TABLE_NAME: ${self:custom.tableName}
+    IEX_BASE_URL: ${self:custom.environment.IEX_BASE_URL}
+    IEX_API_KEY: ${self:custom.environment.IEX_API_KEY}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [DataTable, Arn]
+
+functions:
+  - ${file(resources/functions.yml)}
+  - ${file(resources/functions-test.yml)}
+
+resources:
+  - ${file(resources/api-gateway-errors.yml)}
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

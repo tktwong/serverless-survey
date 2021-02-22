@@ -1,0 +1,113 @@
+service: awesomotes
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-appsync-plugin
+
+provider:
+  name: aws
+  region: eu-west-1
+  runtime: nodejs10.x
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: "*"
+
+custom:
+  appSync:
+    name: Roadrunner
+    authenticationType: API_KEY
+    serviceRole: AppSyncRole
+    schema: src/schema.graphql
+    mappingTemplatesLocation: src/mapping-templates
+    mappingTemplates:
+      - dataSource: Notes
+        type: Query
+        field: getCategories
+        request: "get-categories/request-mapping-template.vtl"
+        response: "get-categories/response-mapping-template.vtl"
+      - dataSource: Notes
+        type: Mutation
+        field: createCategory
+        request: "create-category/request-mapping-template.vtl"
+        response: "create-category/response-mapping-template.vtl"
+      - dataSource: Notes
+        type: Query
+        field: getNotes
+        request: "get-notes/request-mapping-template.vtl"
+        response: "get-notes/response-mapping-template.vtl"
+      - dataSource: Notes
+        type: Mutation
+        field: createNote
+        request: "create-note/request-mapping-template.vtl"
+        response: "create-note/response-mapping-template.vtl"
+      - dataSource: Notes
+        type: Mutation
+        field: updateNote
+        request: "update-note/request-mapping-template.vtl"
+        response: "update-note/response-mapping-template.vtl"
+      - dataSource: Notes
+        type: Mutation
+        field: updateNoteCategory
+        request: "update-note-category/request-mapping-template.vtl"
+        response: "update-note-category/response-mapping-template.vtl"
+      - dataSource: Notes
+        type: Mutation
+        field: deleteNote
+        request: "delete-note/request-mapping-template.vtl"
+        response: "delete-note/response-mapping-template.vtl"
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: Notes
+        description: 'Lambda DataSource'
+        config:
+          tableName: Notes
+
+resources:
+  Resources:
+    Users:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Notes
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: type
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: type
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    AppSyncRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: AppSyncRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          -
+            PolicyName: "Lambda-${self:custom.appSync.serviceRole}-Policy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "lambda:invokeFunction"
+                  Resource: "*"
+                - Effect: "Allow"
+                  Action:
+                    - "dynamodb:*"
+                  Resource: "*"

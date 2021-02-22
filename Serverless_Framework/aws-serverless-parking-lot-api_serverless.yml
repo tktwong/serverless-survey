@@ -1,0 +1,48 @@
+service: service-tickets
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 512
+  stage: ${opt:stage, 'dev'}
+  environment:
+    MYSQL_HOST: ${file(config/stage.${self:provider.stage}.yml):MYSQL_HOST}
+    MYSQL_USER: ${file(config/stage.${self:provider.stage}.yml):MYSQL_USER}
+    MYSQL_PASSWORD: ${file(config/stage.${self:provider.stage}.yml):MYSQL_PASSWORD}
+    MYSQL_DATABASE: ${file(config/stage.${self:provider.stage}.yml):MYSQL_DATABASE}
+    LOT_LIMIT: 10 # Amount of parking lots is expected to be the same across all instances.
+    JWT_SECRET_KEY: ${file(config/stage.${self:provider.stage}.yml):JWT_SECRET_KEY}
+    AWS_ACCOUNT_ID: 123456789012
+
+plugins:
+  - serverless-offline-sns
+  - serverless-offline
+
+custom:
+  SERVICE_VERSION: ${file(config/stage.${self:provider.stage}.yml):SERVICE_VERSION}
+  serverless-offline-sns:
+    port: 4000
+    debug: false
+
+### Routes.
+
+functions:
+  # Get ticket info
+  get_ticket:
+    handler: src/lambda/get.handler
+    events:
+    - http:
+        method: get
+        path: /tickets/${self:custom.SERVICE_VERSION}/{id}
+  # Create ticket
+  post_ticket:
+    handler: src/lambda/post.handler
+    events:
+    - http:
+        method: post
+        path: /tickets/${self:custom.SERVICE_VERSION}
+  # Once payment is completed, close the ticket.
+  closeTicket:
+    handler: src/lambda/sns/closeTicket.handler
+    events:
+    - sns: closeTicket

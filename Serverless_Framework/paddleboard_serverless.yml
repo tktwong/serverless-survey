@@ -1,0 +1,260 @@
+service: pdlbrd-repository-api
+
+provider:
+  resourceGroup: wabrez-westus-dev-paddleboard
+  prefix: ${opt:prefix, 'sls'}
+  name: azure
+  region: West US
+  runtime: nodejs10.x
+  environment:
+    COSMOS_ENDPOINT: ${env:COSMOS_ENDPOINT}
+    COSMOS_KEY: ${env:COSMOS_KEY}
+    STORAGE_CONNECTION: ${env:STORAGE_CONNECTION}
+  apim:
+    name: wabrez-wus-dev-pdlbrd-apim
+    apis:
+      - name: user-profile-api
+        subscriptionRequired: false
+        displayName: User Profile API
+        description: User Profile REST API
+        protocols:
+          - https
+        path: users
+        authorization: none
+      - name: current-user-api
+        subscriptionRequired: false
+        displayName: CurrentUser API
+        description: CurrentUser REST API
+        protocols:
+          - https
+        path: user
+        authorization: none
+    backends:
+      - name: repo-user-profile-backend
+        url: api/users
+      - name: repo-current-user-backend
+        url: api/user
+    cors:
+      allowCredentials: false
+      allowedOrigins:
+        - "*"
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - PATCH
+      allowedHeaders:
+        - "*"
+      exposeHeaders:
+        - "*"
+
+plugins:
+  - serverless-azure-functions
+  - serverless-webpack
+
+functions:
+  # Repositories
+  getRepositoryListByUser:
+    handler: src/handlers/repository.getRepositoryListByUser
+    events:
+      - http: true
+        x-azure-settings:
+          methods:
+            - GET
+          route: users/{userId}/repos
+          authLevel: function
+    apim:
+      api: user-profile-api
+      backend: repo-user-profile-backend
+      operations:
+        - method: GET
+          urlTemplate: /{userId}/repos
+          templateParameters:
+            - name: userId
+              type: string
+
+  getRepositoryListByCurrentUser:
+    handler: src/handlers/repository.getRepositoryListByUser
+    events:
+      - http: true
+        x-azure-settings:
+          methods:
+            - GET
+          route: user/repos
+          authLevel: function
+    apim:
+      api: current-user-api
+      backend: repo-current-user-backend
+      operations:
+        - method: GET
+          urlTemplate: /repos
+
+  getRepositoryListByUserAndCategory:
+    handler: src/handlers/repository.getRepositoryListByUserAndCategory
+    events:
+      - http: true
+        x-azure-settings:
+          methods:
+            - GET
+          route: users/{userId}/categories/{categoryId}/repos
+          authLevel: function
+    apim:
+      api: user-profile-api
+      backend: repo-user-profile-backend
+      operations:
+        - method: GET
+          urlTemplate: /{userId}/categories/{categoryId}/repos
+          templateParameters:
+            - name: userId
+              type: string
+            - name: categoryId
+              type: string
+
+  getRepositoryListByCurrentUserAndCategory:
+    handler: src/handlers/repository.getRepositoryListByUserAndCategory
+    events:
+      - http: true
+        x-azure-settings:
+          methods:
+            - GET
+          route: user/categories/{categoryId}/repos
+          authLevel: function
+    apim:
+      api: current-user-api
+      backend: repo-current-user-backend
+      operations:
+        - method: GET
+          urlTemplate: /categories/{categoryId}/repos
+          templateParameters:
+            - name: categoryId
+              type: string
+
+  getRepository:
+    handler: src/handlers/repository.getRepository
+    events:
+      - http: true
+        x-azure-settings:
+          methods:
+            - GET
+          route: users/{userId}/repos/{repositoryId}
+          authLevel: function
+    apim:
+      api: user-profile-api
+      backend: repo-user-profile-backend
+      operations:
+        - method: GET
+          urlTemplate: /{userId}/repos/{repositoryId}
+          templateParameters:
+            - name: userId
+              type: string
+            - name: repositoryId
+              type: string
+
+  getRepositoryByCurrentUser:
+    handler: src/handlers/repository.getRepository
+    events:
+      - http: true
+        x-azure-settings:
+          methods:
+            - GET
+          route: user/repos/{repositoryId}
+          authLevel: function
+    apim:
+      api: current-user-api
+      backend: repo-current-user-backend
+      operations:
+        - method: GET
+          urlTemplate: /repos/{repositoryId}
+          templateParameters:
+            - name: repositoryId
+              type: string
+
+  postRepository:
+    handler: src/handlers/repository.postRepository
+    events:
+      - http: true
+        x-azure-settings:
+          methods:
+            - POST
+          route: users/{userId}/repos
+          authLevel: function
+    apim:
+      api: user-profile-api
+      backend: repo-user-profile-backend
+      operations:
+        - method: POST
+          urlTemplate: /{userId}/repos
+          templateParameters:
+            - name: userId
+              type: string
+
+  putRepository:
+    handler: src/handlers/repository.putRepository
+    events:
+      - http: true
+        x-azure-settings:
+          methods:
+            - PUT
+          route: users/{userId}/repos/{repositoryId}
+          authLevel: function
+    apim:
+      api: user-profile-api
+      backend: repo-user-profile-backend
+      operations:
+        - method: PUT
+          urlTemplate: /{userId}/repos/{repositoryId}
+          templateParameters:
+            - name: userId
+              type: string
+            - name: repositoryId
+              type: string
+
+  patchRepository:
+    handler: src/handlers/repository.patchRepository
+    events:
+      - http: true
+        x-azure-settings:
+          methods:
+            - PATCH
+          route: users/{userId}/repos/{repositoryId}
+          authLevel: function
+    apim:
+      api: user-profile-api
+      backend: repo-user-profile-backend
+      operations:
+        - method: PATCH
+          urlTemplate: /{userId}/repos/{repositoryId}
+          templateParameters:
+            - name: userId
+              type: string
+            - name: repositoryId
+              type: string
+
+  deleteRepository:
+    handler: src/handlers/repository.deleteRepository
+    events:
+      - http: true
+        x-azure-settings:
+          methods:
+            - DELETE
+          route: users/{userId}/repos/{repositoryId}
+          authLevel: function
+    apim:
+      api: user-profile-api
+      backend: repo-user-profile-backend
+      operations:
+        - method: DELETE
+          urlTemplate: /{userId}/repos/{repositoryId}
+          templateParameters:
+            - name: userId
+              type: string
+            - name: repositoryId
+              type: string
+  ingestRepository:
+    handler: src/handlers/workflow.ingestRepository
+    events:
+      - queue: repositories
+        x-azure-settings:
+          name: message # Specifies which name it's available on `context`
+          connection: STORAGE_CONNECTION # App Setting/environment variable which contains Storage Account Connection String

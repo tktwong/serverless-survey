@@ -1,0 +1,127 @@
+service: udia-gql
+app: udia
+tenant: awwong1
+frameworkVersion: ">=1.44.1 <2.0.0"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-simple-parcel
+  - serverless-apigw-binary
+  - serverless-offline
+
+custom:
+  usersTable: 'users-${self:service}-${opt:stage, self:provider.stage}'
+  serverless-offline:
+    host: 0.0.0.0
+  dynamoDbEndpoint:
+    prod: ''
+    dev: 'http://localhost:8000'
+  nodeEnv:
+    prod: production
+    dev: development
+  minifyStage:
+    prod: true
+    dev: false
+  contentHash:
+    prod: true
+    dev: false
+  parcel:
+    options:
+      minify: ${self:custom.minifyStage.${self:provider.stage}}
+      contentHash: ${self:custom.contentHash.${self:provider.stage}}
+      watch: true
+    entries:
+      - file: src/public/index.html
+        outDir: .build/src/public
+        target: browser
+  apigwBinary:
+    types:
+      - "*/*"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-west-2'}
+  cfnRole: arn:aws:iam::593583987155:role/Serverless_CloudFormation
+  logRetentionInDays: 14
+  environment:
+    NODE_ENV: ${self:custom.nodeEnv.${self:provider.stage}}
+    USERS_TABLE: ${self:custom.usersTable}
+    DYNAMODB_ENDPOINT: ${self:custom.dynamoDbEndpoint.${self:provider.stage}}
+    DYNAMODB_REGION: ${self:provider.region}
+    DYNAMODB_STAGE: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.usersTable}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.usersTable}/index/*"
+
+resources:
+  Resources:
+    UsersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+          - AttributeName: type
+            AttributeType: N
+          - AttributeName: payloadId
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+          - AttributeName: type
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: PayloadIndex
+            KeySchema:
+              - AttributeName: payloadId
+                KeyType: HASH
+            Projection:
+              ProjectionType: INCLUDE
+              NonKeyAttributes:
+                - uuid
+                - type
+                - payload
+        TableName: ${self:custom.usersTable}
+
+functions:
+  hello:
+    handler: src/handlerHello.hello
+    memorySize: 128
+    events:
+      - http:
+          method: GET
+          path: hello
+  graphql:
+    handler: src/handlerGraphQL.graphql
+    memorySize: 192
+    timeout: 9
+    events:
+      - http:
+          method: ANY
+          path: graphql
+          cors: true
+  express:
+    handler: src/handlerExpress.express
+    memorySize: 192
+    events:
+      - http: ANY /
+      - http: ANY {proxy+}

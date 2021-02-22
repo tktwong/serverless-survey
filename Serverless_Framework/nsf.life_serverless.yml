@@ -1,0 +1,127 @@
+service: nsf-life
+
+plugins:
+  - serverless-domain-manager
+  - serverless-cf-vars
+
+custom:
+  serverless-offline:
+    host: 0.0.0.0
+  customDomain:
+    domainName: ${self:custom.${self:provider.stage}.domainName}
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  namespace: ${self:service}-${self:provider.stage}
+  stage: ${self:provider.stage}
+  region: ${self:provider.region}
+  certificateArn: 
+  dev:
+    domainName: dev.nsf.life
+    imageDomainName: images-dev.nsf.life
+    hostedZone: nsf.life
+  prod:
+    domainName: nsf.life
+    imageDomainName: images.nsf.life
+    hostedZone: nsf.life
+
+provider:
+  name: aws
+  runtime: python2.7
+  stage: ${opt:stage, 'dev'}
+  environment:
+    IMAGES_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    IMAGE_BUCKET: ${self:custom.namespace}-images
+    NSFW_IMAGE_URL: https://${self:custom.${self:custom.stage}.imageDomainName}/nsfw.png
+    DOMAIN: ${self:custom.${self:provider.stage}.domainName}
+
+functions:
+  hello:
+    handler: handler.index
+    events:
+      - http:
+          path: /{url+}
+          method: get
+          cors: true
+          integration: aws_proxy
+
+resources:
+  Resources:
+    ImageBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      Properties:
+        WebsiteConfiguration:
+          IndexDocument: index.html
+        VersioningConfiguration:
+          Status: Enabled
+        BucketName: ${self:provider.environment.IMAGE_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: ['PUT', 'GET']
+              AllowedOrigins: ['*']
+
+    ImageBucketPolicy:
+      Type: "AWS::S3::BucketPolicy"
+      Properties:
+        Bucket:
+          Ref: ImageBucket
+        PolicyDocument:
+          Statement:
+            - Action:
+                - "s3:GetObject"
+              Effect: "Allow"
+              Resource:
+                Fn::Join:
+                  - ""
+                  - - "arn:aws:s3:::"
+                    - Ref: ImageBucket
+                    - "/*"
+              Principal: "*"
+
+    ImageBucketDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - ${self:custom.${self:provider.stage}.imageDomainName}
+          Enabled: true
+          Origins:
+            - Id: s3
+              DomainName:
+                Fn::GetAtt: ImageBucket.DomainName
+              CustomOriginConfig:
+                OriginProtocolPolicy: match-viewer
+          ViewerCertificate:
+            AcmCertificateArn: ${opt:certificate-arn, self:custom.certificateArn}
+            SslSupportMethod: sni-only
+          DefaultCacheBehavior:
+            ForwardedValues:
+              QueryString: false
+            TargetOriginId: s3
+            ViewerProtocolPolicy: redirect-to-https
+
+    ImageDistributionDnsRecord:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        AliasTarget:
+            DNSName:
+              Fn::GetAtt: ImageBucketDistribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2
+        HostedZoneName: ${self:custom.${self:provider.stage}.hostedZone}.
+        Name: ${self:custom.${self:provider.stage}.imageDomainName}.
+        Type: A
+
+  Outputs:
+     ImageBucketArn:
+       Value:
+         Fn::GetAtt: ImageBucket.Arn
+     ImageBucketDomain:
+       Value:
+         Fn::GetAtt: ImageBucket.DomainName
+     ImageBucketURL:
+       Value:
+         Fn::GetAtt: ImageBucket.WebsiteURL
+     URL:
+       Value: ${self:custom.${self:provider.stage}.domainName}

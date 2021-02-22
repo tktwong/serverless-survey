@@ -1,0 +1,204 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: tap-starter # NOTE: update this with your service name, e.g. tap-email or tap-flat; also update "serviceName", below
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  serviceName: tap-starter # match this with "service", above
+  accountId: ${{opt:accountId}} # I wish we could use ${AWS::AccountId} instead of passing this in, but Serverless chokes on ${saml:sub} in the Fn::Sub call that this requires...
+  prefix: ${{opt:prefix}}  # used as a prefix for bucket names. Needs to change between installations to avoid bucket name collisions. Use account owner name, e.g. alpha or jimmy
+  testBucket: ${{self:custom.prefix}}-${{self:custom.serviceName}}-user-tests # demotest system tests are stored here
+  triggerBucket: ${{self:custom.prefix}}-${{self:custom.serviceName}}-trigger-bucket # drop a file in this bucket to trigger handleFileTrigger
+provider:
+  name: aws
+  runtime: nodejs8.10
+  # by default AWS variables like ${saml:sub} use same format as Serverless variables like ${self:custom.prefix}
+  # We use variableSyntax here to change serverless vars to look instead like ${{self:custom.prefix}}
+  variableSyntax: '\${{([\s\S]+?)}}'
+
+# you can overwrite defaults here
+  stage: dev
+  region: us-west-2
+
+  iamRoleStatements:
+    # give privileges for the Lambda functions defined below to operate on S3 buckets
+    - Sid: GiveS3PermissionForLambdaFunctions
+      Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: 
+        - "arn:aws:s3:::${{self:custom.triggerBucket}}"
+        - "arn:aws:s3:::${{self:custom.triggerBucket}}/*"
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  filetrigger:
+    handler: dist/js/aws/handler.handleFileTrigger
+    events:
+      - s3:
+          bucket: ${{self:custom.triggerBucket}}
+          event: s3:ObjectCreated:*
+  hello:
+    handler: dist/js/aws/handler.hello
+    events:
+      - http:
+          path: hello
+          method: get
+          cors: true
+      - http:
+          path: hello
+          method: post
+          cors: true
+  doParse:
+    handler: dist/js/aws/handler.doParse
+    events:
+      - http:
+          path: doparse
+          method: post
+          cors: true
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+resources:
+ Resources:
+    # 
+    # Test bucket holds tests and expected responses, both Official and User tests; these are retrieved locally in ./testdata
+    #
+    TestBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${{self:custom.testBucket}}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+                - HEAD
+                - PUT
+                - DELETE
+              AllowedOrigins:
+                - "*"
+    # this role gives access for the UI. Needs to be referred to by auth0 rule after serverless deployment is completed
+    IamRoleBaleMailUser:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement: 
+            - Effect: Allow
+              Principal: 
+                Federated: "arn:aws:iam::${{self:custom.accountId}}:saml-provider/auth0-provider"
+              Action: "sts:AssumeRoleWithSAML"
+              Condition:
+                StringEquals: 
+                  "SAML:iss": "urn:sbcotton.auth0.com"
+        Policies:
+          - PolicyName: BaleMailUser
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                #
+                # S3 permissions: BaleMailUsers have a SAML token from Auth0. We give them permissions to access S3 buckets based on the saml:sub of each registered user;
+                # which is their userId as assigned by Auth0; they can access their own subfolders but nobody else's
+                #
+                - Sid: "AllowEverythingOnSpecificUserPath"
+                  Effect: Allow
+                  Action: "s3:*"                  
+                  Resource:
+                    - "arn:aws:s3:::${{self:custom.testBucket}}/users/${saml:sub}"
+                    - "arn:aws:s3:::${{self:custom.testBucket}}/users/${saml:sub}/*"
+                - Sid: "AllowListBucketIfSpecificPrefixIsIncludedInRequest"
+                  Action: "s3:ListBucket"
+                  Effect: "Allow"
+                  Resource: "arn:aws:s3:::${{self:custom.testBucket}}"
+                  Condition:
+                    StringEquals:
+                      "s3:prefix":
+                        - "users/${saml:sub}"
+                - Sid: "ReadOnlyAccessToOfficial"
+                  Effect: Allow
+                  Action:
+                    - "s3:ListBucket"
+                    - "s3:GetObject"
+                  Resource:
+                    - "arn:aws:s3:::${{self:custom.testBucket}}/official"
+                    - "arn:aws:s3:::${{self:custom.testBucket}}/official/*"
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

@@ -1,0 +1,102 @@
+service: serverless-eventing
+
+
+plugins:
+  - serverless-offline
+  - serverless-dynalite
+
+custom:
+  defaults:
+    log_level: INFO
+    stage: dev
+  config: ${file(./config/variables.yml):${opt:stage, self:custom.defaults.stage}}
+  dynalite:
+    start:
+      port: ${self:provider.environment.DYNAMODB_PORT}
+      region: ${self:provider.environment.DYNAMODB_REGION}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${opt:stage, self:custom.defaults.stage}
+  region: us-east-1
+  environment: ${file(./config/env.yml):${opt:stage, self:custom.defaults.stage}}
+  
+functions:
+  rulesApi:
+    handler: functions/rulesApi/handler.httpApp
+    events:
+      - http:
+          method: GET
+          path: rules/getAll
+          cors: true
+      - http:
+          method: POST
+          path: rules
+          cors: true
+      - http:
+          method: GET
+          path: alerts/getAll
+          cors: true
+
+  debugApp:
+    handler: functions/debugWeb/handler.httpApp
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+  # does not run via serverless-offline
+  ruleProcessor:
+    private: true
+    handler: functions/ruleProcessor/handler.streamProcessor
+    # memorySize: 128
+    # timeout: 10
+    events:
+      - stream:
+          type: kinesis
+          arn: ${self:custom.config.eventsStreamArn}
+          batchSize: 100
+          startingPosition: LATEST
+
+  alertProcessor:
+    private: true
+    handler: functions/alertProcessor/handler.streamProcessor
+    # memorySize: 128
+    # timeout: 10
+    events:
+      - stream:
+          type: kinesis
+          arn: ${self:custom.config.alertsStreamArn}
+          batchSize: 100
+          startingPosition: LATEST
+
+resources:  
+  Resources:
+    ResultsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_NAME_RESULTS}
+        AttributeDefinitions:
+          - AttributeName: unique_result_key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: unique_result_key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: DynamoDbTable
+      Properties:
+        PolicyName: lambda-dynamodb
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: arn:aws:dynamodb:*:*:table/${self:provider.environment.DYNAMODB_TABLE_NAME_RESULTS}
+        Roles:
+          - Ref: IamRoleLambdaExecution

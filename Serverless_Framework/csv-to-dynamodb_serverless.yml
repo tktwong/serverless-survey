@@ -1,0 +1,65 @@
+service: csv-to-dynamodb
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  bucket: csv-to-dynamodb-petr-reshetin
+  tableName: ${self:custom.stage}-real-estate
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ RealEstateTable, Arn ]
+
+  environment:
+    tableName: ${self:custom.tableName}
+  
+functions:
+  save:
+    handler: save.main
+    environment:
+      BUCKET: ${self:custom.bucket}
+  import:
+    handler: import.main
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .csv
+
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  # - ${file(resources/s3-bucket.yml)}

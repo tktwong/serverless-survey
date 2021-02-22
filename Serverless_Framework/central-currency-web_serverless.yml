@@ -1,0 +1,111 @@
+service: rates-aggregator
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-python-requirements
+  - serverless-stage-manager
+custom:
+  defaultStage: "dev"
+  stages:
+    - test
+    - dev
+    - prod
+  pythonRequirements:
+    dockerizePip: non-linux
+    slim: true
+
+  CURRENCY_RATES_TABLE_NAME: ${self:provider.stage}-currency-rates
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, ${self:custom.defaultStage}}
+  versionFunctions: false
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "logs:*"
+      Resource: "*"
+
+  environment:
+    CURRENCY_RATES_TABLE_NAME: ${self:custom.CURRENCY_RATES_TABLE_NAME}
+
+
+package:
+  exclude:
+    - env/**
+    - venv/**
+    - .idea/**
+    - .vscode/**
+    - tests/**
+    - node_modules/**
+
+
+functions:
+  parsePrivatbank:
+    handler: src.handlers.parsers.parse_privatbank
+    memorySize: 128
+    events:
+      - schedule:
+          rate: rate(30 minutes)
+          enabled: true
+  parseMonobank:
+    handler: src.handlers.parsers.parse_monobank
+    memorySize: 128
+    events:
+      - schedule:
+          rate: rate(30 minutes)
+          enabled: true
+  parseVkurse:
+    handler: src.handlers.parsers.parse_vkurse
+    memorySize: 128
+    events:
+      - schedule:
+          rate: rate(30 minutes)
+          enabled: true
+  parseOtpbank:
+    handler: src.handlers.parsers.parse_otpbank
+    memorySize: 128
+    events:
+      - schedule:
+          rate: rate(30 minutes)
+          enabled: true
+
+
+resources:
+  Resources:
+    currencyRatesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: type
+            AttributeType: S
+          - AttributeName: currency
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        GlobalSecondaryIndexes:
+          - IndexName: gsi1
+            KeySchema:
+              - AttributeName: type
+                KeyType: HASH
+              - AttributeName: currency
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        TableName: ${self:custom.CURRENCY_RATES_TABLE_NAME}

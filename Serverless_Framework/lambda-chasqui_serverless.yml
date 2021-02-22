@@ -1,0 +1,124 @@
+service: lambda-chasqui
+
+plugins:
+  - serverless-offline
+  - serverless-kms-secrets
+  - serverless-domain-manager
+  - serverless-plugin-aws-alerts
+
+provider:
+   name: aws
+   runtime: nodejs8.10
+   stage: develop
+   region: us-west-2
+   iamRoleStatements:
+     - Effect: Allow
+       Action:
+         - KMS:Decrypt
+       Resource: ${self:custom.kmsSecrets.keyArn}
+   environment:
+      SECRETS: ${self:custom.kmsSecrets.secrets.SECRETS}
+
+custom:
+  serverless-kms-secrets:
+    secretsFile: kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml
+  kmsSecrets: ${file(kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml)}
+  domainName: 
+    develop: api.uport.space
+    master: api.uport.me
+  customDomain:
+    domainName: ${self:custom.domainName.${opt:stage, self:provider.stage}}
+    basePath: chasqui
+    createRoute53Record: false
+    baseUrl: https://${self:custom.customDomain.domainName}/${self:custom.customDomain.basePath}
+  alerts:
+    dashboards: true
+    topics:
+      alarm: arn:aws:sns:us-west-2:113196216558:cloudwatch-alarm-to-slack
+    definitions: 
+      functionInvocations:
+        threshold: 1000 
+    alarms:
+      - functionThrottles
+      - functionErrors
+      - functionInvocations
+      - functionDuration
+
+      
+functions:
+  topic_post:
+    handler: src/api_handler.topic_post
+    description: Creates a new topic, or updates an existing one
+    events:
+      - http:
+         path: topic
+         method: post
+         cors: true
+      - http:
+         path: topic/{id}
+         method: post
+         cors: true
+         request:
+            parameters:
+              paths:
+                id: false
+      - http:
+         path: api/v1/topic/{id} #legacy
+         method: post
+         cors: true
+  topic_get:
+    handler: src/api_handler.topic_get
+    description: Retrieves a given topic
+    events:
+      - http:
+          path: topic/{id}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+  topic_get_legacy:
+    handler: src/api_handler.topic_get_legacy
+    description: Retrieves a given topic (legacy version)
+    events:
+      - http:
+          path: api/v1/topic/{id} #legacy
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+  topic_get_raw:
+    handler: src/api_handler.raw_topic_get
+    description: Retrieves a given topic (no envelope)
+    events:
+      - http:
+          path: raw/topic/{id}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+  topic_delete:
+    handler: src/api_handler.topic_delete
+    description: Deletes a topic
+    events:
+      - http:
+          path: topic/{id}
+          method: delete
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+      - http:
+         path: api/v1/topic/{id} #legacy
+         method: delete
+         cors: true
+         request:
+            parameters:
+              paths:
+                id: true

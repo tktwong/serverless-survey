@@ -1,0 +1,49 @@
+service: doge-tracker
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  environment:
+    DOGE_PRICE_TABLE: "${self:service}-${opt:stage, self:provider.stage}-dogeprices"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+functions:
+  updatePrice:
+    handler: handler.updatePrice
+    description: 'saves latest price for Dogecoin'
+    events:
+      - schedule: rate(1 minute)
+  getPrice:
+    handler: handler.getPrice
+    description: 'gets latest price for Dogecoin'
+    events:
+      - http:
+          path: price
+          method: get
+
+resources:
+  Resources:
+    PricesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.environment.DOGE_PRICE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: "createdAt"
+            AttributeType: "N"
+        KeySchema:
+          - AttributeName: "createdAt"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

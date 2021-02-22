@@ -1,0 +1,177 @@
+service: lambda-lighthouse-metrics
+
+frameworkVersion: "=1.49.0"
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:GetRecords
+        - dynamodb:DescribeStream
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:${self:provider.region}:*:*'
+    - Effect: Allow
+      Action:
+        - SNS:Subscribe
+        - SNS:Publish
+      Resource: 'arn:aws:sns:${self:provider.region}:*:*'
+    - Effect: Allow
+      Action:
+        - 's3:List*'
+        - 's3:Get*'
+        - 's3:Put*'
+      Resource:
+        'Fn::Join':
+          - ''
+          - - 'arn:aws:s3:::'
+            - Ref: ServerlessDeploymentBucket
+
+  environment:
+    BUCKET:
+      Ref: ServerlessDeploymentBucket
+    PAGES_TABLE_NAME: '${self:service.name}-${self:provider.stage}-pages'
+    JOBS_TABLE_NAME:  '${self:service.name}-${self:provider.stage}-jobs'
+    RUNS_TABLE_NAME:  '${self:service.name}-${self:provider.stage}-runs'
+    SNS_TOPIC_ARN:
+      Ref: snsPagesToTestTopic
+    DLQ_ARN:
+      Ref: snsPagesToTestDlqTopic
+
+package:
+  individualy: true
+
+functions:
+  initialize:
+    handler: handler.initialize
+    memorySize: 2048
+    timeout: 30
+    reservedConcurrency: 3
+  postProcessor:
+    handler: handler.postProcessor
+    memorySize: 128
+    reservedConcurrency: 10
+  worker:
+    handler: handler.worker
+    memorySize: 2048
+    timeout: 30
+    reservedConcurrency: 3
+    onError:
+      Ref: snsPagesToTestDlqTopic
+
+resources:
+  Resources:
+    pagesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: '${self:service.name}-${self:provider.stage}-pages'
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pageId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pageId
+            KeyType: HASH
+    jobsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: '${self:service.name}-${self:provider.stage}-jobs'
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: jobId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: jobId
+            KeyType: HASH
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    runsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: '${self:service.name}-${self:provider.stage}-runs'
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pageId
+            AttributeType: S
+          - AttributeName: jobId
+            AttributeType: S
+          - AttributeName: runId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: runId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: pageIdIndex
+            KeySchema:
+              - AttributeName: pageId
+                KeyType: HASH
+            Projection:
+              ProjectionType: KEYS_ONLY
+          - IndexName: jobIdIndex
+            KeySchema:
+              - AttributeName: jobId
+                KeyType: HASH
+            Projection:
+              ProjectionType: KEYS_ONLY
+    snsPagesToTestTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: '${self:service.name}-${self:provider.stage}-pagesToTest'
+    snsPagesToTestTopicSubs:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn:
+          Ref: snsPagesToTestTopic
+        Endpoint:
+          'Fn::GetAtt': [WorkerLambdaFunction, Arn]
+        Protocol: lambda
+    snsPagesToTestDlqTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: '${self:service.name}-${self:provider.stage}-pagesToTestDlq'
+    snsPagesToTestDlqTopicSubs:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn:
+          Ref: snsPagesToTestDlqTopic
+        Endpoint:
+          'Fn::GetAtt': [WorkerLambdaFunction, Arn]
+        Protocol: lambda
+    snsPagesToTestTopicLambdaPermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName:
+          Ref: WorkerLambdaFunction
+        Principal: sns.amazonaws.com
+        SourceArn:
+          Ref: snsPagesToTestTopic
+    snsPagesToTestTopicDlqLambdaPermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName:
+          Ref: WorkerLambdaFunction
+        Principal: sns.amazonaws.com
+        SourceArn:
+          Ref: snsPagesToTestDlqTopic
+    postProcessorLambdaEventSouceMapping:
+      Type: AWS::Lambda::EventSourceMapping
+      Properties:
+        EventSourceArn:
+          'Fn::GetAtt': [jobsTable, StreamArn]
+        FunctionName:
+          Ref: PostProcessorLambdaFunction
+        BatchSize: 1
+        StartingPosition: LATEST

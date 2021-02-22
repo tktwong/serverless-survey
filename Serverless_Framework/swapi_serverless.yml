@@ -1,0 +1,88 @@
+service: star-wars-serverless
+#app: your-app-name
+org: edwardefa
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  lambdaHashingVersion: 20201221
+  stage: prod
+  region: us-east-1
+  environment:
+    DynamoTableName: StarWars
+    swapiApi: https://swapi.py4e.com/api
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+
+functions:
+  peopleGetByIdFuncion:
+    name: people-get-by-id
+    timeout: 6 
+    handler: src/people/get-by-id.main
+    events:
+      - http:
+          path: /people/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  swapiPeopleGetByIdFuncion:
+    name: swapi-people-get-by-id
+    timeout: 6 
+    handler: src/swapi/people/get-by-id.main
+    events:
+      - http:
+          path: /swapi/people/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  peoplePostFuncion:
+    name: people-post
+    timeout: 6 
+    handler: src/people/post.main
+    events:
+      - http:
+          path: /people
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+
+  - Resources:
+      starWarsTable:
+        Type: AWS::DynamoDB::Table
+        Properties:
+          TableName: StarWars
+          AttributeDefinitions:
+            - AttributeName: typeData
+              AttributeType: S
+            - AttributeName: id
+              AttributeType: N
+          KeySchema:
+            - AttributeName: typeData
+              KeyType: HASH
+            - AttributeName: id
+              KeyType: "RANGE"
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+
+  

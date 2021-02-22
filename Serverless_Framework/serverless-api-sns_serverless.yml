@@ -1,0 +1,119 @@
+service: api
+
+custom: 
+  region: 'eu-west-1'
+  stage: 'dev'
+
+provider:
+  name: aws
+  role: xmyCustRole1 
+  apiKeys:
+    - myApiKey  
+  runtime: nodejs6.10
+  region: eu-west-1  
+  environment:
+    REGION: ${self:provider.region} 
+    PLATFORM_APP_ARN: ${file(./serverless.env.yml):${self:custom.stage}.PLATFORM_APP_ARN}
+
+functions:
+  create:
+    handler: sns/endpoint/create.create
+    events:
+      - http:
+          path: endpoint/create
+          method: post
+          cors: true
+          private: true
+
+  delete:
+    handler: sns/endpoint/delete.delete
+    events:
+      - http:
+          method: delete
+          cors: true
+          private: true
+          path: endpoint/delete
+          # path: endpoint/delete/{id}
+          # request: 
+          #   parameters: 
+          #     paths: 
+          #       id: true
+
+  list:
+    handler: sns/endpoint/list.list
+    events:
+      - http:
+          path: endpoint/list
+          method: get
+          cors: true          
+          authorizer:
+            name: authorizer
+            arn: ${file(./serverless.env.yml):${self:custom.stage}.COGNITO_POOL_ARN}
+
+resources:
+  Resources:
+    # PetsModelNoFlatten: 
+    #   Type: "AWS::ApiGateway::Model"
+    #   Properties: 
+    #     RestApiId: {Ref: ApiGatewayRestApi}
+    #     ContentType: "application/json"
+    #     Description: "Schema for Pets example"
+    #     Name: "PetsModelNoFlatten"
+    #     Schema: 
+    #       Fn::Join: 
+    #         - ""
+    #         - 
+    #           - "{"
+    #           - "   \"$schema\": \"http://json-schema.org/draft-04/schema#\","
+    #           - "   \"title\": \"PetsModelNoFlatten\","
+    #           - "   \"type\": \"array\","
+    #           - "   \"items\": {"
+    #           - "       \"type\": \"object\","
+    #           - "       \"properties\": {"
+    #           - "           \"number\": { \"type\": \"integer\" },"
+    #           - "           \"class\": { \"type\": \"string\" },"
+    #           - "           \"salesPrice\": { \"type\": \"number\" }"
+    #           - "       }"
+    #           - "   }"
+    #           - "}"
+    xmyCustRole1:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /my/cust/path/
+        RoleName: xmyCustRole1
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: myPolicyName
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow # note that these rights are given in the default policy and are required if you want logs out of your lambda(s)
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: arn:aws:logs:*:*:log-group:/aws/lambda/*:*:*
+                - Effect: Allow # note that these rights are given in the default policy and are required if you want logs out of your lambda(s)
+                  Action:
+                    - sns:CreatePlatformEndpoint
+                    - sns:ListEndpointsByPlatformApplication
+                    - sns:DeleteEndpoint
+                  Resource: arn:aws:sns:*:*:*           
+                - Effect: "Allow"
+                  Action:
+                    - "s3:PutObject"
+                  Resource:
+                    Fn::Join:
+                      - ""
+                      - - "arn:aws:s3:::"
+                        - "Ref" : "ServerlessDeploymentBucket"
+
+                        
+

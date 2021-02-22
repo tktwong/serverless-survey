@@ -1,0 +1,66 @@
+# For full config options, check the docs: docs.serverless.com
+
+# Plugins
+# serverless-iam-roles-per-function: https://github.com/functionalone/serverless-iam-roles-per-function
+#    Allows inheriting default IAM settings from the provider layer, and specifying more specific permissions per function without repeating common
+# serverless-pseudo-parameters
+#    Allows use of AWS variables in configuration
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-pseudo-parameters
+
+service: major-tom
+
+# Pin your service to only deploy with a specific Serverless version
+frameworkVersion: "=1.31.0"
+
+provider:
+  stage: "${opt:stage, 'dev'}"
+  name: aws
+  runtime: java8
+  logRetentionInDays: 7
+  stageTags:
+    SERVICE: "${self:service}"
+  tags:
+    SERVICE: "${self:service}"
+    STAGE: "${self:provider.stage}"
+
+custom:
+  topic:
+    notification: "${self:provider.stage}_majortom_notification-topic"
+
+package:
+  individually: true
+
+# TODO external various names and keys to variables
+functions:
+  event-handler:
+    package:
+      artifact: event-handler/build/distributions/event-handler.zip
+    handler: org.starchartlabs.majortom.event.handler.aws.Handler
+    description: Takes notification events and posts to Slack as messages
+    timeout: 300
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - "ssm:GetParameter"
+         - "ssm:GetParametersByPath"
+       Resource: { Fn::Join: [":", [ "arn:aws:ssm", { "Ref" : "AWS::Region" }, { "Ref" : "AWS::AccountId" }, "parameter/${self:provider.stage}/${self:service}/slack/url" ]] }
+    environment:
+        SLACK_URL_SSM: /${self:provider.stage}/${self:service}/slack/url
+    events:
+        - sns: ${self:custom.topic.notification}
+        
+     
+# Dynamically upload the ARN of the incoming notification topic to SSM for consumption   
+resources:
+  Resources:
+    SSMTopicArnParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Description: "SNS topc ARN for ${self:provider.stage} notifications to be processed by the Major Tom system"
+        Name: "/${self:provider.stage}/major-tom/aws/sns-topic-arn"
+        Type: "String"
+        Value: { Fn::Join: [":", ["arn:aws:sns", { "Ref": "AWS::Region" }, { "Ref" : "AWS::AccountId" }, "${self:custom.topic.notification}" ] ]  }

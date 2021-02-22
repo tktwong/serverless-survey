@@ -1,0 +1,74 @@
+service: serverless-transcribe-and-log
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  environment:
+    S3_AUDIO_BUCKET: ${self:service}-${opt:stage, self:provider.stage}-audio-records
+    S3_TRANSCRIPTION_BUCKET: ${self:service}-${opt:stage, self:provider.stage}-transcriptions
+    LANGUAGE_CODE: en-US
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}-transcription-table
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+      Resource:
+        - 'arn:aws:s3:::${self:provider.environment.S3_AUDIO_BUCKET}/*'
+        - 'arn:aws:s3:::${self:provider.environment.S3_TRANSCRIPTION_BUCKET}/*'
+    - Effect: Allow
+      Action:
+        - transcribe:StartTranscriptionJob
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  transcribe:
+    handler: handlers/transcribe.transcribe
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_AUDIO_BUCKET}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .mp3
+  log:
+    handler: handlers/log.log
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_TRANSCRIPTION_BUCKET}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .json
+
+resources:
+  Resources:
+    TranscriptionDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+plugins:
+  - mp3-uploader
+
+custom:
+  mp3_uploader:
+    bucket_name: ${self:provider.environment.S3_AUDIO_BUCKET}

@@ -1,0 +1,146 @@
+service: poc-dynamodb-stepfunc
+
+package:
+  individually: true
+
+plugins:
+  - serverless-step-functions
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-central-1
+  versionFunctions: true
+  tracing: true
+  timeout: 30
+  memorySize: 128
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource:
+        - Fn::Join:
+          - ":"
+          - - "arn"
+            - Ref: "AWS::Partition"
+            - "logs"
+            - Ref: "AWS::Region"
+            - Ref: "AWS::AccountId"
+            - "log-group"
+            - "/aws/lambda/"
+            - "*"
+    - Effect: "Allow"
+      Action:
+        - dynamodb:*
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:*"
+    - Effect: "Allow"
+      Action:
+        - "states:StartExecution"
+      Resource:
+        - "*"
+
+functions:
+  ingest-fdr:
+    handler: "src/ingestFDR.handler"
+    name: "ingest-fdr"
+    environment:
+      DYNAMODB_TABLE: "POC-SourceTable"
+      STATE_MACHINE: 
+        'Fn::Join':
+          - ":"
+          - - "arn"
+            - Ref: "AWS::Partition"
+            - "states"
+            - Ref: "AWS::Region"
+            - Ref: "AWS::AccountId"
+            - "stateMachine:orchestrate-iot-jobs-machine"
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [POCSourceTable, StreamArn]
+
+  job-orchestrator:
+    handler: "src/jobOrchestrator.handler"
+    name: "job-orchestrator"
+  
+  error-handler:
+    handler: "src/errorHandler.handler"
+    name: "error-handler"
+    environment:
+      DYNAMODB_TABLE: "POC-UnprocessedItems"
+
+stepFunctions:
+  stateMachines:
+    orchestrateIoTJobsMachine:
+      name: "orchestrate-iot-jobs-machine"
+      definition:
+        Comment: "A state machine to orchestrate IoT Jobs"
+        StartAt: "job-orchestrator"
+        States:
+          job-orchestrator:
+            Comment: "Lambda responsible for execute the IoT Job Orchestration"
+            Type: "Task"
+            Resource: {
+              "Fn::GetAtt": [ "job-orchestrator", "Arn" ]
+            }
+            Next: Done
+            Retry:
+              - ErrorEquals: ["THNotFoundError"]
+                IntervalSeconds: 1
+                BackoffRate: 2.0
+                MaxAttempts: 2
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                Next: "unprocessed-items"
+                ResultPath: "$.error"
+          unprocessed-items:
+            Comment: "Lambda responsible for save the unprocessed items"
+            Type: "Task"
+            Resource: {
+              "Fn::GetAtt": [ "error-handler", "Arn" ]
+            }
+            Next: UnprocessedState
+          Done:
+            Type: Pass
+            End: true
+          UnprocessedState:
+            Type: Fail
+            Error: "UnprocessedItems"
+
+
+
+resources:
+  Resources:
+    POCSourceTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "POC-SourceTable"
+        StreamSpecification:
+          StreamViewType: KEYS_ONLY
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"          
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 3
+          WriteCapacityUnits: 3
+    POCUnprocessedItems:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "POC-UnprocessedItems"
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"          
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 3
+          WriteCapacityUnits: 3

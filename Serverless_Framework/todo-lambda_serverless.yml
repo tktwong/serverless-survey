@@ -1,0 +1,67 @@
+service: todo-lambda
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  timeout: 120
+  memorySize: 512
+  stage: ${opt:stage}
+  region: us-east-1
+  # vpc:
+  #   securityGroupIds: ${self:custom.deployVars.SECURITY_GROUPS}
+  #   subnetIds: ${self:custom.deployVars.SUBNET_IDS}
+
+iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - lambda:InvokeFunction
+      - lambda:InvokeAsync
+    Resource: "*"
+
+plugins:
+  - serverless-offline
+  # - serverless-plugin-iopipe
+  # -- Custom domain plugin --
+  #
+  # - serverless-domain-manager
+
+package:
+  exclude:
+    - test/**
+
+custom:
+  deployVars: ${file(./config/deploy/deploy.${self:provider.stage}.yml)}
+  serverless-offline:
+    port: ${self:custom.deployVars.PORT}
+  cors:
+    origin: '*'
+    headers:
+      - Content-Type
+      - X-Amz-Date
+      - Authorization
+      - X-Api-Key
+      - X-Amz-Security-Token
+      - X-Amz-User-Agent
+      - Access-Control-Allow-Origin
+    allowCredentials: false
+
+  # -- Custom domain config --
+  #
+  # customDomain:
+  #   domainName: ${self:custom.deployVars.DOMAIN}
+  #   stage: ${self:provider.stage}
+  #   basePath: promotions
+  #   certificateName: ${self:custom.deployVars.CERT}
+  #   endpointType: 'edge'
+
+
+functions:
+  serverlessExampleThingOne:
+    handler: app/handlers/tasks.get
+    environment: ${file(./config/env/${self:provider.stage}.yml)}
+    name: ${self:custom.deployVars.STACK}-${self:provider.stage}-${self:service}-serverless-tasks-get
+    events:
+    - http:
+        path: tasks
+        method: get
+        cors: ${self:custom.cors}

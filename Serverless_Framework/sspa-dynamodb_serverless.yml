@@ -1,0 +1,114 @@
+service: spa-demo
+
+plugins:
+  - serverless-hooks-plugin
+  - serverless-s3-sync
+
+provider:
+  name: aws
+  region: ap-northeast-1
+  runtime: nodejs10.x
+  stage: prd
+  stackName: ${self:service}-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource:
+        - !GetAtt StockTable.Arn
+  resourcePolicy:
+    - Effect: Allow
+      Principal: '*'
+      Action: execute-api:Invoke
+      Resource: !Join
+        - ':'
+        - - arn:aws:execute-api
+          - ${self:provider.region}
+          - !Ref AWS::AccountId
+          - '*'
+      Condition:
+        IpAddress:
+          aws:SourceIp: ${self:custom.config.global.sourceIp}
+
+package:
+  exclude:
+    - '*'
+    - '*/**'
+  include:
+    - lambda/handler.js
+
+functions:
+  spa-demo:
+    name: sspa-demo-${self:provider.stage}
+    handler: lambda/handler.main
+    environment:
+      table_name: !Ref StockTable
+    events:
+      - http:
+          method: get
+          path: /
+          cors: true
+      - http:
+          method: post
+          path: /
+          cors: true
+      - http:
+          method: delete
+          path: /
+          cors: true
+
+custom:
+  s3Sync:
+    - bucketName: ${self:custom.config.s3.bucket_name}
+      localDir: static
+  hooks:
+    after:deploy:deploy:
+      - node deploy/setApiUrl.js ${self:provider.stackName}
+  config: ${file(./config.yml)}
+
+resources:
+  Resources:
+    StaticBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.config.s3.bucket_name}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    StaticBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref StaticBucket
+        PolicyDocument:
+           Statement:
+             Effect: Allow
+             Principal: '*'
+             Action: s3:GetObject
+             Resource: !Join
+                 - ''
+                 - - 'arn:aws:s3:::'
+                   - !Ref StaticBucket
+                   - '/*'
+             Condition:
+               IpAddress:
+                  aws:SourceIp: ${self:custom.config.global.sourceIp}
+    StockTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: StockTable
+  Outputs:
+    StaticBucketUrl:
+      Description: Web site url.
+      Value: !GetAtt StaticBucket.WebsiteURL

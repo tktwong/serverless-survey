@@ -1,0 +1,130 @@
+service: api-search
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin
+  - serverless-domain-manager
+  - serverless-prune-plugin
+  - serverless-apigw-binary
+
+custom:
+  domains:
+    default: ${self:service}.${opt:stage, 'sandpit'}.cloud.spacenow.com
+    prod: ${self:service}.spacenow.com
+  subnet:
+    sandpit:
+      privateA: subnet-0c75bbd1ea60481d4
+      privateB: subnet-070ac699acd775765
+      privateC: subnet-0eca793083726120c
+    prod:
+      privateA: subnet-04d5af2458ebdabbf
+      privateB: subnet-010ee1d571a9ca82c
+      privateC: subnet-069abf1da82eb3acc
+  securityGroup:
+    sandpit: sg-0dbf2b9d996f4c91e
+    prod: sg-00b4a2172f7e29276
+  customDomain:
+    domainName: ${self:custom.domains.${opt:stage, 'sandpit'}, self:custom.domains.default}
+    basePath: ""
+    stage: ${opt:stage, 'sandpit'}
+    certificateArn: ${ssm:/${opt:stageCert, 'SANDPIT'}/ACM_CERTIFICATE}
+    createRoute53Record: true
+    endpointType: "regional"
+  prune:
+    automatic: true
+    number: 5
+  apigwBinary:
+    types:
+      - "*/*"
+
+dotenv:
+  path: ./.env
+  basePath: ./
+  include:
+    - DATABASE_SCHEMA
+    - DATABASE_HOST
+    - DATABASE_USERNAME
+    - DATABASE_PASSWORD
+    - GOOGLE_MAP_API
+    - REDIS_HOST
+    - S3_BUCKET
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  timeout: 20
+  versionFunctions: false
+  stage: ${opt:stage, 'sandpit'}
+  region: ap-southeast-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "*"
+  vpc:
+    securityGroupIds:
+      - ${self:custom.securityGroup.${opt:stage, 'sandpit'}}
+    subnetIds:
+      - ${self:custom.subnet.${opt:stage, 'sandpit'}.privateA}
+      - ${self:custom.subnet.${opt:stage, 'sandpit'}.privateB}
+      - ${self:custom.subnet.${opt:stage, 'sandpit'}.privateC}
+  environment:
+    DATABASE_SCHEMA: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/DATABASE_SCHEMA~true}
+    DATABASE_HOST: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/DATABASE_HOST~true}
+    DATABASE_USERNAME: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/DATABASE_USER~true}
+    DATABASE_PASSWORD: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/DATABASE_PASSWORD~true}
+    GOOGLE_MAP_API: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/GOOGLE_MAP_API~true}
+    REDIS_HOST: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/REDIS_HOST~true}
+    S3_BUCKET: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/S3_BUCKET~true}
+
+functions:
+  put-object:
+    handler: src/functions/aws/s3/put-object.main
+    memorySize: 1024
+    events:
+      - http:
+          path: /v2/put-object/{id}
+          method: post
+          cors: true
+  put-object-from-url:
+    handler: src/functions/aws/s3/put-object-from-url.main
+    events:
+      - http:
+          path: /v2/put-object-from-url/{id}
+          method: post
+          cors: true
+  searchListingsByLatLng:
+    handler: src/functions/search/searchListingsByLatLng.main
+    memorySize: 2048
+    events:
+      - http:
+          path: search/listings/{latlng}
+          method: post
+          cors: true
+  searchQuery:
+    handler: src/functions/search/searchQuery.main
+    memorySize: 2048
+    events:
+      - http:
+          path: search/{key}/query
+          method: post
+          cors: true
+  searchSimilar:
+    handler: src/functions/search/searchSimilar.main
+    memorySize: 2048
+    events:
+      - http:
+          path: search/similar/{listingId}
+          method: get
+          cors: true
+  searchImages:
+    handler: src/functions/images/searchImages.main
+    memorySize: 2048
+    events:
+      - http:
+          path: search/images
+          method: get
+          cors: true
+
+resources:
+  - ${file(src/resources/api-gateway-errors.yml)}

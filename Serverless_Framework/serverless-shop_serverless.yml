@@ -1,0 +1,100 @@
+---
+service: coffee-store
+frameworkVersion: '2'
+provider:
+  name: aws
+  apiKeys:
+    - ${opt:stage, 'dev'}-ApiKey
+  runtime: ruby2.7
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-2
+  environment:
+    DYNAMODB_TABLE: Products
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'dynamodb:Query'
+        - 'dynamodb:Scan'
+        - 'dynamodb:GetItem'
+        - 'dynamodb:PutItem'
+        - 'dynamodb:UpdateItem'
+        - 'dynamodb:DeleteItem'
+      Resource: 'arn:aws:dynamodb:*:*:table/${self:provider.environment.DYNAMODB_TABLE}'
+functions:
+  show-product:
+    handler: app/handlers/show_product.ShowProduct.handler
+    description: "Handles logic for showing product resource"
+    events:
+      - http:
+          path: products/pk/{pk}/sk/{sk}
+          method: get
+          request:
+            parameters:
+              paths:
+                pk: true
+                sk: true
+          response:
+            headers:
+              Content-Type: "'application/json'"
+  create-product:
+    handler: app/handlers/create_product.CreateProduct.handler
+    description: "Handles logic for creating a product resource"
+    events:
+      - http:
+          path: /products
+          method: post
+          private: true
+          request:
+            schema:
+              application/json: ${file(create_request.json)}
+  delete-product:
+    handler: app/handlers/delete_product.DeleteProduct.handler
+    description: "Handles logic for removing a product resource"
+    events:
+      - http:
+          path: products/pk/{pk}/sk/{sk}
+          method: delete
+          private: true
+          request:
+            parameters:
+              paths:
+                pk: true
+                sk: true
+
+  update-product:
+    handler: app/handlers/update_product.UpdateProduct.handler
+    description: "Handles logic for updating a product resource"
+    events:
+      - http:
+          path: products/pk/{pk}/sk/{sk}
+          method: patch
+          private: true
+          request:
+            parameters:
+              paths:
+                pk: true
+                sk: true
+            schema:
+              application/json: ${file(update_request.json)}
+
+
+
+resources:
+  Resources:
+    TestProductDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: '${self:provider.environment.DYNAMODB_TABLE}'

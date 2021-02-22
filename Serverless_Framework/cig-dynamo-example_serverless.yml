@@ -1,0 +1,98 @@
+service:
+  name: cig-dynamo
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  timeout: 5
+  region: eu-west-1
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+    - dynamodb:DescribeTable
+    - dynamodb:Query
+    - dynamodb:Scan
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    - dynamodb:DeleteItem
+    Resource:
+    - "Fn::GetAtt": [ cigDb, Arn ]
+
+functions:
+  create:
+    handler: create.handler
+    name: ${self:service.name}-create-quote
+    events:
+    - http:
+        path: create
+        method: post
+        cors: true
+
+  quote-list:
+    handler: list.handler
+    name: ${self:service.name}-quote-list
+    events:
+    - http:
+        path: quote
+        method: get
+        cors: true
+
+  quote-scan:
+    handler: scan.handler
+    name: ${self:service.name}-quote-scan
+    events:
+    - http:
+        path: scan
+        method: get
+        cors: true
+
+  quote-detail:
+    handler: detail.handler
+    name: ${self:service.name}-quote-detail
+    events:
+    - http:
+        path: quote/{uuid}
+        method: get
+        cors: true
+
+resources:
+  Resources:
+    #Example https://gist.github.com/DavidWells/c7df5df9c3e5039ee8c7c888aece2dd5
+    cigDb:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: cigDb
+        # Watch out - reserved keywords https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ReservedWords.html
+        AttributeDefinitions:
+        - AttributeName: uuid
+          AttributeType: S
+        - AttributeName: effective_date
+          AttributeType: S
+        - AttributeName: agent_subproducer
+          AttributeType: S
+        KeySchema:
+        - AttributeName: uuid
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+        - IndexName: index-date_agent_subproducer
+          KeySchema:
+          - AttributeName: effective_date
+            KeyType: HASH
+          - AttributeName: agent_subproducer
+            KeyType: RANGE
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+          Projection:
+            NonKeyAttributes:
+            - uuid
+            - agent
+            - subproducer
+            ProjectionType: INCLUDE
+
+plugins:
+  - serverless-offline

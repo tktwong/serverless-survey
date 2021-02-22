@@ -1,0 +1,93 @@
+
+service: koa-ts
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev # Set the default stage used. Default is dev
+  region: ${file(serverless.env.yml):provider.region, us-east-1} # Overwrite the default region used. Default is us-east-1
+  profile: ${file(serverless.env.yml):provider.profile, default} # The default profile to use with this service
+  memorySize: 512 # Overwrite the default memory size. Default is 1024
+  timeout: 30 # The default is 6 seconds
+  logRetentionInDays: 14
+  endpointType: REGIONAL # Default API Gateway Endpoints should be regional. Other Options are: PRIVATE, or EDGE (serverless default)
+
+# Serverless Enterprise Settings (https://dashboard.serverless.com)
+# tenant:  MyTenantID
+# app:   MyAppID
+# org: MyOrgID
+
+plugins:
+  - serverless-plugin-select # Select functions to be deployed based on stage/region
+  - serverless-webpack       # Packages and parses functions for lambda
+  - '@anttiviljami/serverless-stack-output'  # Outputs final AWS stack details for downstream CI/CD processing 
+  # - serverless-domain-manager # For Custom Domain name management
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  prefix: ${self:service}-${self:custom.region}-${self:custom.stage}
+  api_prefix: ${self:service}-${self:custom.stage}
+
+  # For serverless-webpack
+  webpack:
+    webpackConfig: './webpack.config.js'
+    includeModules: true
+    packager: 'yarn'   # Packager that will be used to package your external modules
+  
+  # serverless-stack-output
+  output:
+    # handler: scripts/output.handler # Same syntax as you already know
+    file: .serverless/stack.json # toml, yaml, yml, and json format is available
+
+  # For serverless-domain-manager
+  # Comment out to disable custom domains (recommended on first run)
+  # customDomain:
+  #   domainName: ${file(serverless.env.yml):${self:custom.stage}.customDomain.domainName}
+  #   basePath: ''
+  #   stage: ${self:provider.stage}
+  #   createRoute53Record: ${file(serverless.env.yml):${self:custom.stage}.customDomain.createRoute53Record}
+  #   endpointType: ${file(serverless.env.yml):${self:custom.stage}.customDomain.endpointType}
+  #   certificateArn: ${file(serverless.env.yml):${self:custom.stage}.customDomain.certificateArn}
+  #   certificateName: ${file(serverless.env.yml):${self:custom.stage}.customDomain.certificateName}
+  #   hostedZoneId: ${file(serverless.env.yml):${self:custom.stage}.customDomain.hostedZoneId}
+
+# you can add packaging information here
+package:
+  individually: true
+
+functions:
+
+  server:
+    handler: functions/server.handler
+    description: KoaJS Typescript API Server
+    environment:
+      # BASE_URL: ${file(serverless.env.yml):${self:custom.stage}.environment.BASE_URL}
+      SLS_STAGE: ${self:custom.stage}
+      TOKEN_TTL: 1d
+    events:
+      - http:
+          method: any
+          path: '/{proxy+}'
+          cors: true
+      - http: # Required for Custom Domains
+          method: any
+          path: '/'
+          cors: true
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+  Outputs:
+    rootApiGatewayId:
+      Value:
+        Ref: ApiGatewayRestApi
+      Export:
+        Name: ${self:custom.prefix}-restApiId # Export a CF name to be used by other services
+    rootApiGatewayResourceId:
+      Value:
+         Fn::GetAtt:
+          - ApiGatewayRestApi
+          - RootResourceId
+      Export:
+        Name: ${self:custom.prefix}-rootResourceId # Export a CF name to be used by other services

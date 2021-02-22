@@ -1,0 +1,52 @@
+service: canary-deployments-test
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - codedeploy:*
+      Resource:
+        - "*"
+plugins:
+  - serverless-plugin-aws-alerts
+  - serverless-plugin-canary-deployments
+
+custom:
+  alerts:
+    dashboards: false
+  deploymentSettings:
+    stages:
+      - dev
+      - prod
+
+functions:
+  demo:
+    handler: handler.demo
+    environment:
+      VERSION: 6
+    events:
+      - http: GET demo
+    alarms:
+      - name: foo
+        namespace: 'AWS/Lambda'
+        metric: Errors
+        threshold: 1
+        statistic: Minimum
+        period: 60
+        evaluationPeriods: 1
+        comparisonOperator: GreaterThanOrEqualToThreshold
+    deploymentSettings:
+      type: Linear10PercentEvery3Minutes
+      alias: Live
+      preTrafficHook: preHook
+      postTrafficHook: postHook
+      alarms:
+        - DemoFooAlarm
+  preHook:
+    handler: hooks.pre
+  postHook:
+    handler: hooks.post
+
+

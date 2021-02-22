@@ -1,0 +1,64 @@
+service: aivivn-backend
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${opt:stage, 'dev'}
+  region: ap-southeast-1
+  environment:
+    POSTGRES_USER:  ${ssm:/aivivn/${self:provider.stage}/postgres/user}
+    POSTGRES_PASSWORD:  ${ssm:/aivivn/${self:provider.stage}/postgres/password}
+    POSTGRES_DB:  ${ssm:/aivivn/${self:provider.stage}/postgres/db}
+    POSTGRES_HOST:  ${ssm:/aivivn/${self:provider.stage}/postgres/host}
+    CACHE_REDIS_HOST:  ${ssm:/aivivn/${self:provider.stage}/redis/host}
+    CACHE_REDIS_PASSWORD:  ${ssm:/aivivn/${self:provider.stage}/redis/password}
+    SECRET_KEY:  ${ssm:/aivivn/${self:provider.stage}/secret-key}
+    SUBMISSION_UPLOAD_BUCKET: ${ssm:/aivivn/${self:provider.stage}/s3-bucket}
+    FLASK_ENV: ${file(./config/${self:provider.stage}.yml):FLASK_ENV}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        - "arn:aws:s3:::${ssm:/aivivn/${self:provider.stage}/s3-bucket}/*"
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+  - serverless-plugin-existing-s3
+
+custom:
+  wsgi:
+    app: aivivn_backend.app.app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: non-linux
+
+functions:
+  app:
+    handler: wsgi.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+  score-submission:
+    handler: handlers.score_submission
+    events:
+      - existingS3:
+          bucket: ${ssm:/aivivn/${self:provider.stage}/s3-bucket}
+          events:
+            - s3:ObjectCreated:*
+          rules:
+            - prefix: submissions/
+
+
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - tests/**
+    - .vscode/**
+    - .pytest_cache/**
+    - htmlcov/**
+    - '*.env'
+    - '**/__pycache__/*'

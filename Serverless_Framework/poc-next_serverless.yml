@@ -1,0 +1,79 @@
+service: next-js-ssr
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: sa-east-1
+
+plugins:
+  - serverless-nextjs-plugin
+
+custom:
+  serverless-nextjs:
+    nextConfigDir: "./"
+
+package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+  exclude:
+    - node_modules/**
+
+resources:
+  Resources:
+    ## Specifying the S3 Bucket
+    WebAppS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: next-js-ssr-s3
+        AccessControl: PublicRead
+    ## Specifying the CloudFront Distribution to server your Web Application
+    WebAppCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName: next-js-ssr-s3.s3.amazonaws.com
+              Id: myS3
+              S3OriginConfig: {}
+            - DomainName: m7y5qz1eu7.execute-api.sa-east-1.amazonaws.com
+              Id: next-lambda
+              OriginPath: /dev
+              CustomOriginConfig:
+                OriginProtocolPolicy: https-only
+          Enabled: 'true'
+          HttpVersion: http2
+          DefaultCacheBehavior:
+            DefaultTTL: 0
+            MaxTTL: 0
+            MinTTL: 0
+            Compress: 'true'
+            TargetOriginId: next-lambda
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+                QueryString: 'false'
+                Cookies:
+                  Forward: none
+          CacheBehaviors:
+            - AllowedMethods:
+                - GET
+                - HEAD
+              TargetOriginId: myS3
+              Compress: 'true'
+              PathPattern: /_next/static/*
+              ForwardedValues:
+                QueryString: 'false'
+                Cookies:
+                  Forward: none
+              ViewerProtocolPolicy: redirect-to-https
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: 'true'
+
+# functions:
+#   next:
+#     #handler: .next/serverless/pages/index.render
+#     handler: teste.render
+#     events:
+#       - http:
+#           path: next
+#           method: get

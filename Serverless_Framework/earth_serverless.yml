@@ -1,0 +1,46 @@
+service: earth-api-billing
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-west-2
+  stackName: stack-${self:service}-${self:custom.stage}
+  apiName: ${self:service}-${self:custom.stage}
+  profile: sls-earth
+
+  apiGateway:
+    restApiId:
+      'Fn::ImportValue': ${self:custom.stage}-ApiGatewayRestApiId
+    restApiRootResourceId:
+      'Fn::ImportValue': ${self:custom.stage}-ApiGatewayRestApiRootResourceId
+
+  environment:
+    BILLING_TABLENAME:
+      ${file(../../earth-infra/services/database/serverless.yml):custom.billingTableName}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - 'Fn::ImportValue': ${self:custom.stage}-BillingTableArn
+
+functions:
+  billing:
+    handler: billing/billing.main
+    events:
+      - http:
+          path: billing
+          method: post
+          cors: true
+          authorizer: aws_iam

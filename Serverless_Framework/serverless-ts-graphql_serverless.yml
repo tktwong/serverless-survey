@@ -1,0 +1,92 @@
+service: serverless-ts-graphql # TODO: rename your service
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: local
+  timeout: 10 # Default Lambda timeout
+  memorySize: 512 # Default Lambda Memory Size
+  versionFunctions: false # No functions versioning
+
+  environment: ${file(./configs/${self:provider.stage}.yml)}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - 'Fn::GetAtt': [DynamoDBTable, Arn]
+
+custom:
+  region: ${self:provider.region}
+  stage: ${opt:stage, self:provider.stage}
+  prefix: ${self:custom.stage}-${self:service}
+  process: ${self:custom.prefix}-process
+  config: ${self:custom.prefix}-config
+  dynamoTable: ${self:custom.prefix}-table
+  # domains:
+  #   prod: api.mycompany.com
+  #   staging: staging-api.mycompany.com
+  #   dev: dev-api.mycompany.com
+
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+        - typescript
+    webpackConfig: ./webpack/webpack.config.${self:custom.stage}.js
+
+  serverless-offline:
+    host: '0.0.0.0'
+
+  splitStacks:
+    perFunction: true
+    perType: true
+
+  # customDomain:
+  #   basePath: ""
+  #   domainName: ${self:custom.domains.${self:custom.stage}}
+  #   stage: "${self:custom.stage}"
+  #   createRoute53Record: true
+
+  dynamodb:
+    # If you only want to use DynamoDB Local in some stages, declare them here
+      stages:
+        - local
+      start:
+        port: 8000
+        heapInitial: 200m
+        heapMax: 1g
+        migrate: true
+        seed: true
+        convertEmptyValues: true
+      noStart: true
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-dynamodb-local
+  # - serverless-plugin-warmup
+  # - serverless-domain-manager
+
+functions: ${file(serverless-dynamic.js)}
+
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  # - ${file(resources/s3-bucket.yml)}
+  # Cognito
+  # - ${file(resources/cognito-user-pool.yml)}
+  # - ${file(resources/cognito-identity-pool.yml)}

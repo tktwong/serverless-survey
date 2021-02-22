@@ -1,0 +1,155 @@
+service: secrets-api
+
+# pin to a specific Serverless version
+frameworkVersion: ">=2.0.0 <3.0.0"
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs14.x
+  deploymentBucket: forgotpw-deploy-${env:AWS_ENV, 'dev'}
+  stage: live
+  stackName: secrets-api-live
+  memorySize: 2048 # 1024 is default
+  logRetentionInDays: 14 # cloudwatch logs
+  timeout: 10 # seconds
+  versionFunctions: true
+  apiGateway:
+    restApiId: ${env:REST_API_ID}
+    restApiRootResourceId: ${env:ROOT_RESOURCE_ID}
+    restApiResources:
+      '/v1': '${env:V1_RESOURCE_ID}'
+  iamRoleStatements:
+    -
+      Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:ListBucket
+      Resource:
+        - arn:aws:s3:::forgotpw-usertokens-${env:AWS_ENV, 'dev'}/*
+        - arn:aws:s3:::forgotpw-usertokens-${env:AWS_ENV, 'dev'}
+    -
+      Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:ListBucket
+      Resource:
+        - arn:aws:s3:::${ssm:/fpw/AUTHREQ_S3_BUCKET}/*
+        - arn:aws:s3:::${ssm:/fpw/AUTHREQ_S3_BUCKET}
+    -
+      Effect: Allow
+      Action:
+        - s3:GetObject
+      Resource: arn:aws:s3:::forgotpw-userdata-${env:AWS_ENV, 'dev'}/users/*
+    -
+      Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource: arn:aws:s3:::forgotpw-userdata-*
+    -
+      Effect: Allow
+      Action:
+        - s3:GetObject
+      Resource:
+        - arn:aws:s3:::${ssm:/fpw/AUTOGEN_S3_BUCKET}/*
+    -
+      Effect: Allow
+      Action:
+        - sns:Publish
+      Resource:
+        - !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:fpw-secret-store-request
+        - !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:fpw-secret-retrieve-request
+        - !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:fpw-code-send-request
+        - !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:fpw-nuke-account-request
+    -
+      Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+      Resource: 
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:dynamodb'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'table/fpw_verification_code'
+
+plugins:
+  - serverless-mocha-plugin
+  - serverless-prune-plugin
+  - serverless-plugin-diff
+
+custom:
+  # serverless-prune-plugin
+  prune:
+    automatic: true
+    number: 5
+
+package:
+  exclude:
+    - .git/**
+
+functions:
+  fpw-restapi:
+    name: 'fpw-restapi'
+    handler: index.handler
+    environment:
+      USERTOKEN_HASH_HMAC: ${ssm:/fpw/USERTOKEN_HASH_HMAC~true}
+      USERTOKENS_S3_BUCKET: forgotpw-usertokens-${env:AWS_ENV, 'dev'}
+      USERDATA_S3_BUCKET: forgotpw-userdata-${env:AWS_ENV, 'dev'}
+      USERDATA_S3_SSEC_KEY: ${ssm:/fpw/USERDATA_S3_SSEC_KEY~true}
+      STORE_SNS_TOPIC_NAME: fpw-secret-store-request
+      RETRIEVE_SNS_TOPIC_NAME: fpw-secret-retrieve-request
+      SENDCODE_SNS_TOPIC_NAME: fpw-code-send-request
+      NUKEACCOUNT_SNS_TOPIC_NAME: fpw-nuke-account-request
+      CODE_INVALIDCOUNT_MAX: 5
+      AUTHREQ_S3_BUCKET: ${ssm:/fpw/AUTHREQ_S3_BUCKET}
+      AUTHREQ_EXPIRE_MINS: 10
+      AUTOGEN_S3_BUCKET: ${ssm:/fpw/AUTOGEN_S3_BUCKET}
+      AUTOGEN_PW_NUMWORDS: 2
+      AUTOGEN_PW_MAXCHARSPERWORD: 15
+      LOG_LEVEL: 'debug'
+    events:
+      - http:
+          path: v1/{proxy+}
+          method: any
+          integration: lambda-proxy
+          cors:
+            origins:
+              - "*"
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - X-FPW-VerificationCode
+              - X-FPW-CountryCode
+              - Access-Control-Allow-Headers
+              - Access-Control-Allow-Origin
+              - Access-Control-Allow-Methods
+resources:
+  Resources:
+    StoreRequestSNSEvent:
+      Type: AWS::SNS::Topic
+      Properties: 
+        DisplayName: fpw-secret-store-request
+        TopicName: fpw-secret-store-request
+    RetrieveRequestSNSEvent:
+      Type: AWS::SNS::Topic
+      Properties: 
+        DisplayName: fpw-secret-retrieve-request
+        TopicName: fpw-secret-retrieve-request
+    SendCodeRequestSNSEvent:
+      Type: AWS::SNS::Topic
+      Properties: 
+        DisplayName: fpw-code-send-request
+        TopicName: fpw-code-send-request
+    NukeAccountRequestSNSEvent:
+      Type: AWS::SNS::Topic
+      Properties: 
+        DisplayName: fpw-nuke-account-request
+        TopicName: fpw-nuke-account-request

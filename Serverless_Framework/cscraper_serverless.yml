@@ -1,0 +1,112 @@
+service: cscraper
+
+frameworkVersion: ">=1.2.0 <2.0.0"
+
+plugins:
+  - serverless-aws-sync
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-west-1
+  memorySize: 128
+
+functions:
+  cscraper:
+    handler: cscraper.run
+    timeout: 30
+    events:
+      - schedule: rate(10 minutes)
+    environment:
+      ES_ENDPOINT:
+        Fn::GetAtt: [ ElasticSearchInstance , DomainEndpoint ]
+      AWS_KEY: ${env:ES_AWS_ACCESS_KEY_ID}
+      AWS_SECRET: ${env:ES_AWS_SECRET_ACCESS_KEY}
+      APP_RSS_FEEDS: ${env:APP_RSS_FEEDS}
+      APP_TITLE_REGEXP: ${env:APP_TITLE_REGEXP}
+
+resources:
+  Resources:
+    ElasticSearchInstance:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        EBSOptions:
+          EBSEnabled: true
+          VolumeType: gp2
+          VolumeSize: 10
+        ElasticsearchClusterConfig:
+          InstanceType: t2.small.elasticsearch
+          InstanceCount: 1
+          DedicatedMasterEnabled: false
+          ZoneAwarenessEnabled: false
+        ElasticsearchVersion: "6.0"
+        AccessPolicies:
+          Statement:
+            - Sid: ESPublicReadGetObject
+              Effect: Allow
+              Action:
+                - es:ESHttpGet
+              Principal: '*'
+            - Sid: ESAll
+              Effect: Allow
+              Action:
+                - es:*
+              Principal: '*'
+              Condition:
+                IpAddress:
+                  aws:SourceIp: ${env:ES_ALLOW_IP}
+    WebAppS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${env:S3_DNS}
+        AccessControl: PublicRead
+    WebAppS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: WebAppS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: S3PublicReadGetObject
+              Effect: Allow
+              Action: s3:GetObject
+              Resource: arn:aws:s3:::${env:S3_DNS}/*
+              Principal: '*'
+    WebAppCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName: ${env:S3_DNS}.s3.amazonaws.com
+              Id: cscraper-app
+              S3OriginConfig:
+                OriginAccessIdentity: ''
+          Enabled: true
+          HttpVersion: http2
+          ViewerCertificate:
+            AcmCertificateArn: arn:aws:acm:us-east-1:${env:CF_SSL_ARN}
+            SslSupportMethod: sni-only
+          Aliases:
+           - ${env:S3_DNS}
+          DefaultRootObject: index.html
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+            - ErrorCode: 403
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+            TargetOriginId: cscraper-app
+            ForwardedValues:
+              QueryString: true
+              QueryStringCacheKeys:
+                - v
+            ViewerProtocolPolicy: redirect-to-https
+  Outputs:
+    WebAppCloudFrontDistributionOutput:
+      Value:
+        Fn::GetAtt: [ WebAppCloudFrontDistribution, DomainName ]

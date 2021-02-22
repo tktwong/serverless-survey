@@ -1,0 +1,97 @@
+service: minion-land-api
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: us-east-2
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName: minions
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:us-east-2:539734613396:table/minions"
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource: "arn:aws:s3:::minion-land-api-upload"
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource: "arn:aws:s3:::minion-land-api-prod-serverlessdeploymentbucket-1oqg1gqzpimal"
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource: "arn:aws:s3:::minion-land-api-prod-serverlessdeploymentbucket-2od21w9x3mri"
+
+functions:
+  create:
+    handler: src/create.main
+    events:
+      - http:
+          path: minions
+          method: post
+          cors: true
+          authorizer: aws_iam
+  get:
+    handler: src/get.main
+    events:
+      - http:
+          path: minions/{id}
+          method: get
+          cors: true
+  list:
+    handler: src/list.main
+    events:
+      - http:
+          path: minions
+          method: get
+          cors: true
+  update:
+    handler: src/update.main
+    events:
+      - http:
+          path: minions/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  delete:
+    handler: src/delete.main
+    events:
+      - http:
+          path: minions/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+  email:
+    handler: src/email.main
+    events:
+      - http:
+          path: email
+          method: post
+          cors: true
+
+resources:
+  - ${file(resources/api-gateway-errors.yml)}

@@ -1,0 +1,91 @@
+# serverless.yml
+
+service: backend-portfolio
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+  - serverless-dynamodb-local
+
+custom:
+  profileTableName: 'profile-${self:provider.stage}'
+  userTableName: 'user-${self:provider.stage}'
+  wsgi:
+    app: app.app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: non-linux
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+    start:
+      migrate: true
+      dbPath: "./.dynamodb"
+
+resources:
+  Resources:
+    ProfileDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.profileTableName}    
+    UserDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: email
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.userTableName}
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: eu-west-1
+  environment:
+    PROFILE_TABLE: ${self:custom.profileTableName}    
+    USER_TABLE: ${self:custom.userTableName}
+    EMAIL_PORT: 465
+    EMAIL_RECEIVER: ${file(./config/envVars.js):getEnvVars.EMAIL_RECEIVER}
+    EMAIL_SENDER: ${file(./config/envVars.js):getEnvVars.EMAIL_SENDER}
+    EMAIL_SENDER_PASSWORD: ${file(./config/envVars.js):getEnvVars.EMAIL_SENDER_PASSWORD}
+    EMAIL_SERVER: smtp.gmail.com
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["ProfileDynamoDBTable", "Arn"] }
+        - { "Fn::GetAtt": ["UserDynamoDBTable", "Arn"] }
+    
+functions:
+  app:
+    handler: wsgi.handler
+    timeout: 15 # optional, in seconds, default is 6
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'

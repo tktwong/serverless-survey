@@ -1,0 +1,144 @@
+service: HOSTYOURMUSIC-STREAM-API
+
+plugins:
+  - serverless-webpack
+  - serverless-localstack
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-plugin-tracing
+  - serverless-pseudo-parameters
+
+package:
+  individually: true
+
+custom:
+  applicationName: 'STREAM.API'
+  component: HOSTYOURMUSIC
+  serviceAbbreviation: HYM
+
+  region: ${self:provider.region}
+  stage: ${self:provider.stage}
+  componentVersion: ${file(./package.json):version}
+  serviceVersion: ${file(./package.json):version}
+  releaseVersion: ${file(../package.json):releaseVersion}
+
+  configFileVersion: ${file(./package.json):configFileVersion}
+  deployConfigFile: ${file(./config/deploy_config_${self:provider.stage}_${self:custom.configFileVersion}.json)}
+  deployConfig: ${self:custom.deployConfigFile.${self:provider.region}}
+
+  domainNameBase: "${self:custom.deployConfig.DOMAIN_NAME}"
+
+  webpack:
+    includeModules: true
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 128
+  stage: ${opt:stage, "${env:NODE_ENV, 'cicd'}"}
+  region: ${opt:region, "${env:AWS_DEFAULT_REGION, 'eu-west-1'}"}
+  
+  versionFunctions: true
+  timeout: 30
+  tracing: true
+
+  apiGateway:
+    restApiId: ${self:custom.restAPIID}
+    restApiRootResourceId: ${self:custom.restApiRootResourceId}
+    restApiResources:
+      /api/file-stream: ${self:custom.restApiResourceId}
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'logs:CreateLogGroup'
+      Resource:
+        - Fn::Join:
+            - ':'
+            - - 'arn:aws:logs'
+              - Ref: 'AWS::Region'
+              - Ref: 'AWS::AccountId'
+              - 'log-group'
+              - Fn::Join:
+                  - '/'
+                  - - '/aws'
+                    - 'lambda'
+                    - Fn::Join:
+                        - '-'
+                        - - 'HYM'
+                          - '*'
+                          - '${self:provider.stage}'
+    - Effect: Allow
+      Action:
+        - xray:PutTelemetryRecords
+        - xray:PutTraceSegments
+      Resource: '*' ## No Service defined resources allowed - https://docs.aws.amazon.com/IAM/latest/UserGuide/list_awsxray.html#awsxray-resources-for-iam-policies
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:BatchWriteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:DeleteItem
+        - dynamodb:UpdateItem
+      Resource:
+        - Fn::Join:
+            - ':'
+            - - 'arn:aws:dynamodb'
+              - Ref: 'AWS::Region'
+              - Ref: 'AWS::AccountId'
+              - Fn::Join:
+                  - '/'
+                  - - 'table'
+                    - Fn::Join:
+                        - '-'
+                        - - 'HYM'
+                          - '*'
+                          - '${self:provider.stage}*'
+
+  environment:
+    ServiceName: HostYourMusic
+    ApplicationName: ${self:custom.applicationName}
+    ApplicationVersion: ${self:custom.releaseVersion}
+    ComponentVersion: ${self:custom.componentVersion}
+    ServiceVersion: ${self:custom.serviceVersion}
+    ReleaseVersion: ${self:custom.releaseVersion}
+    logGroup: ${self:custom.serviceAbbreviation}
+    logLevel: "info"
+    ServerName: 'serverless'
+    NODE_ENV: ${self:custom.stage}
+    STAGE: ${self:custom.stage}
+
+    DOMAIN_NAME_BASE: ${self:custom.domainNameBase}
+
+    auditLoggerEncryptAES: ${self:custom.vault.auditLoggerEncryptAES, ''}
+    AUDIT_LOGGER_KEY_AES: ${self:custom.vault.AUDIT_LOGGER_KEYAES, ''}
+    AUDIT_LOGGER_IV_AES: ${self:custom.vault.AUDIT_LOGGER_IVAES, ''}
+    AES_IV_KMS: ${self:custom.vault.AESIVKMS, ''}
+    AES_KEY_KMS: ${self:custom.vault.AESKeyKMS, ''}
+
+tags:
+  Application: ${self:custom.applicationName}
+  COMPONENT: ${self:custom.component}
+  Environment: ${self:provider.stage}
+  Service: ${self:custom.serviceAbbreviation}
+  Version: ${self:custom.releaseVersion}
+
+functions:
+  file-stream-get:
+    handler: src/controllers/v1/file-stream/getHandler.main
+    environment:
+      API_VERSION: 1
+      REQUEST_RESOURCE_NAME: "FileStream"
+      REQUEST_OPERATION: "GET"
+      REQUEST_API_CALL_NAME: "GetFileStream"
+    events:
+      - http:
+          path: api/file/stream
+          method: get
+          request:
+            parameters:
+              queryStrings:
+                id: true

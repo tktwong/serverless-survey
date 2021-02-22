@@ -1,0 +1,90 @@
+service:
+  name: reto-tecnico-backend
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+  globalTables:
+    regions:
+      - us-east-1
+    createStack: false
+  prune:
+    automatic: true
+    number: 3
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-iam-roles-per-function
+  - serverless-create-global-dynamodb-table
+  - serverless-prune-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  frameworkVersion: ‘1.64.1’
+  stage: ${opt:stage, 'local'}
+  region: ${opt:region, 'us-east-1'}
+  apiGateway:
+    minimumCompressionSize: 1024
+  environment:
+    DEBUG: '*'
+    NODE_ENV: ${self:provider.stage}
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    EMPLOYEE_TABLE: employee
+  tracing:
+    lambda: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.EMPLOYEE_TABLE}"
+
+functions:
+  rootData:
+    handler: src/handler.rootData
+    events:
+      - http:
+          method: get
+          path: rootData
+  starShipsData:
+    handler: src/handler.starShips
+    events:
+      - http:
+          method: get
+          path: starShips
+  employeeCreate:
+    handler: src/handler.employeeCreate
+    events:
+      - http:
+          method: post
+          path: /employee/register-employee
+  getEmployee:
+    handler: src/handler.getEmployee
+    events:
+      - http:
+          method: get
+          path: /employee/{dni}
+resources:
+  Resources:
+    employee:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: employee
+        AttributeDefinitions:
+          - AttributeName: dni
+            AttributeType: S
+        KeySchema:
+          - AttributeName: dni
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

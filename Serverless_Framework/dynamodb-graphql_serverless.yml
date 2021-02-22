@@ -1,0 +1,78 @@
+service: dynamodb-graphql
+
+provider:
+  tracing:
+    apiGateway: true
+    lambda: true
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, env:NODE_ENV, 'development'}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "ses:SendEmail"
+        - "ses:SendTemplatedEmail"
+      Resource:
+        - "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:Scan
+        # New permissions needed for stream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/*"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    start:
+      migrate: true
+    stages:
+      - development
+      - test
+
+package:
+  individually: true
+
+functions:
+  moodSurveyEmailer:
+    handler: services/mood-survey-emailer.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn: { Fn::GetAtt: ["DynamoDBGraphql", StreamArn] }
+          batchSize: 1
+
+  graphql:
+    handler: services/graphql.handler
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+      - http:
+          path: graphql
+          method: get
+          cors: true
+
+resources:
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/ses-templates.yml)}

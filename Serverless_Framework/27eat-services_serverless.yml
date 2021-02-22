@@ -1,0 +1,51 @@
+service: menu-skill
+
+frameworkVersion: 1.32.0
+
+custom:
+   systemName: 27eat
+   defaultRegion: us-east-1
+   region: ${opt:region, self:custom.defaultRegion}
+   stage: ${opt:stage, 'dev'}
+   objectPrefix: ${self:custom.systemName}-${self:service}-${self:custom.stage}
+   stageVars: ${file(./vars/${self:custom.stage}.yml)}
+   webpack:
+      webpackConfig: ../../webpack.config.js
+      includeModules:
+         forceExclude:
+            - aws-sdk
+         forceInclude:
+            - source-map-support
+         packagePath: ../../package.json
+
+plugins:
+   - serverless-webpack
+   - serverless-iam-roles-per-function
+
+package:
+   exclude:
+      - tests/**
+
+provider:
+   name: aws
+   runtime: nodejs8.10
+   stackTags:
+      CODE_VERSION: ${file(../../node_modules/silvermine-serverless-utils/src/get-code-version.js):both}
+      SYSTEM_NAME: ${self:custom.systemName}
+      SLS_SVC_NAME: ${self:service}
+   region: ${self:custom.region}
+   stage: ${self:custom.stage}
+   environment:
+      CODE_VERSION: ${file(../../node_modules/silvermine-serverless-utils/src/get-code-version.js):both}
+      SYSTEM_NAME: ${self:custom.systemName}
+      SLS_SVC_NAME: ${self:service}
+      SLS_STAGE: ${self:custom.stage}
+
+functions:
+   menuSkill:
+      name: ${self:custom.objectPrefix}
+      handler: src/MenuSkillHandler.handler
+      memorySize: 256
+      timeout: 2
+      events:
+         - alexaSkill: ${self:custom.stageVars.skillID}

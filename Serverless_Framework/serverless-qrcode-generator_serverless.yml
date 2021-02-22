@@ -1,0 +1,62 @@
+service: serverless-qr-generator
+
+custom: ${file(conf/custom.js)}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ${self:custom.region}
+  stage: dev
+  apiKeys:
+    - ${self:custom.apikey}
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+  usagePlanKey: ${self:custom.apikey}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+        - s3:DeleteObject
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+
+functions:
+  
+  create:
+    handler: src/handler.create
+    environment:
+      BUCKET: ${self:custom.bucket}
+      URL: "https://${self:custom.bucket}.s3-${self:custom.region}.amazonaws.com/"
+      ALLOW_ORIGIN: ${self:custom.origin}
+    events:
+      - http:
+          path: /
+          method: post
+          cors: true
+          private: true
+
+  delete:
+    handler: src/handler.delete
+    environment:
+      BUCKET: ${self:custom.bucket}
+      URL: "https://${self:custom.bucket}.s3-${self:custom.region}.amazonaws.com/"
+      ALLOW_ORIGIN: ${self:custom.origin}
+    events:
+      - http:
+          path: /
+          method: delete
+          cors: true
+          private: true
+
+resources:
+  Resources:
+    S3:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucket}

@@ -1,0 +1,85 @@
+service:
+  name: calculon
+plugins:
+  - serverless-webpack
+  # - serverless-pseudo-parameters
+
+package:
+  individually: true
+
+custom: 
+  region: ${opt:region, 'eu-west-1'}
+  # config: ${file(./config.${opt:stage, self:provider.stage}.yml)}
+  webpack:
+    webpackConfig: 'webpack.config.js'   # Name of webpack configuration file
+    includeModules: false   # Node modules configuration for packaging
+    packager: 'npm'   # Packager that will be used to package your external modules
+
+provider:
+  name: aws
+  region: ${self:custom.region}
+  runtime: nodejs8.10
+  apiKeys:
+    - dialogflow
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100      
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ec2:DescribeInstances
+        - ec2:StopInstances
+        - ec2:StartInstances
+      Resource: "*"
+  environment:
+    TOGGL_API_TOKEN: ${ssm:${self:service}-${opt:stage, self:provider.stage}-toggl-api-token}
+    TOGGL_WORKSPACE_ID: ${ssm:${self:service}-${opt:stage, self:provider.stage}-toggl-workspace-id}
+    TOGGL_USER_AGENT: ${ssm:${self:service}-${opt:stage, self:provider.stage}-toggl-user-agent}
+    SLACK_BOT_USER_OAUTH_ACCESS_TOKEN: ${ssm:${self:service}-${opt:stage, self:provider.stage}-slack-bot-oauth-access-token}
+    SLACK_VERIFICATION_TOKEN: ${ssm:${self:service}-${opt:stage, self:provider.stage}-slack-verification-token}
+    SLACK_DEFAULT_CHANNEL: "#general"
+
+functions:
+
+  fulfill-dialogflow-intents:
+    handler: functions/fulfill-dialogflow-intents.handler
+    events:
+      - http:
+          path: dialogflow/fulfill
+          method: post
+          private: true
+
+  # process-basecamp-commands:
+  #   handler: functions/process-basecamp-commands.handler
+  #   events:
+  #     - http:
+  #         path: basecamp/commands
+  #         method: post
+  #         private: false
+
+  # process-teams-message:
+  #   handler: functions/process-teams-message.handler
+  #   events:
+  #     - http:
+  #         path: teams/messages
+  #         method: post
+  #         private: false
+
+  run-intent:
+    handler: functions/run-intent.handler
+    events:
+      - schedule:
+          name: ${self:service}-${opt:stage, self:provider.stage}-SummaryIntent
+          rate: cron(00 17 ? * MON-FRI *)
+          enabled: true
+          input:
+            name: TogglSummaryIntent
+            entities: 
+              projects:
+                - collage
+                - wolf

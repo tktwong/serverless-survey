@@ -1,0 +1,92 @@
+service: chamlersBot-addResources
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  profile: amplelabs
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+  apiKeys:
+    - ${self:service}-${opt:stage, self:provider.stage}-addResourcesKey
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+functions:
+  create:
+    handler: lambdas/create.create
+    events:
+      - http:
+          path: resources
+          method: post
+          cors: true
+          private: true
+
+  list:
+    handler: lambdas/list.list
+    events:
+      - http:
+          path: resources
+          method: get
+          cors: true
+
+  get:
+    handler: lambdas/get.get
+    events:
+      - http:
+          path: resources/{id}
+          method: get
+          cors: true
+
+  # update:
+  #   handler: lambdas/update.update
+  #   events:
+  #     - http:
+  #         path: resources/{id}
+  #         method: put
+  #         cors: true
+
+  # delete:
+  #   handler: lambdas/delete.delete
+  #   events:
+  #     - http:
+  #         path: resources/{id}
+  #         method: delete
+  #         cors: true
+
+resources:
+  Resources:
+    FeedbackDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

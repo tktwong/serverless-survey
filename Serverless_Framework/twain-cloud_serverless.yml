@@ -1,0 +1,373 @@
+service: twain-cloud # NOTE: update this with your service name
+
+local: ${file(serverless.local.yml)} # local settings
+
+custom:
+  deployment: ${opt:deployment, 'private'} 
+  overrides: ${file(./serverless.deployment.${self:custom.deployment}.yml)}
+
+  optimize:
+    global: true
+    debug: false
+    minify: false
+    presets: ['es2016']
+
+plugins:
+  - serverless-plugin-optimize
+  - serverless-offline
+  - serverless-pseudo-parameters
+  - serverless-plugin-tracing
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:stage, 'us-east-1'}
+  tracing: true # enable X-Ray tracing
+
+  environment:
+    # General
+    SERVICE: ${self:service}
+    STAGE: ${self:provider.stage}
+    REGION: ${self:provider.region}
+    
+    # Databases
+    TWAIN_SCANNERS_TABLE: ${self:service}-scanners-${self:provider.stage}
+    CACHE_DB_NAME: ${self:service}-cache-${self:provider.stage}
+    USERS_DB_NAME: ${self:service}-users-${self:provider.stage}
+
+    # TWAIN Cloud
+    TWAIN_BUCKET: twain-cloud-bucket-#{AWS::AccountId}
+    TWAIN_IOT_ROLE: "twain-role-iot"
+
+    # TO BE CUSTOMIZED
+    TWAIN_IOT_ENDPOINT: ${self:custom.overrides.TWAIN_IOT_ENDPOINT}
+    TWAIN_API: ${self:custom.overrides.TWAIN_API}
+    TWAIN_WEB: ${self:custom.overrides.TWAIN_WEB}
+
+    # Auth General
+    REDIRECT_CLIENT_URI: ${self:provider.environment.TWAIN_WEB}
+    TOKEN_SECRET: token-secret-123
+
+    # Auth Providers
+    PROVIDER_FACEBOOK_ID: ${self:custom.overrides.PROVIDER_FACEBOOK_ID}
+    PROVIDER_FACEBOOK_SECRET: ${self:custom.overrides.PROVIDER_FACEBOOK_SECRET}
+    PROVIDER_GOOGLE_ID: ${self:custom.overrides.PROVIDER_GOOGLE_ID}
+    PROVIDER_GOOGLE_SECRET: ${self:custom.overrides.PROVIDER_GOOGLE_SECRET}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:BatchGetItem
+        - dynamodb:Query
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:Scan
+      # TODO: tweak this - we don't want to give access to all dynamoDB tables!
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:*"
+
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource: "*"
+
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+      Resource: "*"
+
+    - Effect: "Allow"
+      Action:
+        - 'iot:Publish'
+      Resource: "*"
+    - Effect: "Allow" # xray permissions (required)
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+
+package:
+  individually: true
+  excludeDevDependencies: false
+  exclude:
+    - .git/**
+    - node_modules/**
+
+functions:
+
+  # Registration APIs
+
+  register:
+    handler: api-register/register.handler
+    events:
+      - http:
+          path: register
+          method: post
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda    
+
+  poll:
+    handler: api-register/poll.handler
+    events:
+      - http:
+          path: poll
+          method: get
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda   
+
+  claim:
+    handler: api-register/claim.handler
+    events:
+      - http:
+          path: claim
+          method: post
+          authorizer: ${file(./serverless.auth.yml)}
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda   
+
+  # TWAIN Cloud APIs
+
+  user:
+    handler: api-cloud/user.handler
+    events:
+      - http:
+          path: user
+          method: get
+          authorizer: ${file(./serverless.auth.yml)}
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda
+
+  getScanners:
+    handler: api-cloud/getScanners.handler
+    events:
+      - http:
+          path: scanners
+          method: get
+          authorizer: ${file(./serverless.auth.yml)}
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda
+
+  getScannerStatus:
+    handler: api-cloud/getScannerStatus.handler
+    events:
+      - http:
+          path: scanners/{scannerId}
+          method: get
+          authorizer: ${file(./serverless.auth.yml)}
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda
+
+  deleteScanner:
+    handler: api-cloud/deleteScanner.handler
+    events:
+      - http:
+          path: scanners/{scannerId}
+          method: delete
+          authorizer: ${file(./serverless.auth.yml)}
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda
+
+  uploadBlock:
+    handler: api-cloud/upload.handler
+    events:
+      - http:
+          path: scanners/{scannerId}/blocks
+          method: post
+          authorizer: ${file(./serverless.auth.yml)}
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda
+
+  downloadBlock:
+    handler: api-cloud/download.handler
+    events:
+      - http:
+          path: scanners/{scannerId}/blocks/{blockId}
+          method: get
+          authorizer: ${file(./serverless.auth.yml)}
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda
+
+  scannerEventHandler:
+    handler: api-cloud/scannerEventHandler.handler
+    events:
+      - iot:
+          name: "twainCloudEvent"
+          sql: "SELECT * FROM 'twain/scanners/+/toCloud'"
+          description: "TWAIN Cloud scanner event handler"
+ 
+  # TWAIN Local APIs
+
+  infoex:
+    handler: api-local/direct.handler
+    events:
+      - http:
+          path: scanners/{scannerId}/privet/infoex
+          method: get
+          authorizer: ${file(./serverless.auth.yml)}
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                scannerId: true
+            template:
+              application/json: ${file(api-local/direct.req.vm)}
+
+  session:
+    handler: api-local/direct.handler
+    events:
+      - http:
+          path: scanners/{scannerId}/privet/twaindirect/session
+          method: post
+          authorizer: ${file(./serverless.auth.yml)}
+          cors: ${file(./serverless.cors.yml)}
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                scannerId: true
+            template:
+              application/json: ${file(api-local/direct.req.vm)}
+
+  # Authentication APIs
+
+  authorize:
+    handler: api-auth/handler.authorize  
+    
+  signin:
+    handler: api-auth/handler.signin
+    memorySize: 256
+    timeout: 15
+    events:
+      - http:
+          path: authentication/signin/{provider}
+          method: get
+          integration: lambda-proxy
+  callback:
+    handler: api-auth/handler.callback
+    memorySize: 256
+    timeout: 15
+    events:
+      - http:
+          path: authentication/callback/{provider}
+          method: get
+          integration: lambda-proxy
+  refresh:
+    handler: api-auth/handler.refresh
+    memorySize: 256
+    timeout: 15
+    events:
+      - http:
+          path: authentication/refresh/{refresh_token}
+          method: get
+          cors: true
+          integration: lambda
+          request:
+            template:
+              application/json: |
+                {
+                  "refresh_token":"$input.params('refresh_token')",
+                  "id":"$input.params('id')",
+                  "state":"$input.params('state')",
+                  "host":"$input.params().header.get('host')",
+                  "stage":"$context.stage"
+                }
+
+resources:
+  Resources:
+
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.TWAIN_BUCKET}
+        AccessControl: Private
+        CorsConfiguration:
+          CorsRules:
+          - AllowedMethods:
+            - GET
+            - PUT
+            - POST
+            - HEAD
+            AllowedOrigins:
+            - "*"
+            AllowedHeaders:
+            - "*"
+
+    # TWAIN Cloud Tables
+    TwainScannersTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.environment.TWAIN_SCANNERS_TABLE}
+
+    # Authentication Tables
+    CacheTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: token
+          AttributeType: S
+        - AttributeName: type
+          AttributeType: S
+        KeySchema:
+        - AttributeName: token
+          KeyType: HASH
+        - AttributeName: type
+          KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CACHE_DB_NAME}
+
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.USERS_DB_NAME}
+
+    # Roles
+    GenerateIoTKeysRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:provider.environment.TWAIN_IOT_ROLE}
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                AWS: "*" # TODO: we need to restrict this somehow once we have better understanding of roles/policies
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          -
+            PolicyName: "root"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action: ["iot:Connect", "iot:Subscribe", "iot:Publish", "iot:Receive"]
+                  Resource: "*" # TODO: looks like we give access to all IoT resrouces. Restrict this!
+        

@@ -1,0 +1,564 @@
+service: image-reader
+
+package:
+  individually: false
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 256
+
+  environment:
+    COLLECTION_ID_INDEX_NAME: IXCollectionById
+    COLLECTION_TABLE_NAME: Collections
+    IMAGES_BUCKET_NAME: udacity-cdnd-capstone-image-reader-${self:provider.stage}
+    IMAGES_COLLECTION_INDEX_NAME: IXImagesCreatedAtByCollection
+    IMAGES_FIND_ID_INDEX_NAME: IXImagesFindById
+    IMAGES_TABLE_NAME: Images
+    IMAGES_TOPIC_NAME: imagesTopic-${self:provider.stage}
+    NAMESPACE: Udacity/ImageReader
+    SIGNED_URL_EXPIRATION: 180
+    USERS_CONNECTIONS_TABLE: UsersConnections
+    USER_INDEX_NAME: IXCollectionsCreatedByUser
+    USERS_ID_INDEX_NAME: IXWSUserIdConnection
+  
+  tracing:
+    lambda: true
+    apiGateway: true
+  
+  # Common to most functions
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "cloudwatch:PutMetricData"
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+custom:
+  serverless-offline:
+    httpPort: 3003
+
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    stages:
+      - dev
+
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Image Reader API
+        description: Serverless Image Reader API
+    models:
+      - name: CollectionRequest
+        contentType: application/json
+        schema: ${file(validators/collection-request.json)}
+      - name: ImageRequest
+        contentType: application/json
+        schema: ${file(validators/image-request.json)}
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-aws-documentation
+  - serverless-reqvalidator-plugin
+  - serverless-iam-roles-per-function
+  - serverless-plugin-tracing
+
+functions:
+  Auth0:
+    environment:
+      JWKS_URL: https://dev-hkcdhb4r.us.auth0.com/.well-known/jwks.json
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  CreateImageCollection:
+    handler: src/lambda/http/collections/create.handler
+    events:
+      - http:
+          method: post
+          path: collections
+          cors: true
+          authorizer: Auth0
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Creates a new image collection
+            description: Create a new image collection in a specified category for the authenticated user
+            requestModels:
+              "application/json": CollectionRequest
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}
+
+  SingleUserImageCollection:
+    handler: src/lambda/http/collections/single.handler
+    events:
+      - http:
+          method: get
+          path: collections/{collectionId}
+          cors: true
+          authorizer: Auth0
+          documentation:
+            summary: Fetch user image collection
+            description: Fetch user image collection for the authenticated user by id
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}/index/${self:provider.environment.COLLECTION_ID_INDEX_NAME}
+
+  ListUserImageCollection:
+    handler: src/lambda/http/collections/list.handler
+    events:
+      - http:
+          method: get
+          path: collections
+          cors: true
+          authorizer: Auth0
+          documentation:
+            summary: List user's image collection
+            description: List user's image collection for the authenticated user
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}/index/${self:provider.environment.USER_INDEX_NAME}
+
+  UpdateImageCollection:
+    handler: src/lambda/http/collections/update.handler
+    events:
+      - http:
+          method: put
+          path: collections/{collectionId}
+          cors: true
+          authorizer: Auth0
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update an image collection
+            description: Update an image collection for the authenticated user
+            requestModels:
+              "application/json": CollectionRequest
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}/index/${self:provider.environment.COLLECTION_ID_INDEX_NAME}
+
+  DeleteImageCollection:
+    handler: src/lambda/http/collections/delete.handler
+    events:
+      - http:
+          method: delete
+          path: collections/{collectionId}
+          cors: true
+          authorizer: Auth0
+          documentation:
+            summary: Delete an image collection
+            description: Delete an image collection for the authenticated user
+            requestModels:
+              "application/json": CollectionRequest
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}/index/${self:provider.environment.COLLECTION_ID_INDEX_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE_NAME}/index/${self:provider.environment.IMAGES_COLLECTION_INDEX_NAME}
+
+  CreateImage:
+    handler: src/lambda/http/images/create.handler
+    events:
+      - http:
+          method: post
+          path: collections/{collectionId}/images
+          cors: true
+          authorizer: Auth0
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new image
+            description: Create a new image for a given collection and returns a signed url for upload to the user
+            requestModels:
+              "application/json": ImageRequest
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.IMAGES_BUCKET_NAME}/*
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}/index/${self:provider.environment.COLLECTION_ID_INDEX_NAME}
+
+  signedUrl:
+    handler: src/lambda/http/images/signedUrl.handler
+    events:
+      - http:
+          method: post
+          path: collections/{collectionId}/images/{imageId}/signedUrl
+          cors: true
+          authorizer: Auth0
+          documentation:
+            summary: Create a new signed url
+            description: Create a new signed url for image upload
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.IMAGES_BUCKET_NAME}/*
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}/index/${self:provider.environment.COLLECTION_ID_INDEX_NAME}
+  
+  UpdateImage:
+    handler: src/lambda/http/images/update.handler
+    events:
+      - http:
+          method: put
+          path: collections/{collectionId}/images/{imageId}
+          cors: true
+          authorizer: Auth0
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update image
+            description: Upload image with new title and description provided by the user
+            requestModels:
+              "application/json": ImageRequest
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}/index/${self:provider.environment.COLLECTION_ID_INDEX_NAME}
+
+  ImageFromCollection:
+    handler: src/lambda/http/images/list.handler
+    events:
+      - http:
+          method: get
+          path: collections/{collectionId}/images
+          cors: true
+          authorizer: Auth0
+          documentation:
+            summary: List images from a collection
+            description: List images from a collection
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}/index/${self:provider.environment.COLLECTION_ID_INDEX_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE_NAME}/index/${self:provider.environment.IMAGES_COLLECTION_INDEX_NAME}
+
+  DeleteImage:
+    handler: src/lambda/http/images/delete.handler
+    events:
+      - http:
+          method: delete
+          path: collections/{collectionId}/images/{imageId}
+          cors: true
+          authorizer: Auth0
+          documentation:
+            summary: Delete image
+            description: Delete image from user's collection
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}/index/${self:provider.environment.COLLECTION_ID_INDEX_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE_NAME}
+
+  RekognitionProcessor:
+    environment:
+      STAGE: ${self:provider.stage}
+      API_ID:
+        Ref: WebsocketsApi
+    handler: src/lambda/s3/images/rekognitionProcessor.handler
+    timeout: 10
+    events:
+      - sns:
+          arn:
+            Fn::Join:
+              - ":"
+              - - arn:aws:sns
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - ${self:provider.environment.IMAGES_TOPIC_NAME}
+          topicName: ${self:provider.environment.IMAGES_TOPIC_NAME}
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - rekognition:DetectText
+          - execute-api:ManageConnections
+        Resource: "*"
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE_NAME}/index/${self:provider.environment.IMAGES_FIND_ID_INDEX_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.COLLECTION_TABLE_NAME}/index/${self:provider.environment.COLLECTION_ID_INDEX_NAME}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_CONNECTIONS_TABLE}/index/${self:provider.environment.USERS_ID_INDEX_NAME}
+
+  ConnectHandler:
+    handler: src/lambda/ws/connect.handler
+    events:
+      - websocket:
+          route: $connect
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_CONNECTIONS_TABLE}
+
+
+  DisconnectHandler:
+    handler: src/lambda/ws/disconnect.handler
+    events:
+      - websocket:
+          route: $disconnect
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_CONNECTIONS_TABLE}
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: "request-body-validator"
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    CollectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.COLLECTION_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.USER_INDEX_NAME}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: ${self:provider.environment.COLLECTION_ID_INDEX_NAME}
+            KeySchema:
+              - AttributeName: id
+                KeyType: HASH
+            Projection:
+              NonKeyAttributes:
+                - userId
+              ProjectionType: INCLUDE
+
+    ImagesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.IMAGES_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: collectionId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: collectionId
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.IMAGES_COLLECTION_INDEX_NAME}
+            KeySchema:
+              - AttributeName: collectionId
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: ${self:provider.environment.IMAGES_FIND_ID_INDEX_NAME}
+            KeySchema:
+              - AttributeName: id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    WSUsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.USERS_CONNECTIONS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.USERS_ID_INDEX_NAME}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    ImagesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.IMAGES_BUCKET_NAME}
+        NotificationConfiguration:
+          TopicConfigurations:
+            - Event: s3:ObjectCreated:Put
+              Topic: !Ref ImagesTopic
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    ImagesTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Image bucket topic
+        TopicName: ${self:provider.environment.IMAGES_TOPIC_NAME}
+
+    ImagesBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: BucketPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForImagesObjects
+              Effect: Allow
+              Principal: "*"
+              Action: "s3:GetObject"
+              Resource: "arn:aws:s3:::${self:provider.environment.IMAGES_BUCKET_NAME}/*"
+        Bucket: !Ref ImagesBucket
+
+    SNSTopicPolicy:
+      Type: AWS::SNS::TopicPolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: "*"
+              Action: sns:Publish
+              Resource: !Ref ImagesTopic
+              Condition:
+                ArnLike:
+                  AWS:SourceArn: arn:aws:s3:::${self:provider.environment.IMAGES_BUCKET_NAME}
+        Topics:
+          - !Ref ImagesTopic

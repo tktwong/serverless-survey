@@ -1,0 +1,49 @@
+service: platformsh-github-authenticator
+
+provider:
+  name: aws
+  region: eu-central-1
+  runtime: provided
+  environment:
+    APP_DEBUG: true
+    APP_ENV: lambda
+    AWS_SNS_DSN: enqueue://acme?topic[name]=platformsh-github-authenticator
+    AWS_KEY: ${ssm:/platformsh-github-authenticator/aws-key}
+    AWS_SECRET: ${ssm:/platformsh-github-authenticator/aws-secret}
+    AWS_TARGET_REGION: ${ssm:/platformsh-github-authenticator/aws-target-region}
+    GITHUB_AUTH_METHOD: http_password
+    GITHUB_USERNAME: ${ssm:/platformsh-github-authenticator/github-username}
+    GITHUB_SECRET: ${ssm:/platformsh-github-authenticator/github-secret}
+    GITHUB_WEBHOOK_SECRET: ${ssm:/platformsh-github-authenticator/github-webhook-secret}
+    GITHUB_ORGANIZATION: ${ssm:/platformsh-github-authenticator/github-organization}
+    GITHUB_TEAM: ${ssm:/platformsh-github-authenticator/github-team}
+    PLATFORMSH_API_TOKEN: ${ssm:/platformsh-github-authenticator/platformsh-api-token}
+    PLATFORMSH_PROJECT: ${ssm:/platformsh-github-authenticator/platformsh-project}
+    GIT_REPO_URL: ${ssm:/platformsh-github-authenticator/git-repo-url}
+    GIT_PRIVATE_KEY: ${ssm:/platformsh-github-authenticator/git-private-key}
+
+plugins:
+  - ./vendor/bref/bref
+
+functions:
+  api:
+    handler: public/index.php
+    timeout: 30 # in seconds (API Gateway has a timeout of 30 seconds)
+    layers:
+      - ${bref:layer.php-73-fpm}
+    events:
+      -   http: 'ANY /'
+      -   http: 'ANY /{proxy+}'
+  worker:
+    handler: vendor/bin/message-consumer
+    timeout: 900
+    layers:
+      - ${bref:layer.php-73} # PHP
+      - arn:aws:lambda:eu-central-1:553035198032:layer:git:6
+    events:
+      - sns: platformsh-github-authenticator
+
+package:
+  exclude:
+    - var/**
+    - tests/**

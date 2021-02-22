@@ -1,0 +1,56 @@
+service: prismic-backup-service
+
+custom:
+  bucketName: ${file(./config/env.json):bucketName}
+
+provider:
+  name: aws
+  stage: dev
+  region: eu-west-1
+  runtime: nodejs4.3
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:PutObject"
+      Resource:
+        - "arn:aws:s3:::${self:custom.bucketName}"
+        - "arn:aws:s3:::${self:custom.bucketName}/*"
+
+functions:
+  BackupPrismic:
+    handler: bin/handler.backupPrismic
+    events:
+      - schedule: rate(1 day)
+
+resources:
+  Resources:
+    BackupBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketName}
+
+    ErrorSNSTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        Subscription: ${file(./config/env.json):ErrorSNSSubscriptions}
+
+    LambdaErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmActions:
+          - Ref: "ErrorSNSTopic"
+        AlarmDescription: "An error has been thrown by the lambda function responsible for backing up prismic data to S3."
+        AlarmName: PrismicBackupLambdaErrorAlarm-${opt:stage, self:provider.stage}
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: BackupPrismicLambdaFunction
+        EvaluationPeriods: 1
+        MetricName: Errors
+        Namespace: AWS/Lambda
+        Period: 60
+        Statistic: Sum
+        Threshold: 1
+        Unit: Count

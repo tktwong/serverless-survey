@@ -1,0 +1,78 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: aws-file-sharing
+custom:
+  bucket: aws-images
+  table: aws-images
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+
+# you can add statements to the Lambda function's IAM Role here
+iamRoleStatements:
+  - Effect: "Allow"
+    Action:
+      - "s3:PutObject"
+    Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+  - Effect: Allow
+    Action:
+      - dynamodb:Query
+      - dynamodb:Scan
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+    Resource: "arn:aws:iam::853873546449:role/aws-file-sharing-dev-us-east-1-lambdaRole"
+
+resources:
+  Resources:
+    AWSImagesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: N   
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: "${self:custom.table}"
+
+functions:
+  listImages:
+    handler: listImages.list
+    memorySize: 128
+    description: List all the images in database
+    events:
+      - http:
+          path: images 
+          method: get
+  saveImage:
+    handler: saveImage.save
+    memorySize: 128
+    description:  Upload a image to database
+    events:
+      - http: 
+          path: images
+          method: post
+    environment:
+      BUCKET: ${self:custom.bucket}

@@ -1,0 +1,89 @@
+service: moodometer-api
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ap-southeast-2
+  timeout: 20
+  environment:
+    MOOD_TABLE_NAME: ${self:custom.moodTableName}
+  httpApi:
+    payload: '1.0'
+    cors:
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+        - Time-Zone
+    authorizers:
+      jwtAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl: ${env:AUTH0_ISSUER_URL}
+        audience:
+          - ${env:AUTH0_AUDIENCE}
+  logs:
+    httpApi: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - 'Fn::GetAtt': [MoodDynamoDbTable, Arn]
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  moodTableName: mood-${self:custom.stage}
+
+functions:
+  getMood:
+    handler: handler.getMood
+    events:
+      - httpApi:
+          path: /mood
+          method: GET
+          cors: true
+          authorizer: jwtAuthorizer
+  postMood:
+    handler: handler.postMood
+    events:
+      - httpApi:
+          path: /mood
+          method: POST
+          cors: true
+          authorizer: jwtAuthorizer
+  getHistory:
+    handler: handler.getHistory
+    events:
+      - httpApi:
+          path: /history
+          method: GET
+          cors: true
+          authorizer: jwtAuthorizer
+
+resources:
+  Resources:
+    MoodDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:custom.moodTableName}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: date
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: date
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST

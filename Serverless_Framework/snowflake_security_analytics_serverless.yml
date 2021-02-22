@@ -1,0 +1,115 @@
+org: randypitcherii
+app: snowwatch-fivetran
+service: snowwatch-fivetran
+
+custom:
+  version: 2.0.0
+  # change these values 
+  readerRoleArns: ${opt:reader_role_arns, ''} # comma-separated string of snowwatch-reader-role ARNs used to monitor other accounts. Leave this empty to just monitor the current account. You can modify the empty string here or pass the value as an argument to the serverless command (serverless deploy --reader_role_arns mycoolarn,yourcoolarn,ourcoolarn) 
+  awsConfigProfileName: ${opt:aws_config_profile_name, 'default'} # Change this if you want to use a different .aws/credentials profile or pass it in as an argument to the serverless command (serverless deploy --awsConfigProfileName altProfileName)
+  awsAccountID: ${opt:account_id, ''} # Replace this value with your account ID or pass it in as an argument to the serverless command (serverless deploy --account_id 123456)
+  lambda: 
+    timeoutInSeconds: 120
+  fivetranExternalID: ${opt:fivetran_external_id, ''} # get this from the new lambda connector config wizard in fivetran.
+
+  # probably don't change these values
+  stage: ${opt:stage, 'prod'}
+
+# cloud provider config
+provider:
+  name: aws
+  runtime: python3.6
+  stage: prod
+  region: us-east-1
+  profile: ${self:custom.awsConfigProfileName} # aws config profile to use from ~/.aws/config
+  environment:
+    READER_ROLE_ARNS: ${self:custom.readerRoleArns}
+  iamRoleStatements:
+    - Effect: Allow # ec2 permissions
+      Action:
+        - ec2:DescribeInstances
+        - ec2:DescribeRegions # used to iterate through each region with ec2 entities instead of blindly checking everything
+        - ec2:DescribeSecurityGroups
+      Resource:
+        - '*'
+    - Effect: Allow # elb permissions
+      Action:
+        - elasticloadbalancing:DescribeLoadBalancers
+        - elasticloadbalancing:DescribeListeners
+      Resource:
+        - '*'
+    - Effect: Allow # iam permissions
+      Action:
+        - iam:GetAccountAuthorizationDetails
+        - iam:ListMFADevices
+      Resource:
+        - '*'
+    - Effect: 'Allow' # assume role permissions. DELETE THIS ELEMENT IF NO ARNS ARE PRESENT
+      Action:
+        - 'sts:AssumeRole'
+      Resource: 
+        Fn::Split: 
+          - ","
+          - ${self:custom.readerRoleArns}
+  tags:
+    author: randypitcherii@gmail.com
+    githubLink: https://github.com/randypitcherii/snowflake_security_analytics
+    version: ${self:custom.version}
+  stackTags:
+    author: randypitcherii@gmail.com
+    githubLink: https://github.com/randypitcherii/snowflake_security_analytics
+    version: ${self:custom.version}
+    
+# define lambda functions
+functions:
+  monitorEc2Instances:
+    description: describes each ec2 instance in each region and writes the data to json files in s3
+    handler: ec2Monitoring.monitor
+    timeout: ${self:custom.lambda.timeoutInSeconds}
+  monitorSecurityGroups:
+    description: describes each security group in each region and writes the data to json files in s3
+    handler: securityGroupMonitoring.monitor
+    timeout: ${self:custom.lambda.timeoutInSeconds}
+  monitorELBs:
+    description: describes each elb in each region and writes the data to json files in s3
+    handler: elbMonitoring.monitor
+    timeout: ${self:custom.lambda.timeoutInSeconds}
+  monitorIAM:
+    description: gathers user, policy, and MFA data and writes it to json files in s3
+    handler: iamMonitoring.monitor
+    timeout: ${self:custom.lambda.timeoutInSeconds}
+
+# Create resources with separate CloudFormation templates
+resources:
+  - Resources:
+      # external role for fivetran to use to invoke snowwatch lambda functions
+      SnowwatchFivetranInvokeLambdaRole:
+        Type: AWS::IAM::Role
+        Properties: 
+          RoleName: snowwatch-fivetran-invoke-lambda-role
+          
+          AssumeRolePolicyDocument: 
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Principal:
+                  AWS: "arn:aws:iam::834469178297:root"
+                Condition:
+                  StringEquals:
+                    "sts:ExternalId": ${self:custom.fivetranExternalID}
+                Action: 
+                  - "sts:AssumeRole"
+              - Effect: Allow
+                Principal:
+                  Service: "lambda.amazonaws.com"
+                Action: 
+                  - "sts:AssumeRole"
+
+          Policies: 
+            - PolicyName: snowwatch_fivetran_lambda_invoke_access
+              PolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                  - Effect: "Allow"
+                    Action: "lambda:InvokeFunction"
+                    Resource: "arn:aws:lambda:us-east-1:${self:custom.awsAccountID}:function:snowwatch-fivetran*"

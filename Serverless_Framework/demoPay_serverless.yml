@@ -1,0 +1,107 @@
+service: main
+app: demopay
+org: greedyman
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ap-south-1
+  #service wide IAM roles
+  #later add separately for each Lambda
+  iamRoleStatements:
+    - Effect: Allow #for cognito
+      Action:
+        - cognito-idp:AdminGetUser
+        - cognito-idp:AdminCreateUser
+      Resource:
+        - Fn::GetAtt:
+            - CognitoUserPool
+            - Arn
+    - Effect: Allow #to invoke SMS sending Lambda
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*" #later add list of functions to be invoked
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+  environment:
+    SEND_MESSAGE_FUNCTION: ${self:service}-${self:provider.stage}-sendMessage
+
+plugins:
+  - serverless-plugin-include-dependencies
+  - serverless-offline
+package:
+#  include: #include doesn't automatically exclude files
+  exclude:
+    - ./**
+    - node_modules/**/aws-sdk/**
+#  individually: true #keep false for faster deployment during dev
+
+functions:
+  router: #route API gateway messages
+    handler: src/router/handler.main
+    environment:
+      USER_POOL_ID: ap-south-1_hvpAGLaHG
+#      USER_POOL_ID: !Ref CognitoUserPool #use this when deploying
+      REGISTER_FUNCTION: ${self:service}-${self:provider.stage}-register
+      BROWSE_FUNCTION: ${self:service}-${self:provider.stage}-browse
+
+    events:
+      - http:
+          path: / #URL given to textLocal webhook
+          method: POST
+          async: true #immediately return 200 to textlocal API. Router invoked asynchronously.
+          integration: lambda
+          #custom Lambda authorizer for 'basic access authentication'.
+          authorizer:
+            name: authorizer
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+
+  authorizer: #this is a function name
+    handler: src/authorizer.handler
+    environment:
+      SMS_API_SECRET: ${param:SMS_API_SECRET}
+
+  sendMessage:
+    handler: src/sendMessage/handler.main
+    environment:
+      TEXTLOCAL_API_KEY: ${param:TEXTLOCAL_API_KEY}
+
+  register:
+    handler: src/register/handler.main
+    environment:
+      USER_POOL_ID: ap-south-1_hvpAGLaHG
+
+  browse:
+    handler: src/browse/handler.main
+    environment:
+      CATALOGACTIVE_TABLE_NAME: !Ref catalogActive
+
+  pay:
+    handler: src/pay/handler.main
+    environment:
+      CATALOGACTIVE_TABLE_NAME: !Ref catalogActive
+      CATALOGINACTIVE_TABLE_NAME: !Ref catalogInactive
+      USERTRANSACTIONS_TABLE_NAME: !Ref userTransactions
+resources:
+  - Resources:
+      GatewayResponse:
+        Type: 'AWS::ApiGateway::GatewayResponse'
+        Properties:
+          ResponseParameters:
+            gatewayresponse.header.WWW-Authenticate: "'Basic'" #this header tells caller about authentication format
+          ResponseType: UNAUTHORIZED
+          RestApiId:
+            Ref: 'ApiGatewayRestApi'
+          StatusCode: '401' #401 Unauthorized message shown if authentication invalid.
+
+  - ${file(res/dynamodb-tables.yml)} #DynamoDB
+  - ${file(res/cognito-user-pool.yml)} #Cognito

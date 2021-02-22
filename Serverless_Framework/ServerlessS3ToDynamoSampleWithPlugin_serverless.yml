@@ -1,0 +1,57 @@
+service: s3todynamoservice
+
+frameworkVersion: ">=1.1.0"
+
+custom:
+  bucket: serverlesstests3todynamo1010
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:BatchWriteItem
+      Resource: "*"     
+functions:
+  postprocess:
+    handler: handler.postprocess
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .csv
+resources:
+  Resources:
+    serverlesstests3todynamo1010:
+      Type: AWS::S3::Bucket
+    S3ToDynamoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "Identifier"
+            AttributeType: "S"
+          -
+            AttributeName: "Name"
+            AttributeType: "S"
+        KeySchema:
+          -
+            AttributeName: "Identifier"
+            KeyType: "HASH"
+          -
+            AttributeName: "Name"
+            KeyType: "RANGE"
+        ProvisionedThroughput: 
+          ReadCapacityUnits: "10"
+          WriteCapacityUnits: "10"
+        TableName: "S3_TO_DYNAMO_TABLE"
+plugins:
+  localPath: './plugins'
+  modules:
+    - uploaddataplugin

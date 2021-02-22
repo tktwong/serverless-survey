@@ -1,0 +1,66 @@
+service: WhatsAppPush
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  environment: 
+    TABLE_NAME: "Templates"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"    
+
+functions:
+  CreateTemplates:
+    handler: api/templates.Create
+    memorySize: 128
+    description: This function create a message template.
+    events:
+      - http:
+         path: templates
+         method: post
+
+  UpdateTemplates:
+    handler: api/templates.Update
+    memorySize: 128
+    description: This function update a message template.
+    events:
+      - http:
+         path: templates/{user_id}/{template_id}       
+         method: put
+       
+resources:
+  Resources:
+    MyDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "user_id"
+            AttributeType: "S"
+          -
+            AttributeName: "template_id"  
+            AttributeType: "S"
+        KeySchema:
+          -
+            AttributeName: "user_id"    
+            KeyType: "HASH"
+          -
+            AttributeName: "template_id"
+            KeyType: "RANGE"  
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"            
+
+        TableName: ${self:provider.environment.TABLE_NAME}  

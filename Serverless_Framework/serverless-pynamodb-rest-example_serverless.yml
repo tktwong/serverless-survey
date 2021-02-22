@@ -1,0 +1,126 @@
+service: serverless-rest-api-with-pynamodb
+
+frameworkVersion: ">=1.20.2 <2.0.0"
+
+plugins:
+  - serverless-python-requirements
+
+package:
+  exclude:
+    - node_modules/**
+    - .idea/**
+    - .requirements/**
+    - env/**
+    - README.md
+    - package.json
+    - package-lock.json
+    - requirements.txt
+    - todos/test/**
+
+provider:
+  name: aws
+  runtime: python3.6
+  region: eu-central-1
+  apiKeys:
+    - ${self:service}-${opt:stage, self:provider.stage}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    DYNAMODB_REGION: ${self:provider.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  create:
+    handler: todos/create.handle
+    events:
+      - http:
+          path: todos
+          method: post
+          cors: true
+          integration: lambda-proxy
+          private: true
+
+  list:
+    handler: todos/list.handle
+    events:
+      - http:
+          path: todos
+          method: get
+          cors: true
+          integration: lambda-proxy
+          private: true
+
+  get:
+    handler: todos/get.handle
+    events:
+      - http:
+          path: todos/{todo_id}
+          method: get
+          cors: true
+          integration: lambda-proxy
+          private: true
+          request:
+            parameters:
+              paths:
+                todo_id: true
+
+  update:
+    handler: todos/update.handle
+    events:
+      - http:
+          path: todos/{todo_id}
+          method: put
+          cors: true
+          integration: lambda-proxy
+          private: true
+          request:
+            parameters:
+              paths:
+                todo_id: true
+  delete:
+    handler: todos/delete.handle
+    events:
+      - http:
+          path: todos/{todo_id}
+          method: delete
+          cors: true
+          integration: lambda-proxy
+          private: true
+          request:
+            parameters:
+              paths:
+                todo_id: true
+
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: todo_id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: todo_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+custom:
+  pythonRequirements:
+    noDeploy:
+      - boto3
+      - botocore

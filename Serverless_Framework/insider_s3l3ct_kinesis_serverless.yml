@@ -1,0 +1,418 @@
+service: insider
+
+plugins:
+  - serverless-offline
+  - serverless-s3-sync
+  - serverless-domain-manager
+  - serverless-python-requirements
+
+package:
+  exclude:
+    - .vscode/**
+    - venv/**
+    - env/**
+    - stock_screener_py/venv/**
+    - stock_screener_py/env/**
+    - stock_screener_py/__pycache__/**
+    - stock_screener_py/.vscode/**
+    - stock_screener_py/bin/**
+    - stock_screener_py/lib/**
+    - stock_screener_py/test/**
+    - bin/**
+    - lib/**
+    - test/**
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${opt:stage, 'dev'}
+  region: eu-central-1
+  deploymentBucket:
+    name: learning-serverless
+  iamRoleStatements:
+  - Effect: Allow
+    Resource: "*"
+    Action:
+    - s3:*
+    - firehose:*
+    - glue:*
+    - lambda:InvokeFunction
+  environment:
+    select_bucket: ${self:custom.select_bucket}
+    optionsDeliveryStream: ${self:custom.optionsDeliveryStream}
+    #optionsDeliveryStreamArn: ${self:custom.optionsDeliveryStreamArn}
+    insiderDBGlue: ${self:custom.insiderDBGlue}
+    optionsGlueTable: ${self:custom.optionsGlueTable}
+    optionsGlueDB: ${self:custom.optionsGlueDB}
+    athenaOutput: ${self:custom.athenaOutput}
+    dataCatalog: ${self:custom.dataCatalog}
+
+custom:
+  pythonRequirements:
+    #dockerizePip: true
+    dockerizePip: non-linux
+    usePoetry: false
+    useDownloadCache: false
+    useStaticCache: false
+    invalidateCaches: false
+    slim: true
+  serviceId: ${self:service}-${self:provider.stage}
+  select_bucket: myinsiderposition-${self:provider.stage}
+  optionsDeliveryStream: options-stream-${self:provider.stage}
+  insiderDBGlue: insider-de-database-glue-${self:provider.stage}
+  optionsCollectSqs: options-collect-sqs-${self:provider.stage}
+  optionsGlueTable: options${self:provider.stage}
+  optionsGlueDB: myinsiderposition${self:provider.stage}
+  athenaOutput: s3://${self:custom.select_bucket}/options_output
+  dataCatalog: myinsiderpositionDataCatalog-${self:provider.stage}
+  guiBucketName: gui-${self:custom.serviceId}
+  siteName: myinsiderposition.com
+  optionsPrefix: options
+  athenaWorkingGroup: myinsiderpositionWG
+  aliasHostedZoneId: Z21DNDUVLTQW6Q
+  #optionsDeliveryStreamArn: 
+  #  'Fn::ImportValue': OptionsKinesisFirehoseArn-${self:provider.stage}
+  aliasDNSName: s3-website.eu-central-1.amazonaws.com
+  s3Sync:
+  - bucketName: ${self:custom.siteName}
+    localDir: ../insider-gui/build
+  customDomain:
+    domainName: api.myinsiderposition.com
+    basePath: ''
+    certificateName: '*.myinsiderposition.com'
+    stage: ${self:provider.stage}
+    endpointType: 'regional'
+    createRoute53Record: true
+
+functions:
+  createS3:
+    runtime: nodejs12.x
+    handler: s3select.create
+    cors: true
+    timeout: 300
+    memorySize: 256
+    events:
+    - schedule: rate(2 hours)
+    - http:
+        path: create
+        method: get
+  selectS3Trades:
+    runtime: nodejs12.x
+    handler: s3select.tradesDE
+    events:
+    - http:
+        cors: true
+        path: trades/de
+        method: get
+  selectS3Companies:
+    runtime: nodejs12.x
+    handler: s3select.companiesDE
+    memorySize: 256
+    events:
+    - http:
+        cors: true
+        path: companies/de
+        method: get
+  selectCompaniesChartHistoricPrices:
+    runtime: nodejs12.x
+    handler: s3select.companyHistoricalChartData
+    memorySize: 256
+    events:
+    - http:
+        cors: true
+        path: chart/historical
+        method: get
+  selectS3Insiders:
+    runtime: nodejs12.x
+    handler: s3select.insidersDE
+    memorySize: 256
+    events:
+    - http:
+        cors: true
+        path: insiders/de
+        method: get
+  optionalStocks:
+    runtime: nodejs12.x
+    handler: s3select.optionalStocks
+    memorySize: 512
+    events:
+    - http:
+        cors: true
+        path: stocks/optionable
+        method: get
+  optionalStock:
+    runtime: nodejs12.x
+    handler: s3select.optionalStock
+    memorySize: 256
+    events:
+    - http:
+        cors: true
+        path: stock/optionable/{ticker}
+        method: get
+  putToStream:
+    runtime: nodejs12.x
+    handler: fhController.putToStream
+    timeout: 300
+    events:
+    - http:
+        path: put
+        method: get
+  #firehoseEvents:
+  #  runtime: nodejs12.x
+  #  handler: firehoseEvents.handler
+  #  events:
+    #  - s3:
+    #      bucket: ${self:custom.select_bucket}
+    #      event: s3:ObjectCreated:*
+  #glueCustomResource:
+  #  runtime: nodejs12.x
+  #  handler: glueCustomResource.handler
+  collect_optional_stocks:
+    handler: stock_screener_py/stock_screener.save_all_optionable
+    timeout: 900
+    memorySize: 256
+    events:
+      - schedule: rate(7 days)
+      #- schedule: cron(0/15 * * * MON-FRI *)
+  update_all_proxies:
+    runtime: nodejs12.x
+    handler: s3select.updateAllProxies
+    timeout: 900
+    memorySize: 256
+    events:
+      - schedule: rate(15 minutes)
+  #update_worked_proxies:
+  #  handler: stock_screener_py/workedProxyService.uploadWorkedProxies
+  #  timeout: 900
+  #  memorySize: 2048
+  #  events:
+  #    - schedule: rate(3 hours)
+  upload_options:
+    handler: stock_screener_py/options_screener.uploadOptions
+    timeout: 900
+    memorySize: 512
+    events:
+      - schedule: rate(15 minutes)
+  collect_stocks:
+    handler: stock_screener_py/stock_screener.save_all
+    timeout: 900
+    memorySize: 512
+  get_all_proxies:
+    runtime: nodejs12.x
+    handler: s3select.getAllProxies
+    timeout: 900
+    memorySize: 256
+  get_worked_proxies:
+    runtime: nodejs12.x
+    handler: s3select.getWorkedProxies
+    timeout: 900
+    memorySize: 256
+  optionsCollectEvent:
+    runtime: nodejs12.x
+    handler: events.optionsCollectEvent
+    timeout: 30
+    memorySize: 128
+    events:
+      #- sqs:
+      #    arn:
+      #      Fn::GetAtt:
+      #        - OptionsCollectSqs
+      #        - Arn
+      - s3:
+          bucket: ${self:custom.select_bucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: options_jobs/
+            - suffix: .json
+resources:
+  Resources:
+    OptionsKinesisFirehose:
+      Type: AWS::KinesisFirehose::DeliveryStream
+      Properties:
+        DeliveryStreamName: ${self:custom.optionsDeliveryStream}
+        ExtendedS3DestinationConfiguration:
+          RoleARN: !GetAtt FirehoseToS3Role.Arn
+          BucketARN:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:s3:::'
+              - Ref: S3BucketMyinsiderposition${self:provider.stage}
+          Prefix: ${self:custom.optionsPrefix}/year=!{timestamp:YYYY}/month=!{timestamp:MM}/day=!{timestamp:dd}/hour=!{timestamp:HH}/
+            #- '' 
+            #- - 'options/year=!{timestamp:YYYY}/month=!{timestamp:MM}/day=!{timestamp:dd}/hour=!{timestamp:HH}/'
+            #- - '/options'
+          ErrorOutputPrefix: 'error/!{firehose:error-output-type}/year=!{timestamp:YYYY}/month=!{timestamp:MM}/day=!{timestamp:dd}/hour=!{timestamp:HH}/'
+            #- '' 
+            #- - 'error/!{firehose:error-output-type}/year=!{timestamp:YYYY}/month=!{timestamp:MM}/day=!{timestamp:dd}/hour=!{timestamp:HH}/'
+            #- - '/error'
+          BufferingHints: 
+            SizeInMBs: 128 
+            IntervalInSeconds: 300 
+          CompressionFormat: UNCOMPRESSED
+          CloudWatchLoggingOptions:
+            Enabled: true 
+            LogGroupName: !Join 
+              - '' 
+              - - 'KDF-' 
+                - !Ref GlueTable 
+            LogStreamName: S3Delivery 
+          DataFormatConversionConfiguration:
+            SchemaConfiguration: 
+              CatalogId: !Ref AWS::AccountId 
+              RoleARN: !GetAtt FirehoseToS3Role.Arn
+              DatabaseName: !Ref GlueDatabase 
+              TableName: !Ref GlueTable 
+              Region: !Ref AWS::Region
+              VersionId: LATEST 
+            InputFormatConfiguration: 
+              Deserializer: 
+                OpenXJsonSerDe: {}
+            OutputFormatConfiguration: 
+              Serializer: 
+                ParquetSerDe: {} 
+        #Enabled: True 
+    
+    FirehoseToS3Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: FirehoseToS3Role
+        AssumeRolePolicyDocument:
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - firehose.amazonaws.com
+            Action:
+            - sts:AssumeRole
+        Policies:
+        - PolicyName: FirehoseToS3Policy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+              - s3:*
+              - firehose:*
+              - glue:*
+              Resource: '*'
+    #GlueCustomResources:
+    #  Type: Custom::GlueCustomResource
+    #  Properties:
+    #    ServiceToken:
+    #      Fn::GetAtt: [GlueCustomResourceLambdaFunction, Arn]
+    InsiderStaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.siteName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: InsiderStaticSite
+        PolicyDocument:
+          Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action:
+            - s3:GetObject
+            Resource:
+              Fn::Join: [
+                "", [
+                "arn:aws:s3:::",
+                {
+                  "Ref": "InsiderStaticSite"
+                },
+                "/*"
+              ]
+              ]
+    OptionsCollectSqs:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.optionsCollectSqs}
+    GlueDatabase: 
+      Type: AWS::Glue::Database 
+      Properties: 
+        CatalogId: !Ref AWS::AccountId 
+        DatabaseInput: {"Name": "${self:custom.optionsGlueDB}"}
+    GlueTable: 
+      Type: AWS::Glue::Table 
+      Properties: 
+        CatalogId: !Ref AWS::AccountId
+        DatabaseName: !Ref GlueDatabase 
+        TableInput: 
+          Name: ${self:custom.optionsGlueTable}
+          Owner: owner 
+          Retention: 0 
+          StorageDescriptor:
+            Columns: 
+              - Name: ticker 
+                Type: string 
+              - Name: strike 
+                Type: double 
+              - Name: ask 
+                Type: double 
+              - Name: bid 
+                Type: double 
+              - Name: mid 
+                Type: double
+              - Name: volume 
+                Type: double 
+              - Name: datetime 
+                Type: timestamp 
+              - Name: exp 
+                Type: timestamp
+              - Name: type 
+                Type: string 
+            InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat 
+            OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat 
+            Compressed: false
+            Location: s3://${self:custom.select_bucket}/${self:custom.optionsPrefix}/
+            #NumberOfBuckets: -1 
+            SerdeInfo: 
+              SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe 
+              Parameters:
+                serialization.format: '1' 
+                StoredAsSubDirectories: false 
+                PartitionKeys: '[{"Name": "year","Type": "string"},{"Name": "month","Type": "string"},{"Name": "day","Type": "string"},{"Name": "hour","Type": "string"},{"Name": "ticker","Type": "string"},{"Name": "exp","Type": "timestamp"}, {"Name": "datetime","Type":"timestamp"}]'
+          TableType: EXTERNAL_TABLE  
+    #MyAthenaDataCatalog:
+    #  Type: AWS::Athena::DataCatalog
+    #  Properties:
+    #    Name: ${self:custom.dataCatalog}
+    #    Type: GLUE
+    #    Description: Simple glue data catalog
+    MyAthenaWorkGroup:
+      Type: AWS::Athena::WorkGroup
+      Properties:
+        Name: ${self:custom.athenaWorkingGroup}
+        Description: My WorkGroup Updated
+        State: ENABLED
+        WorkGroupConfigurationUpdates:
+          BytesScannedCutoffPerQuery: 10000000
+          EnforceWorkGroupConfiguration: true
+          PublishCloudWatchMetricsEnabled: true
+          RequesterPaysEnabled: false
+          ResultConfigurationUpdates:
+            #EncryptionConfiguration:
+            #  EncryptionOption: SSE_S3
+            OutputLocation: ${self:custom.athenaOutput}
+
+#    DnsRecord:
+#      Type: "AWS::Route53::RecordSet"
+#      Properties:
+#        AliasTarget:
+#          DNSName: ${self:custom.aliasDNSName}
+#          HostedZoneId: ${self:custom.aliasHostedZoneId}
+#        HostedZoneName: ${self:custom.siteName}.
+#        Name:
+#          Ref: InsiderStaticSite
+#        Type: 'A'
+  Outputs:
+    OptionsKinesisFirehoseArn:
+      Export:
+        Name: OptionsKinesisFirehoseArn-${self:provider.stage}
+      Value:
+        Fn::GetAtt: OptionsKinesisFirehose.Arn

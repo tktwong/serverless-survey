@@ -1,0 +1,116 @@
+service: event-driven-color-chooser
+
+provider:
+  name: aws
+  runtime: python3.8
+  vpc:
+    securityGroupIds:
+      - "Fn::GetAtt": ServerlessSecurityGroup.GroupId
+    subnetIds:
+      - Ref: PrivateSubnetA
+  stage: ${opt:stage, 'develop'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "execute-api:ManageConnections"
+      Resource:
+        - "arn:aws:execute-api:*:*:**/@connections/*"
+  environment:
+    REDIS_HOST:
+      "Fn::GetAtt": [ElasticCacheCluster, RedisEndpoint.Address]
+    REDIS_PORT:
+      "Fn::GetAtt": [ElasticCacheCluster, RedisEndpoint.Port]
+    WEBSOCKET_API_ID:
+      Ref: WebsocketsApi
+    STAGE: ${self:provider.stage}
+
+package:
+  individually: true
+  exclude:
+    - package.json
+    - package-lock.json
+    - pytest.ini
+    - tests/**
+    - node_modules/**
+    - frontend/**
+    - resources/**
+    - src/**/test_*.py
+
+plugins:
+  - serverless-python-requirements
+  - serverless-domain-manager
+
+functions:
+  rgb:
+    handler: rgbHandler.rgb
+    module: src
+    events:
+      - http:
+          path: rgb
+          method: post
+  
+  votes:
+    handler: rgbHandler.votes
+    module: src
+    events:
+      - http:
+          path: votes
+          method: get
+  
+  socketConnect:
+    handler: socketApi.connect
+    module: src
+    events:
+      - websocket:
+          route: $connect
+  
+  socketDisconnect:
+    handler: socketApi.disconnect
+    module: src
+    events:
+      - websocket:
+          route: $disconnect
+  
+  defaultMessages:
+    handler: socketApi.defaultMessage
+    module: src
+    events:
+      - websocket:
+          route: $default
+  
+  vote:
+    handler: socketApi.vote
+    module: src
+    events:
+      - websocket:
+          route: vote
+  
+  inquire:
+    handler: socketApi.inquire
+    module: src
+    events:
+      - websocket:
+          route: inquire
+
+resources:
+  - ${file(resources/redis.yml)}
+
+custom:
+  config:
+    CACHE_INSTANCE_SIZE: cache.t2.micro
+  pythonRequirements:
+    invalidateCaches: true
+  customDomain:
+    websocket:
+      domainName: ws.colorchooser.iamcly.de
+      stage: ${self:provider.stage}
+      basePath: ''
+      certificateName: '*.iamcly.de'
+      createRoute53Record: true
+      endpointType: 'regional'
+    rest:
+      domainName: rest.colorchooser.iamcly.de
+      stage: ${self:provider.stage}
+      basePath: ''
+      certificateName: '*.iamcly.de'
+      createRoute53Record: true

@@ -1,0 +1,68 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: plantformio
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+resources:
+  Resources:
+    PlantReadingsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: plant
+            AttributeType: S
+          - AttributeName: time
+            AttributeType: S
+        KeySchema:
+          - AttributeName: plant
+            KeyType: HASH
+          - AttributeName: time
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+package:
+  include:
+    - lambda/dist/**/*.js
+    - lambda/plants/*.json
+  exclude:
+    - ./**/*
+    - '!./node_modules/**'
+
+functions:
+  moistureReading:
+    handler: lambda/dist/index.handler
+    environment:
+      WEBHOOK_URL: ${env:WEBHOOK_URL}
+      DATADOG_API_KEY: ${env:DATADOG_API_KEY}
+    events:
+      - iot:
+          name: "moistureHandler"
+          sql: "SELECT *, topic(2) AS plantName FROM 'plants/+/moisture'"
+          description: "Receives plant moisture data and sends it to all the things!"

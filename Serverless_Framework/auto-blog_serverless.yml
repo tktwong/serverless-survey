@@ -1,0 +1,108 @@
+
+service: auto-blog
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  uploadBucket: tjr.${self:service}.${self:custom.stage}.upload
+  webBucket: www.trodger.com
+
+  imageFilterTopic: ${self:service}-${self:custom.stage}-image-filter
+  mdFilterTopic: ${self:service}-${self:custom.stage}-md-filter
+  textFilterTopic: ${self:service}-${self:custom.stage}-text-filter
+
+  imagePageTopic: ${self:service}-${self:custom.stage}-image-page
+  indexPageTopic: ${self:service}-${self:custom.stage}-index-page
+  directoryPageTopic: ${self:service}-${self:custom.stage}-directory-page
+
+  renderTopic: ${self:service}-${self:custom.stage}-render
+
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+provider:
+  name: aws
+  runtime: nodejs6.10
+  memorySize: 128
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "s3:*"
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - SNS:Publish
+      Resource:
+        - { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.textFilterTopic}" ] ]  }
+        - { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.imageFilterTopic}" ] ]  }
+        - { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.mdFilterTopic}" ] ]  }
+        - { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.imagePageTopic}" ] ]  }
+        - { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.indexPageTopic}" ] ]  }
+        - { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.directoryPageTopic}" ] ]  }
+        - { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.renderTopic}" ] ]  }
+
+  environment:
+    UPLOAD_BUCKET: ${self:custom.uploadBucket}
+    WEB_BUCKET: ${self:custom.webBucket}
+
+  stage: dev
+  region: eu-west-2
+
+package:
+  exclude:
+    - .idea/**
+    - .npmignore
+    - package.json
+    - tests/**
+    - README.md
+
+#plugins:
+#  - serverless-plugin-webpack
+
+functions:
+  upload:
+    handler: functions/upload.handler
+    events:
+      - s3:
+        bucket: ${self:custom.uploadBucket}
+        event: s3:ObjectCreated:*
+    environment:
+      # arn:aws:sns:eu-west-2:752934489335:auto-blog-dev-html-page
+      IMAGE_FILTER_TOPIC: { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.imageFilterTopic}" ] ]  }
+      MD_FILTER_TOPIC: { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.mdFilterTopic}" ] ]  }
+      TEXT_FILTER_TOPIC: { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.textFilterTopic}" ] ]  }
+
+  imageFilter:
+    handler: functions/imageFilter.handler
+    events:
+      - sns: ${self:custom.imageFilterTopic}
+    environment:
+      IMAGE_PAGE_TOPIC: { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.imagePageTopic}" ] ]  }
+
+  imagePage:
+    handler: functions/imagePage.handler
+    events:
+      - sns: ${self:custom.imagePageTopic}
+    environment:
+      RENDER_TOPIC: { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.renderTopic}" ] ]  }
+
+  mdFilter:
+    handler: functions/mdFilter.handler
+    events:
+      - sns: ${self:custom.mdFilterTopic}
+    environment:
+      RENDER_TOPIC: { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.renderTopic}" ] ]  }
+
+  textFilter:
+    handler: functions/textFilter.handler
+    events:
+      - sns: ${self:custom.textFilterTopic}
+    environment:
+      RENDER_TOPIC: { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.renderTopic}" ] ]  }
+
+  render:
+    handler: functions/render.handler
+    events:
+      - sns: ${self:custom.renderTopic}

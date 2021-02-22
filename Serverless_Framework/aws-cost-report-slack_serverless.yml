@@ -1,0 +1,30 @@
+
+service: aws-cost-report-slack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action: 'ce:GetCostAndUsage'
+      Resource: '*'
+
+functions:
+  main:
+    handler: index.handler
+    memorySize: 128
+    onError: ${opt:dlq, ''}
+
+    events:
+      - schedule: ${opt:schedule, self:custom.schedule.${self:custom.granularity}}
+
+    environment:
+      WEBHOOK_URL: ${opt:webhook-url}
+      GRANULARITY: ${self:custom.granularity}
+
+custom:
+  schedule:
+    DAILY: 'cron(30 0 * * ? *)'
+    MONTHLY: 'cron(0 0 3 * ? *)'
+  granularity: ${opt:granularity, 'MONTHLY'}

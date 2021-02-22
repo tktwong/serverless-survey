@@ -1,0 +1,81 @@
+service: ssh-observatory
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: us-west-2
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  create:
+    handler: scans/create.create
+    events:
+      - http:
+          path: scans
+          method: post
+          cors: true
+
+  list:
+    handler: scans/list.list
+    events:
+      - http:
+          path: scans
+          method: get
+          cors: true
+
+  get:
+    handler: scans/get.get
+    events:
+      - http:
+          path: scans/{id}
+          method: get
+          cors: true
+
+  worker:
+    handler: scans/worker.worker
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - ScansDynamoDbTable
+              - StreamArn
+          batchSize: 1
+
+resources:
+  Resources:
+    ScansDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE

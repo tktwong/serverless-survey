@@ -1,0 +1,44 @@
+service: "instant-vpn"
+
+provider:
+  name: "aws"
+  profile: "<my_profile>"
+  stage: "prod"
+  runtime: "python2.7"
+  region: "eu-west-2"
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ec2:DescribeInstances"
+        - "ec2:StopInstances"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "route53:ChangeResourceRecordSets"
+      Resource: "*"
+
+functions:
+  stop_vpn:
+    handler: "stop_vpn.main"
+    environment:
+      TO_STOP: ${env:SCEPTRE_OpenVPNInstanceId}
+    events:
+     - schedule: cron(0 01 * * ? *)
+  update_r53:
+    handler: "update_r53.main"
+    environment:
+      HOSTED_ZONE_ID: "<hosted_zone_id>"
+      RECORDSET: "vpn.mydomain.com"
+    events:
+      - cloudwatchEvent:
+          event:
+            source:
+              - "aws.ec2"
+            detail-type:
+              - "EC2 Instance State-change Notification"
+            detail:
+              instance-id:
+                - ${env:SCEPTRE_OpenVPNInstanceId}
+              state:
+                - "running"
+          enabled: true

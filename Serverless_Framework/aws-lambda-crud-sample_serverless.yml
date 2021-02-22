@@ -1,0 +1,132 @@
+service:
+  name: mpn-backoffice
+
+custom:
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+    start:
+      migrate: true
+      noStart: true
+      seed: true
+    seed:
+      productTable:
+        sources:
+          - table: ${self:provider.environment.PRODUCT_TABLE}
+            sources: ["./src/core/seed/products.json"]
+
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+
+package:
+  excludeDevDependencies: true
+  individually: false
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024
+  environment:
+    PRODUCT_TABLE: Product
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCT_TABLE}"
+
+resources:
+  Resources:
+    ProductTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.PRODUCT_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+functions:
+  personValidation:
+    handler: src/functions/personFunctions.handler
+    events:
+      - http:
+          method: POST
+          path: person
+          cors: true
+
+  productIndex:
+    handler: src/functions/productFunctions.index
+    events:
+      - http:
+          method: GET
+          path: product
+          cors: true
+
+  productShow:
+    handler: src/functions/productFunctions.show
+    events:
+      - http:
+          method: GET
+          path: product/{id}
+          cors: true
+          request:
+            paths:
+              id: true
+
+  productCreate:
+    handler: src/functions/productFunctions.store
+    events:
+      - http:
+          method: POST
+          path: product
+          cors: true
+
+  productDestroy:
+    handler: src/functions/productFunctions.destroy
+    events:
+      - http:
+          method: DELETE
+          path: product/{id}
+          cors: true
+          request:
+            paths:
+              id: true
+
+  productStream:
+    handler: src/functions/productFunctions.stream
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - ProductTable
+              - StreamArn
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:ListStreams
+          - dynamodb:DescribeTable
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PRODUCT_TABLE}"

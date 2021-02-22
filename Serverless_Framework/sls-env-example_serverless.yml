@@ -1,0 +1,64 @@
+service: sls-env-example
+
+provider:
+  name: aws
+  runtime: python3.8
+  profile: ${opt:profile, default}
+  stage: ${opt:stage, dev}
+  region: ${opt:region, us-east-1}
+  timeout: 30
+  environment:
+    # To tell lambda function to AWS AccountId by use pseudo-parameters plugin.
+    # AccountId is used to construct SQS Queue URL
+    AWS_ACCOUNT_ID: '#{AWS::AccountId}'
+    # MY_QUEUE_NAME is used to construct Queue URL in lambda.
+    # And also convenient to reference resource ARN in IAM Policy statement
+    MY_QUEUE_NAME: ${self:service}-my-queue-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+      # Specify resource arn simply
+      Resource: "arn:aws:sqs:*:#{AWS::AccountId}:${self:provider.environment.MY_QUEUE_NAME}"
+
+plugins:
+  - serverless-python-requirements
+  - serverless-dotenv-plugin
+  - serverless-pseudo-parameters
+
+custom:
+  pythonRequirements:
+    usePipenv: true
+
+package:
+  exclude:
+    - node_modules/**
+    - .vscode/**
+
+functions:
+  MyJobFunction:
+    handler: app/functions/myjob.handler
+    events:
+      - schedule: cron(3 0 * * ? *)
+  MyConsumerFunction:
+    handler: app/functions/myconsumer.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - MyQueue
+              - Arn
+
+resources:
+  Resources:
+    MyQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.MY_QUEUE_NAME}
+        # notice: VisibilityTimeout must be greeter than lambda invocation timeout
+        VisibilityTimeout: 45
+  Outputs:
+    MyQueueArn:
+      Description: MyQueue
+      Value: 
+        Fn::GetAtt: MyQueue.Arn

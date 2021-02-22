@@ -1,0 +1,83 @@
+service: mattermost-metrics-server
+
+package:
+    individually: true
+
+provider:
+    name: aws
+    runtime: nodejs8.10
+    # Enable if AWS profile is available in local dev
+    # profile: dev-aws
+    region: us-east-1
+    apiKeys:
+        - metricsServerKey
+
+custom:
+    webpackIncludeModules: true
+    webpack:
+        webpackConfig: ./webpack.config.js
+        packager: 'npm'
+
+functions:
+    index:
+        handler: src/ping.default
+        events:
+            - http:
+                  path: /
+                  method: get
+                  private: true
+                  cors: true
+
+    get_metrics:
+        handler: src/get_metrics.default
+        timeout: 20
+        events:
+            - http:
+                  path: metrics
+                  method: get
+                  private: false
+                  cors: true
+            - throttle:
+                  burstLimit: 100
+                  rateLimit: 100
+
+    get_metric:
+        handler: src/get_metric.default
+        timeout: 20
+        events:
+            - http:
+                  path: metric/{id}
+                  method: get
+                  private: false
+                  cors: true
+            - throttle:
+                  burstLimit: 100
+                  rateLimit: 100
+
+    post_metric:
+        handler: src/post_metric.default
+        timeout: 20
+        events:
+            - http:
+                  path: metric
+                  method: post
+                  private: true
+                  cors: true
+            - schedule:
+                  rate: rate(5 minutes)
+                  enabled: true
+
+    get_traces_per_device:
+        handler: src/get_traces_per_device.default
+        timeout: 20
+        events:
+            - http:
+                  path: traces/{device_unique_id}
+                  method: get
+                  private: true
+                  cors: true
+
+plugins:
+    - serverless-webpack
+    - serverless-offline
+    - serverless-dotenv-plugin

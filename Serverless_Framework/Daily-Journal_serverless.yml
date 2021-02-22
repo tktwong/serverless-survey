@@ -1,0 +1,83 @@
+# NOTE: update this with your service name
+service: daily-journal-api
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: us-east-1
+  profile: daily-journal-profile
+ 
+  environment:
+    tableName: journal-entries
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+
+functions:
+  createEntry:
+    handler: createEntry.main
+    events:
+      - http:
+          path: entries
+          method: post
+          authorizer: aws_iam
+          cors: true
+
+  getEntry:
+    handler: getEntry.main
+    events:
+      - http:
+          path: entries/{id}
+          method: get
+          authorizer: aws_iam
+          cors: true
+  
+  getEntryList:
+    handler: listEntries.main
+    events:
+      - http:
+          path: entries
+          method: get
+          authorizer: aws_iam
+          cors: true
+  
+  updateEntry:
+    handler: updateEntry.main
+    events:
+      - http:
+          path: entries/{id}
+          method: put
+          authorizer: aws_iam
+          cors: true
+  
+  deleteEntry:
+    handler: deleteEntry.main
+    events:
+      - http:
+          path: entries/{id}
+          method: delete
+          authorizer: aws_iam
+          cors: true
+
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}

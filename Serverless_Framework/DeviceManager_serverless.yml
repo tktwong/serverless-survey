@@ -1,0 +1,145 @@
+service: device-manager-backend
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-1
+  profile: ben-main
+  stage: ${opt:stage, 'dev'}
+  stackTags:
+    Application: device-manager-backend
+  tags:
+    Application: device-manager-backend
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.devices-table-name}"
+
+plugins:
+  - serverless-domain-manager
+
+custom:
+  customDomain:
+    domainName: 'geotracker.api.cloud-master-team.com' # Change this to your domain.
+    certificateArn: 'arn:aws:acm:eu-west-1:813860980995:certificate/d097cff5-7e0b-4c03-932e-db88b052bded'
+    basePath: 'devices' # This will be prefixed to all routes
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    endpointType: regional
+  devices-table-name: devices-${self:provider.stage}
+  devices-bucket-name: ${self:service}-${self:provider.stage}
+  admin-email: benjamin.ehlers@hardis.fr
+  cognito-user-pool: user-manager-backend-${self:provider.stage}-CognitoUserPool
+
+functions:
+  devices-api:
+    name: ${self:service}-${self:provider.stage}-devices-api
+    handler: devices-api.router
+    timeout: 30
+    events:
+      - http:
+          path: 'v1/{proxy+}'
+          method: any
+          authorizer:
+            name: devices-authorizer
+            resultTtlInSeconds: 30
+            identitySource: method.request.header.Authorization
+            type: token
+    environment:
+      TABLE_NAME: ${self:custom.devices-table-name}
+
+  devices-authorizer:
+    name: ${self:service}-${self:provider.stage}-authorizer
+    handler: auth.handler
+    environment:
+      TOKEN_ISSUER: 
+        Fn::Join:
+          - ''
+          -
+            - 'https://cognito-idp.'
+            - ${self:provider.region}
+            - '.amazonaws.com/'
+            - Fn::ImportValue: ${self:custom.cognito-user-pool}
+      JWKS_URI: 
+        Fn::Join:
+          - ''
+          -
+            - 'https://cognito-idp.'
+            - ${self:provider.region}
+            - '.amazonaws.com/'
+            - Fn::ImportValue: ${self:custom.cognito-user-pool}
+            - '/.well-known/jwks.json'
+      PERMISSION_BUCKET_NAME: ${self:custom.devices-bucket-name}
+    role: DevicesAuthorizerRole
+
+# CloudFormation resource templates
+resources:
+  Resources:
+    DevicesBucket:
+      Type: AWS::S3::Bucket
+      Properties: 
+        AccessControl: Private
+        BucketName: ${self:custom.devices-bucket-name}
+
+    DevicesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.devices-table-name}
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+          
+    DevicesAuthorizerRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-${self:provider.stage}-authorizer
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:service}-${self:provider.stage}-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: 
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                - Effect: Allow
+                  Action: # Gives permission to S3
+                    - s3:GetObject
+                  Resource: 
+                    - arn:aws:s3:::${self:custom.devices-bucket-name}/*

@@ -1,0 +1,61 @@
+service: serverless-modern-slavery-api
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${opt:region, self:custom.region}
+  stage: ${opt:stage, self:custom.stage}
+  profile: ${opt:profile}
+  deploymentBucket: ${opt:deploymentBucket}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: arn:aws:dynamodb:*:*:table/modernSlaveryPredictions
+    - Effect: "Allow"
+      Action:
+        - s3:PutObject
+      Resource: arn:aws:s3:::nuk-tnl-editorial-prod-staticassets/2018/modern-slavery-results/results.json
+
+custom:
+  region: eu-west-1
+  stage: dev
+
+functions:
+  store:
+    handler: handler.store
+    timeout: 10
+    events:
+      - http:
+          method: post
+          path: store
+          cors: true
+
+  process:
+    handler: handler.process
+    timeout: 30
+    events:
+      - schedule: rate(2 minutes)
+
+plugins:
+  - serverless-offline
+
+resources:
+  Resources:
+    offsideOrNot:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: modernSlaveryPredictions
+        AttributeDefinitions:
+          -
+            AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

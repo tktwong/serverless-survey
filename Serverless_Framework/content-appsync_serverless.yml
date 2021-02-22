@@ -1,0 +1,136 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: content-appsync
+# app and org for use with dashboard.serverless.com
+app: content-appsync
+org: fansided
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  apiKeys:
+    - ${self:service}-${opt:stage, self:provider.stage}-mainKey
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:CreateTable
+        - dynamodb:DescribeTable
+      Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:#{AWS::AccountId}:table/*'
+
+custom:
+  defaultStage: dev
+  profiles:
+    dev: fs-dev
+    test: fs-test
+    prod: fs-prod
+  # DynamoDB
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+    seed:
+      test:
+        sources:
+          - table: ArticleTable
+            rawsources: [./ddb_data_export_1-10-20/seedData.json]
+  # AppSync
+  appSync:
+    name: Content-Store-API
+    # apiKey # only required for update-appsync/delete-appsync
+    authenticationType: API_KEY
+    mappingTemplates:
+      # Queries
+      - dataSource: ArticleTable # data source name
+        type: Query # type name in schema (e.g. Query, Mutation, Subscription)
+        field: getContentStoreArticle
+      - dataSource: ArticleTable
+        type: Query
+        field: listContentStoreArticles
+      - dataSource: ArticleTable
+        type: Query
+        field: queryContentStoreArticlesByArticleIdGlobalIndex
+      - dataSource: ArticleTable
+        type: Query
+        field: queryContentStoreArticlesBySiteIdGlobalIndex
+      - dataSource: ArticleTable
+        type: Query
+        field: queryContentStoreArticlesByAuthorIdGlobalIndex
+        # Mutations
+      - dataSource: ArticleTable
+        type: Mutation
+        field: createContentStoreArticle
+      - dataSource: ArticleTable
+        type: Mutation
+        field: deleteContentStoreArticle
+      - dataSource: ArticleTable
+        type: Mutation
+        field: updateContentStoreArticle
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: ArticleTable # data source name
+        description: Article Table
+        config:
+          # Local
+          tableName: { Ref: ArticleTable } # Where MyTable is a dynamodb table defined in Resources
+          # Prod
+          # tableName: content-store-${opt:stage, self:provider.stage}-Article
+  appsync-simulator:
+    apiKey: d41d8cd98f00b204e9800998ecf8427e
+
+functions:
+  hello:
+    handler: ./src/handler.hello
+
+plugins:
+  - serverless-pseudo-parameters
+  # - serverless-plugin-typescript
+  - serverless-dynamodb-local
+  - serverless-appsync-plugin
+  - serverless-appsync-simulator
+  - serverless-offline
+# Comment all below out for deploy;
+# use for local dev
+#
+# In prod, we don't want to create a new table;
+# we use existing DDB article table
+resources:
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ArticleTable
+        AttributeDefinitions:
+          - AttributeName: url
+            AttributeType: S
+        KeySchema:
+          - AttributeName: url
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

@@ -1,0 +1,67 @@
+service: myserverlessproject2
+
+provider:
+    name: aws
+    runtime: nodejs12.x
+    # profile: serverlessUser
+    # region: eu-west-1
+    environment:
+        tableName: ${self:custom.tableName}
+    iamRoleStatements:
+        - Effect: Allow
+          Action:
+              - dynamodb:*
+          Resource: '*'
+        #   Resource:
+        #       - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.tableName}
+
+custom:
+    tableName: WebsocketUsers
+
+functions:
+    websocket-connect:
+        handler: lambdas/websockets/connect.handler
+        events:
+            - websocket:
+                  route: $connect
+    websocket-disconnect:
+        handler: lambdas/websockets/disconnect.handler
+        events:
+            - websocket:
+                  route: $disconnect
+    websocket-default:
+        handler: lambdas/websockets/default.handler
+        events:
+            - websocket:
+                  route: $default
+    websocket-message:
+        handler: lambdas/websockets/message.handler
+        events:
+            - websocket:
+                  route: message
+    connectionStream:
+        handler: lambdas/websockets/dbMessage.handler
+        events:
+            - stream:
+                  type: dynamodb
+                  arn:
+                    Fn::GetAtt: [ WebsocketUserTable, StreamArn ]
+                  startingPosition: LATEST
+                  enabled: True
+resources:
+    Resources:
+        WebsocketUserTable:
+            Type: AWS::DynamoDB::Table
+            Properties:
+                TableName: ${self:custom.tableName}
+                AttributeDefinitions:
+                    - AttributeName: ID
+                      AttributeType: S
+                KeySchema:
+                    - AttributeName: ID
+                      KeyType: HASH
+                BillingMode: PAY_PER_REQUEST
+                StreamSpecification:
+                    StreamViewType: NEW_IMAGE
+# NEW_AND_OLD_IMAGES
+# 

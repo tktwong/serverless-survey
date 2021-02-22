@@ -1,0 +1,162 @@
+service: wylosowana-api
+
+provider:
+  name: aws
+  runtime: java11
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  environment:
+    TESTS_TABLE_NAME: '${self:custom.testsTableName}'
+    ANSWERS_TABLE_NAME: '${self:custom.answersTableName}'
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - cognito-idp:ListUsers
+        - cognito-idp:AdminListGroupsForUser
+      Resource:
+        - { "Fn::GetAtt": ["TestsDynamoDBTable", "Arn"] }
+        - { "Fn::GetAtt": ["AnswersDynamoDBTable", "Arn" ] }
+  #      - 'arn:aws:cognito-...'
+
+
+package:
+  artifact: 'target/${self:service}-${self:provider.stage}.jar'
+
+custom:
+  testsTableName: 'tests-${self:provider.stage}'
+  answersTableName: 'answers-${self:provider.stage}'
+
+functions:
+  createTest:
+    handler: com.wylosowana.handlers.tests.CreateTest
+    events:
+      - http:
+          method: post
+          path: tests
+          cors: true
+  getTests:
+    handler: com.wylosowana.handlers.tests.GetTests
+    timeout: 25
+    events:
+      - http:
+          method: get
+          path: tests
+          cors: true
+  getTest:
+    handler: com.wylosowana.handlers.tests.GetTestById
+    events:
+      - http:
+          method: get
+          path: tests/{id}
+          cors: true
+  getSolvedTests:
+    handler: com.wylosowana.handlers.tests.getSolvedTests
+    events:
+      - http:
+          method: get
+          path: tests/answers
+          cors: true
+  createAnswer:
+    handler: com.wylosowana.handlers.answers.CreateAnswer
+    events:
+      - http:
+          method: post
+          path: answers
+          cors: true
+  getAnswers:
+    handler: com.wylosowana.handlers.answers.GetAnswers
+    memorySize: 1024
+    timeout: 10
+    events:
+      - http:
+          method: get
+          path: answers
+          cors: true
+  getCandidateAnswersForTest:
+    handler: com.wylosowana.handlers.answers.GetCandidateAnswersForTest
+    events:
+      - http:
+          method: get
+          path: /tests/answers/{testId}/{login}
+          cors: true
+  getTestsForCandidate:
+    handler: com.wylosowana.handlers.tests.GetTestsForCandidate
+    events:
+      - http:
+          method: get
+          path: /tests/candidates/{login}
+          cors: true
+  getAnswerById:
+    handler: com.wylosowana.handlers.answers.GetAnswerById
+    events:
+      - http:
+          method: get
+          path: /answers/{id}
+          cors: true
+  updateCandidateLogins:
+    handler: com.wylosowana.handlers.tests.UpdateCandidateLogins
+    events:
+      - http:
+          method: put
+          path: /tests/{id}
+          cors: true
+  addTestTranslation:
+    handler: com.wylosowana.handlers.tests.AddTestTranslation
+    events:
+      - http:
+          method: put
+          path: /tests/translation/{id}
+          cors: true
+  deleteTestById:
+    handler: com.wylosowana.handlers.test.DeleteTestById
+    events:
+      - http:
+          method: delete
+          path: /tests/{id}
+          cors: true
+  mirrorHandler:
+    handler: com.wylosowana.handlers.MirrorHandler
+    timeout: 25
+    events:
+      - http:
+          method: post
+          path: mirror
+          cors: true
+
+resources:
+  Resources:
+    TestsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.testsTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    AnswersDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.answersTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+
+

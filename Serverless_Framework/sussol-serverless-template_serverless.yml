@@ -1,0 +1,49 @@
+# This file is the main config file for the sussol subscriptions service.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+
+frameworkVersion: ">=1.0.0 <2.0.0"
+
+service: exciting-name-here
+
+# Below is for an Amazon AWS Lambda API setup
+provider:
+  name: aws
+  runtime: nodejs4.3
+  memorySize: 128
+  timeout: 30
+  profile: production
+  stage: prod
+  region: ap-southeast-2
+  environment: ${file(env.yml):environment} # If you don't have env.yml, search env.yml on lastpass
+  vpc: ${file(env.yml):vpc}
+  iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "ec2:CreateNetworkInterface"
+          - "ec2:DescribeNetworkInterfaces"
+          - "ec2:DeleteNetworkInterface"
+        Resource:
+          - "*"
+
+resources:
+  Resources:
+    UsagePlan:
+      Type: AWS::ApiGateway::UsagePlan
+      Properties:
+        ApiStages:
+        - ApiId:
+            Ref: "ApiGatewayRestApi"
+          Stage: ${self:provider.stage}
+        Description: ${self:provider.stage} usage plan
+        Quota: # Limit the total HTTP requests to 20,000,000 per week to avoid an unexpected bill
+          Limit: 20000000
+          Period: "WEEK"
+        UsagePlanName: "${self:service}-${self:provider.stage}"
+
+functions:
+  myFunction:
+    handler: handler.myFunction
+    events:
+      - http: get myFunction

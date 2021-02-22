@@ -1,0 +1,162 @@
+service: api
+#app: your-app-name
+#tenant: your-tenant-name
+frameworkVersion: ">=1.50.0 <2.0.0"
+
+plugins:
+  - serverless-dotenv-plugin
+
+provider:
+  name: aws
+  stage: dev
+  runtime: nodejs10.x
+  region: ${env:MY_AWS_REGION}
+  memorySize: 256
+  environment:
+    DYNAMODB_TABLE_COLLECTIONS: ${self:service}-${opt:stage, self:provider.stage}-collections
+    DYNAMODB_TABLE_BOOKMARKS: ${self:service}-${opt:stage, self:provider.stage}-bookmarks
+    DYNAMODB_TABLE_USERS: ${self:service}-${opt:stage, self:provider.stage}-users
+  iamRoleStatements:
+    - Effect: Allow
+      Action: ${self:custom.dynamoActions}
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_COLLECTIONS}"
+    - Effect: Allow
+      Action: ${self:custom.dynamoActions}
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_BOOKMARKS}"
+    - Effect: Allow
+      Action: ${self:custom.dynamoActions}
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_USERS}"
+
+custom:
+  cors:
+    default:
+      origin: ${env:ORIGIN}
+      headers:
+        - Content-Type
+        - X-Amz-Date
+        - Authorization
+        - X-Api-Key
+        - X-Amz-Security-Token
+        - X-Amz-User-Agent
+      allowCredentials: true
+  authorizer:
+    users:
+      name: authorizerFunc
+      type: token
+      identitySource: method.request.header.Authorization
+      identityValidationExpression: '^Bearer [\w-]+\.[\w-]+\.[\w-]+$'
+  dynamoActions:
+    - dynamodb:Query
+    - dynamodb:Scan
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    - dynamodb:DeleteItem
+    - dynamodb:BatchGetItem
+    - dynamodb:BatchWriteItem
+
+package:
+  excludeDevDependencies: false
+  exclude:
+    - .env.**
+    - .gitignore
+
+functions:
+  - ${file(functions/auth.yml)}
+  - ${file(functions/collections.yml)}
+  - ${file(functions/bookmarks.yml)}
+
+resources:
+  Resources:
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        AliasAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+        # EmailConfiguration:
+        #   EmailSendingAccount: "DEVELOPER"
+        #   ReplyToEmailAddress: "hello@nikl.me"
+        #   SourceArn: !GetAtt logicalNameOfResource.attributeName
+        EmailVerificationSubject: "Confirm your e mail adress"
+        EmailVerificationMessage: "Hi there. Your verification code for Findus is {####}."
+        Schema:
+          - AttributeDataType: String
+            Name: email
+            Required: true
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:service}_${self:provider.stage}_client
+        UserPoolId:
+          Ref: CognitoUserPool
+        GenerateSecret: false
+    GatewayResponseDefault4XX: # handle CORS on 4xx responses
+      Type: "AWS::ApiGateway::GatewayResponse"
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'${env:ORIGIN}'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: "ApiGatewayRestApi"
+    # UsersDynamoDbTable:
+    #   Type: 'AWS::DynamoDB::Table'
+    #   DeletionPolicy: Retain
+    #   Properties:
+    #     AttributeDefinitions:
+    #       -
+    #         AttributeName: id
+    #         AttributeType: S
+    #     KeySchema:
+    #       -
+    #         AttributeName: id
+    #         KeyType: HASH
+    #     ProvisionedThroughput:
+    #       ReadCapacityUnits: 1
+    #       WriteCapacityUnits: 1
+    #     TableName: ${self:provider.environment.DYNAMODB_TABLE_USERS}
+    # CollectionsDynamoDbTable:
+    #   Type: 'AWS::DynamoDB::Table'
+    #   DeletionPolicy: Retain
+    #   Properties:
+    #     AttributeDefinitions:
+    #       -
+    #         AttributeName: id
+    #         AttributeType: S
+    #     KeySchema:
+    #       -
+    #         AttributeName: id
+    #         KeyType: HASH
+    #     ProvisionedThroughput:
+    #       ReadCapacityUnits: 1
+    #       WriteCapacityUnits: 1
+    #     TableName: ${self:provider.environment.DYNAMODB_TABLE_COLLECTIONS}
+    # BookmarksDynamoDbTable:
+    #   Type: 'AWS::DynamoDB::Table'
+    #   DeletionPolicy: Retain
+    #   Properties:
+    #     AttributeDefinitions:
+    #       -
+    #         AttributeName: id
+    #         AttributeType: S
+    #     KeySchema:
+    #       -
+    #         AttributeName: id
+    #         KeyType: HASH
+    #     ProvisionedThroughput:
+    #       ReadCapacityUnits: 1
+    #       WriteCapacityUnits: 1
+    #     TableName: ${self:provider.environment.DYNAMODB_TABLE_BOOKMARKS}
+
+  # Print out the Id of the User Pool that is created
+  Outputs:
+    UserPoolId:
+      Value:
+        Ref: CognitoUserPool
+
+    UserPoolClientId:
+      Value:
+        Ref: CognitoUserPoolClient

@@ -1,0 +1,104 @@
+service: serverless-upload-arquivos
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  apiGateway:
+    minimumCompressionSize: 1024 # Ativa compressao gzip para respostas > 1 KB
+
+# Definicao dos plugins
+plugins:
+  # Plugin que fara o upload dos arquivos apos o termino da criacao
+  # da infraestrutura
+  - serverless-finch
+  # Plugin que permite executar comandos atrelados ao ciclo de vida do 
+  # serverless
+  - serverless-hooks
+
+# Definicao dos recursos AWS que serao criados
+resources:
+  # TODO: Entender pq precisa de Resources aqui novamente
+  Resources:
+    # Nomeamos o nosso bucket para o CloudFormation
+    FilesBucket:
+      # Identificamos o tipo de recurso
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        # Nome do Bucket dentro do S3
+        BucketName: serverless-deploy-website
+        # Permissoes de acesso - como queremos enviar arquivos que serao servidos como
+        # uma pagina, eles devem ficar acessiveis abertamente
+        AccessControl: PublicRead
+        # Declaramos que estamos usando esse Bucket como um Website
+        WebsiteConfiguration:
+          # Definimos o nome do arquivo inicial da pagina
+          IndexDocument: index.html
+          # Definimos o nome do arquivo de erro
+          ErrorDocument: error.html
+        # Configuracoes de CORS
+        CorsConfiguration:
+          CorsRules:
+              -
+                AllowedOrigins:
+                  - '*'
+                AllowedHeaders:
+                  - '*'
+                AllowedMethods:
+                  - GET
+                  - PUT
+                  - POST
+                  - HEAD
+                MaxAge: 3000
+
+#Definicao das funcoes disponiveis neste pacote
+functions:
+  # Damos um nome para a nossa funcao(como ela sera identificada no CloudFormation)
+  get:
+    # O caminho ate o codigo da lambda
+    handler: lambda/handler.main
+    # Aqui pode-se configurar metodos http(entre outros) para que o framework
+    # ja crie os endpoints em tempo de deploy
+    events:
+      # Definimos que queremos eventos do tipo HTTP
+      - http:
+          # Queremos expor um metodo GET
+          method: get
+          # No caminho /lambda
+          path: /lambda
+          # Vamos definir as configuracoes de CORS para esse endpoint,
+          # permitindo requests de qualquer lugar(nao faca isso em producao)
+          cors:
+            origin: ${env:CORS_ORIGIN, '*'}
+          # Vamos gerar um pouco de documentacao que ficara acessivel no API Gateway
+          documentation:
+            summary: "Get info"
+            description: "get Info"
+            tags:
+              - "get"
+            methodResponses:
+              - statusCode: "200"
+              - statusCode: "404"
+                responseModels:
+                  "application/json": "ErrorResponse"
+    environment:
+      CORS_ORIGIN: '*'
+
+# A sessao custom define as configuracoes dos plugins
+custom:
+  # client é o nome da sessão que vai definir os parametros do plugin serverless-finch
+  client:
+    # Nome do Bucket: deve ser o mesmo definido em Resources
+    bucketName: serverless-deploy-website
+    # Pasta local com os arquivos a serem enviados(caminho deve ser relativo ao arquivo serverless.yml)
+    distributionFolder: s3_files
+    # Como estamos enviando arquivos que serao servidos como uma página pelo S3, podemos definir qual 
+    # arquivo responde por index e qual pelos erros
+    indexDocument: index.html
+    errorDocument: error.html
+  # precisamos do serverless-hooks para executar comandos que são atrelados ao ciclo de vida
+  # do Serverless
+  serverless-hooks:
+    #essa configuracao faz com que o plugin busque por scripts iniciados com "hooks" dentro do 
+    # arquivo package.json
+    hookPrefix: hook

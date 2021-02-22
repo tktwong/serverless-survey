@@ -1,0 +1,42 @@
+service: java-s3-trigger
+
+provider:
+  name: aws
+  runtime: java8
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "sqs:*"
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource:
+        - "*"
+  environment:
+    QUEUE_URL: ${file(env.json):QUEUE_URL}
+custom:
+  bucketName: ${file(env.json):BUCKET_NAME}
+  uploadPrefix: ${file(env.json):UPLOAD_PREFIX}
+package:
+  artifact: build/distributions/hello.zip
+functions:
+  hello:
+    handler: com.serverless.Handler
+    events:
+      - s3:
+          bucket: ${self:custom.bucketName}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: ${self:custom.uploadPrefix}
+          existing: true

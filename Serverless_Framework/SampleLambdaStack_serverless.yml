@@ -1,0 +1,41 @@
+service: SampleServerlessNetCore
+
+# **********************************************************************************************************
+# To support customizations and multiple accounts, create a 'serverless-custom-<account name>.js' file in the root serverless directory.
+# To override the default account name, use the 'account' parameter like so:
+#
+#       serverless deploy --stage <stage> --account <account name>
+custom: ${file(serverless-custom-${opt:account, 'myAccount'}.js)}
+# **********************************************************************************************************
+
+provider:
+  name: aws
+  runtime: dotnetcore2.1
+  profile: ${self:custom.profile.${self:custom.stage}, 'default'}
+  region: us-west-2
+  stage: ${opt:stage, 'localdev'}
+  memorySize: 512
+  timeout: 10
+  vpc:
+    securityGroupIds:
+      - Ref: SampleServerlessNetCoreSecurityGroup
+    subnetIds:
+      ${self:custom.subnetIds.${self:custom.stage}, self:custom.subnetIds.default}
+
+  environment:
+    MyEnvVariable: "${self:custom.myEnvVariable.${self:custom.stage}, self:custom.myEnvVariable.default}"    
+
+# **********************************************************************************************************
+# To use a shared role, deploy the role from SampleServerlessNetCoreLambdaRole project first. 
+# Make sure to target stage 'dev' and to put default in the dev stage variable.
+# **********************************************************************************************************
+role: "arn:aws:iam::${self:custom.accountId.${self:custom.stage}, self:custom.accountId.default}:role/SampleServerlessNetCoreLambdaRole"
+# **********************************************************************************************************
+
+# Zip created from the build.cmd/build.sh file
+package:
+  artifact: bin/deploy/deploy-package.zip
+
+# Can break up the YAML file into external files
+resources: ${file(Serverless/${self:custom.resourceFolder.${self:custom.stage}, self:custom.resourceFolder.default}/resources.yml)}
+functions: ${file(Serverless/${self:custom.resourceFolder.${self:custom.stage}, self:custom.resourceFolder.default}/functions.yml)}

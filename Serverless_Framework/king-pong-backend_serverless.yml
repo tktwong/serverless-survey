@@ -1,0 +1,43 @@
+service: king-pongs
+
+provider:
+  name: aws
+  region: eu-west-3
+  stage: ${opt:stage, 'dev'}
+  runtime: provided
+  environment:
+    APP_ENV: dev
+    DATABASE_URL: ${ssm:/king-pong/db-username}:${ssm:/king-pong/db-password}@kingpong.ckphcwficesu.eu-west-3.rds.amazonaws.com/king-pong
+
+plugins:
+  - ./vendor/bref/bref
+
+package:
+  exclude:
+    - node_modules/**
+    - tests/**
+
+functions:
+  website:
+    handler: public/index.php
+    timeout: 28 # in seconds (API Gateway has a timeout of 29 seconds)
+    layers:
+      - ${bref:layer.php-72-fpm}
+    events:
+      -   http: 'ANY /'
+      -   http: 'ANY /{proxy+}'
+  console:
+    handler: bin/console
+    timeout: 120 # in seconds
+    layers:
+      - ${bref:layer.php-72} # PHP
+      - ${bref:layer.console} # The "console" layer
+  database:
+    handler: handler.database
+    vpc:
+      securityGroupIds:
+        - sg-2e33de40
+      subnetIds:
+        - subnet-ca5a63a3
+        - subnet-ee580895
+        - subnet-ad3a5fe0

@@ -1,0 +1,477 @@
+
+service: pokebot 
+
+frameworkVersion: '2'
+
+package:
+  exclude:
+    - config.*.yml
+
+provider:
+  name: aws
+  runtime: ruby2.5
+  profile: pokebot-deploy
+  stage: ${opt:stage} 
+  region: ${self:custom.config.region}
+  environment:
+    REGION: ${self:provider.region}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "SNS:Publish"
+      Resource: !Ref SNSMessagesTopic # !Ref returns the ARN of SNSMessages in the resources element below:
+    - Effect: "Allow"
+      Action:
+        - "SNS:Publish"
+      Resource: !Ref SNSIntentTopic # !Ref returns the ARN of SNSIntent in the resources element below:
+    - Effect: "Allow"
+      Action:
+        - "SNS:Publish"
+      Resource: !Ref SNSResponses # !Ref returns the ARN of SNSMessages in the resources element below:
+    - Effect: "Allow"
+      Action:
+        - "SNS:Publish"
+      Resource: !Ref SNSInteractions # !Ref returns the ARN of SNSMessages in the resources element below:
+    - Effect: "Allow"
+      Action:
+        - "SNS:Publish"
+      Resource: !Ref SNSUserTopic # !Ref returns the ARN of SNSMessages in the resources element below:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:BatchGetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        Fn::GetAtt:
+          - FavouritesTable
+          - Arn
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:BatchGetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        Fn::GetAtt:
+          - RecipeFavouritesTable
+          - Arn
+
+custom:
+  config: ${file(config.${self:provider.stage}.yml)}
+  favourites_table: ${self:service}-${self:provider.stage}-favourites-service-favourites
+  recipe_favourites_table: ${self:service}-${self:provider.stage}-recipe-service-favourites
+ 
+functions:
+  messages:
+    handler: messages.handle
+    events:
+      - httpApi:
+          method: POST 
+          path:  /messages
+    environment:
+      SLACK_SIGNED_SECRET: ${self:custom.config.slack_signed_secret}
+      MESSAGES_TOPIC_ARN: !Ref SNSMessagesTopic
+
+  intent:
+    handler: intent.handle
+    events:    
+      - sqs:
+         arn:
+           Fn::GetAtt:
+             - SQSMessagesTopicToIntentQueue
+             - Arn  
+    environment:
+      INTENT_TOPIC_ARN: !Ref SNSIntentTopic
+
+  recipe:
+    handler: recipes.handle
+    events:
+      - sqs:
+         arn:
+           Fn::GetAtt:
+             - SQSIntentTopicToRecipeQueue
+             - Arn  
+      - sqs:
+         arn:
+           Fn::GetAtt:
+             - SQSUserTopicToRecipeQueue
+             - Arn  
+    environment:
+      RESPONSES_TOPIC_ARN: !Ref SNSResponses
+      SPOONACULAR_API_KEY: ${self:custom.config.spoonacular_api_key}
+      SPOONACULAR_ENDPOINT: ${self:custom.config.spoonacular_endpoint}
+      FAVOURITES_TABLE_NAME: ${self:custom.recipe_favourites_table}
+
+  responder:
+    handler: responder.handle
+    events:
+      - sqs:
+         arn:
+           Fn::GetAtt:
+             - SQSResponder
+             - Arn
+      - sqs:
+         arn:
+           Fn::GetAtt:
+             - SQSMessagesToResponder
+             - Arn
+    environment:
+      BOT_USER_OAUTH_ACCESS_TOKEN: ${file(config.${self:provider.stage}.yml):bot_user_oauth_access_token}  
+
+  interactions:
+    handler: interactions.handle
+    events:
+      - httpApi:
+          method: POST 
+          path:  /interactions
+    environment:
+      INTERACTIONS_TOPIC_ARN: !Ref SNSInteractions
+
+  user:
+    handler: user.handle
+    events:
+      - sqs:
+         arn:
+           Fn::GetAtt:
+             - SQSUser
+             - Arn
+    environment:
+      FAVOURITES_TABLE_NAME: ${self:custom.favourites_table}
+      USER_TOPIC_ARN: !Ref SNSUserTopic
+
+
+
+resources:
+  Resources:
+
+    #################################
+    # Messages Service: Messages Topic
+    #################################
+    SNSMessagesTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${self:provider.stage}-messages-topic
+   
+
+
+    #########################################################################
+    # Intent Service: SNS Messages Topic -> SQS Intent Queue & Policy
+    #########################################################################
+    SQSMessagesTopicToIntentQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-messages-topic-to-intent-queue
+    MessagesTopicToIntentQueueSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref SNSMessagesTopic
+        Endpoint: !GetAtt
+          - SQSMessagesTopicToIntentQueue
+          - Arn
+        Protocol: sqs
+      DependsOn:
+        - SNSMessagesTopic
+        - SQSMessagesTopicToIntentQueue
+    SnSMessagesTopictoSQSIntentQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sns-messages"
+              Effect: Allow
+              Principal: "*"
+              Resource: !GetAtt
+                - SQSMessagesTopicToIntentQueue 
+                - Arn
+              Action: "SQS:SendMessage"
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref SNSMessagesTopic
+        Queues:
+          - Ref: SQSMessagesTopicToIntentQueue
+      DependsOn:
+        - MessagesTopicToIntentQueueSubscription
+
+
+    #################################
+    # Messages Service: Intent Topic
+    #################################
+    SNSIntentTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${self:provider.stage}-intent-topic
+   
+
+    #########################################################################
+    # Recipe Service: SNS Intent Topic -> SQS Recipe Queue & Policy
+    #########################################################################
+    SQSIntentTopicToRecipeQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-intent-topic-to-recipe-queue
+    IntentTopicToRecipeQueueSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref SNSIntentTopic
+        Endpoint: !GetAtt
+          - SQSIntentTopicToRecipeQueue
+          - Arn
+        Protocol: sqs
+      DependsOn:
+        - SNSIntentTopic
+        - SQSIntentTopicToRecipeQueue
+    SnSIntentTopictoSQSRecipeQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sns-messages"
+              Effect: Allow
+              Principal: "*"
+              Resource: !GetAtt
+                - SQSIntentTopicToRecipeQueue 
+                - Arn
+              Action: "SQS:SendMessage"
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref SNSIntentTopic
+        Queues:
+          - Ref: SQSIntentTopicToRecipeQueue
+      DependsOn:
+        - IntentTopicToRecipeQueueSubscription
+
+    #########################################   
+    # Recipe Service: SNS Responses Topic
+    ##########################################
+    SNSResponses:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${self:provider.stage}-responses-topic
+
+
+
+
+
+
+    #########################################################################
+    # Responder Service: SNS Responses Topic -> SQS Responder Queue & Policy
+    #########################################################################
+    SQSResponder:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-responder-qu
+    ResponsesQueueSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref SNSResponses
+        Endpoint: !GetAtt
+          - SQSResponder
+          - Arn
+        Protocol: sqs
+      DependsOn:
+        - SNSResponses
+        - SQSResponder
+    SnSResponsestoSQSResponderPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sns-responses"
+              Effect: Allow
+              Principal: "*"
+              Resource: !GetAtt
+                - SQSResponder 
+                - Arn
+              Action: "SQS:SendMessage"
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref SNSResponses
+        Queues:
+          - Ref: SQSResponder
+      DependsOn:
+        - ResponsesQueueSubscription
+
+
+    #########################################################################
+    # Responder Service: SNS Messages Topic -> SQS Responder Queue & Policy
+    #########################################################################
+    SQSMessagesToResponder:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-mrssages-to-responder-queue
+    MessagesToResponsesQueueSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref SNSMessagesTopic
+        Endpoint: !GetAtt
+          - SQSMessagesToResponder
+          - Arn
+        Protocol: sqs
+      DependsOn:
+        - SNSMessagesTopic
+        - SQSMessagesToResponder
+    SnSMessagestoSQSResponderPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sns-responses"
+              Effect: Allow
+              Principal: "*"
+              Resource: !GetAtt
+                - SQSMessagesToResponder 
+                - Arn
+              Action: "SQS:SendMessage"
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref SNSMessagesTopic
+        Queues:
+          - Ref: SQSMessagesToResponder
+      DependsOn:
+        - MessagesToResponsesQueueSubscription
+
+
+
+    ######################################################################3
+    # Interactions Service: Interactions SNS Topic
+    ##################################################################### 
+    SNSInteractions:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${self:provider.stage}-interactions-topic
+
+
+
+
+    ###################################################
+    # User Service: SNS Interactions -> User SQS Queue & Policy
+    ###################################################    
+    SQSUser:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-interactions-topic-to-user-queue
+    InteractionsQueueSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref SNSInteractions
+        Endpoint: !GetAtt
+          - SQSUser
+          - Arn
+        Protocol: sqs
+      DependsOn:
+        - SNSInteractions
+        - SQSUser
+    SnSIntercationstoSQSUserPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sns-responses"
+              Effect: Allow
+              Principal: "*"
+              Resource: !GetAtt
+                - SQSUser 
+                - Arn
+              Action: "SQS:SendMessage"
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref SNSInteractions
+        Queues:
+          - Ref: SQSUser
+      DependsOn:
+        - InteractionsQueueSubscription
+
+    #######################################
+    # User Service: Favourites Table
+    ######################################      
+    FavouritesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.favourites_table}
+        AttributeDefinitions:
+          -
+            AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH 
+        BillingMode: PAY_PER_REQUEST
+   
+    ##########################################
+    # User Service: User SNS Topic
+    ##########################################
+    SNSUserTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${self:provider.stage}-sns-user-topic
+
+
+    ###########################################################################
+    # Recipe Service: SNS User Topic -> SQS Recipe Queue & Policy
+    ###########################################################################
+    SQSUserTopicToRecipeQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-sns-user-to-sqs-recipe
+    UserTopicToRecipeQueueSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref SNSUserTopic
+        Endpoint: !GetAtt
+          - SQSUserTopicToRecipeQueue
+          - Arn
+        Protocol: sqs
+      DependsOn:
+        - SNSUserTopic
+        - SQSUserTopicToRecipeQueue
+    SnSUserToSQSRecipeQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sns-messages"
+              Effect: Allow
+              Principal: "*"
+              Resource: !GetAtt
+                - SQSUserTopicToRecipeQueue
+                - Arn
+              Action: "SQS:SendMessage"
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref SNSUserTopic
+        Queues:
+          - Ref: SQSUserTopicToRecipeQueue
+      DependsOn:
+        - UserTopicToRecipeQueueSubscription
+    
+    #######################################
+    # Recipe Service: Favourites Table
+    ######################################      
+    RecipeFavouritesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.recipe_favourites_table}
+        AttributeDefinitions:
+          -
+            AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH 
+        BillingMode: PAY_PER_REQUEST

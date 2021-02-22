@@ -1,0 +1,59 @@
+service: nucleus-backend
+plugins:
+  - serverless-s3-local
+  - serverless-offline-sqs
+  - serverless-offline-elasticmq
+  - serverless-offline
+
+custom:
+  s3:
+    cors: cors.xml
+    directory: .s3rver
+  elasticmq:
+    stages:
+      - dev
+    start:
+      noStart: false
+  serverless-offline-sqs:
+    autoCreate: true
+    endpoint: http://0.0.0.0:9324
+  serverless-offline:
+    useChildProcesses: true
+
+functions:
+  graphql:
+    events:
+      - http:
+          cors: true
+          method: get
+          path: graphql
+      - http:
+          cors: true
+          method: post
+          path: graphql
+    handler: dist/graphql/index.graphqlHandler
+  queue:
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - Queue
+              - Arn
+    handler: dist/queue/index.queueHandler
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+resources:
+  Resources:
+    Queue:
+      Type: AWS::SQS::Queue
+      Properties:
+        ContentBasedDeduplication: true
+        FifoQueue: true
+        QueueName: Queue.fifo
+    Uploads:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: uploads.localhost

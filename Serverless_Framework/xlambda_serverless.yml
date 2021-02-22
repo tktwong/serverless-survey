@@ -1,0 +1,82 @@
+service: xlambda
+
+frameworkVersion: ">=1.45.1"
+
+plugins:
+    - serverless-python-requirements
+
+custom:
+    pythonRequirements:
+        dockerizePip: non-linux
+        usePipenv: false
+        # zip: true
+        slim: true
+        noDeploy:
+            - boto3
+
+package:
+    exclude:
+        - __pycache__/**
+        - bin/**
+        - docs/**
+        - images/**
+        - include/**
+        - lib/**
+        - lib64/**
+        - tests/**
+        - share/**
+        - lambda-startup-time-analysis.xlsx
+        - local.py
+
+provider:
+    name: aws
+    runtime: python3.7
+    stage: dev
+    region: us-east-1
+    memorySize: 512
+    timeout: 900
+    versionFunctions: false
+    environment:
+        STAGE: ${self:provider.stage}
+    tags:
+        region: ${self:provider.region}
+    iamRoleStatements:
+        - Effect: Allow
+          Action:
+            - "cloudwatch:GetMetricData"
+          Resource:
+            - "*"
+        - Effect: Allow
+          Action:
+            - "lambda:GetFunctionConfiguration"
+          Resource:
+            - "*"
+
+functions:
+    professor:
+        handler: professor.handler
+        name: xlambda-professor-${self:provider.stage}
+        description: Central starting point for the Lambda warming process
+        events:
+            - schedule:
+                name: XLambdaSchedule
+                description: Schedule the execution of the X-Lambda warming process.
+                rate: rate(15 minutes)
+                enabled: true
+                input:
+                    - action: warm_up
+
+    wolverine:
+        handler: wolverine.handler
+        name: xlambda-wolverine-${self:provider.stage}
+        description: Get execution history and function data.
+
+    jean:
+        handler: jean.handler
+        name: xlambda-jean-${self:provider.stage}
+        description: Predict how many containers should be warmed.
+
+    cyclops:
+        handler: cyclops.handler
+        name: xlambda-cyclops-${self:provider.stage}
+        description: Fire up Lambdas concurrently to warm up containers.

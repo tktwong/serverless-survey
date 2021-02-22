@@ -1,0 +1,65 @@
+service: forex-sccoronel1
+
+frameworkVersion: "<=1.25.0"
+
+custom:
+  namespace: ${self:service}-${self:custom.stage}
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: ap-southeast-1
+  environment:
+    CLIENT_ID: '305570257588.323898066771'
+    CLIENT_SECRET: 5b3b8ffb052a723705dadb615c9fa75a
+    VERIFICATION_TOKEN: jYh0kWoSnsjys2HzyAovgp9O
+    INSTALL_ERROR_URL: http://forex-sccoronel1.s3-website-ap-southeast-1.amazonaws.com/#error
+    INSTALL_SUCCESS_URL: http://forex-sccoronel1.s3-website-ap-southeast-1.amazonaws.com/#success
+    NAMESPACE: ${self:custom.namespace}
+    TEAMS_TABLE: ${self:custom.namespace}-teams
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.TEAMS_TABLE}
+    - Effect: Allow
+      Action:
+        - lambda:invokeFunction
+      Resource:
+        - arn:aws:lambda:*:*:function:${self:custom.namespace}-actions
+
+functions:
+  actions:
+    handler: actions.handler
+  events:
+    handler: events.handler
+    events:
+      - http:
+          path: events
+          method: post
+  install:
+    handler: install.handler
+    events:
+      - http:
+          path: install
+          method: get
+
+resources:
+  Resources:
+    TeamsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TEAMS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: team_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: team_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

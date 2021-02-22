@@ -1,0 +1,68 @@
+service: MV-${env:REALM}-Devops-r53
+package:
+    artifact: package/package.zip
+provider:
+  name: aws
+  runtime: nodejs6.10
+  memorySize: 256
+  timeout: 10
+  versionFunctions: false
+  deploymentBucket:
+    name: amaysim-serverless-deployments-${env:AWS_ACCOUNT_ID}-${env:AWS_REGION}
+  environment:
+    ENV: ${env:ENV}
+    REALM: ${env:REALM}
+  region: ${env:AWS_REGION}
+  stage: ${env:ENV}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - route53:ChangeResourceRecordSets
+      Resource:
+        - "arn:aws:route53:::hostedzone/*"
+    - Effect: Allow
+      Action:
+        - route53:GetHostedZone
+      Resource:
+        - "*"
+    - Effect: Allow
+      Action:
+        - ec2:Read*
+        - ec2:List*
+        - ec2:Describe*
+        - autoscaling:Describe*
+      Resource:
+        - "*"
+
+custom:
+  logForwarding:
+    destinationARN: {"Fn::ImportValue": "${env:SUMOLOGIC_LAMBDA_ARN_EXPORT_NAME}"}
+  alerts:
+    dashboards: true
+    topics:
+      ok: ${env:OPS_GENIE_SNS_ARN}
+      alarm: ${env:OPS_GENIE_SNS_ARN}
+      insufficientData: ${env:OPS_GENIE_SNS_ARN}
+    definitions:
+      functionErrors:
+        threshold: 10
+        period: 900
+      functionDuration:
+        threshold: 60000
+        statistic: 'p95'
+        period: 900
+    alarms:
+      - functionErrors
+      - functionThrottles
+      - functionInvocations
+      - functionDuration
+  serverless-offline:
+    prefix: ${env:BASE_PATH}
+    babelOptions:
+      presets: ["es2015"]
+
+functions:
+  index:
+    handler: src/index.handler
+    events:
+      - sns: devops-r53

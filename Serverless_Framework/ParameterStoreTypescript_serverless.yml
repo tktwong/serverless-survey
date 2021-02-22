@@ -1,0 +1,73 @@
+service: ParameterStoreTypescript
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'} # Set the default stage used. Default is dev
+  region: us-east-2
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - secretsmanager:GetSecretValue
+        - ssm:GetParameter
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - kms:Decrypt
+      Resource: "*" 
+    - Effect: "Allow"
+      Action:
+        - "apigateway:GET"
+      Resource:
+        - "*"      
+
+custom:
+  webpack:
+    packager: 'yarn'   
+    includeModules:
+      forceInclude:
+        - aws-param-store
+plugins:
+  - serverless-offline
+  - serverless-webpack
+
+functions:
+  secrets:
+    handler: src/handler.secretHandler
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - SSM: "*"
+        Resource: "*"
+    events:
+      - http:
+          path: secrets/{name}/{withDecryption}
+          method: GET
+          cors: true
+          request: 
+            parameters:
+              paths:
+                name: true
+                withDecryption: true
+
+resources:
+  Resources:
+    BasicParameter001:
+      Type: "AWS::SSM::Parameter"
+      Properties:
+        Name: "Confidential-001"
+        Type: "String" #"StringList" if store more than 1 string of text
+        Value: "password1" #"password1, password2" if using StringList
+        Description: "SSM Parameter for Confidential-001."
+        # AllowedPattern: "^[a-zA-Z0-9]{1,10}$"
+
+    BasicParameter002:
+      Type: "AWS::SSM::Parameter"
+      Properties:
+        Name: "Confidential-002"
+        Type: "StringList" #"StringList" if store more than 1 string of text
+        Value: "secret1, secret2, secret3" #"password1, password2" if using StringList
+        Description: "SSM Parameter for Confidential-002."
+        # AllowedPattern: "^[a-zA-Z0-9]/,$"

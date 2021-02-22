@@ -1,0 +1,129 @@
+service: sequencer
+
+custom: ${file(config.yml):${opt:stage}}
+
+provider:
+  name: aws
+  region: us-west-2
+  runtime: nodejs8.10
+  logRetentionInDays: 90
+  vpc: ${self:custom.vpc}
+  timeout: 30
+  environment:
+    SERVERLESS_STAGE: ${opt:stage}
+    SERVERLESS_SERVICE_NAME: ${self:service}
+    POSTGRES_URL: ${self:custom.database.url}
+    POSTGRES_USERNAME: ${self:custom.database.username}
+    POSTGRES_DATABASE: ${self:custom.database.name}
+    POSTGRES_PASSWORD_KEY: ${self:custom.database.passwordKey}
+    POSTGRES_PORT: ${self:custom.database.port}
+    LAMBDA_PREAMBLE: ${self:service}-${opt:stage, self:provider.stage}-
+    FETCH_EXTERNAL_DATA_LAMBDA: ${self:custom.fetchExternalDataLambda}
+
+  iamRoleStatements:
+    # Email Permissions
+    - Effect: Allow
+      Action:
+        - SES:SendEmail
+      Resource: "*"
+
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource:
+      - Fn::Join:
+        - ':'
+        - - arn:aws:lambda
+          - Ref: AWS::Region
+          - Ref: AWS::AccountId
+          - function:${self:service}-${opt:stage, self:provider.stage}-*
+
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource: ${self:custom.fetchExternalDataLambda}
+
+plugins:
+  - serverless-crypt
+  - serverless-plugin-scripts
+  - serverless-offline
+
+scripts:
+    hooks:
+      'package:initialize': npm run prepare-deploy
+
+functions:
+  ## Mock event for fetching data
+  fetchExternalData:
+    handler: functions/api/fetchExternalData.run
+
+  ## API Functions
+  apiRetrieve:
+    handler: functions/api/genericCrud.retrieve
+    events:
+      - http:
+          cors: true
+          path: admin/crud/{model}
+          method: get
+          authorizer: apiAuthorizer
+      - http:
+          cors: true
+          path: admin/crud/{model}/{id}
+          method: get
+          authorizer: apiAuthorizer
+
+  apiCreate:
+    handler: functions/api/genericCrud.create
+    events:
+      - http:
+          cors: true
+          path: admin/crud/{model}
+          method: post
+          authorizer: apiAuthorizer
+
+  apiRemove:
+    handler: functions/api/genericCrud.remove
+    events:
+      - http:
+          cors: true
+          path: admin/crud/{model}/{id}
+          method: delete
+          authorizer: apiAuthorizer
+
+  apiUpdate:
+    handler: functions/api/genericCrud.update
+    events:
+      - http:
+          cors: true
+          path: admin/crud/{model}/{id}
+          method: patch
+          authorizer: apiAuthorizer
+
+  apiAuthorizer:
+    handler: functions/api/authorizer.handler
+
+  ## Core Events
+  core:
+    handler: functions/core/core.run
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: true
+
+  WaitForDate:
+    handler: functions/steps/WaitForDate.run
+
+  WaitForDuration:
+    handler: functions/steps/WaitForDuration.run
+
+  WaitForDateComparison:
+    handler: functions/steps/WaitForDateComparison.run
+
+  Email:
+    handler: functions/steps/Email.run
+
+  Conditional:
+    handler: functions/steps/Conditional.run
+
+  Goal:
+    handler: functions/steps/Goal.run

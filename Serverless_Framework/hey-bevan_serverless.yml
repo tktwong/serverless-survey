@@ -1,0 +1,200 @@
+service: hey-bevan
+
+plugins:
+  - serverless-domain-manager
+
+custom:
+  tableName: 'hey-bevan-table-new-${self:provider.stage}'
+  customDomain:
+    domainName: "api.hey-bevan.com"
+    certificateArn: arn:aws:acm:us-east-1:038405731550:certificate/29abc4e1-433f-4440-ba0e-3d03b1e0ad8c
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+provider:
+  name: aws
+  runtime: dotnetcore2.1
+  region: ap-southeast-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:BatchGetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "arn:aws:dynamodb:ap-southeast-2:*:*"
+#        - arn:aws:dynamodb:ap-southeast-2:038405731550:table/hey-bevan-table-dev
+#        - { "Fn::GetAtt": ["HeyBevanTable"] }
+  environment:
+    USERS_TABLE: ${self:custom.tableName}
+    SLACK_ACCESS_TOKEN: ${ssm:heybevanBotToken}
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+package:
+  individually: true
+
+functions:
+  addBevan:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::AddBevan
+    description: add bevan
+    events:
+      - http:
+          path: addBevan
+          method: post
+          cors: true
+    package:
+      artifact: bin/release/netcoreapp2.1/AddBevan.zip
+  challenge:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::Challenge
+    description: challenge auth
+    events:
+      - http:
+          path: challenge
+          method: post
+    package:
+      artifact: bin/release/netcoreapp2.1/Challenge.zip
+  GetAll:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::GetAll
+    description: get all bevans
+    events:
+      - http:
+          path: getAll
+          method: get
+          cors: true
+    package:
+      artifact: bin/release/netcoreapp2.1/GetAll.zip
+  GetById:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::GetById
+    description: get bevan by id
+    events:
+      - http:
+          path: getById
+          method: get
+          cors: true
+    package:
+      artifact: bin/release/netcoreapp2.1/GetById.zip
+  showSent:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::ShowSent
+    description: Show sent Bevans
+    events:
+      - http:
+          path: showSent
+          method: post
+          cors: true
+    package:
+      artifact: bin/release/netcoreapp2.1/ShowSent.zip
+  showGiven:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::ShowGiven
+    description: Show given Bevans
+    events:
+      - http:
+          path: showGiven
+          method: post
+          cors: true
+    package:
+      artifact: bin/release/netcoreapp2.1/ShowGiven.zip
+  Redeemable:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::Redeemable
+    description: Show total number of Beavans per userId
+    events:
+      - http:
+          path: Redeemable
+          method: post
+          cors: true
+    package:
+      artifact: bin/release/netcoreapp2.1/Redeemable.zip
+  Channels:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::Channels
+    description: Return list of channels that use bevans
+    events:
+      - http:
+          path: Channels
+          method: get
+          cors: true
+    package:
+      artifact: bin/release/netcoreapp2.1/Channels.zip
+  LeaderBoard:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::LeaderBoard
+    description: Return the leaderboard
+    events:
+      - http:
+          path: LeaderBoard
+          method: post
+          cors: true
+    package:
+      artifact: bin/release/netcoreapp2.1/LeaderBoard.zip
+  GetActivitiesByChannelId:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::GetActivitiesByChannelId
+    description: return activities by channel id
+    events:
+      - http:
+          path: GetActivitiesByChannelId
+          method: post
+          cors: true
+    package:
+      artifact: bin/release/netcoreapp2.1/GetActivitiesByChannelId.zip
+  tokenExchangeRedirection:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::tokenExchangeRedirection
+    description: token redirection
+    events:
+      - http:
+          path: tokenExchangeRedirection
+          method: get
+    package:
+      artifact: bin/release/netcoreapp2.1/tokenExchangeRedirection.zip
+    
+    
+resources:
+ Resources:
+    HeyBevanTable2:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: bevanId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: bevanId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    channel:
+        Type: 'AWS::DynamoDB::Table'
+        DeletionPolicy: Retain
+        Properties:
+            TableName: channel
+            AttributeDefinitions:
+            - AttributeName: guid
+              AttributeType: S
+            KeySchema:
+            - AttributeName: guid
+              KeyType: HASH
+            ProvisionedThroughput:
+                ReadCapacityUnits: 1
+                WriteCapacityUnits: 1
+    user:
+        Type: 'AWS::DynamoDB::Table'
+        DeletionPolicy: Retain
+        Properties:
+            TableName: user
+            AttributeDefinitions:
+            - AttributeName: guid
+              AttributeType: S
+            KeySchema:
+            - AttributeName: guid
+              KeyType: HASH
+            ProvisionedThroughput:
+                ReadCapacityUnits: 1
+                WriteCapacityUnits: 1

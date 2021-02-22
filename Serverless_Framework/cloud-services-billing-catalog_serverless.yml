@@ -1,0 +1,245 @@
+service: cloudservicebillingsls
+# app and org for use with dashboard.serverless.com
+
+# app: appn ame on serverless.com
+# org: org name on serverless.com
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  IBMCloudResourcesTable: "ibmresources"
+  IBMCloudPlansTable: "ibmplans"
+  IBMCloudPricesMetricTable: "ibmpricemetrics"
+  IBMCloudPricesTable: "ibmprices"
+  IBMS3BucketName: "ibmcloudbillingcatalogdump"
+  
+  AzureServicesTable: "azureservices"
+  AzureS3BucketName: "azurecloudbillingcatalogdump"
+  #API keys needed by Azure
+  AzureTenantID: ""
+  AzureSubscriptionID: ""
+  AzureClientID: ""
+  AzureClientSecret: ""
+  AzureOfferId: "MS-AZR-0003P" #this is kept as default
+
+  DigitalOceanDropletTable: "digitaloceandroplets"
+  DigitalOceanS3BucketName: "digitaloceancloudbillingdump"
+  #Auth token needed by digital ocean
+  DigitalOceanAuthToken: ""
+
+provider:
+  name: aws
+  runtime: python3.6
+  iamManagedPolicies:
+    - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  iamRoleStatements:
+      - Effect: "Allow"
+        Action: 
+        # Gives permission to DynamoDB tables in a specific region
+          - "dynamodb:DescribeTable"
+          - "dynamodb:Query"
+          - "dynamodb:Scan"
+          - "dynamodb:GetItem"
+          - "dynamodb:PutItem"
+          - "dynamodb:UpdateItem"
+          - "dynamodb:DeleteItem"
+        Resource:
+          - { "Fn::GetAtt": ["IBMResourcesTable", "Arn"] }
+          - { "Fn::GetAtt": ["IBMPlansTable", "Arn"] }
+          - { "Fn::GetAtt": ["IBMPriceMetricsTable", "Arn"] }
+          - { "Fn::GetAtt": ["IBMPricesTable", "Arn"] }
+          - { "Fn::GetAtt": ["AzureServicesTable", "Arn"] }
+          - { "Fn::GetAtt": ["DigitalOceanDropletsTable", "Arn"] }
+      - Effect: "Allow"
+        Action:
+        # gives permission to saving JSON object to S3
+          - "s3:PutObject"  
+          - "s3:PutObjectAcl"
+        Resource: 
+          - { "Fn::Join": ["", ["arn:aws:s3:::${self:custom.IBMS3BucketName}", "/*" ]]}
+          - { "Fn::Join": ["", ["arn:aws:s3:::${self:custom.AzureS3BucketName}", "/*" ]]}
+          - { "Fn::Join": ["", ["arn:aws:s3:::${self:custom.DigitalOceanS3BucketName}", "/*" ]]}
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.py
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.py
+#    - exclude-me-dir/**
+
+functions:
+  ibmcataloglambdahandler:
+    handler: ibmcloudlambdahandler.event_handler
+    environment:
+      RESOURCES_TABLE_NAME: ${self:custom.IBMCloudResourcesTable}
+      PLANS_TABLE_NAME: ${self:custom.IBMCloudPlansTable}
+      PRICE_METRICS_TABLE_NAME: ${self:custom.IBMCloudPricesMetricTable}
+      PRICES_TABLE_NAME: ${self:custom.IBMCloudPricesTable}
+      S3_BUCKET_NAME: ${self:custom.IBMS3BucketName}
+    timeout: 900
+    events:
+      - schedule: rate(24 hours)
+        # - schedule: cron(15 10 * * ? *)  this will run everyday at 10:15 am
+  azurecataloglambdahandler1:
+    handler: azurecloudlambdahandler1.event_handler
+    environment:
+      SERVICES_TABLE_NAME: ${self:custom.AzureServicesTable}
+      AZURE_TENANT_ID: ${self:custom.AzureTenantID}
+      AZURE_SUBSCRIPTION_ID: ${self:custom.AzureSubscriptionID}
+      AZURE_CLIENT_ID: ${self:custom.AzureClientID}
+      AZURE_CLIENT_SECRET: ${self:custom.AzureClientSecret}
+      AZURE_OFFER_ID: ${self:custom.AzureOfferId}
+      S3_BUCKET_NAME: ${self:custom.AzureS3BucketName}
+    timeout: 900
+    events:
+      - schedule: rate(24 hours)
+        # - schedule: cron(15 10 * * ? *)  this will run everyday at 10:15 am
+  azurecataloglambdahandler2:
+    handler: azurecloudlambdahandler2.event_handler
+    environment:
+      SERVICES_TABLE_NAME: ${self:custom.AzureServicesTable}
+      AZURE_TENANT_ID: ${self:custom.AzureTenantID}
+      AZURE_SUBSCRIPTION_ID: ${self:custom.AzureSubscriptionID}
+      AZURE_CLIENT_ID: ${self:custom.AzureClientID}
+      AZURE_CLIENT_SECRET: ${self:custom.AzureClientSecret}
+      AZURE_OFFER_ID: ${self:custom.AzureOfferId}
+      S3_BUCKET_NAME: ${self:custom.AzureS3BucketName}
+    timeout: 900
+    events:
+      - schedule: rate(24 hours)
+        # - schedule: cron(15 10 * * ? *)  this will run everyday at 10:15 am
+  
+  digitaloceancataloglambdahandler:
+    handler: digitaloceanlambdahandler.event_handler
+    environment:
+      DROPLET_TABLE_NAME: ${self:custom.DigitalOceanDropletTable}
+      DIGITAL_OCEAN_AUTH_TOKEN: ${self:custom.DigitalOceanAuthToken}
+      S3_BUCKET_NAME: ${self:custom.DigitalOceanS3BucketName}
+    timeout: 900
+    events:
+      - schedule: rate(24 hours)
+        # - schedule: cron(15 10 * * ? *)  this will run everyday at 10:15 am
+
+resources:
+  Resources:
+    IBMJSONDumpBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Delete
+      Properties:
+        BucketName: ${self:custom.IBMS3BucketName}
+    AzureJSONDumpBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Delete
+      Properties:
+        BucketName: ${self:custom.AzureS3BucketName}
+    DigitalOceanJSONDumpBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Delete
+      Properties:
+        BucketName: ${self:custom.DigitalOceanS3BucketName}
+    IBMResourcesTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:custom.IBMCloudResourcesTable}
+        AttributeDefinitions:
+          - AttributeName: resource_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: resource_id
+            KeyType: HASH
+        ProvisionedThroughput: 
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 10
+    IBMPlansTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:custom.IBMCloudPlansTable}
+        AttributeDefinitions:
+          - AttributeName: resource_id
+            AttributeType: S
+          - AttributeName: plan_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: resource_id
+            KeyType: HASH
+          - AttributeName: plan_id
+            KeyType: RANGE
+        ProvisionedThroughput: 
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 10
+    IBMPriceMetricsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:custom.IBMCloudPricesMetricTable}
+        AttributeDefinitions:
+          - AttributeName: plan_id
+            AttributeType: S
+          - AttributeName: price_metric_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: plan_id
+            KeyType: HASH
+          - AttributeName: price_metric_id
+            KeyType: RANGE
+        ProvisionedThroughput: 
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 10
+    IBMPricesTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:custom.IBMCloudPricesTable}
+        AttributeDefinitions:
+          - AttributeName: hash_column
+            AttributeType: S
+        KeySchema:
+          - AttributeName: hash_column
+            KeyType: HASH
+        ProvisionedThroughput: 
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 10
+    AzureServicesTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:custom.AzureServicesTable}
+        AttributeDefinitions:
+          - AttributeName: hash_column
+            AttributeType: S
+        KeySchema:
+          - AttributeName: hash_column
+            KeyType: HASH
+        ProvisionedThroughput: 
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 100
+    DigitalOceanDropletsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:custom.DigitalOceanDropletTable}
+        AttributeDefinitions:
+          - AttributeName: hash_column
+            AttributeType: S
+        KeySchema:
+          - AttributeName: hash_column
+            KeyType: HASH
+        ProvisionedThroughput: 
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 10
+# Outputs:
+#   BucketName:
+#     Description: "Name of the bucket"
+#     Value:
+#       Ref: JSONDumpBucket
+plugins:
+  - serverless-python-requirements

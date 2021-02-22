@@ -1,0 +1,62 @@
+service: serverless-sns-sms-logs-to-ddb
+package:
+    include:
+        - src/**
+
+provider:
+    name: aws
+    region: eu-west-1
+    runtime: nodejs8.10
+    stage: ${opt:stage, self:custom.defaultStage}
+    profile: ${opt:profile}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DescribeTable
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+        Resource:
+          - "arn:aws:dynamodb:${self:provider.region}:${self:custom.profiles.${self:provider.stage}.AWS_ACCOUNT_NUMBER}:table/SMSEventsFromLogs"
+
+    environment:
+
+functions:
+    onSMSMessage:
+        handler: src/listener.onSMSMessage
+        events:
+            - cloudwatchLog:
+                logGroup: sns/${self:provider.region}/${self:custom.profiles.${self:provider.stage}.AWS_ACCOUNT_NUMBER}/DirectPublishToPhoneNumber
+            - cloudwatchLog:
+                logGroup: sns/${self:provider.region}/${self:custom.profiles.${self:provider.stage}.AWS_ACCOUNT_NUMBER}/DirectPublishToPhoneNumber/Failure
+plugins:
+    - serverless-prune-plugin
+    - serverless-scriptable-plugin
+
+custom:
+    defaultStage: dev
+    profiles:
+        dev:
+            AWS_PROFILE: sandbox
+            AWS_ACCOUNT_NUMBER: <use you Account Number>
+    prune:
+        automatic: true
+        number: 1
+
+resources:
+    Resources:
+        SMSEventsFromLogsDynamoDBTable: ${file(./CloudFormation/DynamoDB/SMSEventsFromLogs.yml):Table}
+        CloudWatchInvokePolicy:
+            Type: AWS::Lambda::Permission
+            DependsOn: OnSMSMessageLambdaFunction
+            Properties:
+                Action: lambda:InvokeFunction
+                SourceArn: arn:aws:logs:${self:provider.region}:${self:custom.profiles.${self:provider.stage}.AWS_ACCOUNT_NUMBER}:*
+                Principal: logs.${self:provider.region}.amazonaws.com
+                FunctionName:  arn:aws:lambda:${self:provider.region}:${self:custom.profiles.${self:provider.stage}.AWS_ACCOUNT_NUMBER}:function:serverless-sns-sms-logs-to-ddb-${self:provider.stage}-onSMSMessage
+
+
+

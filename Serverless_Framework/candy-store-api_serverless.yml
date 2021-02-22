@@ -1,0 +1,80 @@
+# serverless.yml
+
+service: candy-store-api
+
+custom:
+  tableName: "vendors-table-${self:provider.stage}"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["VendorsDynamoDBTable", "Arn"] }
+  environment:
+    VENDORS_TABLE: ${self:custom.tableName}
+
+functions:
+  app:
+    handler: src/index.handler
+    events:
+      - http:
+          path: /
+          method: any
+          cors:
+            origins:
+              - "*"
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Access-Control-Allow-Headers
+              - Access-Control-Allow-Origin
+              - Access-Control-Allow-Methods
+          integration: lambda
+      - http:
+          path: /{proxy+}
+          method: any
+          cors:
+            origins:
+              - "*"
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Access-Control-Allow-Headers
+              - Access-Control-Allow-Origin
+              - Access-Control-Allow-Methods
+            integration: lambda
+
+resources:
+  Resources:
+    VendorsDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: vendorId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: vendorId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

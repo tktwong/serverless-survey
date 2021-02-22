@@ -1,0 +1,50 @@
+service: WhatTheyTweeted
+plugins:
+  - serverless-dotenv-plugin
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - "Ref" : "ServerlessDeploymentBucket"
+            - "/*"
+
+  environment:
+    SCREEN_NAME_TO_COPY: ${env:SCREEN_NAME_TO_COPY}
+    MONTHS_AGO_TO_COPY: ${env:MONTHS_AGO_TO_COPY}
+    DAYS_TO_SCHEDULE: ${env:DAYS_TO_SCHEDULE}
+    TWITTER_CONSUMER_KEY: ${env:TWITTER_CONSUMER_KEY}
+    TWITTER_CONSUMER_SECRET: ${env:TWITTER_CONSUMER_SECRET}
+    TWITTER_ACCESS_TOKEN: ${env:TWITTER_ACCESS_TOKEN}
+    TWITTER_ACCESS_TOKEN_SECRET: ${env:TWITTER_ACCESS_TOKEN_SECRET}
+
+functions:
+  scheduleTweets:
+    handler: handler.scheduleTweets
+    events:
+      - schedule: rate(24 hours)
+  sendReplicaTweet:
+    handler: handler.sendReplicaTweet
+    events:
+      - sns: greeter-topic
+      - cloudwatchEvent:
+          event:
+            source:
+              - "aws.ec2"
+            detail-type:
+              - "EC2 Instance State-change Notification"
+            detail:
+              state:
+                - pending

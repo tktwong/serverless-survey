@@ -1,0 +1,128 @@
+service: hashtag-lunch-review-dynamodb
+
+plugins:
+  - serverless-dynamodb-local
+
+provider:
+  name: aws
+  region: eu-north-1
+  stage: ${opt:stage, 'dev'}
+  environment:
+    STAGE_ENV: ${opt:stage, 'dev'}
+
+custom:
+  dynamodb:
+    start:
+      seed: true
+      migrate: true
+    seed:
+      domain:
+        sources:
+          - table: Places
+            sources: [./seeds/places.json]
+          - table: Reviews
+            sources: [./seeds/reviews.json]
+          - table: Users
+            sources: [./seeds/users.json]
+
+functions:
+
+resources:
+  Resources:
+    placesTable:
+      Type: AWS::DynamoDB::Table
+
+      Properties:
+        TableName: Places
+
+        AttributeDefinitions:
+          - AttributeName: placeId
+            AttributeType: S
+          - AttributeName: placeName
+            AttributeType: S
+          - AttributeName: googlePlaceId
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: placeId
+            KeyType: HASH
+
+        GlobalSecondaryIndexes:
+          - IndexName: placeNameIndex
+            KeySchema:
+              - AttributeName: placeName
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+
+          - IndexName: placeGoogleIdIndex
+            KeySchema:
+              - AttributeName: googlePlaceId
+                KeyType: HASH
+            Projection:
+              ProjectionType: KEYS_ONLY
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    reviewsTable:
+      Type: AWS::DynamoDB::Table
+
+      Properties:
+        TableName: Reviews
+
+        AttributeDefinitions:
+          - AttributeName: reviewId
+            AttributeType: S
+          - AttributeName: placeId
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: reviewId
+            KeyType: HASH
+
+        GlobalSecondaryIndexes:
+          - IndexName: reviewPlaceIdIndex
+            KeySchema:
+              - AttributeName: placeId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+
+      Properties:
+        TableName: Users
+
+
+        AttributeDefinitions:
+          - AttributeName: googleUserId
+            AttributeType: S
+          # - AttributeName: imageUrl
+          #   AttributeType: S
+          # - AttributeName: displayName
+          #   AttributeType: S
+
+        KeySchema:
+          - AttributeName: googleUserId
+            KeyType: HASH
+
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

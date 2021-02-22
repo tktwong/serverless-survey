@@ -1,0 +1,175 @@
+service: ject-api
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  tableName: ${self:custom.stage}-ject
+  tableNameKaraoke: ${self:custom.stage}-ject-karaoke
+  tableNameTongueTwister: ${self:custom.stage}-ject-tongueTwister
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ap-northeast-1
+
+  environment:
+    tableName: ${self:custom.tableName}
+    tableNameKaraoke: ${self:custom.tableNameKaraoke}
+    tableNameTongueTwister: ${self:custom.tableNameTongueTwister}
+    stripeSecretKey: ${self:custom.environment.stripeSecretKey}
+
+  # 'iamRoleStatement' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - 'Fn::GetAtt': [DecibelsTable, Arn]
+        - 'Fn::GetAtt': [KaraokeTable, Arn]
+        - 'Fn::GetAtt': [TongueTwisterTable, Arn]
+        - 'Fn::GetAtt': [AttachmentsBucket, Arn]
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /notes
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  addDecibel:
+    handler: api/decibels/add.main
+    events:
+      - http:
+          path: decibel
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  getDecibel:
+    handler: api/decibels/get.main
+    events:
+      - http:
+          path: decibel
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  listDecibel:
+    handler: api/decibels/list.main
+    events:
+      - http:
+          path: decibel
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  deleteDecibel:
+    handler: api/decibels/delete.main
+    events:
+      - http:
+          path: decibel/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  addKaraoke:
+    handler: api/karaokes/add.main
+    events:
+      - http:
+          path: karaoke
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  getKaraoke:
+    handler: api/karaokes/get.main
+    events:
+      - http:
+          path: karaoke/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  listKaraoke:
+    handler: api/karaokes/list.main
+    events:
+      - http:
+          path: karaoke
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  deleteKaraoke:
+    handler: api/karaokes/delete.main
+    events:
+      - http:
+          path: karaoke/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  addTongueTwister:
+    handler: api/tongueTwister/add.main
+    events:
+      - http:
+          path: tongueTwister
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  getTongueTwister:
+    handler: api/tongueTwister/get.main
+    events:
+      - http:
+          path: tongueTwister/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  listTongueTwister:
+    handler: api/tongueTwister/list.main
+    events:
+      - http:
+          path: tongueTwister
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  deleteTongueTwister:
+    handler: api/tongueTwister/delete.main
+    events:
+      - http:
+          path: tongueTwister/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+resources:
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/dynamodb-table-karaoke.yml)}
+  - ${file(resources/dynamodb-table-tongueTwisiter.yml)}
+  - ${file(resources/s3-bucket.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

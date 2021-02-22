@@ -1,0 +1,109 @@
+service: invest-valid-serverless
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ap-southeast-1
+  memorySize: 256
+  timeout: 300
+  endpointType: regional
+  environment:
+    AvatarS3Bucket: ${self:custom.AvatarS3Bucket}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - Ref: AvatarS3Bucket
+            - ''
+    - Effect: 'Allow'
+      Action:
+        - 's3:PutObject'
+        - 's3:GetObject'
+        - 's3:DeleteObject'
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - Ref: AvatarS3Bucket
+            - '/*'
+
+plugins:
+  - serverless-mocha-plugin
+  - serverless-offline
+  - serverless-domain-manager
+
+custom:
+  AvatarS3Bucket:
+    Ref: AvatarS3Bucket
+  allowedHeaders: 
+    - Accept 
+    - Content-Type 
+    - Content-Length 
+    - Authorization 
+    - X-Amz-Date 
+    - X-Api-key 
+    - X-Amz-Security-Token 
+    - X-Amz-User-Agent
+    - Access-Control-Allow-Origin
+
+  customDomain:
+    domainName: api.investvalid.com
+    basePath: 'v1'
+    stage: prod
+    certificateName: investvalid.com
+    createRoute53Record: true
+
+functions:
+  getIndexData:
+    handler: StockData/getIndexData.get
+    environment:
+      TUSHARE_TOKEN: ${env:TUSHARE_TOKEN}
+    events:
+      - http:
+          path: stockData/getIndexData
+          method: post
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+  getAStockData:
+    handler: StockData/getAStockData.get
+    environment:
+      TUSHARE_TOKEN: ${env:TUSHARE_TOKEN}
+    events:
+      - http:
+          path: stockData/getAStockData
+          method: post
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+  updateAvatar:
+    handler: UserAttr/UpdateAvatar.update
+    events: 
+      - http:
+          path: userAttr/updateAvatar
+          method: post
+          cors:
+            origin: '*' 
+            headers: ${self:custom.allowedHeaders}
+  
+  getAvatar:
+    handler: UserAttr/GetAvatar.get
+    events:
+      - http:
+          path: userAttr/getAvatar/{avatarName}
+          method: get
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+resources:
+  Resources:
+    AvatarS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-avatar-${opt:stage, self:provider.stage}

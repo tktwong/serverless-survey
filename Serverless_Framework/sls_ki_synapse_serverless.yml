@@ -1,0 +1,95 @@
+service:
+  name: sls-ki-synapse
+
+plugins:
+  - serverless-python-requirements
+  - serverless-domain-manager
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${opt:stage, "dev"}
+  profile: ${self:custom.slsDeploy}.AWS_PROFILE}
+  region: ${self:custom.slsDeploy}.AWS_REGION}
+  timeout: 30
+  environment:
+    SERVICE_NAME: ${self:service}
+    SERVICE_STAGE: ${self:provider.stage}
+    SLIDE_DECKS_BUCKET_NAME: ${self:custom.slideDeckBucketName}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ssm:GetParameter"
+      Resource: { "Fn::Join": [ "", [ "arn:aws:ssm:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":parameter/${self:service}/${self:provider.stage}/*" ] ] }
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject
+      Resource:
+        - 'arn:aws:s3:::${self:custom.slideDeckBucketName}/*'
+  iamManagedPolicies:
+    # TODO: Remove this policy when this is fixed:  https://github.com/serverless/serverless/issues/6241
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+
+functions:
+  graphql:
+    handler: handlers/graphql_handler.graphql
+    events:
+      - http:
+          path: /graphql
+          method: POST
+          authorizer: auth
+          cors: true
+  auth:
+    handler: handlers/auth_handler.authenticate
+
+resources:
+  Resources:
+    # https://serverless.com/blog/cors-api-gateway-survival-guide/#cors-with-custom-authorizers
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+    slideDeckBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: ${self:custom.slideDeckBucketName}
+        LifecycleConfiguration:
+          Rules:
+            - Id: "Delete SlideDeck Bucket Files"
+              Status: "Enabled"
+              ExpirationInDays: ${self:custom.slsDeploy}.SLIDE_DECKS_BUCKET_EXPIRATION_IN_DAYS}
+
+custom:
+  slsDeploy: ${file(./private.sls.deploy.json):${self:provider.stage}
+  slideDeckBucketName: "${self:service}-slide-decks-${self:provider.stage}"
+  customDomain:
+    enabled: ${self:custom.slsDeploy}.DOMAIN_ENABLED}
+    domainName: ${self:custom.slsDeploy}.DOMAIN_NAME}
+    basePath: ${self:custom.slsDeploy}.DOMAIN_BASE_PATH}
+    certificateName: ${self:custom.slsDeploy}.DOMAIN_CERTIFICATE_NAME}
+    createRoute53Record: ${self:custom.slsDeploy}.DOMAIN_CREATE_ROUTE_53_RECORD}
+    endpointType: ${self:custom.slsDeploy}.DOMAIN_ENDPOINT_TYPE}
+    securityPolicy: tls_1_2
+  pythonRequirements:
+    dockerizePip: non-linux
+    # Do not slim the dependencies. PIL/Pillow needs the .pyc files
+    slim: false
+    noDeploy:
+      - pytest
+
+package:
+  individually: false
+  exclude:
+    - "**/**"
+    - "!assets/**"
+    - "!core/**"
+    - "!data/**"
+    - "!handlers/**"
+    - "**/.pytest_cache/**"
+    - "**/__pycache__/**"

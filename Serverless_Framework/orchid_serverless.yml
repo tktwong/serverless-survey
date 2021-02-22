@@ -1,0 +1,333 @@
+service: pac
+app: pac
+org: orchid
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+    zip: false
+    slim: false
+  myEnvironment:
+    TOKEN:
+      prod: "0x4575f41308EC1483f3d399aa9a2826d74Da13Deb"
+      dev: "0xff9978B7b309021D39a76f52Be377F2B95D72394"
+    LOTTERY:
+      prod: "0xb02396f06CC894834b7934ecF8c8E5Ab5C1d12F1"
+      dev: "0xE0dCc70880bee5579DD93C317d272a4121A80117"
+    VERIFIER:
+      prod: "0xbf9155F9f3369B468b54D1Aa16486794A3c7B64A"
+      dev: "0xbf9155F9f3369B468b54D1Aa16486794A3c7B64A"
+    DEFAULT_POOL_SIZE:
+      prod: "50"
+      dev: "10"
+    NET_ORCHID_PACTIER1_POOL_SIZE:
+      prod: "100"
+      dev: "10"
+    LOG_LEVEL:
+      prod: "WARNING"
+      dev: "DEBUG"
+    ENABLE_MONITORING:
+      prod: 'True'
+      dev: 'True'
+    PAC_FUNDER_PUBKEY_SECRET:
+      prod: 'PAC_FUNDER_PUBKEY'
+      dev: 'PAC_FUNDER_PUBKEY_DEV'
+    PAC_FUNDER_PRIVKEY_SECRET:
+      prod: 'PAC_FUNDER_PRIVKEY'
+      dev: 'PAC_FUNDER_PRIVKEY_DEV'
+    DEFAULT_GAS:
+      prod: "75"
+      dev: "75"
+    WEB3_WEBSOCKET:
+      prod: 'WEB3_WEBSOCKET'
+      dev: 'WEB3_WEBSOCKET_DEV'
+    DOUBLE_CHECK_ACCOUNTS:
+      prod: 'True'
+      dev: 'False'
+    RECYCLE_KEY:
+      prod: 'PAC_RECYCLE_KEY_PROD'
+      dev: 'PAC_RECYCLE_KEY_DEV'
+  datadog:
+    addLayers: true
+    flushMetricsToLogs: true
+    apiKey: ${ssm:DATADOG_API_KEY~true}
+  enterprise:
+    logIngestMode: pull
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+    start:
+      migrate: true
+  prune:
+    automatic: true
+    number: 3
+    includeLayers: true
+provider:
+  name: aws
+  stage: ${opt:stage,'dev'}
+  environment:
+    TOKEN: ${self:custom.myEnvironment.TOKEN.${self:provider.stage}}
+    LOTTERY: ${self:custom.myEnvironment.LOTTERY.${self:provider.stage}}
+    VERIFIER: ${self:custom.myEnvironment.VERIFIER.${self:provider.stage}}
+    RECEIPT_SANDBOX: 'False'
+    AUTO_RETRY_WRONG_ENV_REQUEST: 'True'
+    WEB3_WEBSOCKET: ${ssm:${self:custom.myEnvironment.WEB3_WEBSOCKET.${self:provider.stage}}~true}
+    TABLE_NAME: PAC-${self:provider.stage}
+    RECEIPT_TABLE_NAME: PAC-Receipts-${self:provider.stage}
+    RECYCLE_TABLE_NAME: PAC-Recycle-${self:provider.stage}
+    RESULT_TABLE_NAME: PAC-Result-${self:provider.stage}
+    BALANCES_TABLE_NAME: PAC-Balances-${self:provider.stage}
+    TXNS_TABLE_NAME: PAC-TXNsT-${self:provider.stage}
+    EXECUTORS_TABLE_NAME: PAC-ExecutorsT-${self:provider.stage}
+    TARGETS_TABLE_NAME: PAC-TargetsT-${self:provider.stage}
+    DEFAULT_POOL_SIZE: ${self:custom.myEnvironment.DEFAULT_POOL_SIZE.${self:provider.stage}}
+    NET_ORCHID_PACTIER1_POOL_SIZE: ${self:custom.myEnvironment.NET_ORCHID_PACTIER1_POOL_SIZE.${self:provider.stage}}
+    STAGE: ${self:provider.stage}
+    LOG_LEVEL: ${self:custom.myEnvironment.LOG_LEVEL.${self:provider.stage}}
+    ENABLE_MONITORING: ${self:custom.myEnvironment.ENABLE_MONITORING.${self:provider.stage}}
+    PAC_FUNDER_PUBKEY_SECRET: ${self:custom.myEnvironment.PAC_FUNDER_PUBKEY_SECRET.${self:provider.stage}}
+    PAC_FUNDER_PRIVKEY_SECRET: ${self:custom.myEnvironment.PAC_FUNDER_PRIVKEY_SECRET.${self:provider.stage}}
+    DEFAULT_GAS: ${self:custom.myEnvironment.DEFAULT_GAS.${self:provider.stage}}
+    BUNDLE_ID: 'net.orchid.Orchid'
+    MULTISIG: ${ssm:PAC_MULTISIG~true}
+    DOUBLE_CHECK_ACCOUNTS: ${self:custom.myEnvironment.DOUBLE_CHECK_ACCOUNTS.${self:provider.stage}}
+    RECYCLE_KEY: ${self:custom.myEnvironment.RECYCLE_KEY.${self:provider.stage}}
+  runtime: python3.8
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ssm:GetParameter"
+      Resource:
+        - "arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:provider.environment.PAC_FUNDER_PUBKEY_SECRET}"
+        - "arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:provider.environment.PAC_FUNDER_PRIVKEY_SECRET}"
+        - "arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/WEB3_INFURA_PROJECT_ID"
+        - "arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/WEB3_INFURA_PROJECT_SECRET"
+        - "arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:provider.environment.RECYCLE_KEY}"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ PACTable, Arn ]
+        - "Fn::GetAtt": [ ReceiptTable, Arn ]
+        - "Fn::GetAtt": [ RecycleTable, Arn ]
+        - "Fn::GetAtt": [ ResultTable, Arn ]
+        - "Fn::GetAtt": [ BalancesTable, Arn ]
+        - "Fn::GetAtt": [ TxnsTable, Arn ]
+        - "Fn::GetAtt": [ ExecutorsTable, Arn ]
+        - "Fn::GetAtt": [ TargetsTable, Arn ]
+    - Effect: "Allow"
+      Action:
+        - "lambda:InvokeFunction"
+        - "lambda:InvokeAsync"
+      Resource:
+        - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:pac-${self:provider.stage}-MaintainPool"
+        - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:pac-${self:provider.stage}-txn_monitor"
+        - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:pac-${self:provider.stage}-payment_apple"
+        - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:pac-${self:provider.stage}-send_raw"
+        - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:pac-${self:provider.stage}-get_account"
+        - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:pac-${self:provider.stage}-refund_failed_txn"
+functions:
+  txn_monitor:
+    handler: txn_monitor.main
+    timeout: 900
+    events:
+      - schedule: rate(1 minute)
+  get_account:
+    handler: entry_account.main
+    timeout: 10
+    events:
+      - http:
+          path: get_account
+          method: post
+  send_raw:
+    handler: entry_send_raw.main
+    timeout: 10
+    events:
+      - http:
+          path: send_raw
+          method: post
+  refund_failed_txn:
+    handler: entry_refund_failed_txn.main
+    timeout: 10
+    events:
+      - http:
+          path: refund_failed_txn
+          method: post
+  payment_apple:
+    handler: entry_payment_apple.main
+    timeout: 10
+    events:
+      - http:
+          path: payment_apple
+          method: post
+  pac:
+    handler: handler.main
+    timeout: 10
+    events:
+      - http:
+          path: submit
+          method: post
+  apple:
+    handler: handler.apple
+    timeout: 10
+    events:
+      - http:
+          path: apple
+          method: post
+  MaintainPool:
+    handler: pool.maintain_pool_wrapper
+    timeout: 900
+    events:
+      - schedule: cron(0/15 * * * ? *)
+  UpdateStatus:
+    handler: status.main
+    timeout: 900
+    events:
+      - schedule: cron(10/15 * * * ? *)
+  balance:
+    handler: balance.main
+    timeout: 300
+    events:
+      - schedule: cron(5/15 * * * ? *)
+  recycle:
+    handler: recycle.main
+    timeout: 30
+    events:
+      - http:
+          path: recycle
+          method: post
+  reclaim:
+    timeout: 900
+    handler: reclaim.main
+  StoreStatus:
+    handler: storestatus.main
+    timeout: 30
+    events:
+      - http:
+          path: status
+          method: get
+  Verify:
+    handler: verify.main
+    timeout: 30
+    events:
+      - http:
+          path: verify
+          method: post
+plugins:
+  - serverless-plugin-datadog
+  - serverless-pseudo-parameters
+  - serverless-python-requirements
+  - serverless-prune-plugin
+package:
+  exclude:
+    - venv/**
+    - node_modules/**
+resources:
+  Resources:
+    PACTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: price
+            AttributeType: "N"
+          - AttributeName: signer
+            AttributeType: S
+        KeySchema:
+          - AttributeName: price
+            KeyType: HASH
+          - AttributeName: signer
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+      DeletionPolicy: Retain
+    ReceiptTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.RECEIPT_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: receipt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: receipt
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+      DeletionPolicy: Retain
+    ResultTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.RESULT_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: receipt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: receipt
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+      DeletionPolicy: Delete
+    RecycleTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.RECYCLE_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: signer
+            AttributeType: S
+        KeySchema:
+          - AttributeName: signer
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+      DeletionPolicy: Retain
+    BalancesTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.BALANCES_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: account_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: account_id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+      DeletionPolicy: Retain
+    TxnsTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.TXNS_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: txnhash
+            AttributeType: S
+        KeySchema:
+          - AttributeName: txnhash
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+      DeletionPolicy: Retain
+    ExecutorsTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.EXECUTORS_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: pubkey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pubkey
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+      DeletionPolicy: Retain
+    TargetsTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.TARGETS_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: pubkey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pubkey
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+      DeletionPolicy: Retain

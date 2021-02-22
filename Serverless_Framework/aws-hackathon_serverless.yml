@@ -1,0 +1,48 @@
+service: aws-transcribe
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: us-east-1
+  memorySize: 256
+  environment:
+    LANGUAGE_CODE: pt-BR
+    S3_AUDIO_BUCKET: ellyofreitasrecordshacka
+    S3_TRANSCRIPTION_BUCKET: ellyofreitastranscriptionhacka
+    API_SOCKET: http://54.83.123.51:3000
+    REGION: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+      Resource:
+        - 'arn:aws:s3:::${self:provider.environment.S3_AUDIO_BUCKET}/*'
+        - 'arn:aws:s3:::${self:provider.environment.S3_TRANSCRIPTION_BUCKET}/*'
+    - Effect: Allow
+      Action:
+        - transcribe:StartTranscriptionJob
+      Resource: '*'
+
+functions:
+  transcribe:
+    handler: transcribe.handler
+    timeout: 900
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_AUDIO_BUCKET}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .mp3
+      - s3:
+          bucket: ${self:provider.environment.S3_AUDIO_BUCKET}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .wav
+
+resources:
+  Resources:
+    S3TranscriptionBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:provider.environment.S3_TRANSCRIPTION_BUCKET}

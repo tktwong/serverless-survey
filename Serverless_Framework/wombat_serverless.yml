@@ -1,0 +1,104 @@
+service: wombat
+
+frameworkVersion: ">=1.40.0 <2.0.0"
+
+plugins:
+  - serverless-single-page-app-plugin
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ${file(./serverless.env.yml):dev.REGION}
+  environment:
+    PEAS1: ${file(./serverless.env.yml):dev.PEAS1}
+    PEAS2: ${file(./serverless.env.yml):dev.PEAS2}
+    WOMBAT: ${file(./serverless.env.yml):dev.WOMBAT}
+    FILE: ${file(./serverless.env.yml):dev.FILE}
+    REGION: ${file(./serverless.env.yml):dev.REGION}
+
+custom:
+  s3Bucket: ${file(./serverless.env.yml):dev.BUCKET}
+  origin: ${file(./serverless.env.yml):dev.ORIGIN}
+
+package:
+  individually: true
+  exclude:
+    - deploy*
+    - doc
+    - prod
+    - README.md
+    - LICENSE
+    - package-lock.json
+    - coverage/**
+    - app/**
+    - crypto/**
+    - lambda/**
+    - sandbox/**
+    - serverless-single-page-app-plugin/**
+    - web/**
+    - .env
+    - serverless.env.yml
+  include:
+    - lambda/lib/*.*
+
+functions:
+  login:
+    handler: lambda/login/login.endpoint
+    package:
+      include:
+        - lambda/login/login.js
+    events:
+      - http:
+          path: authenticate
+          method: post
+          integration: lambda-proxy
+          cors:
+            origins:
+              - "*"
+            headers:
+              - Accept
+              - Content-Type
+            allowCredentials: true
+  book:
+    handler: lambda/book/book.endpoint          
+    package:
+      include:
+        - lambda/book/book.js
+    events:
+      - http:
+          path: book
+          method: get
+          integration: lambda-proxy
+          cors:
+            origins:
+              - "*"
+            headers:
+              - Accept
+              - Content-Type
+              - Authorization
+            allowCredentials: true
+
+resources:
+  Resources:
+    WebAppS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3Bucket}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: error.html
+    WebAppS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: WebAppS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Action:
+              - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.s3Bucket}/*
+              Principal: 
+                AWS: "arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${self:custom.origin}"

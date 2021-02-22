@@ -1,0 +1,81 @@
+
+service: simple-backend
+
+custom:
+  settings:
+    POSTS_TABLE: posts
+  pythonRequirements:
+    dockerizePip: true
+
+
+provider:
+  name: aws
+  runtime: python3.7
+  profile: serverless-admin
+  region: ap-southeast-2
+  iamRoleStatements:
+  #Mention permissions explicitly.It's good practice not to give more permissions.
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+      #Mentioning name of region and the table
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.POSTS_TABLE}"
+
+functions:
+  hello:
+    handler: handler.hello
+  testThing:
+    handler: handler.testThing
+  getuserinfo:
+    handler: handler.getuserinfo
+    events:
+      - http:
+          path: getuserinfo
+          method: get
+          cors: true
+  putuserinfo:
+    handler: handler.putuserinfo
+    events:
+      - http:
+          path: putuserinfo
+          method: put
+          cors: true
+    # events:
+    # - http:
+    #   path: /post
+    #   method: post
+#Install the following plugin using npm if you want to use boto3
+
+resources:
+#under resource, cloudformation template can be defined. 
+  Resources:
+    PostsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: "username"
+          AttributeType: "S"
+        - AttributeName: "gameid"
+          AttributeType: "S"
+        
+
+        #Following is same as CloudFromation syntax
+        #KeySchema should have length less than or equal to 2.
+        KeySchema:
+          - AttributeName: "username"
+            KeyType: "HASH"
+          - AttributeName: "gameid"
+            KeyType: "RANGE"
+          
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.settings.POSTS_TABLE}
+plugins:
+  - serverless-python-requirements

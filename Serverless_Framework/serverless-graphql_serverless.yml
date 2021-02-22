@@ -1,0 +1,40 @@
+service:
+  name: serverless-graphql
+
+custom:
+  webpackIncludeModules: true # enable auto including modules
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  defaultStage: dev
+  envdefault: ${file(./config/environments/serverless.env.default.yml)}
+  envcurrent: ${file(./config/environments/serverless.env.${self:provider.stage}.yml)}
+  serverless-offline:
+    httpPort: 4000
+    lambdaPort: 4100
+  apiVersion: 'v1'
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: ${self:custom.envdefault.runtime, nodejs12.x}
+  stage: ${opt:stage, self:custom.defaultStage} # Set the default stage used. Default is 'dev'
+  region: ${self:custom.envcurrent.region, 'us-east-1'} # Overwrite the default region used. Default is us-east-1
+  profile: ${opt:awsProfile, 'default'} # The default AWS profile to use with this services
+  memorySize: ${self:custom.envcurrent.memorySize, '128'}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+    # shouldStartNameWithService: true
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    APP_STAGE: ${self:provider.stage}
+    NODE_ENV: ${self:custom.envcurrent.envName, 'dev'} # Set NODE_ENV to current environment
+  tags:
+    tagKeyAppName: ${self:custom.envdefault.tagValueAppName}
+    tagKeyAppLayer: ${self:custom.envdefault.tagValueAppLayerCompute}
+
+functions:
+  - ${file(./serverless.functions.yml)}

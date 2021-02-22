@@ -1,0 +1,77 @@
+service:
+  name: nas-sensors
+
+plugins:
+  - serverless-finch
+
+provider:
+  memorySize: 128
+  timeout: 5
+  name: aws
+  runtime: nodejs12.x
+  region: eu-central-1
+  stage: production
+  profile: muellerjan
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 
+        - dynamodb:PutItem
+        - dynamodb:Scan
+      Resource:
+        - "Fn::GetAtt": [ DynamoDBTable, Arn ]
+  environment:
+    SECRET: ${self:custom.storeData.secret}
+    TABLE_NAME: ${self:custom.tableName}
+    AUTH0_CLIENT_ID: ${file(./secrets.json):AUTH0_CLIENT_ID}
+    AUTH0_CLIENT_PUBLIC_KEY: ${file(./public_key)}
+functions:
+  auth:
+    handler: handlers/auth.handler
+  storeData:
+    name: 'nas-sensors-storeData'
+    handler: handlers/storeData.handler
+    events:
+      - http:
+          path: store
+          method: get
+  fetchData:
+    name: 'nas-sensors-fetchData'
+    handler: handlers/fetchData.handler
+    events:
+      - http:
+          path: fetch
+          method: get
+          cors: true
+          authorizer: auth
+resources:
+  Resources:
+    DynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "Timestamp"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "Timestamp"
+            KeyType: HASH
+        TableName: ${self:custom.tableName}
+        ProvisionedThroughput:
+          ReadCapacityUnits: ${self:custom.tableThroughput}
+          WriteCapacityUnits: ${self:custom.tableThroughput}
+custom:
+  tableName: NasSensors-${self:provider.stage}
+  tableThroughput: 5
+  storeData:
+    secret: ${ssm:/lambda/nas-sensors/storeData/secret}
+  client:
+    bucketName: nas-sensors-frontend
+    distributionFolder: ../client/dist
+    objectHeaders:
+      ALL_OBJECTS:
+        - name: Cache-Control
+          value: max-age=604800
+package:
+  exclude:
+    - "node_modules/aws-sdk/**"
+    - secrets.json
+    - public_key

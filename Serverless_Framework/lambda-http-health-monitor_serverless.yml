@@ -1,0 +1,33 @@
+service: http-health-monitor
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - cloudwatch:PutMetricData
+      Resource: '*'
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  prd:
+    schedule:
+      rate: rate(1 minute)
+      input:
+        ENDPOINT: https://vats.im/health
+        STATUS_CODE_MATCH: 302
+        FAIL_ON_STATUS_CODE_MISMATCH: 1
+  dev:
+    schedule:
+
+functions:
+  httpcheck:
+    handler: handler.http_check
+    environment:
+      TIMEOUT: 5
+      HEADERS: User-Agent=HttpHealthMonitor/1.0
+    events:
+      - schedule: ${self:custom.${self:custom.stage}.schedule}

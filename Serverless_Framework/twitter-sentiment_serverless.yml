@@ -1,0 +1,85 @@
+service: TwitterSentiment
+
+provider:
+  name: aws
+  region: us-east-1
+  iamRoleStatements:
+   iamRoleStatements: # TODO refine to least privilege per function
+    - Effect: Allow
+      Action:
+        - states:StartExecution
+        - states:DescribeExecution
+        - states:GetActivityTask
+        - states:SendTaskSuccess
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject
+        - s3:PutObjectAcl
+        - s3:GetObjectAcl
+        - s3:ListBucket
+        - s3:ListAllMyBuckets
+        - s3:GetBucketLocation
+        - lambda:InvokeFunction
+      Resource: 'arn:aws:*:us-east-1:*:*'
+
+functions:
+  CreateStateMachine:
+    handler: create_state_machine/create_state_machine.handler
+    events:
+      - http:
+        path: /
+        method: get
+  OpenConnection:
+    handler: open_connection/open_connection.handler
+    events:
+      - websocket:
+          route: $connect
+  GetTweets:
+    handler: tweets/get_tweets.handler
+  GetSentiments:
+    handler: sentiments/get_sentiments.handler
+  Aggregate:
+    handler: aggregate/aggregate.handler
+  SendResponse:
+    handler: send_response/send_response.handler
+
+stepFunctions:
+  stateMachines:
+    TwitterSentiment:
+      name: TwitterSentiment
+      definition:
+        Comment: "Basic AWS Step Functions state machine"
+        StartAt: Parallel
+        States:
+          Parallel:
+            Type: Parallel
+            Next: SendResponse
+            Branches:
+            - StartAt: OpenConnection
+              States:
+                OpenConnection:
+                  Type: Task
+                  Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:OpenConnection
+                  End: true
+            - StartAt: GetTweets
+              States:
+                GetTweets:
+                  Type: Task
+                  Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:GetTweets
+                  Next: GetSentiments
+                GetSentiments:
+                  Type: Task
+                  Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:GetSentiments
+                  Next: Aggregate
+                Aggregate:
+                  Type: Task
+                  Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:Aggregate
+                  End: true
+          SendResponse:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:SendResponse
+            End: true
+
+plugins:
+  - serverless-step-functions
+  - serverless-pseudo-parameters

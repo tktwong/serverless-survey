@@ -1,0 +1,38 @@
+service: cult-crons
+#app: cult-crons
+#org: jaydp17
+
+frameworkVersion: '>=1.28.0 <2.0.0'
+
+provider:
+  name: aws
+  runtime: go1.x
+  memorySize: 128
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-south-1'}
+  logRetentionInDays: 14
+  deploymentBucket:
+    name: cultfit-class-booker-deployments
+
+package:
+  individually: true
+  excludeDevDependencies: false
+  exclude:
+    - ./**
+
+functions:
+  class-booker:
+    handler: .bin/class-booker
+    package:
+      include:
+        - .bin/class-booker
+    environment:
+      APP_ENV: ${ssm:/cult-crons/${self:provider.stage}/APP_ENV}
+      CULT_API_KEY: ${ssm:/cult-crons/${self:provider.stage}/CULT_API_KEY}
+      CULT_COOKIE: ${ssm:/cult-crons/${self:provider.stage}/CULT_COOKIE}
+    events:
+      - schedule:
+          name: cult-class-booker-10PM-${self:provider.stage}
+          description: A cron that books my cult classes (stage ${self:provider.stage})
+          rate: cron(30 16 * * ? *) # this equals to 10:00PM IST
+          enabled: true

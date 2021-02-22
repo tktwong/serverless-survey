@@ -1,0 +1,233 @@
+service: workflow
+
+plugins:
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+  - serverless-plugin-include-dependencies
+
+package:
+  individually: true
+  excludeDevDependencies: false
+  browser: false
+  exclude:
+    - functions/**
+    - scripts/**
+    - resources/**
+    - node_modules/**
+    - serverless-resource/**
+    - node_modules/aws-sdk/**
+    - ./*.xlsx
+    - ./*.json
+    - ./*.yml
+    - ./*.encrypted
+    - .gitignore
+    - ./*.txt
+    - ./*.js
+    - ./*.bat
+    - ./*.lock
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-1
+  tags: ${file(./tags.js)}
+  iamRoleStatements:
+  - Effect: "Allow"
+    Action:
+      - states:StartExecution
+      - states:SendTaskFailure
+      - states:SendTaskSuccess
+    Resource:
+      - '*'
+
+stepFunctions:
+  validate: true
+  stateMachines:
+    WorkflowStateMachine:
+      name: WorkflowStateMachine
+      definition:
+        Comment: "A State Machine to manage approval workflow"
+        StartAt: Conditioner
+        States:
+          Conditioner:
+            Type: Task
+            Resource: 
+              Fn::GetAtt: [workflow-condition, Arn]
+            Next: ApprovalLevelChoice
+          ApprovalLevelChoice:
+            Type: Choice
+            Choices: 
+              - Variable: "$.state.level"
+                StringEquals: "AUTO_APPROVE"
+                Next: AutoApproval
+              - Variable: "$.state.level"
+                StringEquals: "LEVEL_1"
+                Next: Level1Approval
+              - Variable: "$.state.level"
+                StringEquals: "LEVEL_2"
+                Next: Level2Approval
+            Default: ChoiceNotFound
+          AutoApproval:
+            Type: Task
+            Resource: 
+              Fn::GetAtt: [workflow-auto-approve, Arn]
+            End: true
+          Level1Approval:
+            Type: Task
+            Resource: 
+              Fn::GetAtt: [workflow-level1-approve, Arn]
+            Next: WaitForCompletion
+          Level2Approval:
+            Type: Task
+            Resource: 
+              Fn::GetAtt: [workflow-level2-approve, Arn]
+            Next: WaitForCompletion
+          ChoiceNotFound:
+            Type: Fail
+            Cause: "Decision could not be made for approval level choice"
+          WaitForCompletion:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke.waitForTaskToken
+            Parameters:
+              FunctionName: ${self:service}-${opt:stage}-workflow-wait-action
+              Payload:
+                taskToken.$: $$.Task.Token
+                state.$: $.state
+            Next: ProcessDecision # the happy path
+            Catch:
+            - ErrorEquals: ["States.TaskFailed"]
+              Next: UnexpectedFailure
+          ProcessDecision:
+            Type: Choice
+            Choices: 
+              - Variable: "$.action"
+                StringEquals: "APPROVE"
+                Next: Approve
+              - Variable: "$.action"
+                StringEquals: "REJECT"
+                Next: Reject
+            Default: ChoiceNotFound
+          Approve:
+            Type: Task
+            Resource: 
+              Fn::GetAtt: [workflow-post-action, Arn]
+            End: true
+          Reject:
+            Type: Task
+            Resource: 
+              Fn::GetAtt: [workflow-post-action, Arn]
+            End: true
+          UnexpectedFailure:
+            Type: Fail
+            Error: Unexpected failure
+            Cause: Some unexpected error occurred, possibly a Lambda function exception, check logs
+resources:
+  Outputs:
+    WorkflowStateMachine:
+      Description: The ARN of the workflow state machine
+      Value:
+        Ref: WorkflowStateMachine
+
+functions:
+  workflow-init:
+    description: Lambda to initate workflow
+    handler: functions/workflow/workflow-init-handler.initateApproval
+    tags:
+      Name: ${self:service}-${self:provider.stage}-workflow-init
+      Description: Lambda to initate workflow
+      module: workflow
+    package:
+      include:
+        - functions/workflow/workflow-init-handler.js
+    environment:
+      statemachine_arn: ${self:resources.Outputs.WorkflowStateMachine.Value}
+    events:
+      - http:
+          path: /workflow/init
+          method: post
+          cors: true
+
+  workflow-condition:
+    description: Lambda to hydrate workflow with conditions
+    handler: functions/workflow/workflow-condition-handler.getApprovalFlowConditions
+    tags:
+      Name: ${self:service}-${self:provider.stage}-workflow-condition
+      Description: ambda to hydrate workflow with conditions
+      module: workflow
+    package:
+      include:
+        - functions/workflow/workflow-condition-handler.js
+
+  workflow-wait-action:
+    description: Lambda to handle waiting for user action state
+    handler: functions/workflow/workflow-wait-action-handler.waitForUserAction
+    tags:
+      Name: ${self:service}-${self:provider.stage}-workflow-wait-action
+      Description: Lambda to handle waiting for user action state
+      module: workflow
+    package:
+      include:
+        - functions/workflow/workflow-wait-action-handler.js
+
+  workflow-resume:
+    description: Lambda to resume workflow via user action
+    handler: functions/workflow/workflow-resume-handler.resume
+    tags:
+      Name: ${self:service}-${self:provider.stage}-workflow-resume
+      Description: Lambda to resume workflow via user action
+      module: workflow
+    package:
+      include:
+        - functions/workflow/workflow-resume-handler.js
+    environment:
+      statemachine_arn: ${self:resources.Outputs.WorkflowStateMachine.Value}
+    events:
+      - http:
+          path: /workflow/action
+          method: post #taskToken, actionPayload
+          cors: true
+
+  workflow-auto-approve:
+    description: Lambda to handle auto-approvals
+    handler: functions/workflow/workflow-auto-approve-handler.autoApprove
+    tags:
+      Name: ${self:service}-${self:provider.stage}-workflow-auto-approve
+      Description: Lambda to handle auto-approvals
+      module: workflow
+    package:
+      include:
+        - functions/workflow/workflow-auto-approve-handler.js
+
+  workflow-level1-approve:
+    description: Lambda to handle level 1 approvals
+    handler: functions/workflow/workflow-level1-approve-handler.level1Approve
+    tags:
+      Name: ${self:service}-${self:provider.stage}-workflow-level1-approve
+      Description: Lambda to handle level 1 approvals
+      module: workflow
+    package:
+      include:
+        - functions/workflow/workflow-level1-approve-handler.js
+
+  workflow-level2-approve:
+    description: Lambda to handle level 2 approvals
+    handler: functions/workflow/workflow-level2-approve-handler.level2Approve
+    tags:
+      Name: ${self:service}-${self:provider.stage}-workflow-level2-approve
+      Description: Lambda to handle level 2 approvals
+      module: workflow
+    package:
+      include:
+        - functions/workflow/workflow-level2-approve-handler.js
+
+  workflow-post-action:
+    description: Lambda to process the decision taken by approvers on a request
+    handler: functions/workflow/workflow-post-action-handler.processDecision
+    tags:
+      Name: ${self:service}-${self:provider.stage}-workflow-post-action
+      Description: Lambda to process the decision taken by approvers on a request
+      module: workflow
+    package:
+      include:
+        - functions/workflow/workflow-post-action-handler.js

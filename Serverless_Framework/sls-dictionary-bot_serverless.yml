@@ -1,0 +1,99 @@
+service: sls-dictionary-bot
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${env:AWS_DEFAULT_REGION, 'eu-west-1'}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:*:*:table/${self:custom.dynamoDbTableName}"
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+        - s3:GetObject
+      Resource: "arn:aws:s3:::${self:custom.s3DefinitionBucketName}/*"
+
+package:
+  exclude:
+    - assets/**
+    - test/**
+    - .circleci/**
+    - .nyc_output/**
+    - .secrets/**
+    - .gitignore
+    - Makefile
+    - serverless.yml
+
+functions:
+  dictionary:
+    name: ${opt:stage, 'local'}-dictbot-read
+    handler: handlers/read.handler
+    description: "a dictionary bot for Slack in ${opt:stage, 'local'}"
+    memorySize: 128
+    timeout: 30
+    events:
+    - http:
+        path: dictionary
+        method: post
+    environment:
+      TABLE_NAME: ${self:custom.dynamoDbTableName}
+      BUCKET_NAME: ${self:custom.s3DefinitionBucketName}
+      BOT_TOKEN: ${env:SLACK_BOT_TOKEN}
+      CHALLENGE_TOKEN: ${env:SLACK_CHALLENGE_TOKEN}
+  update:
+    name: ${opt:stage, 'local'}-dictbot-update
+    handler: handlers/update.handler
+    description: "updates the definitions for dictbot in ${opt:stage, 'local'}"
+    memorySize: 512
+    timeout: 20
+    events:
+    - s3:
+        bucket: ${self:custom.s3DefinitionBucketName}
+        event: s3:ObjectCreated:*
+        rules:
+          - suffix: .json
+    environment:
+      TABLE_NAME: ${self:custom.dynamoDbTableName}
+      BUCKET_NAME: ${self:custom.s3DefinitionBucketName}
+
+plugins:
+  - serverless-stack-output
+
+custom:
+  dynamoDbTableName: ${env:DYNAMODB_TABLE_NAME}
+  s3DefinitionBucketName: ${env:S3_DEFINITION_BUCKET_NAME}
+  output:
+    file: ./serverless-info.json
+
+resources:
+  Resources:
+    DefinitionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.dynamoDbTableName}
+        AttributeDefinitions:
+          - AttributeName: Term
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Term
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+  Outputs:
+    DefinitionBucketName:
+      Value: ${self:custom.s3DefinitionBucketName}
+      Export:
+        Name: ${opt:stage, 'local'}DefinitionBucketName
+    DefinitionTableName:
+      Value: ${self:custom.dynamoDbTableName}
+      Export:
+        Name: ${opt:stage, 'local'}DefinitionTableName
+    

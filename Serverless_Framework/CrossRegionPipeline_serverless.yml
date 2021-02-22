@@ -1,0 +1,64 @@
+service: Builder # NOTE: update this with your service name
+
+provider:
+  name: aws
+#  stage: dev
+  region: us-east-1
+
+resources:
+  Resources:
+    PipelineS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: 
+          Fn::Join:
+            - '-'
+            - - mycrossregion-pipeline
+              - Ref: AWS::AccountId
+              - ${self:provider.region}
+              - ${opt:stage, 'dev'}
+        VersioningConfiguration:
+          Status: Enabled
+
+    CodeBuildIAMRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - 
+              Effect: Allow
+              Principal:
+                Service:
+                  - codebuild.amazonaws.com
+              Action: "sts:AssumeRole"
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
+
+    CodeBuildProject:
+      Type: AWS::CodeBuild::Project
+      Properties:
+        Name: ${self:service}-${opt:stage, 'dev'}
+        Artifacts:
+          Type: CODEPIPELINE
+        Source:
+          Type: CODEPIPELINE
+        ServiceRole: 
+          Fn::GetAtt: [ CodeBuildIAMRole , Arn ]
+        Environment:
+          Type: WINDOWS_CONTAINER
+          Image: aws/codebuild/windows-base:1.0
+          ComputeType: BUILD_GENERAL1_MEDIUM
+          EnvironmentVariables:
+            -
+              Name: STAGE
+              Value: ${opt:stage, 'dev'}
+
+  Outputs: 
+    CodeBuildIAMRole:
+      Value:
+        Fn::GetAtt: [ CodeBuildIAMRole , Arn ]
+
+    CodeBuildProject:
+      Value:
+        Ref: CodeBuildProject

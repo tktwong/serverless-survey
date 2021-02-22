@@ -1,0 +1,105 @@
+service: connected-vehicle-solution
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  timeout: 600
+  memorySize: 256
+  variableSyntax: '\${((self|opt):((?!\${).)+?)}'
+
+  # you can overwrite defaults here
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "lambda:*"
+      Resource: "*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+plugins:
+  - serverless-iam-roles-per-function
+
+functions:
+  NotificationServiceFunction:
+    # name: ${self:service}-${self:provider.stage}-NotificationServiceFunction // To give custom name to function
+    handler: index.handler
+  LocationBasedMarketingFunction:
+    handler: index.handler
+    timeout: 10
+    environment:
+      MKT_TBL:
+        Ref: AdTrackingTable
+      NOTIFICATION_SERVICE:
+        Ref: NotificationServiceFunctionLambdaFunction
+      POI_TBL:
+        Ref: MarketingPoiTable
+    iamRoleStatementsName: LocationBasedMarketingRole #optional custom role name setting instead of the default generated one
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "dynamodb:PutItem"
+          - "dynamodb:Query"
+        Resource:
+          - "Fn::GetAtt": [AdTrackingTable, Arn]
+      - Effect: "Allow"
+        Action:
+          - "dynamodb:Scan"
+        Resource:
+          - "Fn::GetAtt": [MarketingPoiTable, Arn]
+      - Effect: "Allow"
+        Action:
+          - "lambda:InvokeFunction"
+        Resource:
+          - "Fn::GetAtt": [NotificationServiceFunctionLambdaFunction, Arn]
+    events:
+      - iot:
+        name: "ConnectedVehicleLocationBasedMarketing"
+        sql: "SELECT * FROM 'connectedcar/telemetry/#' WHERE name = 'location'"
+        description: "Processing of location-based advertisement data from the AWS Connected Vehicle Solution."
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    MarketingPoiTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: "Delete"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "poi_id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "poi_id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    AdTrackingTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: "Delete"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "trip_id"
+            AttributeType: "S"
+          - AttributeName: "poi_id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "trip_id"
+            KeyType: "HASH"
+          - AttributeName: "poi_id"
+            KeyType: "RANGE"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+  # Outputs:
+  #   NewOutput:
+  #     Description: "Description for the output"
+  #     Value: "UnZipBucket created"

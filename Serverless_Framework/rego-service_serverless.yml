@@ -1,0 +1,79 @@
+service: rego-service
+# app and org for use with dashboard.serverless.com
+app: rego-service
+org: roydenrego
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-southeast-1
+  cfnRole: ${param:cfnRole}
+  # stage: dev
+
+functions:
+  authorizer:
+    handler: services/authorizer.handler
+    memorySize: ${self:custom.memorySize}
+  portfolio:
+    handler: services/portfolio.get
+    memorySize: ${self:custom.memorySize}
+    events:
+      - http:
+          path: v1/portfolio
+          method: get
+          cors: ${self:custom.cors}
+          authorizer: ${self:custom.authorizer}
+  contact:
+    handler: services/contact-sub.post
+    memorySize: ${self:custom.memorySize}
+    events:
+      - http:
+          path: v1/contact
+          method: post
+          cors: ${self:custom.cors}
+          authorizer: ${self:custom.authorizer}
+plugins:
+  - serverless-offline
+  - serverless-domain-manager
+
+resources:
+  Resources:
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.WWW-Authenticate: "'Basic'"
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+
+custom:
+  memorySize: 128
+  authorizer:
+    name: authorizer
+    resultTtlInSeconds: 3600
+    identitySource: method.request.header.Authorization
+    type: request
+  cors:
+    origins:
+      - 'http://react.roydenrego.com'
+      - 'https://react.roydenrego.com'
+      - 'http://roydenrego.com'
+      - 'https://roydenrego.com'
+    headers:
+      - Content-Type
+      - X-Amz-Date
+      - Authorization
+      - X-Api-Key
+      - X-Amz-Security-Token
+      - X-Amz-User-Agent
+  customDomain:
+    domainName: ${param:api_domain}
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    certificateArn: ${param:certificate_arn}
+    endpointType: 'regional'

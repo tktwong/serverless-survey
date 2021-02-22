@@ -1,0 +1,297 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: back-end # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  timeout: 900
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*"
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  master:
+    handler: mapreduce/master.master
+    events:
+      - stream:
+          type: dynamodb
+          batchsize: 1
+          enabled: true
+          arn: { "Fn::GetAtt": ["JobsTable", "StreamArn"] }
+
+  mapper:
+    handler: mapreduce/mapper.mapper
+    timeout: 900
+    memorySize: 3000
+  
+  reducer:
+    handler: mapreduce/reducer.reducer
+    timeout: 900
+    memorySize: 3000
+
+  create:
+    handler: jobs/create.create
+    events:
+      - http:
+          path: jobs
+          method: post
+          cors: true
+  list:
+    handler: jobs/list.list
+    events:
+      - http:
+          path: jobs
+          method: get
+          cors: true
+
+  results:
+    handler: jobs/getresults.getresults
+    events:
+      - http:
+          path: results/{jobId}
+          method: get
+          cors: true
+        request:
+            parameters:
+              paths:
+                jobId: true
+
+  getjob:
+    handler: jobs/getjob.getjob
+    events:
+      - http:
+          path: jobs/{jobId}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                jobId: true
+
+plugins:
+  - serverless-offline
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - websocket: $connect
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(50 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"
+resources:
+  Resources:
+    DataBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: mapreduce-data-bucket
+    DataBucketPolicy: 
+      Type: AWS::S3::BucketPolicy
+      Properties: 
+        Bucket:
+          Ref: "DataBucket"
+        PolicyDocument:
+          Statement:
+            -
+              Effect: "Allow"
+              Principal: "*"
+              Action:
+                - "s3:GetObject"
+              Resource:
+                Fn::Join:
+                  - ""
+                  - 
+                    - "arn:aws:s3:::"
+                    - 
+                      Ref: "DataBucket"
+                    - "/*"
+    JobResultTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: JobResult
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: N
+          - AttributeName: jobId
+            AttributeType: S
+          - AttributeName: value
+            AttributeType: N
+
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        GlobalSecondaryIndexes:
+          - IndexName: jobsResultsSortKey
+            KeySchema:
+              - AttributeName: jobId
+                KeyType: HASH
+              - AttributeName: value
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    ShuffleResultsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ShuffleResults
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: N
+          - AttributeName: jobId
+            AttributeType: S
+          - AttributeName: key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+        GlobalSecondaryIndexes:
+          - IndexName: SortKey
+            KeySchema:
+              - AttributeName: jobId
+                KeyType: HASH
+              - AttributeName: key
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    JobsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Jobs
+        AttributeDefinitions:
+          - AttributeName: jobId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: jobId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: JobsTable
+      Properties:
+        PolicyName: lambda-jobs
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:BatchWriteItem
+                - dynamodb:DescribeStream
+                - dynamodb:ListStreams
+              Resource: 
+                - arn:aws:dynamodb:*:*:table/Jobs
+                - arn:aws:dynamodb:*:*:table/ShuffleResults
+                - arn:aws:dynamodb:*:*:table/ShuffleResults/index/*
+                - arn:aws:dynamodb:*:*:table/JobResult
+                - arn:aws:dynamodb:*:*:table/JobResult/index/*
+        Roles:
+          - Ref: IamRoleLambdaExecution

@@ -1,0 +1,85 @@
+service: graph-service
+frameworkVersion:  ">=2.23.0 < 3.0.0"
+provider:
+  name: aws
+  runtime: nodejs12.x
+  tracing:
+    apiGateway: true
+    lambda: true
+  stage: ${opt:stage, self:custom.defaultStage}
+  memorySize: 256
+  timeout: 20
+  logRetentionInDays: 7
+  stackTags:
+    Name: ${self:service.name}
+  environment:
+    DEPLOY_REGION: ${opt:region, self:provider.region}
+    API_ROOT: ${self:custom.domainName}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+        - cognito-idp:Admin*
+        - xray:PutTelemetryRecords
+        - xray:PutTraceSegments
+      Resource: "*"
+package:
+  include:
+    - configurators
+    - lib
+  exclude:
+    - tmp
+    - .git
+    - .idea
+    - support
+plugins:
+  - serverless-plugin-tracing
+  - serverless-webpack
+  - serverless-plugin-bind-deployment-id
+  - serverless-pseudo-parameters
+custom:
+  local: ${file(./environmentSpecific.yml)}
+  webpackIncludeModules: true
+  grub: graph-api
+  defaultStage: dev
+  basePath: graph
+  kmsKeyPath: ${self:custom.local.kmsKeyPath}
+  maxTokenExpiryPath: ${self:custom.local.maxTokenExpiryPath}
+  domainName: ${self:custom.local.customDomainName}
+  profiles:
+    dev: default
+  regions:
+    dev: us-east-1
+    uat: us-east-1
+    prod: ap-southeast-2
+functions:
+  graphql:
+    handler: src/eventHandlers/graph.graphqlHandler
+    name: ${self:provider.stage}-${self:custom.grub}-graphqlHandler
+    description: graphql handler
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+      - http:
+          path: graphql
+          method: get
+          cors: true
+  ping:
+    handler: src/eventHandlers/http.ping
+    name: ${self:provider.stage}-${self:custom.grub}-util-ping
+    description: a simple payload ping GET test
+    events:
+      - http:
+          path: /ping
+          method: get
+          cors: true
+resources:
+  Resources:
+    __deployment__:
+      Properties:
+        Description: Deployment alias for resources that depend on deployment id
+    ApiGatewayStage: ${file(configurators/apiGatewayStage.yaml)}
+    PathMapping: ${file(configurators/pathMapping.yaml)}

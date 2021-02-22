@@ -1,0 +1,279 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: graasp-service-exporter
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: eu-central-1
+  # the default is 6 seconds
+  # note: api gateway current maximum is 30 seconds
+  timeout: 30
+
+  environment:
+    API_PORT: ${file(./env.${self:provider.stage}.json):API_PORT}
+    SNS_PORT: ${file(./env.${self:provider.stage}.json):SNS_PORT}
+    GRAASP_HOST: ${file(./env.${self:provider.stage}.json):GRAASP_HOST}
+    AUTH_TYPE_HOST: ${file(./env.${self:provider.stage}.json):AUTH_TYPE_HOST}
+    LOGGING_LEVEL: ${file(./env.${self:provider.stage}.json):LOGGING_LEVEL}
+    DEBUG: ${file(./env.${self:provider.stage}.json):DEBUG}
+    TMP_PATH: ${file(./env.${self:provider.stage}.json):TMP_PATH}
+    GRAASP_FILES_HOST: ${file(./env.${self:provider.stage}.json):GRAASP_FILES_HOST}
+    S3_BUCKET: ${file(./env.${self:provider.stage}.json):S3_BUCKET}
+    S3_HOST: ${file(./env.${self:provider.stage}.json):S3_HOST}
+    CI_BRANCH: ${env:CI_BRANCH}
+    CI_COMMIT_ID: ${env:CI_COMMIT_ID}
+    ACCOUNT_ID: ${file(./env.${self:provider.stage}.json):ACCOUNT_ID}
+    REGION: ${file(./env.${self:provider.stage}.json):REGION}
+    CHROME_PATH: ${file(./env.${self:provider.stage}.json):CHROME_PATH}
+    S3_PORT: ${file(./env.${self:provider.stage}.json):S3_PORT}
+    DOMAIN_NAME: ${file(./env.${self:provider.stage}.json):DOMAIN_NAME}
+    CERTIFICATE_ARN: ${file(./env.${self:provider.stage}.json):CERTIFICATE_ARN}
+    SENTRY_DSN: ${file(./env.${self:provider.stage}.json):SENTRY_DSN}
+    STAGE: ${opt:stage}
+
+  # you can overwrite defaults here
+  #  stage: dev
+  #  region: us-east-1
+
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Resource: '*'
+      Action:
+        - 'sns:*'
+    - Effect: 'Allow'
+      Action:
+        - 's3:PutObject'
+        - 's3:ListBucket'
+        - 's3:GetObject'
+      Resource:
+        Fn::Join:
+          - ''
+          - - arn:aws:s3:::${self:provider.environment.S3_BUCKET}
+            - '/*'
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+package:
+  include:
+    - dist/**
+  exclude:
+    # exclude chrome binaries, these are obtained in production from another layer
+    - node_modules/chrome-aws-lambda/**
+    - node_modules/puppeteer-core/**
+    - node_modules/puppeteer/**
+    # exclude the aws sdk as it is already available in the serverless environment
+    - node_modules/aws-sdk/**
+
+functions:
+  getStatus:
+    layers:
+      - arn:aws:lambda:${self:provider.environment.REGION}:${self:provider.environment.ACCOUNT_ID}:layer:graasp-service-chrome:6
+    handler: dist/index.getStatusWithSentry
+    events:
+      - http:
+          path: /
+          method: GET
+          cors: true
+
+  getVersion:
+    layers:
+      - arn:aws:lambda:${self:provider.environment.REGION}:${self:provider.environment.ACCOUNT_ID}:layer:graasp-service-chrome:6
+    handler: dist/index.getVersionWithSentry
+    events:
+      - http:
+          path: /version
+          method: GET
+          cors: true
+
+  throwError:
+    layers:
+      - arn:aws:lambda:${self:provider.environment.REGION}:${self:provider.environment.ACCOUNT_ID}:layer:graasp-service-chrome:6
+    handler: dist/index.throwErrorWithSentry
+    events:
+      - http:
+          path: /error
+          method: GET
+          cors: true
+
+  getExport:
+    layers:
+      - arn:aws:lambda:${self:provider.environment.REGION}:${self:provider.environment.ACCOUNT_ID}:layer:graasp-service-chrome:6
+    handler: dist/index.getExportWithSentry
+    events:
+      - http:
+          path: /{id}
+          method: GET
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+
+  postExport:
+    layers:
+      - arn:aws:lambda:${self:provider.environment.REGION}:${self:provider.environment.ACCOUNT_ID}:layer:graasp-service-chrome:6
+    handler: dist/index.postExportWithSentry
+    events:
+      - http:
+          path: /{id}
+          method: POST
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+
+  generateExport:
+    handler: dist/index.generateExportWithSentry
+    memorySize: 3008
+    timeout: 900
+    layers:
+      - arn:aws:lambda:${self:provider.environment.REGION}:${self:provider.environment.ACCOUNT_ID}:layer:graasp-service-chrome:6
+    events:
+      - sns: export-${opt:stage}
+    onError: arn:aws:sns:${self:provider.environment.REGION}:${self:provider.environment.ACCOUNT_ID}:dlq-${opt:stage}
+
+  handleError:
+    layers:
+      - arn:aws:lambda:${self:provider.environment.REGION}:${self:provider.environment.ACCOUNT_ID}:layer:graasp-service-chrome:6
+    handler: dist/index.handleErrorWithSentry
+    events:
+      - sns: dlq-${opt:stage}
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - websocket: $connect
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"
+
+resources:
+  Conditions:
+    isLocal:
+      Fn::Equals:
+        - ${opt:stage}
+        - local
+  Resources:
+    # only create this bucket locally
+    LocalBucket:
+      Type: AWS::S3::Bucket
+      Condition: isLocal
+      Properties:
+        BucketName: ${file(./env.local.json):S3_BUCKET}
+
+custom:
+  serverless-offline:
+    port: ${self:provider.environment.API_PORT}
+  serverless-offline-sns:
+    port: ${self:provider.environment.SNS_PORT}
+    debug: ${self:provider.environment.DEBUG}
+
+  #settings for serverless-s3-local
+  s3:
+    host: 0.0.0.0
+    port: ${self:provider.environment.S3_PORT}
+    directory: ${self:provider.environment.TMP_PATH}
+
+  # settings for serverless-domain-manager
+  customDomain:
+    domainName: ${self:provider.environment.DOMAIN_NAME}
+    stage: ${opt:stage}
+    certificateArn: ${self:provider.environment.CERTIFICATE_ARN}
+    createRoute53Record: true
+    # by default api endpoints are of type edge
+    # https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-api-endpoint-types.html
+    endpointType: 'edge'
+
+  # settings for serverless-sentry
+  sentry:
+    dsn: ${self:provider.environment.SENTRY_DSN}
+    release:
+      # uses the current git commit hash or tag as release identifier
+      version: git
+
+plugins:
+  - serverless-sentry
+  - serverless-domain-manager
+  - serverless-s3-local
+  - serverless-offline-sns
+  - serverless-offline

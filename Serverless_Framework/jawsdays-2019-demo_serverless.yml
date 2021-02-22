@@ -1,0 +1,106 @@
+service: websockets-order
+
+plugins:
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  region: us-west-2
+  runtime: nodejs8.10
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "dynamodb:*"
+        - "states:StartExecution"
+        - "sns:Publish"
+      Resource:
+        - "*"
+  environment:
+    SLS_SERVICE: ${self:service}
+    SLS_STAGE: ${self:provider.stage}
+
+functions:
+  connect:
+    handler: handler.connect
+    events:
+      - websocket: $connect
+  disconnect:
+    handler: handler.disconnect
+    events:
+      - websocket:
+          route: $disconnect
+  default:
+    handler: handler.default
+    events:
+      - websocket:
+          route: $default
+  order:
+    handler: handler.order
+    events:
+      - websocket: order
+  orderstart:
+    handler: stateMachine.start
+  ordercredit:
+    handler: stateMachine.credit
+  orderstock:
+    handler: stateMachine.stock
+  orderemail:
+    handler: stateMachine.email
+  ordererror:
+    handler: stateMachine.error
+  orderfinish:
+    handler: stateMachine.finish
+
+stepFunctions:
+  stateMachines:
+    orderStateMachine:
+      name: orderStateMachine-${self:service}-${opt:stage}
+      definition:
+        Comment: The state machine for ordering.
+        StartAt: OrderStart
+        States:
+          OrderStart:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-orderstart
+            Next: OrderCredit
+            ResultPath: "$.started"
+          OrderCredit:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-ordercredit
+            Next: OrderStock
+            ResultPath: "$.credit"
+            Catch:
+              - ErrorEquals: [ "States.ALL" ]
+                Next: OrderError
+                ResultPath: $.errorMsg
+          OrderStock:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-orderstock
+            Next: OrderEmail
+            ResultPath: "$.stock"
+            Catch:
+              - ErrorEquals: [ "States.ALL" ]
+                Next: OrderError
+                ResultPath: $.errorMsg
+          OrderEmail:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-orderemail
+            Next: OrderFinish
+            ResultPath: "$.stock"
+            Catch:
+              - ErrorEquals: [ "States.ALL" ]
+                Next: OrderError
+                ResultPath: $.errorMsg
+          OrderError:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-ordererror
+            ResultPath: "$.error"
+            Next: OrderFail
+          OrderFail:
+            Type: Fail
+          OrderFinish:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-orderfinish
+            ResultPath: "$.finished"
+            End: true

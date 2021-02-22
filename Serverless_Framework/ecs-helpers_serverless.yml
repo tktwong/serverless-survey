@@ -1,0 +1,52 @@
+service: ecs-helpers
+
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: prod
+  region: eu-west-1
+  variableSyntax: "\\${{([ ~:a-zA-Z0-9._\\'\",\\-\\/\\(\\)]+?)}}"
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - autoscaling:CompleteLifecycleAction
+        - ecs:ListContainerInstances
+        - ecs:DescribeContainerInstances
+        - ecs:UpdateContainerInstancesState
+        - sns:Publish
+        - ec2:DescribeInstances
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - ssm:PutParameter
+        - ssm:GetParameter
+        - ssm:GetParameters
+      Resource:
+        Fn::Sub: "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ecs-helpers/*"
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  stage: ${{opt:stage, self:provider.stage}}
+  region: ${{opt:region, self:provider.region}}
+  pythonRequirements:
+    dockerizePip: non-linux
+
+package:
+  exclude:
+    - ./**
+  include:
+    - handler.py
+    - amiupdate.py
+
+functions:
+  ecs-instance-drainer:
+    handler: handler.lambda_handler
+  ecs-ami-update:
+    handler: amiupdate.lambda_handler
+    events:
+      - sns: arn:aws:sns:${{self:custom.region}}:177427601217:ecs-optimized-amazon-ami-update
+      

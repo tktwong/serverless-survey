@@ -1,0 +1,68 @@
+
+service: employee-service
+frameworkVersion: ">=1.1.0 <2.0.0"
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  environment:
+    EMPLOYEE_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    EMPLOYEE_EMAIL_TABLE: "employee-email-${opt:stage, self:provider.stage}"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource: "*"
+functions:
+  addEmployee:
+    handler: api/employee.add
+    memorySize: 128
+    description: Submit new employee information.
+    events:
+      - http: 
+          path: employee
+          method: post
+          cors: true
+
+  listEmployees:
+      handler: api/employee.list
+      memorySize: 128
+      description: List all employees
+      events:
+        - http: 
+            path: employee
+            method: get
+            cors: true
+  deleteEmployee:
+      handler: api/employee.delete
+      memorySize: 128
+      description: Delete an employee
+      events:
+        - http: 
+            path: employee/{id}
+            method: delete
+            cors: true
+
+resources:
+  Resources:
+    EmployeesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.EMPLOYEE_TABLE}

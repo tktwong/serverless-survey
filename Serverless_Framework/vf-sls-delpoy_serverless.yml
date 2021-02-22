@@ -1,0 +1,86 @@
+service:
+  name: vf-deploy-service
+app: vf-deploy-app
+org: jlehr
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+plugins:
+  - serverless-webpack
+  - sls_deployalizer
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ${opt:region, 'us-west-2'}
+  stage: ${opt:stage, 'dev'}
+  stackName: ${opt:stackName, 'dev-stack'}
+  deploymentBucket:
+    name: bitiverse-sls-deployments
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    DYNAMODB_TABLE_NAME: ${self:app}-${self:provider.stackName}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: 
+        - "s3:GetObject"
+        - "s3:ListBucket"
+      Resource: 
+        - arn:aws:s3:::${self:provider.deploymentBucket}
+        - arn:aws:s3:::${self:provider.deploymentBucket}/*
+    - Effect: "Allow"
+      Action:
+          - "dynamodb:GetItem"
+          - "dynamodb:PutItem"
+          - "dynamodb:Scan"
+          - "dynamodb:Query"
+      Resource: 
+        - "Fn::GetAtt": [ DynamoDbDeployTable, Arn ]
+functions:
+  initstack:
+    handler: handler.initstack
+    description: "Grabs sls deployment json and uploads to DynamodDB"
+    environment:
+      APP_NAME: ${self:app}
+      SLS_SERVICE_NAME: ${self:service.name}
+      SLS_STAGE_NAME: ${self:provider.stage}
+      STACK_NAME: ${self:provider.stackName}
+      DDB_TABLE_NAME: ${self:provider.environment.DYNAMODB_TABLE_NAME}
+      SLS_DEPLOY_BUCKET: ${self:provider.deploymentBucket}
+      SLS_BUCKET_PREFIX: serverless/${self:service.name}/${self:provider.stage}
+    events:
+      - http: 
+          path: slsd
+          method: post
+resources:
+  Resources:
+    IamAssumeRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:provider.stackName}-${self:provider.stage}-deploy-assume-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+                  - apigateway.amazonaws.com
+              Action: sts:AssumeRole
+    DynamoDbDeployTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_NAME}
+        AttributeDefinitions:
+        - AttributeName: service_name
+          AttributeType: S
+        - AttributeName: created_utc_ms
+          AttributeType: N
+        KeySchema:
+        - AttributeName: service_name
+          KeyType: HASH
+        - AttributeName: created_utc_ms
+          KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

@@ -1,0 +1,96 @@
+service: serverless-prueba
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region : us-east-1
+  environment:
+    DYNAMODB_TABLE: users-table
+    BASE_URL: https://swapi.py4e.com/api
+    YANDEX_KEY: trnsl.1.1.20200426T195618Z.7220e38d8eba9222.99c3348713219fc3e606fee02ccc8eed97f3931e
+    # IS_OFFLINE: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+
+  planet:
+    handler: handlers/planet/list.list
+    events:
+      - http:
+          path: planets
+          method: get
+          cors: true
+  
+  health:
+    handler: handlers/planet/health.health
+    events:
+      - http:
+          path: health
+          method: get
+          cors: true
+
+  listUser:
+    handler: handlers/user/list.list
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+  
+  createUser:
+    handler: handlers/user/create.create
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    AttributesTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+plugins:
+  - serverless-offline
+  - serverless-dynamodb-local
+  - serverless-mocha-plugin
+
+custom:
+  dynamodb:    
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true         
+
+package:
+  exclude:
+    - ".*/**"

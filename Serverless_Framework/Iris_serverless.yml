@@ -1,0 +1,103 @@
+frameworkVersion: "=1.32.0"
+
+service: ${self:custom.name}
+app: ${self:custom.name}
+tenant: toobad
+
+# define custom variables
+custom:
+  name: ${file(./.config/${self:custom.stage}.yml):name}
+  stage: ${opt:stage, 'development'}
+  domain: ${file(./.config/${self:custom.stage}.yml):domain}
+  version: v1
+  region: ${file(./.config/${self:custom.stage}.yml):region}
+  crmDataBucket: ${file(./.config/common.yml):crmDataBucket}
+  deploymentBucket: ${file(./.config/common.yml):deploymentBucket}
+  customDomain:
+    domainName: ${self:custom.domain}
+    basePath: ${self:custom.version}
+    stage: ${self:custom.stage}
+    createRoute53Record: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+  memorySize: 256
+  timeout: 15
+  stackName: ${self:custom.name}-${self:custom.stage}
+  apiName: ${self:custom.name}-${self:custom.stage}
+  versionFunctions: false
+  deploymentBucket:
+    name: ${self:custom.deploymentBucket}
+  environment:
+    REGION: ${self:provider.region}
+    DATA_BUCKET: ${self:custom.crmDataBucket}
+  tags:
+    project: ${self:custom.name}
+    scope: backend
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource: "arn:aws:s3:::${self:custom.crmDataBucket}"
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject
+      Resource: "arn:aws:s3:::${self:custom.crmDataBucket}/*"
+
+package:
+  exclude:
+    - source/**
+    - .config/**
+    - '*.{md,js,json,sublime-*,*config}'
+
+functions:
+  sync:
+    handler: build/iris.sync
+    name: ${self:custom.stage}-iris-sync
+    tags: ${file(./.config/common.yml):functionTags}
+    events:
+      - http:
+          path: iris/sync
+          method: get
+          cors: true
+  list:
+    handler: build/iris.list
+    name: ${self:custom.stage}-iris-list
+    tags: ${file(./.config/common.yml):functionTags}
+    events:
+      - http:
+          path: iris/odata/
+          method: get
+          cors: true
+  metadata:
+    handler: build/iris.metadata
+    name: ${self:custom.stage}-iris-metadata
+    tags: ${file(./.config/common.yml):functionTags}
+    events:
+      - http:
+          path: iris/odata/$metadata
+          method: get
+          cors: true
+  fetch:
+    handler: build/iris.fetch
+    name: ${self:custom.stage}-iris-fetch
+    tags: ${file(./.config/common.yml):functionTags}
+    events:
+      - http:
+          path: iris/odata/{resource}
+          method: get
+          cors: true
+
+
+resources:
+  Resources:
+    NewResource:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.crmDataBucket}

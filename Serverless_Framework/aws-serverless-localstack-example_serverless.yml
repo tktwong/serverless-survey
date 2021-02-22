@@ -1,0 +1,85 @@
+service: aws-serverless-localstack-example
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  iamRoleStatements:
+  - Effect: 'Allow'
+    Action:
+      - 'sqs:*'
+    Resource: 'arn:aws:sqs:${self:provider.region}:#{AWS::AccountId}:GeneratedReportQueue'
+  deploymentBucket:
+    name: local-stack-bucket
+    serverSideEncryption: AES256
+
+plugins:
+  - serverless-localstack
+  - serverless-deployment-bucket
+  - serverless-pseudo-parameters
+
+
+package:
+  individually: true
+  
+custom:
+    snsTopic: ${self:service}-${self:provider.stage}-Topic 
+    localstack:
+        stages:
+        # list of stages for which the plugin should be enabled
+        - local
+        host: http://localhost  # optional - LocalStack host to connect to
+        autostart: true  # optional - start LocalStack in Docker on Serverless deploy 
+        edgePort: 4566
+        lambda:
+        # Enable this flag to improve performance
+        mountCode: True
+        docker:
+        # Enable this flag to run "docker ..." commands as sudo
+        sudo: False
+
+functions:
+  GenerateReportLambda:
+    handler: sender.handler
+    environment:
+      QueueUrl: 
+        Ref: GeneratedReportQueue
+    events:
+      - sns:
+          arn: !Ref CreateReportLambdaTrigger
+          topicName: ${self:custom.snsTopic}
+  
+  ReadQueueMessageLambda:
+    handler: receiver.handler
+    environment:
+      QueueUrl: 
+        Ref: GeneratedReportQueue
+    events:
+      - sqs: 
+          arn:
+             Fn::GetAtt: 
+              - GeneratedReportQueue
+              - Arn
+resources:
+  Resources:
+    GeneratedReportQueue:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: 'GeneratedReportQueue'
+    CreateReportLambdaTrigger:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: 'CreateReportLambdaTriggerName'
+        
+  Outputs:
+    GeneratedReportQueueUrl:
+      Description: "Generated Report Queue URL"
+      Value:
+        Ref: GeneratedReportQueue
+    CreateReportLambdaTriggerArn:
+      Description: "Create Report SNS Arn"
+      Value:
+        Ref: CreateReportLambdaTrigger
+    
+

@@ -1,0 +1,64 @@
+service:
+  name: backend
+org: westergaards1
+app: covid
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+  covidTableName: covid-data
+  covidImportRecordTableName: covid-import-record
+  apiGatewayCaching:
+    enabled: true
+    ttlInSeconds: 3600 # defaults to the maximum allowed: 3600
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-api-gateway-caching
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    COVID_DATA_TABLE_NAME: ${self:custom.covidTableName}
+    COVID_IMPORT_RECORD_TABLE_NAME: ${self:custom.covidImportRecordTableName}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:Scan
+        - dynamodb:BatchWriteItem
+        - dynamodb:PutItem
+      Resource:
+        - 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:custom.covidTableName}'
+        - 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:custom.covidImportRecordTableName}'
+
+functions:
+  getState:
+    handler: src/handler.getState
+    events:
+      - http:
+          method: get
+          path: state/search
+          cors: true
+  getStates:
+    handler: src/handler.getStates
+    events:
+      - http:
+          method: get
+          path: states
+          cors: true
+          caching:
+            enabled: true

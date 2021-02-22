@@ -1,0 +1,212 @@
+service:
+  name: compark
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-north-1'}
+
+  environment:
+    SPOTS_TABLE: Spots-${self:provider.stage}
+    SPOT_ID_INDEX: SpotIdIndex
+    TICKETS_TABLE: Tickets-${self:provider.stage}
+    TICKETS_GARAGE_ID_INDEX: TicketsGarageIdIndex
+
+functions:
+
+  GetSpot:
+    handler: src/lambda/http/getSpot.handler
+    events:
+      - http:
+          method: get
+          path: spot/{spotId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SPOTS_TABLE}
+
+  UpdateSpot:
+    handler: src/lambda/http/updateSpot.handler
+    events:
+      - http:
+          method: patch
+          path: spot/{spotId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SPOTS_TABLE}
+
+  GetSpots:
+    handler: src/lambda/http/getSpots.handler
+    events:
+      - http:
+          method: get
+          path: spots/{garageId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SPOTS_TABLE}/index/${self:provider.environment.SPOT_ID_INDEX}
+      
+  GetAllSpots:
+    handler: src/lambda/http/getAllSpots.handler
+    events:
+      - http:
+          method: get
+          path: spots
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SPOTS_TABLE}
+
+  CreateSpot:
+    handler: src/lambda/http/createSpot.handler
+    events:
+      - http:
+          method: post
+          path: spots
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SPOTS_TABLE}
+      
+  CreateTicket:
+    handler: src/lambda/http/createTicket.handler
+    events:
+      - http:
+          method: post
+          path: tickets
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TICKETS_TABLE}
+
+  GetTicket:
+    handler: src/lambda/http/getTicket.handler
+    events:
+      - http:
+          method: get
+          path: ticket/{ticketId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TICKETS_TABLE}       
+  
+  GetTickets:
+    handler: src/lambda/http/getTickets.handler
+    events:
+      - http:
+          method: get
+          path: tickets/{garageId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TICKETS_TABLE}/index/${self:provider.environment.TICKETS_GARAGE_ID_INDEX}
+      
+  GetAllTickets:
+    handler: src/lambda/http/getAllTickets.handler
+    events:
+      - http:
+          method: get
+          path: tickets
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TICKETS_TABLE}
+  
+  UpdateTicket:
+    handler: src/lambda/http/updateTicket.handler
+    events:
+      - http:
+          method: patch
+          path: ticket/{ticketId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TICKETS_TABLE}
+      
+resources:
+  Resources:
+    SpotsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: garageId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.SPOTS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.SPOT_ID_INDEX}
+            KeySchema:
+              - AttributeName: garageId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    TicketsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: garageId
+            AttributeType: S
+          - AttributeName: timeOfArrival
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.TICKETS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.TICKETS_GARAGE_ID_INDEX}
+            KeySchema:
+              - AttributeName: garageId
+                KeyType: HASH
+              - AttributeName: timeOfArrival
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi

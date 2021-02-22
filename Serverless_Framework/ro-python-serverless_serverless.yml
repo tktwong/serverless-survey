@@ -1,0 +1,111 @@
+# Welcome to Serverless!
+#
+
+service: 
+    name: ro-python-hello-serverless
+
+plugins:
+  - serverless-python-requirements
+  - serverless-s3-local
+  - serverless-s3-local-sync
+  - serverless-s3-sync
+  - serverless-plugin-existing-s3
+  - serverless-offline-python
+  - serverless-plugin-tracing
+
+custom:
+    pythonRequirements:
+        dockerizePip: non-linux
+        noDeploy: []
+    serverless-offline:
+        port: 4000
+    s3:
+        host: 0.0.0.0
+        port: 8002
+        directory: ./.s3
+        cors: ./s3-cors-policy.xml
+    s3Sync:
+        - bucketName: ${self:service:name}-${self:provider.stage}-work
+          localDir: resources/s3/ro-python-hello-work
+        - bucketName: ${self:service:name}-${self:provider.stage}-proc
+          localDir: resources/s3/ro-python-hello-proc
+        - bucketName: ${self:service:name}-${self:provider.stage}-res
+          localDir: resources/s3/ro-python-hello-res
+
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: dev
+  region: us-east-1
+  memorySize: 1024
+  timeout: 120
+  versionFunctions: true
+  tracing: true
+
+  iamRoleStatements:
+      - Effect: Allow
+        Action:
+            - s3:*
+        Resource:
+            - arn:aws:s3:::${self:service:name}-${self:provider.stage}-*
+      - Effect: Allow
+        Action:
+            - xray:PutTraceSegments
+            - xray:PutTelemetryRecords
+        Resource:
+            - "*"
+
+  environment:
+      PROC_BUCKET: ${self:service:name}-${self:provider.stage}-proc
+      WORK_BUCKET: ${self:service:name}-${self:provider.stage}-work
+      RES_BUCKET: ${self:service:name}-${self:provider.stage}-res
+      S3_ENDPOINT: ${env:S3_ENDPOINT}
+      S3_REGION: ${self:provider.region}
+
+package:
+    exclude:
+        - ./**
+    include:
+        - serverless_hello/**
+
+functions:
+    hello:
+       handler: serverless_hello/handler.hello
+       events:
+           - http:
+               path: hello
+               method: get
+    start_work:
+       handler: serverless_hello/worker.start_work
+       events:
+           - http:
+               path: start-work
+               method: get
+       healthcheck:
+           tracing: true
+    compute:
+        handler: serverless_hello/worker.compute
+        events:
+            - existingS3:
+                bucket: ${self:provider.environment.PROC_BUCKET}
+                events: 
+                    - s3:ObjectCreated:*
+                rules:
+                    - suffix: .work
+resources:
+    Resources:
+        InBucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:provider.environment.WORK_BUCKET}
+        OutBucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:provider.environment.PROC_BUCKET}
+        ResBucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:provider.environment.RES_BUCKET}
+
+

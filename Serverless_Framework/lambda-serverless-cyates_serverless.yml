@@ -1,0 +1,175 @@
+service: movies
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: demo
+  region: us-east-1
+  profile: serverless-admin
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "apigateway:GET"
+      Resource:
+        - "arn:aws:apigateway:${self:provider.region}::/restapis*"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - "*"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-aws-documentation
+  - serverless-domain-manager
+  - serverless-stack-output
+  - serverless-dynamodb-local
+
+package:
+  include:
+    src/**/!(*.spec).js
+  exclude:
+    - node_modules/**/*
+    - '!node_modules/uuid/**'
+
+functions:
+  deleteMovie:
+    handler: src/api/movies/movies.deleteMovie
+    description: Deletes a movie.
+
+    events:
+      - http:
+          path: movies/{id}
+          method: delete
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+          documentation:
+            summary: Delete a movie.
+            tags:
+              - Movie
+            description: Deletes the specified movie.
+            pathParams:
+              - name: id
+                description: The unique identifier of the movie to delete.
+            methodResponses:
+              - statusCode: '204'
+                description: Returned when the operation is completed successfully.
+
+  getMovie:
+    handler: src/api/movies/movies.getMovie
+    description: Returns a single movie.
+
+    events:
+      - http:
+          path: movies/{id}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+          documentation:
+            summary: Get a movie.
+            tags:
+              - Movie
+            description: Returns the specified movie.
+            pathParams:
+              - name: id
+                description: The unique identifier of the movie to retrieve.
+            methodResponses:
+              - statusCode: '200'
+                description: Returned when the operation is completed successfully.
+
+  getMovies:
+    handler: src/api/movies/movies.getMovies
+    description: Returns all movies.
+
+    events:
+      - http:
+          path: movies
+          method: get
+          cors: true
+          documentation:
+            summary: Get all movies.
+            tags:
+              - Movie
+            description: Returns all movies.
+            methodResponse:
+              - statusCode: '200'
+                description: Returned when the operation is completed successfully.
+
+  patchMovie:
+    handler: src/api/movies/movies.patchMovie
+    description: Updates a movie.
+
+    events:
+      - http:
+          path: movies/{id}
+          method: post
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+            schema:
+              application/json: ${file(src/schema/create-movie-request.json)}
+          documentation:
+            summary: Update a movie.
+            tags:
+              - Movie
+            description: Updates a movie.
+            pathParams:
+              - name: id
+                description: The unique identifier of the movie to update.
+            methodResponses:
+              - statusCode: '200'
+                description: Returned when the operation is completed successfully.
+
+  putMovie:
+    handler: src/api/movies/movies.putMovie
+    description: Creates a movie.
+
+    events:
+      - http:
+          path: movies
+          method: post
+          cors: true
+          request:
+            schema:
+              application/json: ${file(src/schema/create-movie-request.json)}
+          documentation:
+            summary: Create a new movie.
+            tags:
+              - Movie
+            description: Creates a movie.
+            methodResponses:
+              - statusCode: '200'
+                description: Returned when the operation is completed successfully.
+
+custom:
+  customDomain:
+    basePath: api
+    domainName: movies.charles-yates.com
+    certificateName: '*.charles-yates.com'
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  dynamodb:
+    # If you only want to use DynamoDB Local in some stages, declare them here
+      stages:
+        - start
+      start:
+        port: 8000
+        inMemory: true
+        heapInitial: 200m
+        heapMax: 1g
+        migrate: true
+        seed: true
+        convertEmptyValues: true
+      # Uncomment only if you already have a DynamoDB running locally
+      # noStart: true
+  output:
+    file: .serverless/output.json

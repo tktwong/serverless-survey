@@ -1,0 +1,58 @@
+service: ${self:custom.appName}-lambda
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: ap-northeast-1
+  profile: private
+  environment:
+    STAGE: ${self:provider.stage}
+    PREFIX: ${self:custom.appName}-${self:provider.stage}
+    CHANNEL_INFO_TABLE: ${self:provider.environment.PREFIX}-channel-info
+    BROADCAST_INFO_TABLE: ${self:provider.environment.PREFIX}-broadcast-info
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PREFIX}*"
+custom:
+  defaultStage: dev
+  appName: vtuber-scheduler
+plugins:
+  - serverless-webpack
+package:
+  individually: true
+  exclude:
+    - ./**
+functions:
+  getYoutubeBroadcast:
+    handler: src/app/lambda/get-youtube-broadcast/handler.getYoutubeBloadcast
+    events:
+      # 日本時間(JST)で毎日0時、6時、12時間、18時に定期実行
+      - schedule: cron(0 15 * * ? *) #0時
+      - schedule: cron(0 21 * * ? *) #6時
+      - schedule: cron(0 3 * * ? *) #12時
+      - schedule: cron(0 9 * * ? *) #18時
+  getChannelInfo:
+    handler: src/app/lambda/get-channel-info/handler.getChannelInfo
+  youtubeBroadcastInfoApi:
+    handler: src/app/lambda/youtube-broadcast-api/handler.youtubeBroadcastInfoApi
+    # API Gatewayに関する設定
+    events:
+      - http:
+          path: youtubeBroadcastInfo
+          method: get
+          cors: true
+  youtubeChannelInfoApi:
+    handler: src/app/lambda/youtube-channel-api/handler.youtubeChannelInfoApi
+    # API Gatewayに関する設定
+    events:
+      - http:
+          path: youtubeChannelInfo
+          method: get
+          cors: true

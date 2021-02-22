@@ -1,0 +1,93 @@
+org: dyadic
+app: receipt-saver-be
+service: rs-service
+
+custom:
+  defaultEnv: ${file(./default_env.json)}
+  tableReceiptName: ${self:service}-${self:custom.defaultEnv.TABLE_RECEIPT}-${self:provider.stage}
+  tableItemName: ${self:service}-${self:custom.defaultEnv.TABLE_ITEM}-${self:provider.stage}
+  tableUsersName: ${self:service}-${self:custom.defaultEnv.TABLE_USERS}-${self:provider.stage}
+  bucketReceiptsName: ${self:service}-${self:custom.defaultEnv.BUCKET_RECEIPTS}-${self:provider.stage}
+  serverless-offline:
+    port: ${self:custom.defaultEnv.SERVERLESS_PORT}
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+    start:
+      port: ${self:custom.defaultEnv.DB_PORT}
+      inMemory: false
+      migrate: true
+      dbPath: offline
+  s3:
+    port: ${self:custom.defaultEnv.S3_PORT}
+    directory: offline
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${env:STAGE}
+  region: eu-west-2
+  environment: 
+    TABLE_RECEIPT: ${self:custom.tableReceiptName}
+    TABLE_ITEM: ${self:custom.tableItemName}
+    TABLE_USERS: ${self:custom.tableUsersName}
+    BUCKET_RECEIPTS: ${self:custom.bucketReceiptsName}
+  iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+        Resource:
+          - { "Fn::GetAtt": ["ReceiptDynamoDBTable", "Arn" ] }
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:PutObjectAcl
+          - s3:GetObject
+          - s3:GetObjectAcl
+          - s3:DeleteObject
+          - s3:DeleteObjectAcl
+        Resource:
+          - { "Fn::GetAtt": ["ReceiptBucket", "Arn" ] }
+  apiGateway:
+    binaryMediaTypes:
+      - 'image/*'
+      - 'multipart/form-data'
+      - 'application/octet-stream'
+
+functions:
+  app:
+    handler: build/app.sls.server
+    events:
+      - http:
+          path: /helloWorld
+          method: get
+      - http:
+          path: /image
+          method: ANY
+      - http:
+          path: /image/{any+}
+          method: ANY
+      - http:
+          path: /receipt
+          method: ANY
+      - http:
+          path: /receipt/{any+}
+          method: ANY
+
+
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  - ${file(resources/s3-bucket.yml)}
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-s3-local
+  - serverless-dynamodb-local
+  - serverless-offline

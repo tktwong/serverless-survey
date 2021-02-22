@@ -1,0 +1,132 @@
+# The `service` block is the name of the service
+service: ${self:custom.package}-users
+
+# Plugins
+plugins:
+  - serverless-plugin-include-dependencies
+  - serverless-pseudo-parameters
+
+# The `package` block contains files to ignore
+package:
+  exclude:
+    - node_modules/**
+
+# The `custom` block contains global params
+custom:
+  settings:
+    DYNAMODB_TABLE: Users
+  READ_CAPACITY_UNITS: 1
+  WRITE_CAPACITY_UNITS: 1
+  package: ms-sigem
+  # bucket: ${self:custom.package}-bucket-${self:provider.stage}
+  # apiGateway: API-${self:provider.stage}-${self:custom.package}
+  # authorizerId: !ImportValue ${self:custom.apiGateway}-apiGatewayAuthorizer
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs12.x
+  tracing:
+    lambda: true
+  stage: ${opt:stage,'dev'}
+  environment: ${self:custom.settings}
+  timeout: 30
+  memorySize: 1024
+  region: us-east-1
+  # deploymentBucket:
+  #   name: ${self:custom.bucket}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:CreateTable
+        - dynamodb:DeleteTable
+      Resource: "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.settings.DYNAMODB_TABLE}"
+
+# The `functions` block defines the endpoints that will be published
+functions:
+  findById:
+    handler: handlers/findById-handler.findById
+    name: ${self:service}-find-by-id
+    description: Find user by id function
+    events:
+      - http:
+          path: sigem/users/{id}
+          method: get
+          cors: true
+  find:
+    handler: handlers/find-handler.find
+    name: ${self:service}-find
+    description: Filter users function
+    events:
+      - http:
+          path: sigem/users
+          method: get
+          cors: true
+  create:
+    handler: handlers/create-handler.create
+    name: ${self:service}-create
+    description: Create user function
+    events:
+      - http:
+          path: sigem/users
+          method: post
+          cors: true
+  update:
+    handler: handlers/update-handler.update
+    name: ${self:service}-update
+    description: Update users function
+    events:
+      - http:
+          path: sigem/users/{id}
+          method: put
+          cors: true
+  delete:
+    handler: handlers/delete-handler.delete
+    name: ${self:service}-delete
+    description: Delete users function
+    events:
+      - http:
+          path: sigem/users/{id}
+          method: delete
+          cors: true
+  create-table:
+    handler: handlers/createTable-handler.createTable
+    name: ${self:service}-create-table
+    description: Create table users function
+    events:
+      - http:
+          path: sigem/users/create-table
+          method: post
+          cors: true
+  deleteTable:
+    handler: handlers/deleteTable-handler.deleteTable
+    name: ${self:service}-delete-table
+    description: Delete table users function
+    events:
+      - http:
+          path: sigem/users/delete-table
+          method: delete
+          cors: true
+# The `resources` block defines de table creation. If table exist, deploy fails.
+# resources:
+#   Resources:
+#     UsersDynamoDbTable:
+#       Type: "AWS::DynamoDB::Table"
+#       DeletionPolicy: Retain
+#       Properties:
+#         AttributeDefinitions:
+#           - AttributeName: id
+#             AttributeType: S
+#         KeySchema:
+#           - AttributeName: id
+#             KeyType: HASH
+#         ProvisionedThroughput:
+#           ReadCapacityUnits: ${self:custom.READ_CAPACITY_UNITS}
+#           WriteCapacityUnits: ${self:custom.WRITE_CAPACITY_UNITS}
+#         TableName: ${self:custom.settings.DYNAMODB_TABLE}

@@ -1,0 +1,64 @@
+service:
+  name: auction-service
+
+plugins:
+# allows you to bundle your application using webpack and ECMA script 6+
+  - serverless-bundle
+# allows you to interpolate AWS parameters(region, accountID)
+  - serverless-pseudo-parameters
+
+# about the account provider
+provider:
+  name: aws
+  runtime: nodejs12.x
+# how much memory our lambda function will get when executed (set globally instead of per function)
+  memorySize: 256
+# set custom options for development, if no stage provided
+  stage: ${opt:stage, 'dev'}
+  region: us-west-1
+  environment:
+    AUCTIONS_TABLE_NAME: ${self:custom.AuctionsTable.name}
+  iamRoleStatements:
+    - ${file(iam/AuctionsTableIAM.yml):AuctionsTableIAM}
+  
+resources:
+  Resources:
+    AuctionsTable: ${file(resources/AuctionsTable.yml):AuctionsTable}
+
+# define lambda function with handler and event trigger
+functions:
+  createAuction:
+    handler: src/handlers/createAuction.handler
+    events:
+      - http:
+          method: POST
+          path: /auction
+  getAuctions:
+    handler: src/handlers/getAuctions.handler
+    events:
+      - http:
+          method: GET
+          path: /auction
+  getAuctionById:
+    handler: src/handlers/getAuctionById.handler
+    events:
+      - http:
+          method: GET
+          path: /auction/{id}
+  placeBid:
+    handler: src/handlers/placeBid.handler
+    events:
+      - http:
+          method: PATCH
+          path: /auction/{id}/bid
+  processAuctions:
+    handler: src/handlers/processAuctions.handler
+    # events:
+    #   - schedule: rate(1 minute)
+
+custom:
+  AuctionsTable:
+    name: !Ref AuctionsTable
+    arn: !GetAtt AuctionsTable.Arn
+  bundle:
+    linting: true

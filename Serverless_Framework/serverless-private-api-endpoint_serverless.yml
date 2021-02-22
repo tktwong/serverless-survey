@@ -1,0 +1,39 @@
+service: sls-test-private-endpoint
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-west-2
+  stage: dev
+  endpointType: PRIVATE
+  vpcEndpointIds:
+    - vpce-0631ee46a323b75e4
+
+  #El Resource Policy que generamos primero bloqueará todo el tráfico que no sea de la/las VPCs listadas a bajo aws:sourceVpc, luego permitimos
+  # el acceso de todo lo demás.
+  resourcePolicy:
+  ##Bloqueo de lo que no corresponde al VPC
+    - Effect: Deny
+      Principal: "*"
+      Action: execute-api:Invoke
+      Resource:
+        - execute-api:/*/*/*
+      Condition:
+        StringNotEquals:
+          aws:sourceVpc:
+            - vpc-03602a6783bdefb87
+  ##Permiso a lo demás. Acá también podemos bloquiar por segmento de IP.
+    - Effect: Allow
+      Principal: "*"
+      Action: execute-api:Invoke
+      Resource:
+        - execute-api:/*/*/*
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: /
+          method: get

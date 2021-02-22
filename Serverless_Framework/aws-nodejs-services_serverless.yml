@@ -1,0 +1,136 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: import-service
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-west-1
+  environment:
+    BUCKET: for-import
+    SQS_URL:
+      Ref: catalogItemsQueue
+    SNS_ARN:
+      Ref: createProductTopic
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: "s3:ListBucket"
+      Resource:
+        - "arn:aws:s3:::for-import"
+    - Effect: "Allow"
+      Action: "s3:*"
+      Resource:
+        - "arn:aws:s3:::for-import/*"
+    - Effect: "Allow"
+      Action: "sqs:*"
+      Resource:
+        - Fn::GetAtt: [ catalogItemsQueue, Arn ]
+    - Effect: "Allow"
+      Action: "sns:*"
+      Resource:
+        Ref: createProductTopic
+
+plugins:
+  - serverless-webpack
+
+custom:
+  webpack:
+    webpackConfig: webpack.config.js
+
+functions:
+  - importProductsFile:
+      handler: importProductsFile.products
+      events:
+        - http:
+            cors: true
+            path: import
+            method: get
+            request:
+              parameters:
+                querystrings:
+                  name: true
+            authorizer:
+              arn: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:authorization-service-dev-basicAuthorizer"
+              identitySource: method.request.header.Authorization
+              type: token
+  - importFileParser:
+      handler: importFileParser.parse
+      events:
+        - s3:
+            bucket: for-import
+            event: s3:ObjectCreated:*
+            rules:
+              - prefix: uploaded/
+            existing: true
+  - catalogBatchProcess:
+      handler: catalogBatchProcess.handler
+      events:
+        - sqs:
+            batchSize: 5
+            arn:
+              Fn::GetAtt:
+                - catalogItemsQueue
+                - Arn
+
+resources:
+  Resources:
+    catalogItemsQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "catalogItemsQueue"
+    createProductTopic:
+      Type: "AWS::SNS::Topic"
+      Properties:
+        TopicName: "createProductTopic"
+    createTabletProductSubscription:
+      Type: "AWS::SNS::Subscription"
+      Properties:
+        Endpoint: "maksym_lebedynets@epam.com"
+        Protocol: email
+        FilterPolicy: "{\"productType\": [\"tablet\"]}"
+        TopicArn:
+          Ref: createProductTopic
+    createLaptopProductSubscription:
+      Type: "AWS::SNS::Subscription"
+      Properties:
+        Endpoint: "delirious.max@gmail.com"
+        Protocol: email
+        FilterPolicy: "{\"productType\": [\"laptop\"]}"
+        TopicArn:
+          Ref: createProductTopic
+    gatewayAccessDeniedResponses:
+      Type: "AWS::ApiGateway::GatewayResponse"
+      Properties:
+        RestApiId: !Ref ApiGatewayRestApi
+        ResponseType: ACCESS_DENIED
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
+    gatewayUnauthorizedResponses:
+      Type: "AWS::ApiGateway::GatewayResponse"
+      Properties:
+        RestApiId: !Ref ApiGatewayRestApi
+        ResponseType: UNAUTHORIZED
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"

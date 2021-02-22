@@ -1,0 +1,74 @@
+service: serverless-node-js
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: serverlessUser
+  region: eu-west-1
+  environment:
+      tableName: ${self:custom.tableName}
+      bucketName: ${self:custom.bucketName}
+  iamRoleStatements:
+      - Effect: Allow
+        Action:
+            - dynamodb:*
+            - s3:*
+            - ses:*
+        Resource: '*'
+
+functions:
+  index:
+    handler: src/dist/index.handler
+    events:
+      - http:
+          path: lyrify/{key1}/{key2}
+          method: GET
+          cors: true
+
+plugins:
+    - serverless-offline
+    - serverless-dynamodb-local
+
+package:
+    individually: true
+
+custom:
+    tableName: lyrics
+    bucketName: myserverlessprojectuploadbucket-123123
+    dynamodb:
+        stages:
+            - dev
+        start:
+            port: 8000
+            inMemory: true
+            migrate: true
+        migration:
+            dir: src/offline/migrations
+
+resources:
+    Resources:
+        DemoBucketUpload:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:custom.bucketName}
+        MyDynamoDbTable:
+            Type: AWS::DynamoDB::Table
+            Properties:
+                TableName: ${self:custom.tableName}
+                AttributeDefinitions: 
+                    - 
+                      AttributeName: "author"
+                      AttributeType: "S"
+                    - 
+                      AttributeName: "music"
+                      AttributeType: "S"
+                KeySchema: 
+                    - 
+                      AttributeName: "author"
+                      KeyType: "HASH"
+                    - 
+                      AttributeName: "music"
+                      KeyType: "RANGE"
+                BillingMode: PAY_PER_REQUEST

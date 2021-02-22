@@ -1,0 +1,74 @@
+service: import-service
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: dev
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: "s3:ListBucket"
+      Resource:
+        - "arn:aws:s3:::lesson5-bucket"
+    - Effect: "Allow"
+      Action: "s3:*"
+      Resource: 
+        - "arn:aws:s3:::lesson5-bucket/*"
+    - Effect: "Allow"
+      Action: "sqs:*"
+      Resource: ${cf:product-service-${self:provider.stage}.SQSQueueArn}
+
+  environment:
+    SQS_URL: ${cf:product-service-${self:provider.stage}.SQSQueueUrl}
+
+resources:
+  Resources:
+    GatewayResponseDenied:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
+        ResponseType: ACCESS_DENIED
+        RestApiId: !Ref ApiGatewayRestApi
+    GatewayResponseUnauthorized:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
+        ResponseType: UNAUTHORIZED
+        RestApiId: !Ref ApiGatewayRestApi
+
+functions:
+  importProductsFile:
+    handler: handler.importProductsFile
+    events:
+      - http:
+          path: import
+          method: get
+          cors: true
+          authorizer:
+            name: tokenAuthorizer
+            arn: "arn:aws:lambda:us-east-1:241876787615:function:authorization-service-dev-basicAuthorizer"
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: token
+          request:
+            parameters:
+              querystrings:
+                name: true
+  parseProductsFile:
+    handler: handler.parseProductsFile
+    events:
+      - s3:
+          bucket: lesson5-bucket
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: uploaded/
+          existing: true

@@ -1,0 +1,253 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: ai-covid-infra
+# app and org for use with dashboard.serverless.com
+app: ai-covid-infra
+org: frans06
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+plugins:
+  modules:
+    - serverless-appsync-plugin
+    - aws-amplify-serverless-plugin
+    - serverless-offline
+provider:
+  name: aws
+  runtime: python3.8
+  region: ${opt:region, "us-east-1"}
+  stage: ${opt:stage, "dev"}
+  profile: covid
+  apiname: ${self:provider.stage}ApiCovid
+  environment:
+    env: development
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+custom:
+  accountId: { Ref: AWS::AccountId }
+  amplify:
+    - filename: amplify/awsconfiguration.json
+      type: native
+      appClient: AndroidUserPoolClient
+      s3bucket: UserFiles
+    - filename: amplify/aws-exports.js
+      type: javascript
+      appClient: WebUserPoolClient
+    - filename: amplify/aws-exports.ts
+      type: typescript
+      appClient: WebUserPoolClient
+    - filename: amplify/schema.json
+      type: schema.json
+    - filename: amplify/operations.graphql
+      type: graphql
+    - filename: amplify/API.swift
+      type: appsync
+  appSync:
+    name: ${self:provider.apiname}
+    region: ${self:provider.region}
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      awsRegion: { Ref: AWS::Region }
+      defaultAction: ALLOW
+      userPoolId: { Ref: UserPool }
+    schema: schema.graphql # In case you want to change it
+    serviceRole: "AppSyncServiceRole"
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: "NotesTableDS"
+        description: "DynamoDB Notes Table"
+        config:
+          tableName: { Ref: NotesTable }
+          iamRoleStatements:
+            - Effect: Allow
+              Action:
+                - "dynamodb:GetItem"
+                - "dynamodb:PutItem"
+                - "dynamodb:DeleteItem"
+                - "dynamodb:Query"
+              Resource:
+                - { Fn::GetAtt: [ NotesTable, Arn ]}
+                - { Fn::Join: [ '', [ { Fn::GetAtt: [ NotesTable, Arn ] }, '/*' ] ] }
+    # mappingTemplates:
+    #   - dataSource: NotesTableDS
+    #     type: Query
+    #     field: getNote
+    #     request: "getnote-request.vtl"
+    #     response: "common-response.vtl"
+    #   - dataSource: NotesTableDS
+    #     type: Mutation
+    #     field: saveNote
+    #     request: "savenote-request.vtl"
+    #     response: "common-response.vtl"
+    #   - dataSource: NotesTableDS
+    #     type: Mutation
+    #     field: deleteNote
+    #     request: "deletenote-request.vtl"
+    #     response: "common-response.vtl"
+
+resources:
+  Resources:
+
+    # Amazon Cognito user pool - used for testing so that we can check the defaults section
+    FirstListedUserPool:
+      Type: "AWS::Cognito::UserPool"
+      Description: "An Amazon Cognito user pool for authenticating users"
+      Properties:
+        UserPoolName: ${self:provider.apiname}-fake-pool
+
+    # Amazon Cognito user pool
+    UserPool:
+      Type: "AWS::Cognito::UserPool"
+      Description: "An Amazon Cognito user pool for authenticating users"
+      Properties:
+        UserPoolName: ${self:provider.apiname}-user-pool
+
+    # An app client for the Amazon Cognito user pool
+    WebUserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Description: "App Client for Web Usage"
+      Properties:
+        ClientName: ${self:provider.apiname}-web-cognitoclient
+        GenerateSecret: false
+        UserPoolId: { Ref: UserPool }
+    AndroidUserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Description: "App Client for Android Client"
+      Properties:
+        ClientName: ${self:provider.apiname}-android-cognitoclient
+        GenerateSecret: true
+        UserPoolId: { Ref: UserPool }
+    iOSUserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Description: "App Client for iOS Client"
+      Properties:
+        ClientName: ${self:provider.apiname}-android-cognitoclient
+        GenerateSecret: true
+        UserPoolId: { Ref: UserPool }
+
+    # Identity Poool
+    IdentityPool:
+      Type: "AWS::Cognito::IdentityPool"
+      Properties:
+        IdentityPoolName: ${self:provider.apiname}_pool
+        AllowUnauthenticatedIdentities: true
+        SupportedLoginProviders:
+          accounts.google.com: "google-webclient-id"
+          graph.facebook.com: "facebook-app-id"
+          www.amazon.com: "amazon-client-id"
+
+    # S3 Bucket for User Files
+    UserFiles:
+      Type: "AWS::S3::Bucket"
+      Description: "User Files Bucket"
+      Properties:
+        BucketName: ${self:service.name}-userfiles
+
+    # DynamoDB Table
+    NotesTable:
+      Type: "AWS::DynamoDB::Table"
+      Description: "Data Store for AWS AppSync Notes Type"
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: "NoteId"
+            AttributeType: "S"
+          - AttributeName: "UserId"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "NoteId"
+            KeyType: "HASH"
+          - AttributeName: "UserId"
+            KeyType: "RANGE"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    # you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.py
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.py
+#    - exclude-me-dir/**
+
+functions:
+  hello:
+    handler: handler.hello
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - websocket: $connect
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+#      - alb:
+#          listenerArn: arn:aws:elasticloadbalancing:us-east-1:XXXXXX:listener/app/my-load-balancer/50dc6c495c0c9188/
+#          priority: 1
+#          conditions:
+#            host: example.com
+#            path: /hello
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

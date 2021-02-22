@@ -1,0 +1,59 @@
+service: step-fns-renew-lambda-TO
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+  - serverless-step-functions
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  memorySize: 128
+  logRetentionInDays: 7
+  timeout: 10
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ses:*
+      Resource: '*'
+
+functions:
+  processItem:
+    handler: handlers.processItem
+  batchEnded:
+    handler: handlers.batchEnded
+
+stepFunctions:
+  stateMachines:
+    batchProcessingRenewingTO:
+      name: batchProcessingRenewingTO
+      definition:
+        Comment: "Process batch relaunching lambda after processing each item to renew lambda timeout"
+        StartAt: ProcessingItem
+        States:
+          ProcessingItem:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [ processItem, Arn ]
+            TimeoutSeconds: ${self:provider.timeout}
+            Next: IsBatchDone
+          IsBatchDone:
+            Type: Choice
+            Choices:
+            - Variable: $.done
+              BooleanEquals: false
+              Next: ProcessingItem
+            Default: BatchEnded
+          BatchEnded:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [ batchEnded, Arn ]
+            TimeoutSeconds: ${self:provider.timeout}
+            End: true

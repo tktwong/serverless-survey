@@ -1,0 +1,158 @@
+service:
+  name: branch-api
+  app: branch
+  org: nicholaspretorius
+
+package:
+  individually: true
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+  profiles:
+    dev: franchisely
+  # prod: prod
+  # dynamodb:
+  #   stages:
+  #     - ${self:provider.stage}
+  #   start:
+  #     port: 8002
+  #     inMemory: true
+  #     migrate: true
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-iam-roles-per-function
+  - serverless-dotenv-plugin
+  - serverless-plugin-tracing
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    ENTITIES_TABLE: ncp-branches-entities-${self:provider.stage}
+    ENTITIES_UPLOADS_S3_BUCKET: ncp-branches-entities-uploads-bucket-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300 # seconds = 5 mins
+    STRIPE_SECRET_KEY: ${env:STRIPE_SECRET_KEY}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+functions:
+  ping:
+    handler: src/lambda/http/ping.main
+    events:
+      - http:
+          method: get
+          path: ping
+
+  getList:
+    handler: src/lambda/http/entities/getList.main
+    events:
+      - http:
+          method: get
+          path: entities
+          cors: true
+          authorizer: aws_iam
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ENTITIES_TABLE}
+
+  get:
+    handler: src/lambda/http/entities/get.main
+    events:
+      - http:
+          method: get
+          path: entities/{entityId}
+          cors: true
+          authorizer: aws_iam
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ENTITIES_TABLE}
+
+  entityCreate:
+    handler: src/lambda/http/entities/create.main
+    events:
+      - http:
+          method: post
+          path: entities
+          cors: true
+          authorizer: aws_iam
+          request:
+            schema:
+              application/json: ${file(src/models/requests/create.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ENTITIES_TABLE}
+
+  delete:
+    handler: src/lambda/http/entities/delete.main
+    events:
+      - http:
+          method: delete
+          path: entities/{entityId}
+          cors: true
+          authorizer: aws_iam
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ENTITIES_TABLE}
+
+  update:
+    handler: src/lambda/http/entities/update.main
+    events:
+      - http:
+          method: put
+          path: entities/{entityId}
+          cors: true
+          authorizer: aws_iam
+          request:
+            schema:
+              application/json: ${file(src/models/requests/update.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ENTITIES_TABLE}
+
+  billing:
+    handler: src/lambda/http/billing.main
+    events:
+      - http:
+          method: post
+          path: billing
+          cors: true
+          authorizer: aws_iam
+
+resources:
+  - ${file(resources/api-gateway-errors.yml)}
+  - ${file(resources/entities-dynamodb-table.yml)}
+  - ${file(resources/entities-uploads-s3-bucket.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

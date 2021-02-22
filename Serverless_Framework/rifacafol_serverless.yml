@@ -1,0 +1,92 @@
+service: rifacafol-prod
+plugins:
+  - serverless-dotenv-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: us-east-1
+  apiName: rifas # Use a custom name for the API Gateway API
+  memorySize: 128 # Overwrite the default memory size. Default is 1024
+  timeout: 30 # The default is 6 seconds. Note: API Gateway current maximum is 30 seconds
+  deploymentBucket:
+    name: com.serverless.us-east-1.rifacafol-prod.deploys
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:HeadObject"
+        - "s3:GetObject"
+        - "s3:ListBucket"
+      Resource:
+        - "arn:aws:s3:::rifa-datalake-raw"
+        - "arn:aws:s3:::rifa-datalake-raw/*"
+    - Effect: Allow
+      Action:
+        - "sqs:DeleteMessage"
+        - "sqs:GetQueueAttributes"
+        - "sqs:ReceiveMessage"
+        - "sqs:SendMessage"
+      Resource:
+        - "arn:aws:sqs:us-east-1:113779569966:RafflePaymentSuccessProd"
+        - "arn:aws:sqs:us-east-1:113779569966:RafflePaymentSuccessProdDLT"
+    - Effect: Allow
+      Action:
+        - "ses:SendTemplatedEmail"
+        - "ses:SendRawEmail"
+      Resource: "arn:aws:ses:us-east-1:113779569966:identity/*"
+
+functions:
+  app:
+    handler: index.handler
+    layers:
+      - { Ref: DependenciesLambdaLayer }
+    reservedConcurrency: 5
+    events:
+      - http: ANY /
+      - http: "ANY {proxy+}"
+  raffle-processor:
+    handler: index.processor
+    layers:
+      - { Ref: DependenciesLambdaLayer }
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - RafflePaymentSuccessProd
+              - Arn
+  report:
+    handler: index.report
+    layers:
+      - { Ref: DependenciesLambdaLayer }
+    events:
+      - schedule: cron(0 6,20 * * ? *)
+
+resources:
+  Resources:
+    RafflePaymentSuccessProd:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "RafflePaymentSuccessProd"
+    RafflePaymentSuccessProdDLT:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "RafflePaymentSuccessProdDLT"
+
+package:
+  exclude:
+    - node_modules/**
+    - .env.*
+    - .env
+    - lambda/**
+
+layers:
+  Dependencies:
+    package:
+      artifact: ./lambda/dependencies-layer/nodejs.zip
+
+custom:
+  dotenv:
+    path: ./.env.production

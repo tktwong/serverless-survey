@@ -1,0 +1,192 @@
+service: bytabit-serverless
+
+frameworkVersion: ">=1.35.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: java8
+  stage: regtest
+  logRetentionInDays: 30
+
+  environment:
+      OFFER_TABLE: ${self:service}-${opt:stage, self:provider.stage}-offer
+      TRADE_TABLE: ${self:service}-${opt:stage, self:provider.stage}-trade
+      BADGE_TABLE: ${self:service}-${opt:stage, self:provider.stage}-badge
+
+  iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+        Resource:
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.OFFER_TABLE}"
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TRADE_TABLE}"
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TRADE_TABLE}/index/offerIndex"
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.BADGE_TABLE}"
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.BADGE_TABLE}/index/badgeIndex"
+
+package:
+  artifact: build/distributions/bytabit-serverless.zip
+
+functions:
+  version-get:
+    handler: com.bytabit.serverless.common.GetVersionHandler
+    events:
+      - http:
+          path: version
+          method: get
+          cors: true
+  offers-put:
+    handler: com.bytabit.serverless.offer.PutOfferHandler
+    events:
+      - http:
+          path: offers/{id}
+          method: put
+          cors: true
+  offers-getall:
+    handler: com.bytabit.serverless.offer.GetAllOfferHandler
+    events:
+      - http:
+          path: offers
+          method: get
+          cors: true
+  offers-getbyid:
+    handler: com.bytabit.serverless.offer.GetByIdOfferHandler
+    events:
+      - http:
+          path: offers/{id}
+          method: get
+          cors: true
+  offers-delete:
+    handler: com.bytabit.serverless.offer.DeleteOfferHandler
+    events:
+      - http:
+          path: offers/{id}
+          method: delete
+          cors: true
+  trades-put:
+    handler: com.bytabit.serverless.trade.PutTradeHandler
+    events:
+      - http:
+          path: trades/{id}
+          method: put
+          cors: true
+  trades-getbyid:
+    handler: com.bytabit.serverless.trade.GetByIdTradeHandler
+    events:
+      - http:
+          path: trades/{id}
+          method: get
+          cors: true
+  trades-arbitrate:
+    handler: com.bytabit.serverless.trade.GetAllArbitrateTradeHandler
+    events:
+      - http:
+          path: trades/arbitrate
+          method: get
+          cors: true
+  trades-getbyoffer:
+    handler: com.bytabit.serverless.trade.GetByOfferTradeHandler
+    events:
+      - http:
+          path: offers/{id}/trades
+          method: get
+          cors: true
+  badges-put:
+    handler: com.bytabit.serverless.badge.PutBadgeHandler
+    events:
+      - http:
+          path: badges/{profilePubKey}/{id}
+          method: put
+          cors: true
+  badges-getbypubkey:
+    handler: com.bytabit.serverless.badge.GetBadgeHandler
+    events:
+      - http:
+          path: badges/{profilePubKey}
+          method: get
+          cors: true
+
+resources:
+  Resources:
+
+    BytabitOfferTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:provider.environment.OFFER_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    BytabitTradeTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:provider.environment.TRADE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: version
+            AttributeType: N
+          - AttributeName: offerId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: version
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: offerIndex
+            KeySchema:
+              - AttributeName: offerId
+                KeyType: HASH
+              - AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: "1"
+              WriteCapacityUnits: "1"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    BytabitBadgeTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:provider.environment.BADGE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: profilePubKey
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: profilePubKey
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+plugins:
+  - serverless-domain-manager
+
+custom:
+  customDomain:
+    domainName: ${opt:stage, self:provider.stage}.bytabit.net
+    basePath: ''
+    stage: ${opt:stage, self:provider.stage}
+    createRoute53Record: true

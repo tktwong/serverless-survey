@@ -1,0 +1,51 @@
+service: backend
+frameworkVersion: '>=1.28.0 <2.0.0'
+
+provider:
+  name: aws
+  runtime: go1.x
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+      Resource: 'arn:aws:dynamodb:us-east-1:*:*'
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+functions:
+  authorize:
+    handler: bin/authorizer
+    # environment:
+    #   AUTHORIZER_SECRET: ${env:AUTHORIZER_SECRET}
+  graphql:
+    handler: bin/graphql
+    events:
+      - http:
+          path: /data/{proxy+}
+          method: post
+          integration: lambda_proxy
+          cors: true
+          authorizer:
+            name: authorize
+            resultTtlInSeconds: 0
+
+resources:
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: restaurants
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

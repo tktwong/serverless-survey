@@ -1,0 +1,88 @@
+service:
+  name: bbe-bot-sls
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  resourceNames:
+    tables:
+      sessions: ${self:service}-${self:provider.stage}-sessions
+      telegrafSessions: ${self:service}-${self:provider.stage}-telegrafSessions
+    buckets:
+      config: ${self:service}-${self:provider.stage}-config
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    TELEGRAM_TOKEN: ${ssm:/bbe-telegram-token~true}
+    TELEGRAM_ADMIN_ID: ${ssm:/bbe-telegram-adminId~true}
+    DYNAMODB_TABLE_SESSIONS: ${self:custom.resourceNames.tables.sessions}
+    DYNAMODB_TABLE_TELEGRAF_SESSIONS: ${self:custom.resourceNames.tables.telegrafSessions}
+    S3_BUCKET_CONFIG: ${self:custom.resourceNames.buckets.config}
+
+functions:
+  versionCheck:
+    handler: src/handlers/utils.versionCheck
+    events:
+      - schedule:
+          rate: cron(0 12 * * ? *)
+
+  setWebhook:
+    handler: src/handlers/bot.setWebhook
+    events:
+      - http:
+          method: get
+          path: setWebhook
+
+  retrieveConfig:
+    handler: src/handlers/bbe.retrieveConfig
+    events:
+      - schedule:
+          rate: cron(0 12 * * ? *)
+
+  refreshLogin:
+    handler: src/handlers/bbe.refreshLogin
+
+resources: # CloudFormation template syntax from here on.
+  Resources:
+    sessions:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.resourceNames.tables.sessions}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    telegrafSessionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.resourceNames.tables.telegrafSessions}
+        AttributeDefinitions:
+          - AttributeName: SessionKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: SessionKey
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    configBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.resourceNames.buckets.config}

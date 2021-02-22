@@ -1,0 +1,54 @@
+
+plugins:
+  - serverless-kms-secrets
+
+service: aws-python
+
+provider:
+  name: aws
+  runtime: python3.6
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+      - "codepipeline:PutApprovalResult"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+      - KMS:Decrypt
+      Resource: ${self:custom.kmsSecrets.keyArn} 
+    - Effect: Allow
+      Action: 
+        - secretsmanager:GetSecretValue
+      Resource: arn:aws:secretsmanager:us-east-1:487312177614:secret:SlackSigningSecret-QByVib
+
+custom:
+  serverless-kms-secrets:
+      secretsFile: kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml (optional)
+  kmsSecrets: ${file(kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml)}
+
+
+functions:
+  interactive:
+    handler: interactive.lambda_handler
+    events:
+      - http:
+          path: callback
+          method: post
+
+  approval:
+    handler: approval.lambda_handler
+    events:
+    # Using a name will create a new SNS topic
+      - sns: slackbot
+    environment:
+      SLACK_WEBHOOK_URL: https://hooks.slack.com/services/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
+      SLACK_CHANNEL: botcity
+  
+  # Update Commit status using API calls (In Progress)
+  commitStatus:
+    handler: commitStatus.lambda_handler
+    events:
+      - cloudwatchEvent:
+          event:
+            source:
+              - aws.codebuild

@@ -1,0 +1,73 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: dadjoke
+
+
+custom:
+  serverless-kms-secrets:
+    secretsFile: kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml
+  kmsSecrets: ${file(kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml)}
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: 51
+  region: eu-west-1
+  environment:
+    SERVERLESS_STAGE: ${opt:stage, self:provider.stage}
+    SERVERLESS_PROJECT: ${self:service}
+    SERVERLESS_REGION: ${opt:region, self:provider.region}
+    TWITTER_CONSUMER_KEY: ${self:custom.kmsSecrets.secrets.TWITTER_CONSUMER_KEY}
+    TWITTER_CONSUMER_SECRET: ${self:custom.kmsSecrets.secrets.TWITTER_CONSUMER_SECRET}
+    TWITTER_ACCESS_TOKEN_KEY: ${self:custom.kmsSecrets.secrets.TWITTER_ACCESS_TOKEN_KEY}
+    TWITTER_ACCESS_TOKEN_SECRET: ${self:custom.kmsSecrets.secrets.TWITTER_ACCESS_TOKEN_SECRET}
+
+  #   TABLE_NAME: ${self:provider.environment.SERVERLESS_PROJECT}-${self:provider.environment.SERVERLESS_STAGE}
+  # iamRoleStatements:
+  #   - Effect: Allow
+  #     Action:
+  #     - KMS:Decrypt
+  #     Resource: ${self:custom.kmsSecrets.keyArn} 
+
+# The `functions` block defines what code to deploy
+functions:
+  helloWorldRequest:
+    handler: handler.request
+    # The `events` block defines how to trigger the handler.request code
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true
+  timedTweet:
+    handler: get-hello.handler
+    events:
+      - schedule: rate(12 hours)
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-kms-secrets
+
+# resources:
+#   Resources:
+#    ExampleTable:
+#      Type: AWS::DynamoDB::Table
+#      DeletionPolicy: Delete
+#      Properties:
+#        AttributeDefinitions:
+#          - AttributeName: id
+#            AttributeType: S
+#        KeySchema:
+#          - AttributeName: id
+#            KeyType: HASH
+#        ProvisionedThroughput:
+#          ReadCapacityUnits: 1
+#          WriteCapacityUnits: 1
+#        TableName: ${self:provider.environment.TABLE_NAME}

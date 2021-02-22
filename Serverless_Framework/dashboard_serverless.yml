@@ -1,0 +1,210 @@
+service: dai-faucet
+
+custom:
+  serverless-offline:
+    port: 3001
+  sqs: faucet-requests-${opt:stage}
+  senderSqs: xdai-tx-sender-${opt:stage}
+  table: wr-payments-${opt:stage}
+  region: eu-west-1
+  distributionMinFrequency: 3600 # in seconds
+  env: ${file(./serverless.env.${opt:stage}.yml)}
+
+package:
+  exclude:
+    - src/**/*.test.js
+
+provider:
+  name: aws
+  region: ${self:custom.region}
+  runtime: nodejs10.x
+  timeout: 30
+  iamManagedPolicies:
+    - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+       - ssm:GetParameters
+       - ssm:GetParameter
+      Resource: "arn:aws:ssm:*:*:parameter/faucet/${opt:stage}/*"
+    - Effect: Allow
+      Action:
+        - sqs:DeleteMessage
+        - sqs:ReceiveMessage
+        - sqs:SendMessage
+        - sqs:GetQueueAttributes
+      Resource: 
+        - arn:aws:sqs:*:*:${self:custom.sqs}
+        - arn:aws:sqs:*:*:${self:custom.senderSqs}
+    - Effect: Allow
+      Action:
+       - sdb:GetAttributes
+       - sdb:PutAttributes
+       - sdb:DeleteAttributes
+      Resource: 
+        - Fn::Join:
+          - ""
+          - - "arn:aws:sdb:*:*:domain/"
+            - Ref: whiterabbitPaymentDb
+    - Effect: Allow
+      Action:
+       - KMS:Decrypt
+      Resource: ${self:custom.env.kmsKeyArn}
+
+responseMappings: &response_mappings
+  headers:
+    Content-Type: "'application/json'"
+  statusCodes:
+      200:
+          pattern: ''
+          headers:
+            Access-Control-Allow-Origin: "'*'"
+          template:
+            application/json: ""
+      400:
+          pattern: 'Bad Request: .*'
+          headers:
+            Access-Control-Allow-Origin: "'*'"
+          template:
+            application/json: ""
+      401:
+          pattern: 'Unauthorized: .*'
+          headers:
+            Access-Control-Allow-Origin: "'*'"
+          template:
+            application/json: ""
+      403:
+          pattern: 'Forbidden: .*'
+          headers:
+            Access-Control-Allow-Origin: "'*'"
+          template:
+            application/json: ""
+      404:
+          pattern: 'Not Found: .*'
+          headers:
+            Access-Control-Allow-Origin: "'*'"
+          template:
+            application/json: ""
+      500:
+          pattern: 'Error: .*'
+          headers:
+            Access-Control-Allow-Origin: "'*'"
+
+functions:
+  pushTxToClient:
+    handler: src/revenue/pusher.handler
+    name: revenue-${opt:stage}-claim-push
+    environment:
+      PUSHER_APP_ID: ${self:custom.env.pusherAppId}
+      PUSHER_KEY: ${self:custom.env.pusherKey}
+      PUSHER_SECRET: ${self:custom.env.pusherSecret}
+      TABLE_NAME:
+        Ref: whiterabbitPaymentDb
+    events:
+      - http:
+          method: post
+          path: /blocknative-hook
+          integration: lambda
+          response: *response_mappings
+  queueRevenueClaim:
+    handler: src/revenue/registerRequest.handler
+    name: revenue-${opt:stage}-claims-queue
+    environment:
+      AWS_QUEUE_NAME: ${self:custom.senderSqs}
+      WR_BACKEND: ${self:custom.env.rfrApiUrl}
+      WR_SUBGRAPH: ${self:custom.env.rfrSubgraphUrl}
+      POOL_CONTRACT_ADDR: ${self:custom.env.poolContractAddr}
+      MIN_FREQUENCY: ${env:MIN_FREQUENCY, self:custom.distributionMinFrequency}
+      TABLE_NAME:
+        Ref: whiterabbitPaymentDb
+    events:
+      - http:
+          method: post
+          path: /pool/{action}/{movieId}/{region}/
+          integration: lambda
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - x-wr-sigdata
+              - x-wr-signature
+          response: *response_mappings
+  queueRequests:
+    timeout: 3
+    handler: src/receiver.handler
+    name: faucet-${opt:stage}-queueRequests
+    environment:
+      CIRCLE_API_KEY: ${ssm:/faucet/${opt:stage}/CIRCLE_API_KEY}
+      CIRCLE_ENDPOINT: ${self:custom.env.circleUrl}
+      QUEUE_NAME: ${self:custom.sqs}
+      TABLE_NAME:
+        Ref: whiterabbitPaymentDb
+    events:
+      - http:
+          method: post
+          path: /
+          integration: lambda
+          cors: true
+          response: *response_mappings
+  circleProxy:
+    timeout: 3
+    handler: src/proxy.handler
+    name: faucet-${opt:stage}-proxy
+    environment:
+      CIRCLE_API_KEY: ${ssm:/faucet/${opt:stage}/CIRCLE_API_KEY}
+      CIRCLE_ENDPOINT: ${self:custom.env.circleUrl}
+      TABLE_NAME:
+        Ref: whiterabbitPaymentDb
+    events:
+      - http:
+          method: any
+          path: /v1/{proxy+}
+          integration: lambda
+          cors: true
+          response: *response_mappings
+  sender:
+    timeout: 7
+    handler: src/sender.handler
+    name: tx-sender-${opt:stage}
+    reservedConcurrency: 1
+    environment:
+      PROVIDER_URL: ${self:custom.env.providerUrl}
+      ENV: ${opt:stage}
+      TABLE_NAME:
+        Ref: whiterabbitPaymentDb
+      MIN_FREQUENCY: ${env:MIN_FREQUENCY, self:custom.distributionMinFrequency}
+      BLOCKNATIVE_API_KEY: ${self:custom.env.blocknativeApiKey}
+    events:
+      - sqs: 
+          arn:
+            Fn::GetAtt:
+            - faucetRequests
+            - Arn
+      - sqs: 
+          arn:
+            Fn::GetAtt:
+            - senderQueue
+            - Arn
+
+plugins:
+  - serverless-offline
+
+resources:
+  Resources:
+    faucetRequests:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.sqs}
+        MessageRetentionPeriod: 1209600
+        VisibilityTimeout: 60
+    whiterabbitPaymentDb:
+      Type: "AWS::SDB::Domain"
+      Properties:
+        DomainName : ${self:custom.table}
+        Description: "SDB Domain to store metadata"
+    senderQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.senderSqs}
+        MessageRetentionPeriod: 1209600
+        VisibilityTimeout: 60

@@ -1,0 +1,35 @@
+service: "jns-${env:ENV}"
+
+provider:
+  name:               aws
+  runtime:            nodejs6.10
+  region:             ${env:AWS_DEFAULT_REGION, 'us-west-2'}
+  stage:              ${opt:stage}
+  logRetentionInDays: 7
+  memorySize:         128
+  timeout:            2
+
+  environment:
+    ALLOW_CIDR: "${env:ALLOW_CIDR, 'x.x.x.x'}"
+    FAILURE_ENDPOINT: "jfs-${env:ENV}-failures"
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - Kinesis:PutRecord
+      Resource: "arn:aws:kinesis:${opt:region, self:provider.region}:*:stream/${self:provider.environment.FAILURE_ENDPOINT}"
+
+package:
+  include:
+    - node_modules/*
+    - src/*.js
+  exclude:
+    - venv
+
+functions:
+  event:
+    handler: src/event.event
+    events:
+      - http:
+          path:   jns/job/event
+          method: post

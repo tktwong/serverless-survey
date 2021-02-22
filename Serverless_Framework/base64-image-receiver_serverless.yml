@@ -1,0 +1,71 @@
+
+service: base64-image-receiver
+
+custom:
+  defaultProfile: default
+  webpack:
+    webpackConfig: ./webpack.config.js 
+    includeModules: true
+
+frameworkVersion: ">=1.4.0"
+
+provider:
+  name: aws
+  profile: ${opt:profile, self:custom.defaultProfile}
+  runtime: nodejs10.x
+  stackName: 'base64-image-receiver'
+  apiName: 'base64-image-receiver'
+  stage: prod
+  region: ap-northeast-1
+  memorySize: 128
+  timeout: 10
+  role: ${file(./serverless-env.yml):role}
+  deploymentBucket:
+    name: ${file(./serverless-env.yml):deploy-bucket}
+
+plugins:
+  - serverless-webpack
+
+package:
+  excludeDevDependencies: true
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  receiver:
+    name: '${self:service}'
+    handler: src/index.handler
+    environment:
+      TZ: Asia/Toyko
+      S3_REGION: ap-northeast-1
+      S3_BUCKET_NAME: ${file(./serverless-env.yml):cache-bucket}
+    # package:
+    #   include: # Specify the directories and files which should be included in the deployment package for this specific function.
+    #     # - src/**
+    #     # - handler.js
+    #  - ./src/index.js
+    events:
+      - http:
+          path: receive
+          method: post
+          cors:
+            origins: '*'
+          headers:
+            - Content-Type
+            - X-Amz-Date
+            - Authroization
+            - X-Api-Key
+            - X-Amz-Security-Token
+          allowCredentials: false
+    cloudwatchLog: '/aws/lambda/${self:service}'
+
+resources:
+  Resources:
+    ReceiverLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: 30

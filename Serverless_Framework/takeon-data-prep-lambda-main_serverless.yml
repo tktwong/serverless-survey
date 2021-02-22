@@ -1,0 +1,63 @@
+# This is the serverless deployment file of this repo to deploy into aws.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+
+service: TakeOn-Data-Prep # NOTE: update this with your service name
+#app: your-app-name
+#tenant: your-tenant-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+frameworkVersion: ">=1.28.0 <2.0.0"
+
+provider:
+  name: aws
+  vpc:
+    securityGroupIds:
+      - ${file(../json_outputs/security_groups_output.json):SecurityGroups.0.GroupId}
+    subnetIds:
+      - ${file(../json_outputs/subnets_output.json):Subnets.0.SubnetId}
+      - ${file(../json_outputs/subnets_output.json):Subnets.1.SubnetId}
+  runtime: python3.7
+  region: eu-west-2
+  stage: dev
+  deploymentBucket: takeon.validation.deployment
+
+package:
+ exclude:
+  #  - ./**
+  #  - venv/**
+  #  - .vscode/**
+  #  - .cache/**
+  #  - test/**
+  #  - Docs/**
+   - node_modules/**
+   - .pytest_cache/**
+   - __pycache__/**
+
+
+functions:
+  main:
+    handler: handler.run_data_prep
+    role: ${file(./serverless-config.json):EXECUTION_ROLE_ARN}
+    environment:
+      INPUT_QUEUE_URL: ${file(./serverless-config.json):INPUT_QUEUE_URL}
+      OUTPUT_QUEUE_URL: ${file(./serverless-config.json):OUTPUT_QUEUE_URL}
+      ERROR_QUEUE_URL: ${file(./serverless-config.json):ERROR_QUEUE_URL}
+      BUSINESS_LAYER_ENDPOINT: ${file(./serverless-config.json):BUSINESS_LAYER_ENDPOINT}
+
+    vpc:
+      securityGroupIds:
+        - ${file(./serverless-config.json):SECURITY_GROUP_ID}
+      subnetIds:
+        - ${file(./serverless-config.json):SUBNET_ID}
+    events:
+      - sqs:
+         arn: ${file(./serverless-config.json):INPUT_QUEUE_ARN}
+         batchSize: 1
+    timeout: 3
+    memorySize: 512
+    layers:
+      - arn:aws:lambda:eu-west-2:014669633018:layer:takeon-python-layer:2

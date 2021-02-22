@@ -1,0 +1,69 @@
+# serverless.yml
+service: poc-serverless-graphql
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+functions:
+  app:
+    handler: index.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-west-2
+  role: arn:aws:iam::775101116967:role/lambda_dynamo
+  environment:
+    COUNT_TABLE: ${self:provider.stage}-${self:service}-count
+    LEDGER_TABLE: ${self:provider.stage}-${self:service}-ledger
+    region: ${self:provider.region}
+  
+
+resources:
+  Resources:
+    ledgerTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: actionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: actionId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.LEDGER_TABLE}
+    countTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.COUNT_TABLE}
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+      domain:
+        sources:
+          - table: ${self:provider.environment.COUNT_TABLE}
+            sources: [./seedData/count.json]
+    # Uncomment only if you already have a DynamoDB running locally
+    # noStart: true

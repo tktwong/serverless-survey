@@ -1,0 +1,245 @@
+service:
+  name: fishing-app
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  timeout: 500
+  tracing:
+    lambda: true
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTimeToLive
+        - dynamodb:BatchWriteItem
+      Resource: ${cf:ss-database-${self:provider.stage}.MainTableArn}
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+        - sqs:SendMessageBatch
+        - sqs:DeleteMessage
+        - sqs:SetQueueAttributes
+        - sqs:GetQueueAttributes
+        - sqs:ReceiveMessage
+      Resource:
+        - ${cf:ss-queue-${self:provider.stage}.ForecastPreloaderQueueArn}
+        - ${cf:ss-queue-${self:provider.stage}.TidePreloaderQueueArn}
+        - ${cf:ss-queue-${self:provider.stage}.WindFinderPreloaderQueueArn}
+        - ${cf:ss-queue-${self:provider.stage}.UsgsPreloaderQueueArn}
+        - ${cf:ss-queue-${self:provider.stage}.NoaaPreloaderQueueArn}
+        - ${cf:ss-queue-${self:provider.stage}.NoaaBuoyPreloaderQueueArn}
+        - ${cf:ss-queue-${self:provider.stage}.WeatherConditionPreloaderQueueArn}
+        - ${cf:ss-queue-${self:provider.stage}.WeatherForecastPreloaderQueueArn}
+        - ${cf:ss-queue-${self:provider.stage}.WeatherForecastHourlyPreloaderQueueArn}
+        - ${cf:ss-queue-${self:provider.stage}.MarineForecastPreloaderQueueArn}
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: arn:aws:s3:::salty-solutions-assets/*
+  environment:
+    SERVERLESS_STAGE: ${self:provider.stage}
+    ROLLBAR_KEY: ${env:ROLLBAR_KEY}
+    DATABASE_TABLE_NAME: ${cf:ss-database-${self:provider.stage}.MainTableName}
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+
+functions:
+  graphql:
+    handler: ./src/server.graphql
+    layers:
+      - arn:aws:lambda:us-east-1:764866452798:layer:ghostscript:8
+    timeout: 20
+    events:
+      - http:
+          cors: true
+          method: any
+          path: api
+
+  # todo change this to v2?
+  # preload-forecast-producer:
+  #   handler: src/preloaders/producers.forecast
+  #   events:
+  #     - schedule:
+  #         name: ForecastPreloader-${self:provider.stage}
+  #         enabled: ${self:custom.schedule_enabled.${self:provider.stage}, false}
+  #         rate: rate(3 hours)
+  #   environment:
+  #     QUEUE_URL: ${cf:ss-queue-${self:provider.stage}.ForecastPreloaderQueueUrl}
+  # preload-forecast-consumer:
+  #   handler: src/preloaders/consumers.forecast
+  #   timeout: 120
+  #   events:
+  #     - sqs:
+  #         batchSize: 1
+  #         arn: ${cf:ss-queue-${self:provider.stage}.ForecastPreloaderQueueArn}
+
+  preload-windfinder-producer:
+    handler: src/preloaders/producers.windFinder
+    events:
+      - schedule:
+          name: WindFinderPreloader-${self:provider.stage}
+          enabled: ${self:custom.schedule_enabled.${self:provider.stage}, false}
+          rate: rate(1 hour)
+    environment:
+      QUEUE_URL: ${cf:ss-queue-${self:provider.stage}.WindFinderPreloaderQueueUrl}
+  preload-windfinder-consumer:
+    handler: src/preloaders/consumers.windFinder
+    timeout: 120
+    events:
+      - sqs:
+          batchSize: 1
+          arn: ${cf:ss-queue-${self:provider.stage}.WindFinderPreloaderQueueArn}
+
+  preload-usgs-producer:
+    handler: src/preloaders/producers.usgs
+    events:
+      - schedule:
+          name: UsgsPreloader-${self:provider.stage}
+          enabled: ${self:custom.schedule_enabled.${self:provider.stage}, false}
+          rate: rate(1 hour)
+    environment:
+      QUEUE_URL: ${cf:ss-queue-${self:provider.stage}.UsgsPreloaderQueueUrl}
+  preload-usgs-consumer:
+    handler: src/preloaders/consumers.usgs
+    timeout: 120
+    events:
+      - sqs:
+          batchSize: 1
+          arn: ${cf:ss-queue-${self:provider.stage}.UsgsPreloaderQueueArn}
+
+  preload-noaa-producer:
+    handler: src/preloaders/producers.noaa
+    events:
+      - schedule:
+          name: NoaaPreloader-${self:provider.stage}
+          enabled: ${self:custom.schedule_enabled.${self:provider.stage}, false}
+          rate: rate(1 hour)
+    environment:
+      QUEUE_URL: ${cf:ss-queue-${self:provider.stage}.NoaaPreloaderQueueUrl}
+  preload-noaa-consumer:
+    handler: src/preloaders/consumers.noaa
+    timeout: 120
+    events:
+      - sqs:
+          batchSize: 1
+          arn: ${cf:ss-queue-${self:provider.stage}.NoaaPreloaderQueueArn}
+
+  preload-noaa-buoy-producer:
+    handler: src/preloaders/producers.noaaBuoy
+    events:
+      - schedule:
+          name: NoaaBuoyPreloader-${self:provider.stage}
+          enabled: ${self:custom.schedule_enabled.${self:provider.stage}, false}
+          rate: rate(1 hour)
+    environment:
+      QUEUE_URL: ${cf:ss-queue-${self:provider.stage}.NoaaBuoyPreloaderQueueUrl}
+  preload-noaa-buoy-consumer:
+    handler: src/preloaders/consumers.noaaBuoy
+    timeout: 120
+    events:
+      - sqs:
+          batchSize: 1
+          arn: ${cf:ss-queue-${self:provider.stage}.NoaaBuoyPreloaderQueueArn}
+
+  preload-tide-producer:
+    handler: src/preloaders/producers.tide
+    events:
+      - schedule:
+          name: TidePreloader-${self:provider.stage}
+          enabled: ${self:custom.schedule_enabled.${self:provider.stage}, false}
+          rate: rate(1 day)
+    environment:
+      QUEUE_URL: ${cf:ss-queue-${self:provider.stage}.TidePreloaderQueueUrl}
+  preload-tide-consumer:
+    handler: src/preloaders/consumers.tide
+    timeout: 300
+    events:
+      - sqs:
+          batchSize: 1
+          arn: ${cf:ss-queue-${self:provider.stage}.TidePreloaderQueueArn}
+
+  preload-weather-conditions-producer:
+    handler: src/preloaders/producers.weatherConditions
+    events:
+      - schedule:
+          name: WeatherConditionPreloader-${self:provider.stage}
+          enabled: ${self:custom.schedule_enabled.${self:provider.stage}, false}
+          rate: rate(20 minutes)
+    environment:
+      QUEUE_URL: ${cf:ss-queue-${self:provider.stage}.WeatherConditionPreloaderQueueUrl}
+  preload-weather-conditions-consumer:
+    handler: src/preloaders/consumers.weatherConditions
+    timeout: 120
+    events:
+      - sqs:
+          batchSize: 1
+          arn: ${cf:ss-queue-${self:provider.stage}.WeatherConditionPreloaderQueueArn}
+
+  preload-weather-forecast-producer:
+    handler: src/preloaders/producers.weatherForecast
+    events:
+      - schedule:
+          name: WeatherForecastPreloader-${self:provider.stage}
+          enabled: ${self:custom.schedule_enabled.${self:provider.stage}, false}
+          rate: rate(2 hours)
+    environment:
+      QUEUE_URL: ${cf:ss-queue-${self:provider.stage}.WeatherForecastPreloaderQueueUrl}
+  preload-weather-forecast-consumer:
+    handler: src/preloaders/consumers.weatherForecast
+    timeout: 120
+    events:
+      - sqs:
+          batchSize: 1
+          arn: ${cf:ss-queue-${self:provider.stage}.WeatherForecastPreloaderQueueArn}
+
+  preload-weather-forecast-hourly-producer:
+    handler: src/preloaders/producers.weatherForecastHourly
+    events:
+      - schedule:
+          name: WeatherForecastHourlyPreloader-${self:provider.stage}
+          enabled: ${self:custom.schedule_enabled.${self:provider.stage}, false}
+          rate: rate(2 hours)
+    environment:
+      QUEUE_URL: ${cf:ss-queue-${self:provider.stage}.WeatherForecastHourlyPreloaderQueueUrl}
+  preload-weather-forecast-hourly-consumer:
+    handler: src/preloaders/consumers.weatherForecastHourly
+    timeout: 120
+    events:
+      - sqs:
+          batchSize: 1
+          arn: ${cf:ss-queue-${self:provider.stage}.WeatherForecastHourlyPreloaderQueueArn}
+
+  preload-marine-forecast-producer:
+    handler: src/preloaders/producers.marineForecast
+    events:
+      - schedule:
+          name: MarineForecastPreloader-${self:provider.stage}
+          enabled: ${self:custom.schedule_enabled.${self:provider.stage}, false}
+          rate: rate(2 hours)
+    environment:
+      QUEUE_URL: ${cf:ss-queue-${self:provider.stage}.MarineForecastPreloaderQueueUrl}
+  preload-marine-forecast-consumer:
+    handler: src/preloaders/consumers.marineForecast
+    timeout: 120
+    events:
+      - sqs:
+          batchSize: 1
+          arn: ${cf:ss-queue-${self:provider.stage}.MarineForecastPreloaderQueueArn}
+
+custom:
+  serverless-offline:
+    port: 4000
+  schedule_enabled:
+    prod: true
+    dev: false

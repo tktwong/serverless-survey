@@ -1,0 +1,218 @@
+service: onondaga-e911
+
+frameworkVersion: ">=1.2.0 <2.0.0"
+
+plugins:
+  - serverless-python-requirements
+  - serverless-s3-deploy
+  - serverless-pseudo-parameters
+
+custom:
+  assets:
+    auto: true
+    targets:
+     - bucket: ${self:resources.Resources.EventsBucket.Properties.BucketName}
+       files:
+        - source: ./ui/
+          empty: false
+          globs: 'index.html'
+     - bucket: ${self:resources.Resources.EventsBucket.Properties.BucketName}
+       prefix: dist
+       files:
+        - source: ./ui/dist/
+          empty: false
+          globs: '**/*.*'
+
+package:
+  exclude:
+    - node_modules/**
+    - __pycache__/**
+    - README.md
+    - package.json
+    - package-lock.json
+    - Pipfile
+    - Pipfile.lock
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: prod
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+      Resource:
+        - { "Fn::GetAtt": ["PendingEventsTable", "Arn"] }
+        - { "Fn::GetAtt": ["AllEventsTable", "Arn"] }
+        - { "Fn::GetAtt": ["ClosedEventsTable", "Arn"] }
+    -  Effect: "Allow"
+       Action:
+         - s3:PutObject
+         - s3:GetObject
+       Resource:
+        - { "Fn::Join": [ "", [ { "Fn::GetAtt": ["EventsBucket", "Arn"] }, "/*"] ] }
+
+functions:
+
+  # list:
+  #   handler: scraper.list_events
+  #   events:
+  #     - http:
+  #         path: events
+  #         method: get
+  #         cors: true
+
+  scrape_all:
+    handler: scraper.scrape
+    environment:
+      SCRAPE_PAGE: "all"
+      SCRAPE_URL: "https://911events.ongov.net/CADInet/app/_rlvid.jsp?_rap=pc_Cad911Toweb.doLink1Action&_rvip=/events.jsp"
+      PENDING_EVENTS_TABLE: ${self:resources.Resources.PendingEventsTable.Properties.TableName}
+      ALL_EVENTS_TABLE: ${self:resources.Resources.AllEventsTable.Properties.TableName}
+      CLOSED_EVENTS_TABLE: ${self:resources.Resources.ClosedEventsTable.Properties.TableName}
+    events:
+      - schedule: rate(1 minute)
+
+  scrape_closed:
+    handler: scraper.scrape
+    environment:
+      SCRAPE_PAGE: "closed"
+      SCRAPE_URL: "https://911events.ongov.net/CADInet/app/_rlvid.jsp?_rap=pc_Cad911Toweb.doLink7Action&_rvip=/events.jsp"
+      PENDING_EVENTS_TABLE: ${self:resources.Resources.PendingEventsTable.Properties.TableName}
+      ALL_EVENTS_TABLE: ${self:resources.Resources.AllEventsTable.Properties.TableName}
+      CLOSED_EVENTS_TABLE: ${self:resources.Resources.ClosedEventsTable.Properties.TableName}
+    events:
+      - schedule: rate(1 minute)
+
+  archive_pending:
+    handler: scraper.archive
+    environment:
+      DYNAMODB_TABLE: ${self:resources.Resources.PendingEventsTable.Properties.TableName}
+      S3_BUCKET: ${self:resources.Resources.EventsBucket.Properties.BucketName}
+      S3_PREFIX: pending/
+    events:
+      - schedule: rate(1 hour)
+
+  archive_all:
+    handler: scraper.archive
+    environment:
+      DYNAMODB_TABLE: ${self:resources.Resources.AllEventsTable.Properties.TableName}
+      S3_BUCKET: ${self:resources.Resources.EventsBucket.Properties.BucketName}
+      S3_PREFIX: all/
+    events:
+      - schedule: rate(1 hour)
+
+  archive_closed:
+    handler: scraper.archive
+    environment:
+      DYNAMODB_TABLE: ${self:resources.Resources.ClosedEventsTable.Properties.TableName}
+      S3_BUCKET: ${self:resources.Resources.EventsBucket.Properties.BucketName}
+      S3_PREFIX: closed/
+    events:
+      - schedule: rate(1 hour)
+
+resources:
+  Resources:
+
+    ScrapeUnderScoreAllLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "7"
+
+    ScrapeUnderScoreClosedLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "7"
+
+    PendingEventsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:service}-pending-${opt:stage, self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: inserted_date
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: inserted_date
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    AllEventsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:service}-all-${opt:stage, self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: date
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: date
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    ClosedEventsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:service}-closed-${opt:stage, self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: date
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: date
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    EventsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-${opt:stage, self:provider.stage}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ["*"]
+              AllowedHeaders: ["*"]
+              AllowedMethods: ["GET"]
+              MaxAge: "3600"
+
+    EventsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: EventsBucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action: ["s3:GetObject"]
+              Resource: { "Fn::Join": [ "", [ { "Fn::GetAtt": ["EventsBucket", "Arn"] }, "/*"] ] }

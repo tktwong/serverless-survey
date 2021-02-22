@@ -1,0 +1,101 @@
+service: serverless-python-dynamo
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: python3.7
+  profile: serverless
+
+  environment:
+    TASK_DYNAMODB_TABLE: ${self:service}-task-${opt:stage, self:provider.stage}
+    TASK_QUEUE: ${self:service}-task-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*      
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TASK_DYNAMODB_TABLE}"
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+        - "sqs:GetQueueUrl"
+      Resource: "arn:aws:sqs:${opt:region, self:provider.region}:*:${self:provider.environment.TASK_QUEUE}"
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+      Resource: "*"
+
+functions:
+  createTask:
+    handler: api/handlers/task.create
+    events:
+      - http:
+          path: tasks
+          method: post
+          cors: true
+  getTask:
+    handler: api/handlers/task.get
+    events:
+      - http:
+          path: tasks/{id}
+          method: get
+          cors: true
+  updateTask:
+    handler: api/handlers/task.update
+    events:
+      - http:
+          path: tasks/{id}
+          method: put
+          cors: true
+  sendEmail:
+    handler: api/handlers/email.send
+    events:
+      - http:
+          path: email/send
+          method: post
+          cors: true
+  hello:
+    handler: api/handlers/email.process
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - TaskQueue
+              - Arn
+resources:
+  Resources:
+    TasksDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.TASK_DYNAMODB_TABLE}
+    TaskQueue:
+          Type: "AWS::SQS::Queue"
+          Properties:
+            QueueName: ${self:provider.environment.TASK_QUEUE}
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-python-requirements
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true # create tables on start
+  pythonRequirements:
+    dockerizePip: non-linux

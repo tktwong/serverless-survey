@@ -1,0 +1,53 @@
+service: bakery 
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  region: ap-southeast-2
+  environment:
+    STATUS_CAKE_API_KEY: ${env:STATUS_CAKE_API_KEY}
+    STATUS_CAKE_USER: ${env:STATUS_CAKE_USER}
+
+functions:
+  post:
+    handler: handler.createOrUpdate
+    events:
+      - http: POST statuscheck
+
+resources: 
+  Resources:
+    bakeryTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: bakery
+        AttributeDefinitions:
+          - AttributeName: stackName
+            AttributeType: S
+          - AttributeName: endpoint
+            AttributeType: S
+        KeySchema:
+          - AttributeName: stackName
+            KeyType: HASH
+          - AttributeName: endpoint
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: bakeryTable
+      Properties:
+        PolicyName: bakery-lambda-dynamodb
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:DeleteItem
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: arn:aws:dynamodb:*:*:table/bakery
+        Roles:
+          - Ref: IamRoleLambdaExecution
+

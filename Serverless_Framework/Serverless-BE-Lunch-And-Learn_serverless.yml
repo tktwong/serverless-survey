@@ -1,0 +1,63 @@
+org: silverchiprob
+# app: lunch
+service: lunch
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-1
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+    JWT_SECRET: hello
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:Scan
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+# https://www.serverless.com/blog/serverless-auth-with-aws-http-apis
+functions:
+  auth: 
+    handler: auth.handler
+  getPosts:
+    handler: api.getPosts
+    events: 
+      - http:
+          path: api/posts
+          method: get        
+  getPost:
+    handler: api.getPost
+    events:
+      - http:
+          path: posts/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+  addPost:
+    handler: api.addPost
+    events: 
+      - http: 
+          path: api/posts
+          method: post
+          authorizer: auth
+          cors: true
+
+
+resources: 
+  Resources:
+    blogposts:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

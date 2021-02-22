@@ -1,0 +1,103 @@
+frameworkVersion: ">=1.2.0 <2.0.0"
+
+service: video-stitcher # NOTE: update this with your service name
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  #timeout: 240
+  #memorySize: 512
+  #versionFunctions: false # optional, default is true
+  stage: ${opt:stage, "prod"}
+  region: ${opt:region, "eu-west-1"}
+
+  cfLogs: true
+  environment: ${file(config/${self:provider.stage}.yml):ENVIRONMENT}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:Put*"
+        - "s3:GetObject"
+        - "elastictranscoder:CreateJob"
+      Resource:
+        - "arn:aws:s3:::${self:custom.bucket_name}"
+        - "arn:aws:s3:::${self:custom.bucket_name}/*"
+        - "arn:aws:elastictranscoder:*:*:*"
+
+package:
+  individually: true
+  exclude:
+    - test/**
+    - .git/**
+
+functions:
+  stitchvideos:
+    handler: functions/stitchVideos/index.handler
+    events:
+      - s3:
+          bucket: videostitcher
+          events:
+            - s3:ObjectCreated:*
+          #rules:
+          #  - suffix: .mp4
+
+plugins:
+  - serverless-mocha-plugin
+  - serverless-webpack
+  - serverless-offline
+  - serverless-kms-secrets
+  - serverless-plugin-custom-roles
+  - serverless-plugin-split-stacks
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+
+custom:
+  bucket_name: aa-video-stitcher
+  serverless-mocha-plugin:
+    functionTemplate: templates/function.ejs
+  webpack:
+    includeModules: true
+
+resources:
+  Resources:
+    S3BucketVideostitcher:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.bucket_name}
+    S3BucketVideostitcherPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: S3BucketVideostitcher
+        PolicyDocument:
+          Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action:
+            - s3:GetObject
+            Resource:
+              Fn::Join: [
+                "", [
+                "arn:aws:s3:::",
+                {
+                  "Ref": "S3BucketVideostitcher"
+                },
+                "/*"
+              ]
+              ]
+    StitchvideosLambdaPermissionVideostitcherS3:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        FunctionName:
+          "Fn::GetAtt":
+          - StitchvideosLambdaFunction
+          - Arn
+        Principal: "s3.amazonaws.com"
+        Action: "lambda:InvokeFunction"
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: "arn:aws:s3:::${self:custom.bucket_name}"

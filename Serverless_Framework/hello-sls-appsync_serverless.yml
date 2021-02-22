@@ -1,0 +1,50 @@
+service: hello-sls-appsync
+
+plugins:
+  - serverless-webpack
+  - serverless-appsync-plugin
+  - serverless-appsync-simulator
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  timeout: 600
+
+functions:
+  greetingsHandler:
+    handler: src/greetings.handler
+    package:
+      exclude:
+        - ./**
+      include:
+        - ./src/**
+        - ./node_modules/**
+
+custom:
+  appsync-simulator:
+    location: ".webpack/service"
+    apiKey: da2-fakeApiId123456
+
+  webpack:
+    webpackConfig: "webpack.config.js"
+    includeModules: true
+
+  appSync:
+    authenticationType: API_KEY
+    mappingTemplatesLocation: ./resources/
+    mappingTemplates:
+      - dataSource: GreetingsLambdaDataSource
+        type: Query
+        field: getGreetings
+        request: "Query.generic.request.vtl"
+        response: "Query.generic.response.vtl"
+    schema: ./resources/schema.graphql
+    dataSources:
+      - type: AWS_LAMBDA
+        name: GreetingsLambdaDataSource
+        description: Handles greetings
+        config:
+          functionName: greetingsHandler

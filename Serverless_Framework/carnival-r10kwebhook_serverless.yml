@@ -1,0 +1,45 @@
+# This is the serverless configuration file for the r10kwebhook Lambda. Please
+# refer to README.md for further information.
+#
+# For documentation around the Serverless framework, please see:
+# docs.serverless.com
+
+service: r10k-webhook
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: python2.7
+
+  # Stage & Region can be overriden at CLI.
+  stage: staging
+  region: us-east-1
+
+  # Grant the Lamba permission to create and push to an SNS topic based on the
+  # name + stage of this Lambda. We do some horrible assembly of the name using
+  # a mix of CloudFormation variables and Serverless variable.
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "SNS:CreateTopic"
+        - "SNS:Publish"
+      Resource: { "Fn::Join" : ["", ["arn:aws:sns:", { "Ref" : "AWS::Region" }, ":", { "Ref" : "AWS::AccountId" }, ":${self:service}-${self:provider.stage}" ] ]  }
+
+  # Setup environmentals for use inside the Lambda
+  environment:
+    SNSTOPIC: ${self:service}-${self:provider.stage}
+
+# We have a single function for our webhook - only need to have a single route.
+functions:
+  webhook:
+    handler: handler.webhook
+    description: Provides a webhook endpoint that generates SNS messages for r10k consumer.
+    memorySize: 128 # MB
+    timeout: 10
+    events:
+      - http:
+          path: /
+          method: post

@@ -1,0 +1,265 @@
+service: cloud9-api
+custom:
+  passwordRecruiter: 'abcdef'
+  formsTableName: 'form-${self:provider.stage}'
+  questionsTableName: 'questions-${self:provider.stage}'
+  formSolutionsTableName: 'form-solutions-${self:provider.stage}'
+provider:
+  name: aws
+  runtime: java11
+  timeout: 10
+  memorySize: 3000
+  stage: ${opt:stage, 'prod'}
+  region: ${opt:region, 'us-east-1'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - cognito-idp:ListUsers
+        - cognito-idp:AdminListGroupsForUser
+        - s3:*
+      Resource:
+        - { "Fn::GetAtt": ["FormsDynamoDBTable", "Arn"] }
+        - { "Fn::GetAtt": ["QuestionsDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["FormSolutionsDynamoDBTable", "Arn" ] }
+        - 'arn:aws:cognito-idp:us-east-1:376153185365:userpool/us-east-1_1Q2XS2AE4'
+        - 'arn:aws:s3:::upload-file-cloud9-dev-hdasbdhsabd/*'
+  environment:
+    RECRUITER_PASSWORD: ${self:custom.passwordRecruiter}
+    FORMS_TABLE_NAME: ${self:custom.formsTableName}
+    QUESTIONS_TABLE_NAME: ${self:custom.questionsTableName}
+    FORM_SOLUTIONS_TABLE_NAME: ${self:custom.formSolutionsTableName}
+
+package:
+  artifact: 'target/${self:service}-${self:provider.stage}.jar'
+
+functions:
+  recruiter-check-password:
+    handler: com.serverless.handlers.user.RecruiterCheckPasswordHandler
+    events:
+      - http:
+          path: recruiter_check_password
+          method: post
+          cors: true
+  create-form:
+    handler: com.serverless.handlers.form.CreateFormHandler
+    events:
+      - http:
+          path: forms
+          method: post
+          cors: true
+  delete-form:
+    handler: com.serverless.handlers.form.DeleteFormHandler
+    events:
+      - http:
+          path: forms/{id}
+          method: delete
+          cors: true
+  update-form:
+    handler: com.serverless.handlers.form.UpdateFormHandler
+    events:
+      - http:
+          path: forms/{id}
+          method: put
+          cors: true
+  list-forms:
+    handler: com.serverless.handlers.form.ListFormsHandler
+    events:
+      - http:
+          path: forms
+          method: get
+          cors: true
+  add-user-to-form:
+    handler: com.serverless.handlers.form.AddUserToFormHandler
+    events:
+      - http:
+          path: forms/{id}/user
+          method: post
+          cors: true
+  delete-user-to-form:
+    handler: com.serverless.handlers.form.DeleteUserFromFormHandler
+    events:
+      - http:
+          path: forms/{id}/user/{user}
+          method: delete
+          cors: true
+  find-user-form:
+    handler: com.serverless.handlers.form.FindUserFormHandler
+    events:
+      - http:
+          path: forms/user/{id}
+          method: get
+          cors: true
+  find-user-form-all:
+    handler: com.serverless.handlers.form.ListFormForUserAll
+    events:
+      - http:
+          path: forms/user/{id}/all
+          method: get
+          cors: true
+  get-form:
+    handler: com.serverless.handlers.form.GetFormHandler
+    events:
+      - http:
+          path: forms/{id}
+          method: get
+          cors: true
+  list-users:
+    handler: com.serverless.handlers.user.ListUsersHandler
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+  get-user:
+    handler: com.serverless.handlers.user.GetUserHandler
+    events:
+      - http:
+          path: users/{id}
+          method: get
+          cors: true
+  add-question-to-form:
+    handler: com.serverless.handlers.question.AddQuestionHandler
+    events:
+      - http:
+          path: forms/{id}/question
+          method: post
+          cors: true
+  list-question-for-form:
+    handler: com.serverless.handlers.question.ListQuestionsForForm
+    events:
+      - http:
+          path: forms/{id}/questions
+          method: get
+          cors: true
+  list-question-without-lang-for-form:
+    handler: com.serverless.handlers.question.ListQuestionsWithoutLangForForm
+    events:
+      - http:
+          path: forms/{id}/questions/all
+          method: get
+          cors: true
+  delete-question:
+    handler: com.serverless.handlers.question.DeleteQuestionHandler
+    events:
+      - http:
+          path: forms/{id}/questions/{question}
+          method: delete
+          cors: trueUpdateQuestionHandler
+  update-question:
+    handler: com.serverless.handlers.question.UpdateQuestionHandler
+    events:
+      - http:
+          path: forms/{id}/questions/{question}
+          method: put
+          cors: true
+  add-solve-form:
+    handler: com.serverless.handlers.solveform.AddFormSolutionsHandler
+    events:
+      - http:
+          path: solveform/{id}/user/{user}
+          method: post
+          cors: true
+  add-answers-user-form:
+    handler: com.serverless.handlers.solveform.GetAnswersFormSolutionsHandler
+    events:
+      - http:
+          path: solveform/{id}/user/{user}
+          method: get
+          cors: true
+  check-answers-user-form:
+    handler: com.serverless.handlers.solveform.AddCheckAnswersHandler
+    events:
+      - http:
+          path: checksolveform/{id}/user/{user}
+          method: post
+          cors: true
+  get-summary-user-form:
+    handler: com.serverless.handlers.solveform.GetSummaryFormHandler
+    events:
+      - http:
+          path: form/{id}/user/{user}/summary
+          method: get
+          cors: true
+  list-form-for-recruiter:
+    handler: com.serverless.handlers.form.ListFormForRecruiterHandler
+    events:
+      - http:
+          path: form/recruiter/{id}
+          method: get
+          cors: true
+  translate-form:
+    handler: com.serverless.handlers.translate.AddTranslateForm
+    events:
+      - http:
+          path: forms/{id}/translate/
+          method: post
+          cors: true
+  list-solveform-for-recruiter:
+    handler: com.serverless.handlers.solveform.ListFormSolutionsHandler
+    events:
+      - http:
+          path: solveform/form/{id}
+          method: get
+          cors: true
+  get-solveform-for-recruiter:
+    handler: com.serverless.handlers.solveform.GetFormSolutionsHandler
+    events:
+      - http:
+          path: solveform/{id}
+          method: get
+          cors: true
+  import-form-csv:
+    handler: com.serverless.handlers.csv.ImportCSVHandler
+    events:
+      - http:
+          path: form/{id}/import
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    FormsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.formsTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    QuestionsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.questionsTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    FormSolutionsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.formSolutionsTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

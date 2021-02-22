@@ -1,0 +1,207 @@
+service: sls-rds-internet-access-example
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  webpack:
+    includeModules:
+      forceInclude:
+        - pg
+    webpackConfig: ./webpack.config.js
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: ap-southeast-2
+  environment:
+    # make database host + credentials available in the env
+    postgresEndpoint:
+      "Fn::Join": [":", ["Fn::GetAtt": [ServerlessRDSCluster, Endpoint.Address], "Fn::GetAtt": [ServerlessRDSCluster, Endpoint.Port]]]
+    postgresDatabase: "serverlessdatabase"
+    postgresUser: "rdsadminuser" # changeme
+    postgresPassword: "rdsadminuser" #changeme
+  vpc:
+    securityGroupIds:
+      - "Fn::GetAtt": ServerlessSecurityGroup.GroupId
+    subnetIds:
+      - Ref: ServerlessPrivateSubnetA
+      - Ref: ServerlessPrivateSubnetB
+      - Ref: ServerlessPrivateSubnetC
+  iamRoleStatements:
+    # Allow the lambda function permission to create EINs, which is part of the
+    - Effect: "Allow"
+      Action:
+        - "ec2:CreateNetworkInterface"
+        - "ec2:DescribeNetworkInterfaces"
+        - "ec2:DeleteNetworkInterface"
+      Resource: "*"
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: hello
+          method: get
+
+resources:
+  Resources:
+    ServerlessVPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: "10.0.0.0/16"
+    ElasticIpLambda:
+      Type: AWS::EC2::EIP
+      Properties:
+        Domain: vpc
+    InternetGatewayLambda:
+      Type: AWS::EC2::InternetGateway
+    VPCGatewayAttachmentLambda:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        InternetGatewayId:
+          Ref: InternetGatewayLambda
+    NatGatewayLambda:
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId:
+          Fn::GetAtt:
+            - ElasticIpLambda
+            - AllocationId
+        SubnetId:
+          Ref: ServerlessPublicSubnetA
+    # create 3 private subnets for rds
+    ServerlessPrivateSubnetA:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        AvailabilityZone: ${self:provider.region}a
+        CidrBlock: "10.0.0.0/24"
+    ServerlessPrivateSubnetB:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        AvailabilityZone: ${self:provider.region}b
+        CidrBlock: "10.0.1.0/24"
+    ServerlessPrivateSubnetC:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        AvailabilityZone: ${self:provider.region}c
+        CidrBlock: "10.0.2.0/24"
+    ServerlessPublicSubnetA:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        AvailabilityZone: ${self:provider.region}a
+        CidrBlock: "10.0.3.0/24"
+    DefaultPrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+    DefaultPrivateRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId:
+          Ref: DefaultPrivateRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        NatGatewayId:
+          Ref: NatGatewayLambda
+    DefaultPublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+    DefaultPublicRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId:
+          Ref: DefaultPublicRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId:
+          Ref: InternetGatewayLambda
+    SubnetRouteTableAssociationLambdaPrivateA:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: ServerlessPrivateSubnetA
+        RouteTableId:
+          Ref: DefaultPrivateRouteTable
+    SubnetRouteTableAssociationLambdaPrivateB:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: ServerlessPrivateSubnetB
+        RouteTableId:
+          Ref: DefaultPrivateRouteTable
+    SubnetRouteTableAssociationLambdaPrivateC:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: ServerlessPrivateSubnetC
+        RouteTableId:
+          Ref: DefaultPrivateRouteTable
+    SubnetRouteTableAssociationLambdaPublicA:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: ServerlessPublicSubnetA
+        RouteTableId:
+          Ref: DefaultPublicRouteTable
+    ServerlessSecurityGroup:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SecurityGroup for Serverless Functions
+        VpcId:
+          Ref: ServerlessVPC
+    ServerlessStorageSecurityGroup:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Ingress for RDS Instance
+        VpcId:
+          Ref: ServerlessVPC
+        SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '5432'
+          ToPort: '5432'
+          SourceSecurityGroupId:
+            Ref: ServerlessSecurityGroup
+    ServerlessRDSSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: "RDS Subnet Group"
+        SubnetIds:
+        - Ref: ServerlessPrivateSubnetA
+        - Ref: ServerlessPrivateSubnetB
+        - Ref: ServerlessPrivateSubnetC
+    # TODO use variables instead of hardcoding db params
+    ServerlessRDSCluster:
+      DependsOn: ServerlessStorageSecurityGroup
+      Type: AWS::RDS::DBInstance
+      Properties:
+        Engine: Postgres
+        DBName: serverlessdatabase
+        MasterUsername: rdsadminuser #changeme
+        MasterUserPassword: rdsadminuser #changeme
+        DBInstanceClass: db.t2.micro
+        AllocatedStorage: 20
+        VPCSecurityGroups:
+        - "Fn::GetAtt": ServerlessStorageSecurityGroup.GroupId
+        DBSubnetGroupName:
+          Ref: ServerlessRDSSubnetGroup

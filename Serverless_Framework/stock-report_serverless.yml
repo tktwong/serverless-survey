@@ -1,0 +1,55 @@
+service:
+  name: stock-report
+
+package:
+  individually: true
+  exclude:
+    - '**/**'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stackName: ${self:service.name}-stack
+  stage: ${opt:stage, 'prod'}
+  region: eu-central-1
+  deploymentBucket:
+    name: kaskadi-serverless-deployment-bucket
+  stackTags:
+    app: kaskadi
+  tags:
+    app: kaskadi
+    service: ${self:service.name}
+    logical-unit: stocks
+    type: schedule
+
+layers:
+  StockReportLayer:
+    path: layer
+    name: ${self:service.name}-layer
+    description: Layer for ${self:service.name}
+    compatibleRuntimes:
+      - nodejs10.x
+      - nodejs12.x
+    licenseInfo: MIT
+    package:
+      include:
+        - '**/**'
+
+functions:
+  StockReport:
+    handler: stock-report.handler
+    name: ${self:service.name}
+    package:
+      include:
+        - 'stock-report.js'
+        - 'helpers/**'
+    layers:
+      - { Ref: StockReportLayerLambdaLayer }
+    environment:
+      ES_ID: ${env:ES_ID}
+      ES_SECRET: ${env:ES_SECRET}
+      ES_ENDPOINT: ${env:ES_ENDPOINT}
+    events:
+      - schedule:
+          rate: cron(0 7 ? * MON *) # runs every monday at 7AM
+          enabled: true

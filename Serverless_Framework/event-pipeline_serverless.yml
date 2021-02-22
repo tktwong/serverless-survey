@@ -1,0 +1,162 @@
+service: event-pipeline
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${self:custom.stage}
+  region: 'eu-west-1'
+  iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - "s3:ListBucket"
+       Resource:
+         Fn::Join:
+           - ""
+           - - "arn:aws:s3:::"
+             - Ref: ServerlessDeploymentBucket
+    -  Effect: "Allow"
+       Action:
+         - "s3:PutObject"
+       Resource:
+         Fn::Join:
+           - ""
+           - - "arn:aws:s3:::"
+             - Ref: ServerlessDeploymentBucket
+             - "/*"
+    -  Effect: "Allow"
+       Action:
+         - "s3:*"
+       Resource:
+         Fn::Join:
+           - ""
+           - - "arn:aws:s3:::"
+             - Ref: EventsPipelineExtractBucket
+             - "/*"
+    -  Effect: "Allow"
+       Action:
+         - "s3:*"
+       Resource:
+         Fn::Join:
+           - ""
+           - - "arn:aws:s3:::"
+             - Ref: EventsPipelineTransformBucket
+             - "/*"
+    -  Effect: "Allow"
+       Action: "states:*"
+       Resource: "*"
+    -  Effect: "Allow"
+       Action:
+         - "s3:PutBucketNotification"
+       Resource:
+         Fn::Join:
+           - ""
+           - - "*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+package:
+ include:
+   - "handlers.py"
+   - "src/**/*.py"
+   - "bin/*"
+ exclude:
+   - ".*/**"
+
+
+functions:
+  extract:
+    handler: src/extract.handle
+    timeout: 30
+    environment:
+      MEETUP_API_TOKEN: ${ssm:meetupApiToken}
+      EVENTBRITE_API_TOKEN: ${ssm:eventbriteApiToken}
+      EXTRACT_BUCKET: events-pipeline-extract
+  transform:
+    handler: src/transform.handle
+    timeout: 30
+    environment:
+      TRANSFORM_BUCKET: events-pipeline-transform
+  load:
+    handler: src/load.handle
+    timeout: 900
+    environment:
+      EVENTS_ENDPOINT: https://muxer.co.uk/events
+
+
+resources:
+  Resources:
+
+    EventsPipelineExtractBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: events-pipeline-extract
+
+    EventsPipelineTransformBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: events-pipeline-transform
+
+    StatesExecutionRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service: "states.#{AWS::Region}.amazonaws.com"
+              Action: "sts:AssumeRole"
+        Path: "/"
+        Policies:
+          - PolicyName: StatesExecutionPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "lambda:InvokeFunction"
+                  Resource: "*"
+
+    EventPipelineStateMachine:
+      Type: "AWS::StepFunctions::StateMachine"
+      Properties:
+        DefinitionString: |-
+          {
+            "StartAt": "Extract",
+            "Version": "1.0",
+            "States": {
+              "Extract": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:event-pipeline-${self:custom.stage}-extract",
+                "Next": "Transform"
+              },
+              "Transform": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:event-pipeline-${self:custom.stage}-transform",
+                "Next": "Load"
+              },
+              "Load": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:event-pipeline-${self:custom.stage}-load",
+                "End": true
+              }
+            }
+          }
+        RoleArn: !GetAtt [ StatesExecutionRole, Arn ]
+
+
+
+plugins:
+  - serverless-python-requirements
+  - serverless-plugin-tracing
+  - serverless-pseudo-parameters
+
+custom:
+  stage: ${opt:stage, 'dev'}
+  pythonRequirements:
+    dockerizePip: non-linux
+    pipCmdExtraArgs:
+      - --no-compile

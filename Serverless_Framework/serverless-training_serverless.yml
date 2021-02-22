@@ -1,0 +1,254 @@
+service: workshop-${self:custom.name}
+
+plugins:
+  - serverless-export-env
+  - serverless-pseudo-parameters
+  - serverless-iam-roles-per-function
+
+custom:
+  name: samhall
+  email: aws-workshop@solflux.co.uk
+  stage: ${opt:stage, self:provider.stage}
+  logLevel:
+    prod: ERROR
+    default: INFO
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  tracing:
+    apiGateway: true
+    lambda: true
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    SAMPLE_DEBUG_LOG_RATE: 0.1
+    serviceName: ${self:service}
+    stage: ${self:provider.stage}
+    LOG_LEVEL: ${self:custom.logLevel.${self:custom.stage}, self:custom.logLevel.default}
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - "xray:PutTraceSegments"
+      - "xray:PutTelemetryRecords"
+    Resource: "*"
+
+functions:
+  get-index:
+    handler: functions/get-index.handler
+    events:
+      - http:
+          path: /
+          method: get
+    environment:
+      restaurants_api: 
+        Fn::Join:
+          - ""
+          - - https://
+            - !Ref ApiGatewayRestApi
+            - .execute-api.${self:provider.region}.amazonaws.com/${self:custom.stage}/restaurants
+      orders_api:
+        Fn::Join:
+          - ""
+          - - https://
+            - !Ref ApiGatewayRestApi
+            - .execute-api.${self:provider.region}.amazonaws.com/${self:custom.stage}/orders
+      cognito_user_pool_id: !Ref CognitoUserPool
+      cognito_client_id: !Ref WebCognitoUserPoolClient
+    iamRoleStatements:
+    - Effect: Allow
+      Action: execute-api:Invoke
+      Resource: arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:#{ApiGatewayRestApi}/${self:custom.stage}/GET/restaurants
+  get-restaurants:
+    handler: functions/get-restaurants.handler
+    events:
+      - http:
+          path: /restaurants
+          method: get
+          authorizer: aws_iam
+    environment:
+      restaurants_table: !Ref RestaurantsTable
+    iamRoleStatements:
+    - Effect: Allow
+      Action: dynamodb:scan
+      Resource: !GetAtt RestaurantsTable.Arn
+    - Effect: Allow
+      Action: ssm:GetParameters*
+      Resource: arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:custom.stage}/get-restaurants/config
+  search-restaurants:
+    handler: functions/search-restaurants.handler
+    events:
+      - http:
+          path: /restaurants/search
+          method: post
+          authorizer:
+            name: CognitoAuthorizer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt CognitoUserPool.Arn
+    environment:
+      restaurants_table: !Ref RestaurantsTable
+    iamRoleStatements:
+    - Effect: Allow
+      Action: dynamodb:scan
+      Resource: !GetAtt RestaurantsTable.Arn
+    - Effect: Allow
+      Action: ssm:GetParameters*
+      Resource:
+        - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:custom.stage}/search-restaurant/config
+        - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:custom.stage}/search-restaurant/secretString
+    # - Effect: Allow
+    #   Action: kms:Decrypt
+    #   Resource: ${ssm:/dev/kmsArn}
+  place-order:
+    handler: functions/place-order.handler
+    events:
+      - http:
+          path: /orders
+          method: post
+          authorizer:
+            name: CognitoAuthorizer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt CognitoUserPool.Arn
+    environment:
+      bus_name: !Ref EventBus
+    iamRoleStatements:
+    - Effect: Allow
+      Action: events:PutEvents
+      Resource: "*"
+  notify-restaurant:
+    handler: functions/notify-restaurant.handler
+    events:
+      - eventBridge:
+          eventBus: arn:aws:events:#{AWS::Region}:#{AWS::AccountId}:event-bus/order_events_${self:custom.stage}
+          pattern:
+            source:
+              - big-mouth
+            detail-type:
+              - order_placed
+    environment:
+      bus_name: !Ref EventBus
+      restaurant_notification_topic: !Ref RestaurantNotificationTopic
+    iamRoleStatements:
+    - Effect: Allow
+      Action: events:PutEvents
+      Resource: "*"
+    - Effect: Allow
+      Action: sns:Publish
+      Resource: !Ref RestaurantNotificationTopic
+
+resources:
+  Resources:
+    RestaurantsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        AliasAttributes:
+          - email
+        UsernameConfiguration:
+          CaseSensitive: false
+        AutoVerifiedAttributes:
+          - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireNumbers: true
+            RequireUppercase: true
+            RequireSymbols: true
+        Schema:
+          - AttributeDataType: String
+            Mutable: true
+            Name: given_name
+            Required: true
+            StringAttributeConstraints:
+              MinLength: "1"
+          - AttributeDataType: String
+            Mutable: true
+            Name: family_name
+            Required: true
+            StringAttributeConstraints:
+              MinLength: "1"
+          - AttributeDataType: String
+            Mutable: true
+            Name: email
+            Required: true
+            StringAttributeConstraints:
+              MinLength: "1"
+    
+    WebCognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: web
+        UserPoolId: !Ref CognitoUserPool
+        ExplicitAuthFlows:
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        PreventUserExistenceErrors: ENABLED
+
+    ServerCognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: server
+        UserPoolId: !Ref CognitoUserPool
+        ExplicitAuthFlows:
+          - ALLOW_ADMIN_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        PreventUserExistenceErrors: ENABLED
+
+    ServiceUrlParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Type: String
+        Name: /${self:service}/${self:custom.stage}/serviceUrl
+        Value:
+          Fn::Join:
+            - ""
+            - - https://
+              - !Ref ApiGatewayRestApi
+              - .execute-api.${self:provider.region}.amazonaws.com/${self:custom.stage}
+
+    EventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: order_events_${self:custom.stage}
+    
+    RestaurantNotificationTopic:
+      Type: AWS::SNS::Topic
+
+  Outputs:
+    RestaurantsTableName:
+      Value: !Ref RestaurantsTable
+    CognitoUserPoolId:
+      Value: !Ref CognitoUserPool
+    CognitoUserPoolArn:
+      Value: !GetAtt CognitoUserPool.Arn
+    CognitoUserPoolWebClientId:
+      Value: !Ref WebCognitoUserPoolClient
+    CognitoUserPoolServerClientId:
+      Value: !Ref ServerCognitoUserPoolClient
+    RestApiUrl:
+      Value: 
+        Fn::Join:
+          - ""
+          - - https://
+            - !Ref ApiGatewayRestApi
+            - .execute-api.${self:provider.region}.amazonaws.com/${self:custom.stage}
+    EventBusName:
+      Value: !Ref EventBus
+    RestaurantNotificationTopicName:
+      Value: !GetAtt RestaurantNotificationTopic.TopicName
+    RestaurantNotificationTopicArn:
+      Value: !Ref RestaurantNotificationTopic

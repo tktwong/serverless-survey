@@ -1,0 +1,140 @@
+service: event-guru-backend
+
+app: ${env:SLS_APP, self:custom.stageVars.SLS_APP}
+tenant: ${env:SLS_TENANT, self:custom.stageVars.SLS_TENANT}
+
+package:
+  individually: true
+  exclude:
+    - test
+    - docs
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: prod
+  region: eu-west-1
+  memorySize: 512
+  cfLogs: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:custom.basicVars.EVENT_GURU_EVENTS_CACHE_TABLE}'
+
+custom:
+  basicVars: ${file(./src/config/config.json)}
+  stageVars: ${file(./src/config/config-${self:provider.stage}.json)}
+
+plugins:
+  - serverless-webpack
+
+resources:
+  Resources:
+    EventGuruEventsCacheTable:
+          Type: 'AWS::DynamoDB::Table'
+          DeletionPolicy: Retain
+          Properties:
+            AttributeDefinitions:
+              -
+                AttributeName: location
+                AttributeType: S
+            KeySchema:
+              -
+                AttributeName: location
+                KeyType: HASH
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+            TableName: ${self:custom.basicVars.EVENT_GURU_EVENTS_CACHE_TABLE}
+
+    EventGuruBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.basicVars.EVENT_GURU_BUCKET}
+        AccessControl: PublicReadWrite
+        CorsConfiguration:
+          CorsRules:
+          - AllowedMethods:
+              - GET
+            AllowedOrigins:
+              - http://ask-ifr-download.s3.amazonaws.com
+              - https://eventguru.io
+
+    EventGuruBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: EventGuruBucket
+        PolicyDocument:
+          Statement:
+            - Action:
+                - 's3:GetObject'
+              Effect: Allow
+              Principal: '*'
+              Resource:
+                Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: EventGuruBucket
+                    - '/*'
+
+functions:
+  # http rest interfaces
+  events-rest-api:
+    handler: src/lambda/events-rest-handler.getEvents
+    description: Event Guru - Get events REST API
+    environment:
+      SONGKICK_API_KEY: ${env:SONGKICK_API_KEY, self:custom.stageVars.SONGKICK_API_KEY}
+    events:
+      - http:
+          path: events
+          method: get
+          request:
+            parameters:
+              querystrings:
+                location: true
+                from: true
+                to: false
+
+  urls-rest-api:
+    handler: src/lambda/url-shorter-rest-handler.getUrl
+    description: Event Guru - Shorten URL REST API
+    environment:
+      BITLY_ACCESS_TOKEN: ${env:BITLY_ACCESS_TOKEN, self:custom.stageVars.BITLY_ACCESS_TOKEN}
+    events:
+      - http:
+          path: urls
+          method: get
+          request:
+            parameters:
+              querystrings:
+                url: true
+
+  artists-rest-api:
+      handler: src/lambda/artist-rest-handler.getArtist
+      description: Event Guru - Artist REST API
+      events:
+        - http:
+            path: artists
+            method: get
+            request:
+              parameters:
+                querystrings:
+                  name: true
+
+  # cron jobs
+  events-preload:
+    handler: src/lambda/events-preload-handler.run
+    description: Event Guru - CronJob Event Preloader
+    environment:
+      SONGKICK_API_KEY: ${env:SONGKICK_API_KEY, self:custom.stageVars.SONGKICK_API_KEY}
+    timeout: 600s
+    events:
+      - schedule: cron(1 0 * * ? *) # 00:01 every midnight

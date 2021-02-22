@@ -1,0 +1,159 @@
+service: octoprint-listener
+org: andresmweber
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-plugin-git-variables
+  - serverless-offline
+  - serverless-export-env
+  - serverless-domain-manager
+package:
+  include:
+    - src/**/*
+  exclude:
+    - ./node_modules/
+    - tests/**
+  individually: true
+provider:
+  profile: aw
+  name: aws
+  runtime: nodejs12.x
+  stage: ${self:custom.serverlessBranch, self:custom.gitBranch, opt:stage, env:STAGE}
+  region: ${opt:region, 'us-east-1'}
+  apiGateway:
+    binaryMediaTypes:
+      - 'multipart/form-data'
+  deploymentBucket:
+    name: ${self:service}-deploys
+  memorySize: 512
+  role: bucketRole
+  tags:
+    GIT-USER: ${self:custom.serverlessGitUser}
+  environment:
+    DEBUG: ${env:DEBUG, 'octolistener:*'}
+    SLS_DEBUG: ${env:SLS_DEBUG, ''}
+    REGION: ${self:provider.region}
+    STAGE: ${env:STAGE, self:provider.stage}
+    DOMAIN: octo-${self:custom.subdomain}.andresmweber.com
+    AW_SLACK_URL: ${ssm:/aw/slack/octoprint~true}
+    AW_BUCKET: ${self:custom.imageBucket}
+    AW_BRANCH: ${self:custom.serverlessBranch, self:custom.gitBranch}
+    GIT_COMMIT_LONG: ${self:custom.gitCommitLong}
+    GIT_TAGS: ${self:custom.gitTags}
+    GIT_IS_DIRTY: ${self:custom.gitDirty}
+    GIT_BRANCH: ${self:custom.gitBranch}
+    GIT_REPOSITORY: ${self:custom.gitRepo}
+    GIT_DESCRIPTION: ${self:custom.gitDescription}
+    GIT_DESCRIPTION_LONG: ${self:custom.gitDescriptionLong}
+    SLS_CI_GIT_BRANCH: ${self:custom.serverlessBranch, false}
+    SLS_CI_GIT_USER: ${self:custom.serverlessGitUser, false}
+    SLS_CI_GIT_ORG: ${self:custom.serverlessGitOrg, false}
+    SLS_CI_STAGE: ${self:custom.serverlessStage, false}
+    SLS_CI_REPO: ${self:custom.serverlessRepo, false}
+    SLS_CI_REPO_OWNER: ${self:custom.serverlessRepoOwner, false}
+    SLS_CI_COMMIT_MSG: ${self:custom.serverlessCommitMessage, false}
+    SLS_CI_BUILD_ID: ${self:custom.serverlessBuildId, false}
+    COVERALLS_SERVICE_NAME: serverless
+    COVERALLS_REPO_TOKEN: ${ssm:/aw/octo-listener/coveralls~true}
+    COVERALLS_GIT_BRANCH: ${self:custom.serverlessBranch, self:custom.gitBranch}
+custom:
+  subdomains:
+    master: 'api'
+  subdomain: ${self:custom.subdomains.${self:provider.stage}, ${self:provider.stage}}
+  imageBucket: octoprint-listener-snapshot-${self:provider.stage}-bucket
+  gitCommitLong: ${env:GIT_COMMIT_LONG, git:sha1}
+  gitTags: ${env:TAGS, git:tags}
+  gitDirty: ${env:GIT_IS_DIRTY, git:isDirty}
+  gitBranch: ${git:branch}
+  gitRepo: ${env:GIT_REPOSITORY, git:repository}
+  gitDescription: ${env:GIT_DESCRIPTION, git:describe}
+  gitDescriptionLong: ${git:repository} - ${git:branch} - ${git:tags}
+  serverlessBranch: ${env:SERVERLESS_BRANCH}
+  serverlessGitUser: ${env:SERVERLESS_COMMIT_USER}
+  serverlessGitOrg: ${env:SERVERLESS_ORG}
+  serverlessStage: ${env:SERVERLESS_PLATFORM_STAGE}
+  serverlessRepo: ${env:SERVERLESS_REPO}
+  serverlessRepoOwner: ${env:SERVERLESS_REPO_OWNER}
+  serverlessCommitMessage: ${env:SERVERLESS_COMMIT_MSG}
+  serverlessBuildId: ${env:SERVERLESS_BUILD_ID}
+  customDomain:
+    domainName: ${self:provider.environment.DOMAIN}
+    basePath: 'v1'
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+functions:
+  receiveWebhook:
+    handler: src/lambdas/receiveWebhook.handler
+    description: ${self:custom.gitDescription}
+    events:
+      - http:
+          path: webhook
+          method: POST
+          cors: true
+          private: false
+          integration: 'lambda-proxy'
+    environment:
+      BUCKET: !Ref OctoprintSnapshotBucket
+
+# you can add CloudFormation resource templates here
+resources:
+  Description: >
+    ${self:service} ${git:branch}:${git:sha1}
+    https://github.com/andresmweber/octoprint-listener
+    ${git:message}
+  Resources:
+    OctoprintSnapshotBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.imageBucket}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+    bucketRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /octolistener/${self:provider.stage}/bucketRole/
+        RoleName: ${self:service}-${self:provider.stage}-bucketRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: bucketPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                        - ':'
+                        - - 'arn:aws:logs'
+                          - Ref: 'AWS::Region'
+                          - Ref: 'AWS::AccountId'
+                          - 'log-group:/aws/lambda/*:*:*'
+                - Effect: 'Allow'
+                  Action:
+                    - 's3:PutObject'
+                    - 's3:PutObjectAcl'
+                    - 's3:GetObject'
+                    - 's3:ListBucket'
+                  Resource:
+                    - arn:aws:s3:::${self:custom.imageBucket}
+                    - arn:aws:s3:::${self:custom.imageBucket}/*
+  Outputs:
+    NewOutput:
+      Description: 'Description for the output'
+      Value: 'Some output value'

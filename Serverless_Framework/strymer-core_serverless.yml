@@ -1,0 +1,108 @@
+# NOTE: update this with your service name
+service: strymer-core
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-2
+
+  # To load environment variables externally
+  # rename env.example to .env and uncomment
+  # the following line. Also, make sure to not
+  # commit your .env.
+  #
+  environment:
+    algoliaAppKeyEnvVar: ${env:ALGOLIA_APP_KEY}
+    algoliaAdminKeyEnvVar: ${env:ALGOLIA_ADMIN_KEY}
+    algoliaSearchOnlyKeyEnvVar: ${env:ALGOLIA_SEARCH_ONLY_KEY}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:BatchGetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:us-east-2:*:*'
+
+functions:
+  writePodcasts:
+    handler: jobs/writePodcasts.main
+  updateEpisodes:
+    handler: jobs/updateEpisodes.main
+    events:
+      - schedule: rate(25 hours)
+  list:
+    handler: routes/list.main
+    events:
+      - http:
+          path: podcasts
+          method: get
+          cors: true
+          authorizer: aws_iam
+  listFavorites:
+    handler: routes/listFavorites.main
+    events:
+      - http:
+          path: favorites
+          method: get
+          cors: true
+          authorizer: aws_iam
+  getFeatured:
+    handler: routes/getFeatured.main
+    events:
+      - http:
+          path: featured
+          method: get
+          cors: true
+          authorizer: aws_iam
+  getTop:
+    handler: routes/getTop.main
+    events:
+      - http:
+          path: top
+          method: get
+          cors: true
+          authorizer: aws_iam
+  get:
+    handler: routes/get.main
+    events:
+      - http:
+          path: podcasts/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  create:
+    handler: routes/createFavorites.main
+    events:
+      - http:
+          path: favorites
+          method: post
+          cors: true
+          authorizer: aws_iam
+  delete:
+    handler: routes/deleteFavorites.main
+    events:
+      - http:
+          path: favorites/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam

@@ -1,0 +1,58 @@
+service: NowhereChatApiServerless
+
+plugins:
+  modules:
+    - serverless-cf-vars
+    - serverless-appsync-plugin
+
+provider:
+  name: aws
+  region: ${opt:region, "us-east-1"}
+  runtime: nodejs8.10
+  stage: ${opt:stage, "dev"}
+
+custom:
+  api: ${self:provider.stage}NowhereChatApiServerless
+
+  appSync:
+    name: ${self:custom.api}
+    authenticationType: API_KEY
+    logConfig:
+      loggingRoleArn: { Fn::GetAtt: [AppSyncLoggingServiceRole, Arn] }
+      level: ALL
+    schema: ./schema.graphql
+    dataSources:
+      - type: NONE
+        name: None
+    mappingTemplates:
+      - type: Mutation
+        field: sendMessage
+        dataSource: None
+        request: Mutation-sendMessage-request.vtl
+        response: Mutation-sendMessage-response.vtl
+
+resources:
+  Resources:
+    AppSyncLoggingServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.api}-AppSyncLoggingServiceRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: 'appsync.amazonaws.com'
+              Action: 'sts:AssumeRole'
+        Policies:
+          - PolicyName: CloudWatchLogsAccess
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Action:
+                    - 'logs:CreateLogGroup'
+                    - 'logs:CreateLogStream'
+                    - 'logs:PutLogEvents'
+                  Effect: Allow
+                  Resource:
+                    - 'arn:aws:logs:#{AWS::Region}:#{AWS::AccountId}:*'

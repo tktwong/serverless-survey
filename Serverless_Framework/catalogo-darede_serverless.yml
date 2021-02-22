@@ -1,0 +1,305 @@
+service: service-catalog
+
+custom:
+  settings:
+    SERVICE_TABLE: posts   
+    
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  environment:
+    SERVICE_TABLE: ${self:service}-${opt:stage,self:provider.stage}-services
+    USERS_TABLE:  ${self:service}-${opt:stage,self:provider.stage}-Users
+    GROUPS_TABLE: ${self:service}-${opt:stage,self:provider.stage}-Groups
+    WORKLOADS_TABLE: ${self:service}-${opt:stage,self:provider.stage}-Workloads
+
+  region: us-west-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        # dynamo Policy
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        
+        # Policy Cloudform
+        - cloudformation:CreateStack
+        - cloudformation:CreateChangeSet
+        - cloudformation:ListStacks
+        - cloudformation:UpdateStack
+        - cloudformation:DescribeChangeSet
+        - cloudformation:ExecuteChangeSet
+        - cloudformation:DescribeStacks
+        - cloudformation:DescribeStackInstance
+
+        # ec2 Policy
+
+        - ec2:CreateSecurityGroup
+        - ec2:RunInstances
+        - ec2:DescribeInstances
+        - ec2:CreateKeyPair
+
+        # IAM Policy
+        - iam:CreateGroup
+        - iam:CreateUser
+        - iam:AddUserToGroup
+        - iam:CreateLoginProfile
+        - iam:ListGroups
+        - iam:GetGroup	
+        - iam:ListUsers
+
+
+      Resource: ["arn:aws:dynamodb:${opt:region, self:provider.region}:507252436531:table/${self:provider.environment.SERVICE_TABLE}", "*","arn:aws:s3:::cloudformation-cssolucoes" ]
+
+functions:
+# <FUNÇÕES DE SERVIÇOS>
+
+#configurando a função create e dizendo que ela sera usada quando eu utilizar o endpoint "service" com metodo htpp post
+# handler passa o caminho onde a minha função se encontra, no caso é uma função com nome create no arquivo create, dentro da pasta "Servicos"
+  create:
+    handler: Services/create.create  
+    events:
+      - http: 
+          path: service
+          method: post
+          integration: lambda
+
+#configurando a função lsit e dizendo que ela sera usada quando eu utilizar o endpoint "service" com metodo htpp get
+# handler passa o caminho onde a minha função se encontra, no caso é uma função com nome list no arquivo list, dentro da pasta "Servicos"
+  list:
+    handler: Services/list.list
+    events:
+      - http:
+          path: /service
+          method: get
+          cors: true
+          integration: lambda
+
+#configurando a função getById e dizendo que ela sera usada quando eu utilizar o endpoint com o id da informação que desejoa acessar no formato de "service/{id}" com metodo htpp get
+# handler passa o caminho onde a minha função se encontra, no caso é uma função com nome getById no arquivo get, dentro da pasta "Servicos"
+  getById:
+    handler: Services/get.get
+    events:
+      - http:
+          path: service/{id}
+          method: get
+          integration: lambda
+
+#configurando a função update e dizendo que ela sera usada quando eu utilizar o endpoint com o id da informação que desejoa acessar no formato de "service/{id}" com metodo htpp put
+# handler passa o caminho onde a minha função se encontra, no caso é uma função com nome update no arquivo update, dentro da pasta "Servicos"
+  # update:
+  #   handler: Servicos/update.update
+  #   events:
+  #     - http:
+  #         path: service/{id}
+  #         method: put
+  #         cors: true
+
+#configurando a função delete e dizendo que ela sera usada quando eu utilizar o endpoint com o id da informação que desejoa acessar no formato de "service/{id}" com metodo htpp delete
+# handler passa o caminho onde a minha função se encontra, no caso é uma função com nome delete no arquivo delete, dentro da pasta "Servicos"
+  delete:
+    handler: Services/delete.delete
+    events:
+      - http:
+          path: service/{id}
+          method: delete
+          cors: true
+          integration: lambda
+
+  
+
+
+  DescribeStack:
+   handler: CloudForm/Ec2WebServer/DescribeWebServer.describe
+   events:
+      - http:
+          path: Service/EC2Describe
+          method: get
+          cors: true
+          integration: lambda
+
+
+  DescribeStackInstance:
+   handler: CloudForm/Ec2WebServer/DescribeStackInstance.describe
+   events:
+      - http:
+          path: Service/StackDescribeInstance
+          method: get
+          cors: true
+          integration: lambda
+
+
+  Ec2Describe:
+   handler: CloudForm/Ec2WebServer/DescribeInstance.describe
+   events:
+      - http:
+          path: Service/EC2DescribeInstance
+          method: get
+          cors: true
+          integration: lambda
+
+  CreateKeyPair:
+   handler: CloudForm/Ec2WebServer/CreateKeyPair.create
+   events:
+      - http:
+          path: Service/CreateKeyPair
+          method: post
+          cors: true
+          integration: lambda        
+
+  ServiceCloudForm:
+   handler: CloudForm/Ec2WebServer/EC2Execute.create
+   events:
+      - http:
+          path: Service/EC2Execute
+          method: post
+          cors: true
+          integration: lambda
+# </FUNÇÕES DE SERVIÇOS>
+
+# <FUNÇÕES DE USUARIO>
+
+  PostUsuario:
+   handler:  Users/UsersSubmit.usersSubmit
+   events:
+      - http:
+          path: users/signup
+          method: post
+          cors: true
+          integration: lambda
+
+
+  ListarUsuarios:
+   handler:  Users/ListUsers.list
+   events:
+      - http:
+          path: users/list
+          method: get
+          cors: true
+          integration: lambda
+
+
+  Login:
+   handler:  Users/LoginUser.login
+   events:
+      - http:
+          path: users/login
+          method: post
+          cors: true
+          integration: lambda
+
+
+  # <FUNÇÕES DE GRUPOS>
+  
+  CreateGroup:
+   handler: Groups/CreateGroup.create
+   events:
+      - http:
+          path: Groups/Create
+          method: post
+          cors: true
+          integration: lambda
+
+
+  ListGroups:
+   handler: Groups/ListAllGroups.list
+   events:
+      - http:
+          path: Groups/ListGroups
+          method: get
+          cors: true
+          integration: lambda
+
+
+  ListParticipants:
+   handler: Groups/ListParticipants.GetGroup
+   events:
+      - http:
+          path: Groups/ListParticipants
+          method: get
+          cors: true
+          integration: lambda
+
+
+  AddUserToGroup:
+   handler: Groups/AddUserToGroup.add
+   events:
+      - http:
+          path: Groups/AddUser
+          method: post
+          cors: true
+          integration: lambda
+
+  #</FUNÇÕES DE GRUPOS>
+  
+
+resources:
+  Resources:
+    ServicesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.environment.SERVICE_TABLE}
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    UsersTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.USERS_TABLE}
+        AttributeDefinitions:
+        - AttributeName: "idUsers"
+          AttributeType: "S"   
+        KeySchema:
+        - AttributeName: "idUsers"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+          
+    GroupsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.GROUPS_TABLE}
+        AttributeDefinitions:
+        - AttributeName: "idUsers"
+          AttributeType: "S"   
+        KeySchema:
+        - AttributeName: "idUsers"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    WorkloadsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.WORKLOADS_TABLE}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+        AttributeDefinitions:
+        - AttributeName: "idUsers"
+          AttributeType: "S"   
+        KeySchema:
+        - AttributeName: "idUsers"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+
+
+
+ 

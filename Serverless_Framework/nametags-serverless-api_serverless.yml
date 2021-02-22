@@ -1,0 +1,110 @@
+service: vcc-nametags-api
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-apigw-binary
+  - serverless-apigwy-binary
+  - serverless-s3-sync
+  - serverless-webpack
+  - serverless-offline
+  - serverless-ding
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set our DynamoDB throughput for prod and all other non-prod stages.
+  # Load our webpack config
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+  # s3Sync:
+  #   - bucketName: nametags-database
+  #     localDir: database
+  apigwBinary:
+    types:
+      - "application/pdf"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  profile: verticalchurch
+
+  # These environment variables are made available to our functions
+  # under process.env.
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /tags
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  create:
+    handler: create.main
+    events:
+      - http:
+          path: tags
+          method: post
+          cors: true
+
+  get:
+    # Defines an HTTP API endpoint that calls the main function in get.js
+    # - path: url path is /tags/{id}
+    # - method: GET request
+    handler: get.main
+    events:
+      - http:
+          path: tags/{id}
+          method: get
+          cors: true
+
+  list:
+    # Defines an HTTP API endpoint that calls the main function in list.js
+    # - path: url path is /tags
+    # - method: GET request
+    handler: list.main
+    events:
+      - http:
+          path: tags
+          method: get
+          cors: true
+
+  update:
+    # Defines an HTTP API endpoint that calls the main function in update.js
+    # - path: url path is /tags/{id}
+    # - method: PUT request
+    handler: update.main
+    events:
+      - http:
+          path: tags/{id}
+          method: patch
+          cors: true
+
+  delete:
+    # Defines an HTTP API endpoint that calls the main function in delete.js
+    # - path: url path is /tags/{id}
+    # - method: DELETE request
+    handler: delete.main
+    events:
+      - http:
+          path: tags/{id}
+          method: delete
+          cors: true
+
+  printtags:
+    handler: print.main
+    events:
+      - http:
+          path: printtags
+          method: get
+          cors: true
+# Create our resources with separate CloudFormation templates
+resources:
+  # S3DB
+  - ${file(resources/s3-database.yml)}

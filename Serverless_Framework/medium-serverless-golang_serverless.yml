@@ -1,0 +1,76 @@
+--- 
+service: my-service
+
+
+# Custom development for all the staging with dynamic values
+custom:
+  development:
+    projectId: gcp-project-id-dev
+    cloudRegion: us-central1
+    ## GCP service account for deployment for development
+    ## It require some permission to deploy like storage Admin, cloud build, deployment manager etc.
+    credentials: ./secrets/secrets.development.json
+    bucketName: 'bucket-development'
+  staging:
+    projectId: gcp-project-id-stg
+    cloudRegion: us-central1
+    ## GCP credential for deployment for staging
+    ## It require some permission to deploy like storage Admin, cloud build, deployment manager etc.
+    credentials: ./secrets/secrets.staging.json
+    bucketName: 'bucket-staging'
+  production:
+    projectId: gcp-project-id-prod
+    cloudRegion: us-central1
+    ## GCP credential for deployment for production
+    ## It require some permission to deploy like storage Admin, cloud build, deployment manager etc.
+    credentials: ./secrets/secrets.production.json
+    bucketName: 'bucket-production'
+
+
+provider: 
+  credentials: ${self:custom.${opt:stage}.credentials}
+  name: google
+  project: ${self:custom.${opt:stage}.projectId}
+  region: ${self:custom.${opt:stage}.cloudRegion}
+  ## GoLang runtime version
+  runtime: go111
+  stage: ${opt:stage}
+
+  ## Environment variable configuration on the basis of stage
+  environment:
+    PROJECT_ID: ${self:custom.${opt:stage}.projectId}
+    BUCKET_NAME: ${self:custom.${opt:stage}.bucketName}
+
+# Pluging for google-cloudfunctions to execute 
+plugins: 
+  - serverless-google-cloudfunctions
+
+package: 
+  exclude:
+    - node_modules/**
+    - .gitignore
+    - .git/**
+
+# There are two functions defined below
+functions: 
+
+  ## Hello Event function accpet event from GCP bucket.
+  hello-event:
+    handler: Helloevent  # Mapping with internal function name.
+    events:
+      - event:
+          eventType: google.storage.object.finalize
+          resource: projects/${self:custom.${opt:stage}.projectId}/buckets/${self:custom.${opt:stage}.bucketName}
+  
+  ## Hello Http function accept event from Http call.
+  hello-http:
+    handler: Hellorequest # Mapping with internal function name.
+    events:
+      - http:
+          method: get
+          path: /foods/{food_id}
+          cors: true
+          request:
+            parameters:
+              paths:
+                food_id: true

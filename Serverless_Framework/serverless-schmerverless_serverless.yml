@@ -1,0 +1,150 @@
+service: serverless-shared-tasks-app-nodejs
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  logs:
+    httpApi: true
+  environment:
+    SHARED_TASKS_TABLE_NAME:
+      'Fn::ImportValue': 'cognito-stack-${self:custom.stage}-SharedTasksTableName'
+    USER_POOL_ARN:
+      'Fn::ImportValue': 'cognito-stack-${self:custom.stage}-UserPoolArn'
+    SHARED_TASKS_TABLE_ARN:
+      'Fn::ImportValue': 'cognito-stack-${self:custom.stage}-SharedTasksTableArn'
+
+  # One IAM role is shared by all Lambdas in a Serverless
+  # Application - if you add the following property to
+  # provider you'll be able to set policy statements for it
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - dynamodb:BatchGet*
+        - dynamodb:Get*
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:BatchWrite*
+        - dynamodb:CreateTable
+        - dynamodb:Delete*
+        - dynamodb:Update*
+        - dynamodb:PutItem
+      Resource:
+        - ${self:provider.environment.SHARED_TASKS_TABLE_ARN}
+    - Effect: "Allow"
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+
+  plugins:
+    - serverless-plugin-tracing
+
+functions:
+  addTask:
+    handler: tasks-api/add-task.handler
+    memory: 256
+    tracing: true
+    events:
+      - http:
+          method: POST
+          path: /tasks/{taskOwner}
+          cors: true         # defaults are ok
+          request:
+            parameters:
+              taskOwner: true
+          # refers to the Cognito authorizer below - some duplication
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  updateTask:
+    handler: tasks-api/update-task.handler
+    memory: 256
+    tracing: true
+    events:
+      - http:
+          method: PUT
+          path: /tasks/{taskOwner}/{taskId}
+          cors: true         # defaults are ok
+          # refers to the Cognito authorizer below - some duplication
+          request:
+            parameters:
+              paths:
+                taskOwner: true
+                taskId: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  listTasks:
+    handler: tasks-api/list-tasks.handler
+    memory: 512
+    tracing: true
+    events:
+      - http:
+          method: GET
+          path: /tasks/{taskOwner}
+          cors: true         # defaults are OK
+          # refers to the Cognito authorizer below - some duplication
+          request:
+            parameters:
+              paths:
+                taskOwner: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  getTask:
+    handler: tasks-api/get-task.handler
+    memory: 128
+    tracing: true
+    events:
+      - http:
+          method: GET
+          path: /tasks/{taskOwner}/{taskId}
+          cors: true         # defaults are OK
+          # refers to the Cognito authorizer below - some duplication
+          request:
+            parameters:
+              paths:
+                taskOwner: true
+                taskId: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+
+resources:
+  Resources:
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi   # an implied resource by Serverless...
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: cognito-authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - ${self:provider.environment.USER_POOL_ARN}
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, 'us-east-1'}
+
+  exclude:
+    - aws-env/**
+  include:
+    - tasks-api/**
+    - node_modules/uuid/**
+
+plugins:
+  - serverless-plugin-tracing
+  - serverless-offline

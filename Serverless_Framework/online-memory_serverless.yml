@@ -1,0 +1,493 @@
+service:
+  name: online-memory-server
+
+frameworkVersion: '>=1.21.0 <2.0.0'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+
+plugins:
+  - serverless-appsync-plugin
+  - serverless-dynamodb-local
+
+custom:
+  accountId: ${opt:accountId}
+  tableName: 'OnlineMemory-${self:provider.stage}'
+  userPoolName: OnlineMemory-${self:provider.stage}
+
+  appSync:
+    name: OnlineMemory-${self:provider.stage}
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    serviceRole: 'OnlineMemory-${self:provider.stage}'
+
+    userPoolConfig:
+      awsRegion: ${self:provider.region}
+      defaultAction: ALLOW
+      userPoolId: { Ref: CognitoUserPoolUsers }
+
+    mappingTemplates:
+      - dataSource: OnlineMemory
+        type: Query
+        field: getUsers
+        request: 'getUsers-request-mapping-template.vtl'
+        response: 'getUsers-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: Query
+        field: getUserGames
+        request: 'getUserGames-request-mapping-template.vtl'
+        response: 'getUserGames-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: UserGames
+        field: activeGames
+        request: 'activeGames-request-mapping-template.vtl'
+        response: 'activeGames-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: UserGames
+        field: completedGames
+        request: 'completedGames-request-mapping-template.vtl'
+        response: 'completedGames-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: GameUser
+        field: id
+        request: 'gameUserId-request-mapping-template.vtl'
+        response: 'gameUserId-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: GameUser
+        field: item
+        request: 'gameUserData-request-mapping-template.vtl'
+        response: 'gameUserData-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: Game
+        field: users
+        request: 'gameUsers-request-mapping-template.vtl'
+        response: 'gameUsers-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        type: Mutation
+        field: inviteUser
+        request: 'inviteUser-request-mapping-template.vtl'
+        response: 'inviteUser-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: Mutation
+        field: updateUser
+        request: 'updateUser-request-mapping-template.vtl'
+        response: 'updateUser-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: Mutation
+        field: addFriend
+        request: 'addFriend-request-mapping-template.vtl'
+        response: 'addFriend-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: Mutation
+        field: removeFriend
+        request: 'removeFriend-request-mapping-template.vtl'
+        response: 'removeFriend-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        type: Mutation
+        field: updateUsername
+        request: 'updateUsername-request-mapping-template.vtl'
+        response: 'updateUsername-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        type: Query
+        field: whoAmI
+        request: 'whoAmI-request-mapping-template.vtl'
+        response: 'whoAmI-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: WhoAmI
+        field: friends
+        request: 'friends-request-mapping-template.vtl'
+        response: 'friends-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        type: Query
+        field: getWorld
+        request: 'getWorld-request-mapping-template.vtl'
+        response: 'getWorld-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        type: World
+        field: onlineUsers
+        request: 'onlineUsers-request-mapping-template.vtl'
+        response: 'onlineUsers-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        type: Query
+        field: templates
+        request: 'templates-request-mapping-template.vtl'
+        response: 'templates-response-mapping-template.vtl'
+
+      - type: Mutation
+        field: deleteGame
+        request: 'deleteGame-request-mapping-template-before.vtl'
+        response: 'deleteGame-response-mapping-template-after.vtl'
+        kind: PIPELINE
+        functions:
+          - DeleteGame
+          - DeleteGameData
+      - type: Mutation
+        field: createGame
+        request: 'createGame-request-mapping-template-before.vtl'
+        response: 'createGame-response-mapping-template-after.vtl'
+        kind: PIPELINE
+        functions:
+          - CreateGame
+          - CreateGameData
+      - type: Query
+        field: getGame
+        request: 'getGame-request-mapping-template-before.vtl'
+        response: 'getGame-response-mapping-template-after.vtl'
+        kind: PIPELINE
+        functions:
+          - GetGame
+          - UpdateGameData
+      - type: Mutation
+        field: claimPlayer
+        request: 'claimPlayer-request-mapping-template-before.vtl'
+        response: 'claimPlayer-response-mapping-template-after.vtl'
+        kind: PIPELINE
+        functions:
+          - ClaimPlayer
+          - UpdateGameData
+      - type: Mutation
+        field: startGame
+        request: 'startGame-request-mapping-template-before.vtl'
+        response: 'startGame-response-mapping-template-after.vtl'
+        kind: PIPELINE
+        functions:
+          - StartGame
+          - UpdateGameData
+      - type: Mutation
+        field: checkoutTile
+        request: 'checkoutTile-request-mapping-template-before.vtl'
+        response: 'checkoutTile-response-mapping-template-after.vtl'
+        kind: PIPELINE
+        functions:
+          - CheckoutTile
+          - UpdateGameData
+      - type: Mutation
+        field: playTurn
+        request: 'playTurn-request-mapping-template-before.vtl'
+        response: 'playTurn-response-mapping-template-after.vtl'
+        kind: PIPELINE
+        functions:
+          - PlayTurn
+          - UpdateGameData
+
+    functionConfigurations:
+      - dataSource: graphqlLambda
+        name: 'Templates'
+        request: 'templates-request-mapping-template.vtl'
+        response: 'templates-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        name: 'WhoAmI'
+        request: 'whoAmI-request-mapping-template.vtl'
+        response: 'whoAmI-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        name: 'DeleteGame'
+        request: 'deleteGame-request-mapping-template.vtl'
+        response: 'deleteGame-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        name: 'DeleteGameData'
+        request: 'deleteGameData-request-mapping-template.vtl'
+        response: 'deleteGameData-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        name: 'CreateGame'
+        request: 'createGame-request-mapping-template.vtl'
+        response: 'createGame-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        name: 'GetGame'
+        request: 'getGame-request-mapping-template.vtl'
+        response: 'getGame-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        name: 'CreateGameData'
+        request: 'createGameData-request-mapping-template.vtl'
+        response: 'createGameData-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        name: 'ClaimPlayer'
+        request: 'claimPlayer-request-mapping-template.vtl'
+        response: 'claimPlayer-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        name: 'StartGame'
+        request: 'startGame-request-mapping-template.vtl'
+        response: 'startGame-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        name: 'CheckoutTile'
+        request: 'checkoutTile-request-mapping-template.vtl'
+        response: 'checkoutTile-response-mapping-template.vtl'
+      - dataSource: graphqlLambda
+        name: 'PlayTurn'
+        request: 'playTurn-request-mapping-template.vtl'
+        response: 'playTurn-response-mapping-template.vtl'
+      - dataSource: OnlineMemory
+        name: 'UpdateGameData'
+        request: 'updateGameData-request-mapping-template.vtl'
+        response: 'updateGameData-response-mapping-template.vtl'
+
+    substitutions:
+      TABLE_NAME: ${self:custom.tableName}
+
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: OnlineMemory
+        description: 'Online Memory ${self:provider.stage}'
+        config:
+          tableName: { Ref: OnlineMemoryTable }
+          serviceRoleArn: { Fn::GetAtt: [AppSyncDynamoDBServiceRole, Arn] }
+      - type: AWS_LAMBDA
+        name: graphqlLambda
+        description: 'Lambda DataSource'
+        config:
+          functionName: graphql
+          lambdaFunctionArn: { Fn::GetAtt: [GraphqlLambdaFunction, Arn] } # Where GraphqlLambdaFunction is the lambda function cloudformation resource created by serverless for the serverless function named graphql
+          serviceRoleArn: { Fn::GetAtt: [AppSyncLambdaServiceRole, Arn] } # Where AppSyncLambdaServiceRole is an IAM role defined in Resources
+
+functions:
+  graphql:
+    description: 'Online Memory ${self:provider.stage} function'
+    handler: src/handler.graphqlHandler
+    role: GraphQLServiceRole
+    environment:
+      TABLE_NAME: ${self:custom.tableName}
+      USER_POOL_ID: { Ref: CognitoUserPoolUsers }
+  preSignUp:
+    description: 'Online Memory ${self:provider.stage} preSignUp function'
+    handler: src/preSignUp.handler
+    role: LambdaforCognito
+    environment:
+      TABLE_NAME: ${self:custom.tableName}
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.userPoolName}
+          trigger: PreSignUp
+          existing: true
+
+resources:
+  Resources:
+    CognitoUserPoolUsers:
+      Type: AWS::Cognito::UserPool
+      DeletionPolicy: Delete
+      Properties:
+        UserPoolName: ${self:custom.userPoolName}
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: false
+        AutoVerifiedAttributes:
+          - email
+        AccountRecoverySetting:
+          RecoveryMechanisms:
+            - Name: verified_email
+              Priority: 1
+        EmailVerificationMessage: "Hello from Online Memory.\nHere's your verification code: {####}"
+        EmailVerificationSubject: 'Online Memory'
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 6
+            RequireLowercase: false
+            RequireNumbers: false
+            RequireSymbols: false
+            RequireUppercase: false
+        UsernameAttributes:
+          - email
+        Schema:
+          - Name: email
+            Required: true
+            Mutable: true
+            AttributeDataType: String
+          - Name: name
+            Required: true
+            Mutable: true
+            AttributeDataType: String
+            StringAttributeConstraints:
+              MinLength: 5
+              MaxLength: 16
+
+    WebUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: 'Web'
+        GenerateSecret: false
+        RefreshTokenValidity: 30
+        UserPoolId: { Ref: CognitoUserPoolUsers }
+
+    OnlineMemoryTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: __typename
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: __typename
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: TypenameGSI
+            KeySchema:
+              - AttributeName: __typename
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 2
+              WriteCapacityUnits: 2
+        TimeToLiveSpecification:
+          AttributeName: expiresAt
+          Enabled: true
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2
+
+    AppSyncDynamoDBServiceRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        RoleName: '${self:custom.appSync.serviceRole}-Dynamo'
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: 'Allow'
+              Principal:
+                Service:
+                  - 'appsync.amazonaws.com'
+              Action:
+                - 'sts:AssumeRole'
+        Policies:
+          - PolicyName: '${self:custom.appSync.serviceRole}-Dynamo-Policy'
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: 'Allow'
+                  Action:
+                    - 'dynamodb:Query'
+                    - 'dynamodb:Scan'
+                    - 'dynamodb:GetItem'
+                    - 'dynamodb:UpdateItem'
+                    - 'dynamodb:PutItem'
+                    - 'dynamodb:DeleteItem'
+                    - 'dynamodb:BatchGetItem'
+                  Resource:
+                    - 'arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/OnlineMemory-${self:provider.stage}'
+                    - 'arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/OnlineMemory-${self:provider.stage}/*'
+
+    AppSyncLambdaServiceRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        RoleName: '${self:custom.appSync.serviceRole}-Lambda'
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: 'Allow'
+              Principal:
+                Service:
+                  - 'appsync.amazonaws.com'
+              Action:
+                - 'sts:AssumeRole'
+        Policies:
+          - PolicyName: '${self:custom.appSync.serviceRole}-Lambda-Policy'
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: 'Allow'
+                  Action:
+                    - 'lambda:invokeFunction'
+                  Resource:
+                    - 'arn:aws:lambda:${self:provider.region}:${self:custom.accountId}:function:online-memory-server-${self:provider.stage}-graphql'
+                    - 'arn:aws:lambda:${self:provider.region}:${self:custom.accountId}:function:online-memory-server-${self:provider.stage}-graphql:*'
+
+    GraphQLServiceRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        RoleName: '${self:custom.appSync.serviceRole}-GraphQL-Function'
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: 'Allow'
+              Principal:
+                Service:
+                  - 'lambda.amazonaws.com'
+              Action:
+                - 'sts:AssumeRole'
+        Policies:
+          - PolicyName: '${self:custom.appSync.serviceRole}-GraphQL-Dynamo-Policy'
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: 'Allow'
+                  Action:
+                    - 'dynamodb:Query'
+                    - 'dynamodb:GetItem'
+                    - 'dynamodb:PutItem'
+                    - 'dynamodb:UpdateItem'
+                    - 'dynamodb:DeleteItem'
+                    - 'cognito-idp:AdminUpdateUserAttributes'
+                    - 'cognito-idp:AdminGetUser'
+                  Resource:
+                    - 'arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/OnlineMemory-${self:provider.stage}'
+                    - 'arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/OnlineMemory-${self:provider.stage}/*'
+                    - 'arn:aws:cognito-idp:${self:provider.region}:${self:custom.accountId}:userpool'
+                    - 'arn:aws:cognito-idp:${self:provider.region}:${self:custom.accountId}:userpool/*'
+          # Uncomment to enable CloudWatch on the GraphQL Lambda Function
+          # - PolicyName: '${self:custom.appSync.serviceRole}-GraphQL-CloudWatch-Policy'
+          #   PolicyDocument:
+          #     Version: '2012-10-17'
+          #     Statement:
+          #       - Effect: 'Allow'
+          #         Action:
+          #           - 'logs:CreateLogGroup'
+          #           - 'logs:CreateLogStream'
+          #           - 'logs:PutLogEvents'
+          #         Resource:
+          #           - 'arn:aws:logs:${self:provider.region}:${self:custom.accountId}:log-group:/aws/lambda/online-memory-server-${self:provider.stage}-graphql'
+          #           - 'arn:aws:logs:${self:provider.region}:${self:custom.accountId}:log-group:/aws/lambda/online-memory-server-${self:provider.stage}-graphql:*'
+
+    LambdaforCognito:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        RoleName: ${self:custom.appSync.serviceRole}-Cognito
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: 'sts:AssumeRole'
+              Principal:
+                Service: lambda.amazonaws.com
+        Policies:
+          - PolicyName: ${self:custom.appSync.serviceRole}-Cognito-Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - 'lambda:invokeFunction'
+                  Resource:
+                    - 'arn:aws:lambda:${self:provider.region}:${self:custom.accountId}:function:online-memory-server-${self:provider.stage}-preSignUp'
+                    - 'arn:aws:lambda:${self:provider.region}:${self:custom.accountId}:function:online-memory-server-${self:provider.stage}-preSignUp:*'
+
+          - PolicyName: '${self:custom.appSync.serviceRole}-Cognito-Dynamo-Policy'
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: 'Allow'
+                  Action:
+                    - 'dynamodb:Query'
+                  Resource:
+                    - 'arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/OnlineMemory-${self:provider.stage}'
+                    - 'arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/OnlineMemory-${self:provider.stage}/*'
+
+          # Uncomment to enable CloudWatch on the Cognito Lambda Function
+          # - PolicyName: '${self:custom.appSync.serviceRole}-Cognito-CloudWatch-Policy'
+          #   PolicyDocument:
+          #     Version: '2012-10-17'
+          #     Statement:
+          #       - Effect: 'Allow'
+          #         Action:
+          #           - 'logs:CreateLogGroup'
+          #           - 'logs:CreateLogStream'
+          #           - 'logs:PutLogEvents'
+          #         Resource:
+          #           - 'arn:aws:logs:${self:provider.region}:${self:custom.accountId}:log-group:/aws/lambda/online-memory-server-${self:provider.stage}-preSignUp'
+          #           - 'arn:aws:logs:${self:provider.region}:${self:custom.accountId}:log-group:/aws/lambda/online-memory-server-${self:provider.stage}-preSignUp:*'

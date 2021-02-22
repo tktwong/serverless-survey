@@ -1,0 +1,93 @@
+service: ${self:custom.system}-BackendAPI
+frameworkVersion: "=1.21.1"
+
+plugins:
+  - serverless-enable-api-logs
+  - serverless-offline
+
+custom:
+  system: "Team2-Mken"
+  stage: ${opt:stage, self:provider.stage}
+provider:
+  name: aws
+  stackTags:
+    Team: Team2
+    System: ${self:custom.system}
+    Stage: ${self:custom.stage}
+  runtime: nodejs6.10
+  memorySize: 512
+  timeout: 10
+  stage: DEV ##コマンドで指定しなかった場合のデフォルト
+  region: ap-northeast-1
+  environment:
+    NODE_ENV: ${self:custom.stage}
+    DEBUG: "MKEN:*"
+    TZ: "Asia/Tokyo"
+  # Lambda function's IAM Role
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:Query"
+        - "dynamodb:Scan"
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:BatchWriteItem"
+      Resource: "arn:aws:dynamodb:ap-northeast-1:*:table/${self:custom.system}.${self:custom.stage}.*"
+package:
+  exclude:
+  - api-def/**
+  - tools/**
+  - test/**
+  - trial-data/**
+  - docs/**
+  - .nyc_output
+  - coverage
+  - .git/**
+
+functions:
+  buttonAction:
+    handler: src/handler/buttonAction.post
+    events:
+      - http: 
+          path: button/{bid}/activity
+          method: POST
+          cors: true
+  getActivities:
+    handler: src/handler/activities.get
+    events:
+      - http:
+          path: activities
+          method: GET
+          cors: true
+  putPresets:
+    handler: src/handler/buttonPreset.put
+    events:
+      - http:
+          path: button/{bid}/preset
+          method: PUT
+          cors: true
+  getTheButton:
+    handler: src/handler/buttonPreset.findOne
+    events:
+      - http:
+          path: buttons/{bid}
+          method: GET
+          cors: true
+  getButtons:
+    handler: src/handler/buttonPreset.findAll
+    events:
+      - http:
+          path: buttons
+          method: GET
+          cors: true
+  setButtonName:
+    handler: src/handler/buttonPreset.setName
+    events:
+      - http:
+          path: buttons/{bid}/name
+          method: PATCH
+          cors: true
+
+resources: ${file(./resources.yml)}

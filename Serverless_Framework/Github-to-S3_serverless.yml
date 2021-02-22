@@ -1,0 +1,68 @@
+# ###############################################################################################
+# Copyright 2018 Ashok Sathyanarayan
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ###############################################################################################
+service: Github-to-S3
+
+provider:
+  name: aws
+  runtime: python3.6
+  profile: serverless
+  environment:
+    snsarn: { "Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.githubFileToCopy}" ] ]  }
+    githubconfig : ${self:custom.githubConfig}
+    s3accessKeys : ${self:custom.s3accessKeys}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - "sns:Publish"
+      Resource:
+        - {"Fn::Join" : ["", ["arn:aws:sns:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.githubFileToCopy}" ] ]}
+    - Effect: 'Allow'
+      Action:
+        - "secretsmanager:*"
+      Resource:
+        - {"Fn::Join" : ["", ["arn:aws:secretsmanager:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":secret:${self:custom.githubConfig}-??????" ] ]}
+        - {"Fn::Join" : ["", ["arn:aws:secretsmanager:${self:custom.region}:", { "Ref" : "AWS::AccountId" }, ":secret:${self:custom.s3accessKeys}-??????" ] ]}
+    - Effect: 'Allow'
+      Action:
+        - "kms:*"
+      Resource:
+        - "arn:aws:kms:us-east-1:670533574044:key/f1f6bf8b-c32c-4818-82cf-7e3622c87c09"
+
+custom:
+  stage: ${opt:stage , self:provider.stage}
+  region: ${opt:region , self:provider.region}
+  githubFileToCopy: "${self:service}-github-file-to-copy-${self:custom.stage}"
+  githubConfig: "/${self:custom.stage}/githubCopy/appConfig"
+  s3accessKeys: "/${self:custom.stage}/s3/appKeys"
+
+package:
+  include:
+    - library/**
+
+functions:
+  githubWebhook:
+    handler: handler.githubWebhook
+    events:
+      - http:
+          path: webhook/githubWebhook
+          method: post
+    Timeout: 300
+  githubFileCopy:
+    handler: handler.githubFileCopy
+    events:
+      - sns: ${self:custom.githubFileToCopy}
+    Timeout: 300
+

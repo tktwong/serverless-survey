@@ -1,0 +1,72 @@
+service: serverless-chatbot
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+# Use dotenv
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: eu-west-2
+  apiGateway:
+    shouldStartNameWithService: true
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName: ${env:TABLE_NAME}
+    watsonApiKey: ${env:WATSON_API_KEY}
+    watsonUrl: ${env:WATSON_URL}
+    watsonVersion: ${env:WATSON_VERSION}
+    watsonAssistantId: ${env:WATSON_ASSISTANT_ID}
+
+  # 'iam.role.statements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access Comprehend and DynamoDb.
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - comprehend:DetectSentiment
+            - comprehend:DetectEntities
+            - comprehend:DetectKeyPhrases
+            - dynamodb:Scan
+            - dynamodb:Query
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:DescribeTable
+          Resource: "*"
+
+# Here we define our routes, in this case we only have one route for sending a message.
+functions:  
+  sendMessage:
+    handler: routes/sendMessage.main
+    events:
+      - http:
+          path: message
+          method: post
+          cors: true
+          authorizer: aws_iam        
+  fetchMood:
+    handler: routes/fetchMood.main
+    events:
+      - http:
+          path: mood
+          method: get
+          cors: true
+          authorizer: aws_iam                               
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}               

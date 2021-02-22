@@ -1,0 +1,88 @@
+---
+plugins:
+  - serverless-domain-manager
+
+service:
+  name: flightaware-flight-info
+
+frameworkVersion: '>=1.0.0'
+
+layers:
+  phantomjs:
+    package:
+      artifact: include/phantomjs_lambda.zip
+
+provider:
+  name: aws
+  runtime: ruby2.5
+  region: ${env:AWS_REGION, 'us-east-2'}
+  memorySize: 1024
+  deploymentBucket:
+    name: ${env:SERVERLESS_BUCKET_NAME}
+  deploymentPrefix: serverless
+  apiKeys:
+    - default_key
+  tracing:
+    apiGateway: true
+
+package:
+  include:
+    - lib/**
+    - bin/**
+    - vendor/**
+  exclude:
+    - include/**
+    - scripts/**
+    - secrets/**
+    - infra/**
+    - docker-compose.*
+    - .terraform/**
+    - spec/**
+    - .env*
+
+functions:
+  ping:
+    handler: bin/flight-info.get_ping
+    description: Tests that flight info bot is up and running.
+    timeout: 30
+    environment:
+      GEM_PATH: vendor/bundle/ruby/2.5.0
+    events:
+      - http:
+          path: ping
+          method: get
+  test_internet_access:
+    handler: bin/flight-info.test_internet_access
+    description: Test whether our app can access the Internet.
+    timeout: 30
+    stage: develop
+    environment:
+      GEM_PATH: vendor/bundle/ruby/2.5.0
+    layers:
+      - { Ref: PhantomjsLambdaLayer }
+    events:
+      - http:
+          path: testInternetAccess
+          method: get
+          private: true
+  flight_info:
+    handler: bin/flight-info.get_flight_info
+    description: Gets flight information when given a flight number.
+    timeout: 30
+    environment:
+      GEM_PATH: vendor/bundle/ruby/2.5.0
+    layers:
+      - { Ref: PhantomjsLambdaLayer }
+    events:
+      - http:
+          path: flightInfo
+          method: get
+          private: true
+
+custom:
+  customDomain:
+    stage: v1
+    domainName: ${env:DOMAIN_PATH}.${env:DOMAIN_TLD}
+    certificateArn: ${file(./secrets/certificate_arn)}
+    basePath: 'v1'
+    createRoute53Record: true

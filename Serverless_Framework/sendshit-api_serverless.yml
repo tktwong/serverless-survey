@@ -1,0 +1,43 @@
+service: sendshit
+provider:
+  name: aws
+  runtime: go1.x
+  region: ${file(./.env.yml):REGION, env:REGION}
+  memorySize: 128
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject
+      Resource: "arn:aws:s3:::${file(./.env.yml):FILE_BUCKET, env:FILE_BUCKET}/*"
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+functions:
+  server:
+    handler: bin/server
+    description: Backend API for sendsh.it
+    environment:
+      REGION: ${file(./.env.yml):REGION, env:REGION}
+      BUCKET: ${file(./.env.yml):FILE_BUCKET, env:FILE_BUCKET}
+    events:
+      - http:
+          method: any
+          path: /{proxy+}
+          cors:
+            origin: 'https://sendsh.it'
+resources:
+  Resources:
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(./.env.yml):FILE_BUCKET, env:FILE_BUCKET}
+        AccessControl: Private
+        LifecycleConfiguration:
+          Rules:
+          - Id: FileStorage
+            Status: Enabled
+            ExpirationInDays: 1

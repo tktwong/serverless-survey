@@ -1,0 +1,329 @@
+service: bsi-bim
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-central-1
+  profile: bsi
+
+  environment:
+    ENTITIES_TABLE: ${self:provider.stage}-Entities
+    CITIZENS_TABLE: ${self:provider.stage}-Citizens
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: "*"
+      Resource: "*"
+
+functions:
+  insertCognitoUser:
+    handler: src/insertCognitoUser.handler
+    events:
+      - http:
+          path: insertCognitoUser
+          method: post
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+
+  getThirdParty:
+    handler: src/getThirdParty.handler
+    events:
+      - http:
+          path: getThirdParty
+          method: get
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+
+  listThirdParties:
+    handler: src/listThirdParties.handler
+    events:
+      - http:
+          path: listThirdParties
+          method: get
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+
+  addThirdParties:
+    handler: src/addThirdParties.handler
+    events:
+      - http:
+          path: addThirdParties
+          method: post
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+
+  editThirdParty:
+    handler: src/editThirdParty.handler
+    events:
+      - http:
+          path: editThirdParty
+          method: post
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+
+  deleteThirdParty:
+    handler: src/deleteThirdParty.handler
+    events:
+      - http:
+          path: deleteThirdParty
+          method: post
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+
+  getAllRequiredKeys:
+    handler: src/getAllRequiredKeys.handler
+    events:
+      - http:
+          path: getAllRequiredKeys
+          method: get
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+
+  addVehicle:
+    handler: src/addVehicle.handler
+    events:
+      - http:
+          path: addVehicle
+          method: post
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+
+  listVehicles:
+    handler: src/listVehicles.handler
+    events:
+      - http:
+          path: listVehicles
+          method: get
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+          authorizer:
+            name: ThirdPartyAuthorizer
+            type: COGNITO_USER_POOLS
+            arn:
+              Fn::GetAtt:
+                - CognitoThirdPartyPool
+                - Arn
+
+  getVehicleDetails:
+    handler: src/getVehicleDetails.handler
+    events:
+      - http:
+          path: getVehicleDetails
+          method: get
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+          authorizer:
+            name: ThirdPartyAuthorizer
+            type: COGNITO_USER_POOLS
+            arn:
+              Fn::GetAtt:
+                - CognitoThirdPartyPool
+                - Arn
+
+  getVehicleHistory:
+    handler: src/getVehicleHistory.handler
+    events:
+      - http:
+          path: getVehicleHistory
+          method: get
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+          authorizer:
+            name: ThirdPartyAuthorizer
+            type: COGNITO_USER_POOLS
+            arn:
+              Fn::GetAtt:
+                - CognitoThirdPartyPool
+                - Arn
+
+  updateVehicleMaintenance:
+    handler: src/updateVehicleMaintenance.handler
+    events:
+      - http:
+          path: updateVehicleMaintenance
+          method: post
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+          authorizer:
+            name: ThirdPartyAuthorizer
+            type: COGNITO_USER_POOLS
+            arn:
+              Fn::GetAtt:
+                - CognitoThirdPartyPool
+                - Arn
+
+  getServiceReport:
+    handler: src/getServiceReport.handler
+    events:
+      - http:
+          path: getServiceReport
+          method: get
+          integration: lambda
+          cors: true
+          request:
+            template:
+              application/json: ${file(config.yml):application_json}
+          authorizer:
+            name: ThirdPartyAuthorizer
+            type: COGNITO_USER_POOLS
+            arn:
+              Fn::GetAtt:
+                - CognitoThirdPartyPool
+                - Arn
+
+  websocket:
+    handler: src/websocket.handler
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+      - websocket:
+          route: $default
+      - websocket:
+          route: ceva
+
+# you can add CloudFormation resource templates here
+resources:
+ Resources:
+  qldbLedger:
+    Type: AWS::QLDB::Ledger
+    Properties:
+      Name: qldb-ledger-${self:provider.stage}
+      DeletionProtection: false
+      PermissionsMode: ALLOW_ALL
+
+  # Cognito - User pool
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: ${self:provider.stage}-user-pool
+      AliasAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+
+  # Cognito - Client
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: ${self:provider.stage}-user-pool-client
+      UserPoolId:
+        Ref: CognitoUserPool
+      ExplicitAuthFlows:
+        - USER_PASSWORD_AUTH
+
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: ${self:provider.stage}_user_identity_pool
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId:
+            Ref: CognitoUserPoolClient
+          ProviderName:
+            Fn::GetAtt: [CognitoUserPool, ProviderName]
+
+  # Cognito - ThirdParty pool
+  CognitoThirdPartyPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: ${self:provider.stage}-thirdParties-pool
+      AliasAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+
+  # Cognito - Client
+  CognitoThirdPartyPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: ${self:provider.stage}-thirdParties-pool-client
+      UserPoolId:
+        Ref: CognitoThirdPartyPool
+      ExplicitAuthFlows:
+        - USER_PASSWORD_AUTH
+
+  CognitoThirdPartyIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: ${self:provider.stage}_thirdParties_identity_pool
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId:
+            Ref: CognitoThirdPartyPoolClient
+          ProviderName:
+            Fn::GetAtt: [CognitoThirdPartyPool, ProviderName]
+
+  #DYNAMODB
+  Entities:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ${self:provider.stage}-Entities
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  Citizens:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ${self:provider.stage}-Citizens
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: Index-Email
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+            - AttributeName: id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL

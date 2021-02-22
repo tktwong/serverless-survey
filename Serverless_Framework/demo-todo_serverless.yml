@@ -1,0 +1,115 @@
+service: demo-todo
+
+org: servicessfprodemo 
+app: demo-todo
+
+custom:
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  tableName: ${self:service}-${self:custom.stage}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${self:custom.region}
+  memorySize: 128
+  timeout: 20
+  environment: 
+    TODO_TABLENAME: ${self:custom.tableName}
+    STAGE: ${self:custom.stage}
+  iamRoleStatements: # IAM Role Permissions
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource: "*"
+    - Effect: Allow
+      Action: 
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - { "Fn::GetAtt": ["demoTodoTable", "Arn" ] }
+        - Fn::Join:
+          - "/"
+          -
+            - { "Fn::GetAtt": ["demoTodoTable", "Arn" ] }
+            - "index/*"
+functions:
+  router:
+    handler: src/handler.router
+    events: 
+      - http:
+          method: any
+          path: 'v1/{proxy+}'
+  invoker:
+    handler: src/invoker.invoke
+    events:
+      - schedule:
+          rate: rate(8 minutes)
+    environment:
+      BASE_URL:  
+        Fn::Join:
+          - ""
+          -
+            - "https://"
+            - { "Ref" : "ApiGatewayRestApi" }
+            - ".execute-api.${self:custom.region}.amazonaws.com/${self:custom.stage}" 
+  deployer: 
+    handler: src/deployer.deploy
+    environment:
+      GITHUB_TOKEN: ${param:GITHUB_TOKEN}
+      GITHUB_USER: ${param:GITHUB_USER}
+      GITHUB_EMAIL: ${param:GITHUB_EMAIL}
+      STAGE: ${self:custom.stage}
+    layers:
+      - arn:aws:lambda:us-east-1:553035198032:layer:git-lambda2:4
+    events:
+      - schedule:
+          rate: rate(9 hours)
+resources:
+  Resources:
+    demoTodoTable: 
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: lsi
+            AttributeType: S
+          - AttributeName: gsi1pk
+            AttributeType: S
+          - AttributeName: gsi1sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          - IndexName: lsi
+            Projection: 
+              ProjectionType: ALL
+            KeySchema:
+              - AttributeName: pk
+                KeyType: HASH
+              - AttributeName: lsi
+                KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: gsi1
+            Projection: 
+              ProjectionType: ALL
+            KeySchema:
+              - AttributeName: gsi1pk
+                KeyType: HASH
+              - AttributeName: gsi1sk
+                KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST

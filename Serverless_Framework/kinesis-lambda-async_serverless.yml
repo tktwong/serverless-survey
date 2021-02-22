@@ -1,0 +1,48 @@
+service: k2
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: lambda:InvokeFunction
+      Resource: '*'
+    - Effect: "Allow"
+      Action: sns:Publish
+      Resource: '*'
+
+functions:
+  hello:
+    handler: k2.doIt
+    environment:
+      DOWNSTREAM_FN_NAME: "${self:service}-${self:provider.stage}-processRecord"
+    events:
+      - stream:
+          type: kinesis
+          arn:
+            Fn::GetAtt:
+              - K2
+              - Arn
+          batchSize: 100
+  processRecord:
+    handler: k2.doRecord
+    reservedConcurrency: 3
+    onError: 
+      Ref: ProcessingErrors
+
+plugins:
+    - serverless-pseudo-parameters
+
+resources:
+  Resources:
+    K2:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: K2Stream
+        ShardCount: 1
+
+    ProcessingErrors:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: "ProcessingError-${self:provider.stage}"

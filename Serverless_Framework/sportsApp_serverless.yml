@@ -1,0 +1,65 @@
+service: espnClone
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: us-east-1
+  apiKeys:
+    - ${self:provider.stage}-apiKeyName1
+
+  environment:
+    baseUrl: 'https://www.thesportsdb.com/api/v1/json/1'
+    teamIDTableName: 'espn-clone-team-id'
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+      Resource: "arn:aws:dynamodb:us-east-1:817648391599:table/espn-clone-team-id"
+
+functions:
+  soccer-list:
+    handler: src/Soccer/list.main
+    events:
+      - http:
+          path: soccer/all
+          method: get
+          cors: true
+          private: true
+    memorySize: 128
+  soccer-standings:
+    handler: src/Soccer/standings.main
+    events:
+      - http:
+          path: soccer/standings
+          method: get
+          cors: true
+          private: true
+    memorySize: 128
+    timeout: 10
+  soccer-team-schedule:
+    handler: src/Soccer/teamSchedule.main
+    events:
+      - http:
+          path: soccer/teamSchedule/{teamName}
+          method: get
+          cors: true
+          private: true
+    memorySize: 128
+  populate-data-team-id:
+    handler: utils/populateData/espn-clone-team-id.main
+    memorySize: 128
+
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yaml)}

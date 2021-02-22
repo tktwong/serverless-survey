@@ -1,0 +1,229 @@
+# Simple Serverless Registration Service
+#
+# The service provides email registration to a serverless website that
+# offers free access (to registered users) to assets on an S3 bucket using
+# pre-signed urls.
+
+service: simple-serverless-registration
+
+frameworkVersion: ">=1.9.0 <2.0.0"
+
+plugins:
+  - serverless-sync-s3buckets
+
+# Global parameters used by cloudformation script
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  # Used by the serverless plugin to sync files to S3
+  syncS3Buckets:
+    - bucketRef: PrivateAssets # the private S3 bucket for secure assets
+      localDir: assets
+    - bucketRef: WebSite # The front-end website
+      localDir: static/dist
+
+provider:
+  name: aws
+  runtime: java8
+  environment:
+    #
+    # Feature Flags
+    #
+    # Allow an external party to verify email (do not send verification email)
+    EXTERNAL_VERIFY: true
+    # The source email for SES; must be validated via AWS Console
+    SES_SOURCE_EMAIL: noreply@myhost.com
+    # The name of your service; used in the validation email to subscriber
+    SERVICE_NAME: myhost
+    # The verification url; used in the validation email to subscriber
+    VERIFY_URL: https://www.myhost.com/verify.html
+    # The signature key for the JWT Token
+    JWTKEY: SomeSecretKey
+    #
+    # System Variables
+    #
+    SUBSCRIBER_TABLE: {Ref: subscriberTable}
+    REGION: {Ref: "AWS::Region"}
+    PRIVATE_BUCKET: {Ref: PrivateAssets}
+
+  # IAM Role for AWS Lambda functions
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Scan
+        - dynamodb:Query
+      Resource:
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - ":table/"
+              - Ref: subscriberTable
+    -  Effect: "Allow"
+       Action:
+        - s3:PutObject
+        - s3:GetObject
+       Resource: {"Fn::Join": ["", ["arn:aws:s3:::", {Ref: PrivateAssets}, "/*"]]}
+
+# Packaging information for AWS Lambda
+package:
+  artifact: target/simpleserverlessregistration-dev.jar
+  exclude:
+    - node_modules/**
+    - static/**
+    - assets/**
+    - package.json
+    - .idea/**
+    - resources/**
+
+# Configuration for AWS Lambda functions
+functions:
+  registerSubscriber:
+    handler: com.serverless.RegisterSubscriberHandler
+    events:
+      - http:
+          cors: true
+          path: /api/register
+          method: post
+  confirmSubscriber:
+    handler: com.serverless.ConfirmSubscriberHandler
+    events:
+      - http:
+          cors: true
+          path: /api/confirm
+          method: post
+  authorizeSubscriber:
+    handler: com.serverless.AuthorizeSubscriberHandler
+  getPresignedUrl:
+    handler: com.serverless.GetPresignedUrlHandler
+    events:
+      - http:
+          path: /api/sign
+          method: post
+          authorizer: authorizeSubscriber
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+
+# AWS Resources comprising the serverless architecture
+resources:
+  ## Utility yml files
+  Mappings: ${file(resources/mappings.yml)}
+  Outputs: ${file(resources/outputs.yml)}
+  Resources:
+    ## S3 bucket for the private assets
+    PrivateAssets:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+                - HEAD
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+    ## S3 bucket for the Angular front-end website
+    WebSite:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          ErrorDocument: index.html
+          IndexDocument: index.html
+    ## Specifying the policies to make sure all files inside the Bucket are available to CloudFront
+    WebSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: WebSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource: {"Fn::Join": ["", ["arn:aws:s3:::", {Ref: WebSite}, "/*"]]}
+    ## Specifying the CloudFront Distribution to server your Web Application
+    WebSiteCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName: {"Fn::Join": ["", [{Ref: WebSite}, ".", {"Fn::FindInMap": [RegionMap, {Ref: "AWS::Region"}, websiteendpoint]}]]}
+              ## An identifier for the origin which must be unique within the distribution
+              Id: S3Origin
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+              ## In case you want to restrict the bucket access use S3OriginConfig and remove CustomOriginConfig
+              # S3OriginConfig:
+              #   OriginAccessIdentity: origin-access-identity/cloudfront/E127EXAMPLE51Z
+          Enabled: 'true'
+          ## Uncomment the following section in case you are using a custom domain
+          # Aliases:
+          # - mysite.example.com
+          DefaultRootObject: index.html
+          ## Since the Single Page App is taking care of the routing we need to make sure ever path is served with index.html
+          ## The only exception are files that actually exist e.h. app.js, reset.css
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            ## The origin id defined above
+            TargetOriginId: S3Origin
+            ## Defining if and how the QueryString and Cookies are forwarded to the origin which in this case is S3
+            ForwardedValues:
+              QueryString: 'true'
+              Cookies:
+                Forward: all
+            ## The protocol that users can use to access the files in the origin. To allow HTTP use `allow-all`
+            ViewerProtocolPolicy: redirect-to-https
+          ## The certificate to use when viewers use HTTPS to request objects.
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: 'true'
+          ## Uncomment the following section in case you want to enable logging for CloudFront requests
+          # Logging:
+          #   IncludeCookies: 'false'
+          #   Bucket: mylogs.s3.amazonaws.com
+          #   Prefix: myprefix
+
+    ## AWS DynamoDB table for subscribers
+    subscriberTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+

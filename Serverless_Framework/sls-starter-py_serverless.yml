@@ -1,0 +1,110 @@
+service:
+  name: starter-py
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-python-requirements
+  - serverless-prune-plugin
+  - serverless-iam-roles-per-function
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    port: ${opt:apiport, '6969'}
+  dynamodb:
+    seed:
+      hello:
+        sources:
+          - table: ${self:provider.stage}-hello
+            sources: [./config/seed_hello.json]
+    migration:
+      dir: ./data/migrations
+    start:
+      port: ${opt:ddbport, '6970'}
+      inMemory: true
+      migrate: true
+      seed: true
+    stages: ${self:provider.stage}
+  pythonRequirements:
+    dockerizePip: non-linux
+    useDownladCache: true
+    usePipenv: true
+    slim: true
+    layer:
+      name: ${self:provider.stage}-${self:service.name}
+      description: Python pipenv project dependencies.
+      licenseInfo: MIT
+      compatibleRuntimes:
+        - python3.7
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+  prune:
+    automatic: true
+    includeLayers: true
+    number: 5
+  ssmPath:
+    sentry_dsn: ${ssm:/starter_py/sentry_dsn, ''}
+
+provider:
+  name: aws
+  runtime: python3.7
+  timeout: 10 # seconds
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  stackName: ${self:provider.stage}-${self:service.name}
+  logRetentionInDays: 7
+  iamRoleStatements: ${file(./aws/iam_statements.yml)}
+  tags:
+    project: ${self:provider.stage}-${self:service.name}
+  apiKeys:
+    - ${self:provider.stage}-${self:service.name}
+  apiGateway:
+    apiKeySourceType: HEADER
+  deploymentBucket:
+    blockPublicAccess: true
+    serverSideEncryption: AES256
+  environment:
+    SENTRY_DSN: ${self:custom.ssmPath.sentry_dsn}
+
+package:
+  exclude:
+    - .git/**
+    - .serverless/**
+    - .pytest_cache/**
+    - .mypy_cache/**
+    - src/__tests__/**
+    - src/utils/**
+    - dependencies.zip
+    - node_modules/**
+    - coverage/**
+    - aws/**
+  include:
+    - src/**
+  compatibleRuntimes:
+    - python3.7
+  excludeDevDependencies: true
+
+functions:
+  helloFunction:
+    name: hello_function
+    handler: src/functions/hello.handler
+    description: Basic sample function.
+    events:
+      - http:
+          path: /test
+          method: get
+          request:
+            parameters:
+              queryStrings:
+                message: false
+              paths:
+                message: false
+          cors: true
+          private: true
+    layers:
+      - !Ref PythonRequirementsLambdaLayer
+
+resources:
+  - ${file(./aws/lambda_dlq.yml)}
+  - ${file(./aws/dynamodb_hello.yml)}

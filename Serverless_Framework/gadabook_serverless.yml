@@ -1,0 +1,541 @@
+
+service: gadabook-services
+plugins:
+- serverless-domain-manager
+
+custom:
+  tableName: 'gardabook-develop'
+  customDomain:
+    domainName: 'api.gardabook.com'
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: ap-southeast-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["GardabookDynamoDB", "Arn" ] }
+    - Effect: Allow
+      Action: 
+        - cognito-idp:*
+      Resource: 
+        - arn:aws:cognito-idp:ap-southeast-1:136165392672:userpool/ap-southeast-1_n90l7WmwP
+  # role: arn:aws:iam::136165392672:role/gardabook-google-auth-lambda
+  environment:
+    USERS_TABLE: ${self:custom.tableName}
+functions:
+  cfLambda:
+    handler: security/cfLambdaEdge.tokenVerification
+    events: 
+      - cloudFront:
+        eventType: origin-request
+        origin: https://api.gardabook.com
+  # publicEndpoint:
+  #   handler: handler.publicEndpoint
+  #   events:
+  #     - http:
+  #         path: api/public
+  #         method: get
+  #         integration: lambda
+  #         cors: true
+  # auth:
+  #   handler: security/auth.authorize
+  # privateEndpoint:
+  #   handler: handler.privateEndpoint
+  #   events:
+  #     - http:
+  #         path: api/private
+  #         method: get
+  #         authorizer: auth
+  #         cors:
+  #           origins:
+  #             - '*'
+  #           headers:
+  #             - Content-Type
+  #             - X-Amz-Date
+  #             - Authorization
+  #             - X-Api-Key
+  #             - X-Amz-Security-Token
+  # Booking APis
+  getBookingByUserId:
+    handler: controllers/Booking.getUserBooking
+    events:
+      - http:
+          path: v1/booking/getBookingByUserId
+          method: get
+          # authorizer: auth
+          authorizer:
+            name: authorizer
+            type: COGNITO_USER_POOLS
+            arn: arn:aws:cognito-idp:ap-southeast-1:136165392672:userpool/ap-southeast-1_n90l7WmwP
+            claims:
+              - email
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          response:
+            headers:
+              Access-Control-Allow-Origin: "'*'"
+  deleteBookingById:
+    handler: controllers/Booking.deleteBooking
+    events:
+      - http:
+          path: v1/booking/deleteBookingById/{bookingId}
+          method: delete
+          # authorizer: auth
+          authorizer:
+            name: authorizer
+            type: COGNITO_USER_POOLS
+            arn: arn:aws:cognito-idp:ap-southeast-1:136165392672:userpool/ap-southeast-1_n90l7WmwP
+            claims:
+              - email
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          response:
+            headers:
+              Access-Control-Allow-Origin: "'*'"
+  getBookingByBookingId:
+    handler: controllers/Booking.getBooking
+    events:
+      - http:
+          path: v1/booking/getBookingByBookingId/{bookingId}
+          method: get
+          # authorizer: auth
+          authorizer:
+            name: authorizer
+            type: COGNITO_USER_POOLS
+            arn: arn:aws:cognito-idp:ap-southeast-1:136165392672:userpool/ap-southeast-1_n90l7WmwP
+            claims:
+              - email
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          response:
+              headers:
+                Access-Control-Allow-Origin: "'*'"
+  createUserBooking:
+    handler: controllers/Booking.createUserBooking
+    events:
+      - http:
+          path: v1/booking/createUserBooking
+          method: post
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          response:
+            headers:
+              Access-Control-Allow-Origin: "'*'"
+  
+  addCatalogue:
+    handler: controllers/Catalogue.addCatalogue
+    events:
+      - http:
+          path: v1/catalogue/addCatalogue
+          method: post
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+            response:
+              headers:
+                Access-Control-Allow-Origin: "'*'"
+  deleteCatalogueById:
+    handler: controllers/Catalogue.deleteCatalogue
+    events:
+      - http:
+          path: v1/catalogue/deleteCatalogueById/{catalogueId}
+          method: delete
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          response:
+            headers:
+              Access-Control-Allow-Origin: "'*'"
+  findCatalogueByTags:
+    handler: controllers/Catalogue.readCatalogueByTags
+    events:
+      - http:
+          path: v1/catalogue/getCatalogueByTags
+          method: get
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          response:
+            headers:
+              Access-Control-Allow-Origin: "'*'"
+  getAllCatalogues:
+    handler: controllers/Catalogue.getAllCatalogues
+    events:
+      - http:
+          path: v1/catalogue/getAllCatalogues
+          method: get
+          # authorizer: auth
+          authorizer:
+            name: authorizer
+            type: COGNITO_USER_POOLS
+            arn: arn:aws:cognito-idp:ap-southeast-1:136165392672:userpool/ap-southeast-1_n90l7WmwP
+            claims:
+              - email
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          response:
+            headers:
+              Access-Control-Allow-Origin: "'*'"
+  readCatalogueByAvailabilityId:
+    handler: controllers/Catalogue.readCatalogueByAvailabilityId
+    events:
+      - http:
+          path: v1/catalogue/getCatalogueByAvailabilityId/{availabilityId}
+          method: get
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  getCatalogueById:
+    handler: controllers/Catalogue.readCatalogue
+    events:
+      - http:
+          path: v1/catalogue/getCatalogueById/{catalogueId}
+          method: get
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  updateCatalogue:
+    handler: controllers/Catalogue.updateCatalogue
+    events:
+      - http:
+          path: v1/catalogue/updateCatalogue
+          method: put
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  createEnrollment:
+    handler: controllers/Enrollment.createEnrollment
+    events:
+      - http:
+          path: v1/enrollment/createEnrollment
+          method: post
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  getUserEnrollment:
+    handler: controllers/Enrollment.getUserEnrollment
+    events:
+      - http:
+          path: v1/enrollment/getUserEnrollment
+          method: get
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  getEnrollment:
+    handler: controllers/Enrollment.getEnrollment
+    events:
+      - http:
+          path: v1/enrollment/getEnrollment/{enrollmentId}
+          method: get
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  deleteEnrollment:
+    handler: controllers/Enrollment.deleteEnrollment
+    events:
+      - http:
+          path: v1/enrollment/deleteEnrollment/{enrollmentId}
+          method: delete
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  createUser:
+    handler: controllers/User.createUser
+    events:
+      - http:
+          path: v1/user/createUser
+          method: post
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  deleteUser:
+    handler: controllers/User.deleteUser
+    events:
+      - http:
+          path: v1/user/deleteUser
+          method: delete
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  getUserByName:
+    handler: controllers/User.getUserByName
+    events:
+      - http:
+          path: v1/user/getUserByName
+          method: get
+          # authorizer: auth
+          authorizer:
+            name: authorizer
+            type: COGNITO_USER_POOLS
+            arn: arn:aws:cognito-idp:ap-southeast-1:136165392672:userpool/ap-southeast-1_n90l7WmwP
+            claims:
+              - email
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  updateUser:
+    handler: controllers/User.updateUser
+    events:
+      - http:
+          path: v1/user/updateUser
+          method: get
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  userLogin:
+    handler: controllers/User.userLogin
+    events:
+      - http:
+          path: v1/user/userLogin
+          method: get
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  userLogout:
+    handler: controllers/User.userLogout
+    events:
+      - http:
+          path: v1/user/userLogout
+          method: get
+          # authorizer: auth
+          authorizer:
+            name: authorizer
+            type: COGNITO_USER_POOLS
+            arn: arn:aws:cognito-idp:ap-southeast-1:136165392672:userpool/ap-southeast-1_n90l7WmwP
+            claims:
+              - email
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+  getCognitoTokenFromGoogleCode:
+    handler: controllers/gCognito.getCognitoTokenFromGoogleCode
+    events:
+      - http:
+          path: v1/cognito/getCognitoTokenFromGoogleCode
+          method: get
+          # authorizer: auth
+          integration: lambda
+          cors: 
+            origins: 
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+resources:
+  Resources:
+    GardabookDynamoDB:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: pKey
+            AttributeType: S
+          - AttributeName: sKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pKey
+            KeyType: HASH
+          - AttributeName: sKey
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2
+        TableName: ${self:custom.tableName}
+        GlobalSecondaryIndexes:
+          - IndexName: gsi
+            KeySchema: 
+              - AttributeName: sKey
+                KeyType: HASH
+              - AttributeName: pKey
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes: []
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 2
+              WriteCapacityUnits: 2
+        
+
+

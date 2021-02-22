@@ -1,0 +1,69 @@
+service:
+  name: get-amz-listing-report
+
+package:
+  individually: true
+  exclude:
+    - '**/**'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stackName: ${self:service.name}-stack
+  stage: ${opt:stage, 'prod'}
+  region: eu-central-1
+  deploymentBucket:
+    name: kaskadi-serverless-deployment-bucket
+  stackTags: 
+    app: kaskadi
+  tags:
+    app: kaskadi
+    service: ${self:service.name}
+    logical-unit: stocks
+    type: eventBridge
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'events:PutEvents'
+      Resource:
+        - ${env:STOCKS_BUS_ARN}
+
+layers:
+  GetAmzListingReportLayer:
+    path: layer
+    name: ${self:service.name}-layer
+    description: Layer for ${self:service.name}
+    compatibleRuntimes:
+      - nodejs10.x
+      - nodejs12.x
+    licenseInfo: MIT
+    package:
+      include:
+        - '**/**'
+
+functions:
+  GetAmzListingReport:
+    handler: get-amz-listing-report.handler
+    name: ${self:service.name}
+    timeout: 900
+    layers:
+      - { Ref: GetAmzListingReportLayerLambdaLayer}
+    package:
+      include:
+        - 'get-amz-listing-report.js'
+        - 'helpers/**'
+    environment:
+      MWS_KEY_ID: ${env:MWS_KEY_ID}
+      MWS_KEY_SECRET: ${env:MWS_KEY_SECRET}
+      AMZ_EU_SELLER_ID: ${env:AMZ_EU_SELLER_ID}
+      STOCKS_BUS_ARN: ${env:STOCKS_BUS_ARN}
+    events:
+      - eventBridge:
+          eventBus: ${env:STOCKS_BUS_ARN}
+          pattern:
+            detail:
+              responsePayload:
+                stocksEventType:
+                  - 'amz-report-request'
+    destinations:
+      onSuccess: ${env:STOCKS_BUS_ARN}

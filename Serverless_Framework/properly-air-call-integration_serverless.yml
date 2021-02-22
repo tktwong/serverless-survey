@@ -1,0 +1,52 @@
+service: properly-air-call-integration
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  properlyStageData:
+    staging:
+      roleToUse: "arn:aws:iam::529943178829:role/service-roles/hig-staging-us-east-1"
+    prod:
+      roleToUse: "arn:aws:iam::529943178829:role/service-roles/hig-prod-us-east-1"
+  testStage: ${self:custom.properlyStageData.${self:provider.stage}} # warns out deploy if a random stage is provided
+
+package:
+  exclude:
+    - node_modules/**
+    - tests/**
+
+provider:
+  name: aws
+  apiGateway:
+    minimumCompressionSize: 1024
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'staging'}
+  region: us-east-1
+  role: ${self:custom.properlyStageData.${self:provider.stage}.roleToUse}
+  environment:
+    PROPERLY_STAGE: ${self:provider.stage}
+  stackTags:
+   PROPERLY_STAGE: ${self:provider.stage}
+   PROPERLY_CODE_ORIGIN_URL: https://github.com/GoProperly/properly-air-call-integration
+  versionFunctions: false
+
+functions:
+  main:
+    handler: src/index.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors: true
+      - http:
+          path: /{any+}
+          method: ANY
+          cors: true

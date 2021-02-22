@@ -1,0 +1,100 @@
+service: albumshuffler
+configValidationMode: error
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: python3.8
+  lambdaHashingVersion: 20201221
+  region: ca-central-1
+  stage: ${opt:stage, 'dev'}
+  apiGateway:
+    shouldStartNameWithService: true
+  logRetentionInDays: 30
+  iamRoleStatements:
+  - Effect: "Allow"
+    Action:
+      - dynamodb:Query
+      - dynamodb:Scan
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+      - dynamodb:UpdateItem
+      - dynamodb:DeleteItem
+      - dynamodb:BatchWriteItem
+    Resource:
+      Fn::GetAtt: 
+      - AlbumShufflerTable
+      - Arn
+  - Effect: "Allow"
+    Action:
+      - sqs:SendMessage
+      - sqs:GetQueueUrl
+      - sqs:ReceiveMessage
+    Resource:
+      Fn::GetAtt:
+      - AlbumImportQueue
+      - Arn
+  httpApi:
+    cors:
+     maxAge: 6000
+
+  environment:
+    ALBUM_SHUFFLER_TABLE: ${self:custom.albumShufflerTable}
+    ALBUM_IMPORT_QUEUE: ${self:custom.albumImportQueue}
+    SPOTIFY_CLIENT_ID: ${ssm:/AlbumShuffler/${self:provider.stage}/spotify_client_id~true}
+    SPOTIFY_CLIENT_SECRET: ${ssm:/AlbumShuffler/${self:provider.stage}/spotify_client_secret~true}
+    JWT_SECRET: ${ssm:/AlbumShuffler/${self:provider.stage}/jwt_secret~true}
+    STAGE: ${self:provider.stage}
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  albumShufflerTable: ${self:provider.stage}-AlbumShufflerTable
+  albumImportQueue: ${self:provider.stage}-AlbumImportQueue
+
+functions:
+  GetRandomAlbum:
+    handler: functions/get_random_album.handler
+    events:
+      - httpApi: 
+          path: /randomalbum
+          method: GET
+  SpotifyAuthCallback:
+    handler: functions/spotify_auth_callback.handler
+    events:
+      - httpApi:
+          path: /spotifyauth
+          method: GET
+  AlbumImporter:
+    handler: functions/album_import_handler.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - AlbumImportQueue
+              - Arn
+          batchSize: 1
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    AlbumShufflerTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.stage}-AlbumShufflerTable
+        BillingMode: PAY_PER_REQUEST 
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: sortKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: sortKey
+            KeyType: RANGE
+    AlbumImportQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.albumImportQueue}

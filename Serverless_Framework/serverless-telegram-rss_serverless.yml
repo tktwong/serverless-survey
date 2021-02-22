@@ -1,0 +1,152 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: ozbargain-bot
+# app and org for use with dashboard.serverless.com
+app: ozbargain-bot
+org: evansrhys
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: python3.8
+  tracing:
+    lambda: true
+  memorySize: 256   
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    FEEDS_DYNAMODB_TABLE: ${self:service}-feeds-${opt:stage, self:provider.stage}
+    LAMBDA_QUEUE: ${self:service}-${opt:stage, self:provider.stage}
+    TELEGRAM_TOKEN: ${env:TELEGRAM_TOKEN}
+    TELEGRAM_CHAT_ID: ${env:TELEGRAM_CHAT_ID}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+        - sqs:*
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.FEEDS_DYNAMODB_TABLE}"
+        - "arn:aws:sqs:${opt:region, self:provider.region}:*:${self:provider.environment.LAMBDA_QUEUE}"
+        - "*"
+
+custom:
+  wsgi:
+    app: lambdas/api/app.app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: true
+
+package:
+   individually: true
+
+plugins:
+  - serverless-python-requirements
+  - serverless-dotenv-plugin
+  - serverless-wsgi
+  
+functions:
+  publish_to_telegram:
+    handler: app.lambda_handler
+    module: lambdas/publish_to_telegram
+    tracing: Active
+    events:
+      - sqs: 
+        arn:
+          Fn::GetAtt:
+            - SqSPublishEvents
+            - Arn
+          batchSize: 1
+          enabled: true
+
+  read_dynamo_events:
+    handler: app.lambda_handler
+    module: lambdas/read_dynamo_events
+    tracing: Active
+    events:
+      - stream:
+         type: dynamodb
+         arn:
+            Fn::GetAtt:
+              - EventsDynamoDbTable
+              - StreamArn
+        batchSize: 1
+  app:
+    handler: wsgi_handler.handler
+    module: lambdas/api
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'      
+  crawl:
+    handler: app.lambda_handler
+    module: lambdas/parse_feeds_to_dynamodb
+    tracing: Active
+    timeout: 30
+    events:
+      - schedule: rate(5 minutes) 
+
+
+resources:
+  Resources:
+    SqSPublishEvents:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: ${self:provider.environment.LAMBDA_QUEUE}
+    EventsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    FeedSourcesTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.FEEDS_DYNAMODB_TABLE}

@@ -1,0 +1,86 @@
+service: invoice-application2
+
+custom:
+  tableName: 'invoices-doc-table-${self:provider.stage}'
+  logTableName: 'invoice-pdf-table-${self:provider.stage}'
+  dynamodb:
+    start:
+      migrate: true
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  environment:
+    USERS_TABLE: ${self:custom.tableName}
+    LOG_TABLE: ${self:custom.logTableName}
+    IS_OFFLINE: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - dynamodb:Query
+      - dynamodb:Scan
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+      - dynamodb:UpdateItem
+      - dynamodb:DeleteItem
+      Resource:
+      - { "Fn::GetAtt": ["UsersDynamoDBTable", "Arn" ] }
+      - { "Fn::GetAtt": ["LogDynamoDBTable", "Arn" ] }
+
+functions:
+  app:
+    handler: index.handler
+    events:
+    - http: ANY /
+    - http: 'ANY /{proxy+}'
+  getUser:
+    handler: index.handler
+    events:
+    - http: 'GET /invoices/{proxy+}'
+  createInvoice:
+    handler: index.handler
+    events:
+    - http: 'POST /invoices'
+  createInvoicePdf:
+    handler: index.handler
+    events:
+    - http: 'POST /invoices-pdf'
+
+resources:
+  Resources:
+    UsersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+        -
+          AttributeName: id
+          AttributeType: S
+        KeySchema:
+        -
+          AttributeName: id
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
+    LogDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+        -
+          AttributeName: id
+          AttributeType: S
+        KeySchema:
+        -
+          AttributeName: id
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.logTableName}

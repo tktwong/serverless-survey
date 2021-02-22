@@ -1,0 +1,69 @@
+service:
+  name: aws-workshop-pictures
+
+custom:
+  defaultStage: dev
+  defaultRegion: us-east-1
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: ${opt:region, file(./serverless.env.yml):${self:provider.stage}.REGION}
+  versionFunctions: false
+  memorySize: 128
+
+  environment:
+    STAGE:
+      ${self:provider.stage}
+    PICTURES_BUCKET:
+      Ref: PicturesBucket
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - Ref: PicturesBucketName
+            - "/*"
+    - Effect: Allow
+      Action:
+        - "rekognition:*"
+      Resource: "*"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+
+functions:
+  helloWorld:
+    handler: handlers/hello-world.helloWorld
+    events:
+      - http:
+          method: post
+          path: hello-world
+          cors: true
+
+  addFile:
+    handler: handlers/add-file.addFile
+    events:
+      - http:
+          method: post
+          path: file
+          cors: true
+
+  analyze:
+    handler: handlers/analyze.analyze
+    events:
+      - http:
+          method: get
+          path: analyze
+          cors: true
+
+resources:
+  - ${file(resources/gateway.yml)}
+  - ${file(resources/s3-bucket.yml)}

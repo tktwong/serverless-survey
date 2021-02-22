@@ -1,0 +1,238 @@
+service:
+  name: serverless-todo-app
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-plugin-tracing
+
+custom:
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: ToDos API
+        description: Serverless ToDoS Application
+    models:
+      - name: CreateTodo
+        contentType: application/json
+        schema: ${file(src/models/createTodoReq.json)}
+      - name: UpdateTodo
+        contentType: application/json
+        schema: ${file(src/models/updateTodoReq.json)}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  environment:
+    TODO_TABLE: Todos-vema1-${self:provider.stage}
+    TODOS_S3_BUCKET: serverless-vema-todos-${self:provider.stage}
+    USER_ID_INDEX: UserIdIndex
+    SIGNED_URL_EXPIRATION: 300
+  tracing:
+    lambda: true
+    apiGateway: true
+
+
+iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - dynamodb:Scan
+      - dynamodb:PutItem
+      - dynamodb:GetItem
+      - dynamodb:UpdateItem
+      - dynamodb:DeleteItem
+      - dynamodb:Query
+    Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}/index/${self:provider.environment.USER_ID_INDEX}
+  - Effect: Allow
+    Action:
+      - s3:PutObject
+      - s3:GetObject
+    Resource: arn:aws:s3:::${self:provider.environment.TODOS_S3_BUCKET}/*
+  - Effect: "Allow" # xray permissions (required)
+    Action:
+      - "xray:PutTraceSegments"
+      - "xray:PutTelemetryRecords"
+    Resource:
+      - "*"
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  # TODO: Configure this function (GetTodos)
+  GetTodos:
+    handler: src/lambda/http/getTodos.handler
+    events:
+      - http:
+          method: get
+          path: todos
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}/index/${self:provider.environment.USER_ID_INDEX}
+
+  # TODO: Configure this function (CreateTodos)
+  CreateTodo:
+    handler: src/lambda/http/createTodo.handler
+    events:
+      - http:
+          method: post
+          path: todos
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create Ops
+            description: Create Todo
+            requestModels:
+              'application/json': CreateTodo
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}
+
+
+  # TODO: Configure this function (UpdateTodos)
+  UpdateTodo:
+    handler: src/lambda/http/updateTodo.handler
+    events:
+      - http:
+          method: patch
+          path: todos/{todoId}
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update Ops
+            description: Update Todo
+            requestModels:
+              'application/json': UpdateTodo
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}
+
+  # TODO: Configure this function (DeleteTodos)
+  DeleteTodo:
+    handler: src/lambda/http/deleteTodo.handler
+    events:
+      - http:
+          method: delete
+          path: todos/{todoId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}
+
+
+  # TODO: Configure this function (UploadUrlTodos)
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    healthCheckFunction:
+      tracing: true # overrides provider settings (opt out)
+    events:
+      - http:
+          method: post
+          path: todos/{todoId}/attachment
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.TODOS_S3_BUCKET}/*
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+
+resources:
+  Resources:
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    # TODO: Add any necessary AWS resources
+    TodosDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: todoId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: todoId
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: UserIdIndex
+            KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: todoId
+              KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.TODO_TABLE}
+
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.TODOS_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:*'
+              Resource: 'arn:aws:s3:::${self:provider.environment.TODOS_S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket
+

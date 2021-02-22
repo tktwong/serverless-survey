@@ -1,0 +1,160 @@
+service: succulent-of-the-day
+plugins:
+  - serverless-iam-roles-per-function
+package:
+  individually: true
+  excludeDevDependencies: true
+custom:
+  queue_name: SucculentContentAdded-${self:provider.stage}
+  api_name: SucculentContent
+provider:
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 256
+  versionFunctions: false
+  stage: ${opt:stage, 'dev'}
+  variableSyntax: "\\${((?!AWS)[ ~:a-zA-Z0-9._'\",\\-\\/\\(\\)]+?)}"
+  environment:
+    S3_BUCKET_NAME:
+      Ref: SucculentOfTheDay
+functions:
+  handler:
+    handler: custom/index.handler
+    package:
+      path: custom
+      include:
+        - custom/index.js
+        - custom/lib/**/*.js
+      exclude:
+        - custom/**/*.test.js
+        - api/**
+    events:
+      - alexaSkill: amzn1.ask.skill.3feda312-4b2d-4545-9474-5de3108af54e
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - s3:GetObject
+          - s3:HeadObject
+          - s3:ListBucket
+        Resource:
+          Fn::Join: ['', [{ Fn::GetAtt: [SucculentOfTheDay, Arn] }, '/*']]
+  content-added:
+    handler: api/index.handler
+    package:
+      path: api
+      include:
+        - api/index.js
+        - api/lib/**/*.js
+      exclude:
+        - api/**/*.test.js
+        - custom/**
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [SucculentContentAddedQueue, Arn]
+          enabled: true
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - s3:GetObject
+          - s3:ListBucket
+          - s3:PutObject
+          - s3:PutObjectAcl
+          - s3:GetObjectAcl
+          - s3:DeleteObject
+          - s3:HeadObject
+        Resource:
+          Fn::Join: ['', [{ Fn::GetAtt: [SucculentOfTheDay, Arn] }, '/*']]
+      - Effect: 'Allow'
+        Action:
+          - sqs:ReceiveMessage
+          - sqs:DeleteMessage
+          - sqs:GetQueueAttributes
+        Resource: { Fn::GetAtt: [SucculentContentAddedQueue, Arn] }
+resources:
+  Resources:
+    SucculentOfTheDay:
+      Type: AWS::S3::Bucket
+      Properties:
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods: [GET, HEAD]
+              AllowedOrigins:
+                - http://ask-ifr-download.s3.amazonaws.com
+                - https://ask-ifr-download.s3.amazonaws.com
+    ReadOnlyImagesPublicAccessPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: SucculentOfTheDay
+        PolicyDocument:
+          Version: '2012-10-17'
+          Id: ReadOnlyImagesPublicAccessPolicy
+          Statement:
+            Sid: ReadOnlyImagesPublicAccessPolicy-Grant
+            Effect: 'Allow'
+            Principal: '*'
+            Action: ['s3:GetObject']
+            Resource:
+              Fn::Join:
+                - ''
+                - [{ Fn::GetAtt: [SucculentOfTheDay, Arn] }, '/images/*']
+    SucculentContentAddedQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.queue_name}
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn: { Fn::GetAtt: [SucculentContentAddedDLQ, Arn] }
+          maxReceiveCount: 5
+    SucculentContentAddedDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.queue_name}-dlq
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      DependsOn: SucculentContentAddedQueue
+      Properties:
+        Body: ${file(./api/swagger.yaml)}
+    SucculentApiDeployment:
+      Type: AWS::ApiGateway::Deployment
+      Properties:
+        RestApiId:
+          Ref: ApiGatewayRestApi
+    SucculentApiStage:
+      Type: AWS::ApiGateway::Stage
+      Properties:
+        DeploymentId:
+          Ref: SucculentApiDeployment
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        StageName: ${self:provider.stage}
+        MethodSettings:
+          - HttpMethod: '*'
+            LoggingLevel: INFO
+            ResourcePath: '/*'
+            DataTraceEnabled: true
+    ApiGatewaySqsIam:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /app/all/
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - apigateway.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+        Policies:
+          - PolicyName: SucculentApiGatewayIamPolicy-${self:provider.stage}
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Resource:
+                    Fn::GetAtt: [SucculentContentAddedQueue, Arn]
+                  Action:
+                    - 'sqs:SendMessage'

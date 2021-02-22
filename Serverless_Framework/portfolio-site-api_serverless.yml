@@ -1,0 +1,98 @@
+service: portfolio-app-api
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: us-east-1
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName: permissions
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - ses:*
+      Resource: "*"
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  sendEmail:
+    handler: sendEmail.main
+    events:
+      - http:
+          path: send-email
+          method: post
+          cors: true
+
+  create:
+    handler: create.main
+    events:
+      - http:
+          path: permissions
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  get:
+    handler: get.main
+    events:
+      - http:
+          path: permissions/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  list:
+    handler: list.main
+    events:
+      - http:
+          path: permissions
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  update:
+    handler: update.main
+    events:
+      - http:
+          path: permissions/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  delete:
+    handler: delete.main
+    events:
+      - http:
+          path: permissions/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}

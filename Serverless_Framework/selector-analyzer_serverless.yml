@@ -1,0 +1,65 @@
+service: selectors-analyzer
+
+custom:
+  s3Bucket: selectors-analyzer-files
+
+provider:
+  name: aws
+  region: eu-central-1
+  runtime: nodejs12.x
+  stage: dev
+  memorySize: 2048
+  timeout: 600
+  layers:
+    - arn:aws:lambda:${self:provider.region}:764866452798:layer:chrome-aws-lambda:17
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+        - s3:GetObject
+      Resource: arn:aws:s3:::${self:custom.s3Bucket}/*
+
+functions:
+  analyze:
+    handler: src/index.handler
+    events:
+      - schedule: rate(2 hours)
+    environment:
+      MONGO_URI: ${env:MONGO_URI}
+      TELEGRAM_BOT_TOKEN: ${env:TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: 124169513
+      S3_REGION: ${self:provider.region}
+      S3_BUCKET: ${self:custom.s3Bucket}
+
+  lambda-errors-handler:
+    handler: src/lambda-errors-handler.handler
+    memorySize: 128
+    events:
+      - cloudwatchLog:
+          filter: ERROR
+          logGroup: /aws/lambda/selectors-analyzer-${self:provider.stage}-analyze
+
+resources:
+  Resources:
+    # Bucket where the screenshots are stored
+    screenshotsBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Delete
+      Properties:
+        BucketName: ${self:custom.s3Bucket}
+        AccessControl: Private
+        VersioningConfiguration:
+          Status: Enabled
+        LifecycleConfiguration:
+          Rules:
+            - ExpirationInDays: 30
+              NoncurrentVersionExpirationInDays: 30
+              Status: Enabled
+
+package:
+  exclude:
+    - node_modules/puppeteer/**
+    - .gitignore
+    - .git/**
+    - .env

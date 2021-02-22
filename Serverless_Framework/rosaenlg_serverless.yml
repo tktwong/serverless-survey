@@ -1,0 +1,669 @@
+# Copyright 2019 Ludan Stoecklé
+# SPDX-License-Identifier: Apache-2.0
+service: rosaenlg-lambda-${self:custom.myStage}
+
+custom:
+  myStage: ${opt:stage, self:provider.stage}
+  # you may change buckets here
+  bucket: rosaenlg-lambda-bucket-${self:custom.myStage}
+  customDomain:
+    domainName: ${file(./serverless-props.json):${self:custom.myStage}.domainName}
+    basePath: templates
+    createRoute53Record: true
+  jetpack:
+    base: ../../
+  writeLambaLogsShortcut: &writeLambaLogsShortcut
+    PolicyDocument:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: "Allow"
+          Action:
+            - "logs:CreateLogGroup"
+            - "logs:CreateLogStream"
+            - "logs:PutLogEvents"
+          Resource: 
+            - "*"
+  assumeRoleDecorationShortcut: &assumeRoleDecorationShortcut
+    AssumeRolePolicyDocument:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+              - lambda.amazonaws.com
+          Action: sts:AssumeRole
+  corsStuff: &corsStuff
+    cors:
+      origin: '*'
+      headers:
+        # standard ones
+        - Content-Type
+        - X-Amz-Date
+        - Authorization
+        - X-Api-Key
+        - X-Amz-Security-Token
+        - X-Amz-User-Agent
+        # rapid API specific
+        - x-rapidapi-proxy-secret
+        - x-rapidapi-user
+      allowCredentials: false
+  userInHeaders: &userInHeaders
+    'X-RapidAPI-User': true
+  # Rapid API will always send it, so we have to accept it, even if we don't use it for auth
+  secretKeyInHeaders: &secretKeyInHeaders
+    'X-RapidAPI-Proxy-Secret': true
+  renderMethodEtc: &renderMethodEtc
+    method: post
+    authorizer: AuthorizerFct
+    <<: *corsStuff
+    request:
+      parameters:
+        paths:
+          - templateId: true
+          - templateSha1: true
+        headers:
+          <<: *userInHeaders
+          <<: *secretKeyInHeaders
+      schema:
+        application/json: ${file(../rosaenlg-server-toolkit/src/swagger/renderOptionsInput.schema.json)}
+  createMethodEtc: &createMethodEtc
+    method: put
+    authorizer: AuthorizerFct
+    <<: *corsStuff
+    request:
+      parameters:
+        headers:
+          <<: *userInHeaders
+          <<: *secretKeyInHeaders
+      schema:
+        application/json: ${file(../rosaenlg-server-toolkit/src/swagger/jsonPackage.schema.json)}
+  someExclusions:
+    - &excludeDist "./dist/**/*"
+    - &excludeNotHelper "!./dist/helper.js"
+    - &excludeNotCreateHelper "!./dist/create/createHelper.js"
+    - &excludeNotRenderHelper "!./dist/render/renderHelper.js"
+  
+
+package:
+  individually: true
+  excludeDevDependencies: true
+  exclude:
+    - ./lib/*
+    - "../../node_modules/aws-sdk/**" # included on Lambda.
+    - "../../node_modules/**/**/*.ts"
+    - "../../node_modules/**/**/*.map"
+    - "../../node_modules/**/README*"
+    - "../../node_modules/**/gulpfile.js"
+    - "../../node_modules/**/.travis.yml"
+    - "../../node_modules/**/tsconfig.json"
+    - "../../node_modules/**/LICENCE*"
+    - "../../node_modules/**/LICENSE*"
+    - "../../node_modules/**/.gitignore"
+    - "../../node_modules/**/.npmignore"
+    - "../../node_modules/**/.nyc_output/**/*"
+    #- "../../node_modules/**/src/**/*" # is used in debug module
+    - "../../node_modules/**/test/**/*"
+    - "../../node_modules/**/.bin/**/*"
+    - "../../node_modules/**/example.js"
+    - "../../node_modules/**/rollup.config.js"
+    - "../../node_modules/**/rosaenlg-packager-bundle.js"
+    - "../../node_modules/**/coverage/**"
+    - "../../node_modules/**/sonar-project.properties"
+    - "**/README*"
+    - "**/gulpfile.js"
+    - "**/.travis.yml"
+    - "**/tsconfig.json"
+    - "**/*.ts"
+    - "**/*.map"
+    - "**/LICENSE*"
+    - "**/LICENCE*"
+
+plugins:
+  - serverless-jetpack
+  - serverless-plugin-common-excludes
+  - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 512 # default is 1024 ; can be different on each function!
+  timeout: 60 # default is 6 seconds
+  region: eu-west-1
+  stackName: rosaenlg-lambda-stack-${self:custom.myStage}
+  stage: dev # default stage
+  logRetentionInDays: 30
+
+functions:
+  # RENDER
+  RenderFrench:
+    role: renderS3Role
+    handler: dist/render/renderFrench.handler
+    events:
+      - http:
+          path: /fr_FR/{templateId}/{templateSha1}
+          <<: *renderMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_fr_FR_*.js
+        - '!lib/rosaenlg_tiny_fr_FR_*_comp.js'
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotRenderHelper
+        - "!./dist/render/renderFrench.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  RenderEnglish:
+    role: renderS3Role
+    handler: dist/render/renderEnglish.handler
+    events:
+      - http:
+          path: /en_US/{templateId}/{templateSha1}
+          <<: *renderMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_en_US*.js
+        - '!lib/rosaenlg_tiny_en_US_*_comp.js'
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotRenderHelper
+        - "!./dist/render/renderEnglish.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  RenderGerman:
+    role: renderS3Role
+    handler: dist/render/renderGerman.handler
+    events:
+      - http:
+          path: /de_DE/{templateId}/{templateSha1}
+          <<: *renderMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_de_DE*.js
+        - '!lib/rosaenlg_tiny_de_DE_*_comp.js'
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotRenderHelper
+        - "!./dist/render/renderGerman.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  RenderItalian:
+    role: renderS3Role
+    handler: dist/render/renderItalian.handler
+    events:
+      - http:
+          path: /it_IT/{templateId}/{templateSha1}
+          <<: *renderMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_it_IT*.js
+        - '!lib/rosaenlg_tiny_it_IT_*_comp.js'
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotRenderHelper
+        - "!./dist/render/renderItalian.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  RenderSpanish:
+    role: renderS3Role
+    handler: dist/render/renderSpanish.handler
+    events:
+      - http:
+          path: /es_ES/{templateId}/{templateSha1}
+          <<: *renderMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_es_ES*.js
+        - '!lib/rosaenlg_tiny_es_ES_*_comp.js'
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotRenderHelper
+        - "!./dist/render/renderSpanish.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  RenderOther:
+    role: renderS3Role
+    handler: dist/render/renderOther.handler
+    events:
+      - http:
+          path: /OTHER/{templateId}/{templateSha1}
+          <<: *renderMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_OTHER*.js
+        - '!lib/rosaenlg_tiny_OTHER_*_comp.js'
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotRenderHelper
+        - "!./dist/render/renderOther.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+      
+  # CREATE
+  CreateFrench:
+    role: createS3Role
+    handler: dist/create/createFrench.handler
+    events:
+      - http:
+          path: /fr_FR
+          <<: *createMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_fr_FR_*_comp.js
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotCreateHelper
+        - "!./dist/create/createFrench.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  CreateEnglish:
+    role: createS3Role
+    handler: dist/create/createEnglish.handler
+    events:
+      - http:
+          path: /en_US
+          <<: *createMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_en_US_*_comp.js
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotCreateHelper
+        - "!./dist/create/createEnglish.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  CreateGerman:
+    role: createS3Role
+    handler: dist/create/createGerman.handler
+    events:
+      - http:
+          path: /de_DE
+          <<: *createMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_de_DE_*_comp.js
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotCreateHelper
+        - "!./dist/create/createGerman.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+    memorySize: 1024
+  CreateItalian:
+    role: createS3Role
+    handler: dist/create/createItalian.handler
+    events:
+      - http:
+          path: /it_IT
+          <<: *createMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_it_IT_*_comp.js
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotCreateHelper
+        - "!./dist/create/createItalian.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  CreateSpanish:
+    role: createS3Role
+    handler: dist/create/createSpanish.handler
+    events:
+      - http:
+          path: /es_ES
+          <<: *createMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_es_ES_*_comp.js
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotCreateHelper
+        - "!./dist/create/createSpanish.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  CreateOther:
+    role: createS3Role
+    handler: dist/create/createOther.handler
+    events:
+      - http:
+          path: /OTHER
+          <<: *createMethodEtc
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      include:
+        - lib/rosaenlg_tiny_OTHER_*_comp.js
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - *excludeNotCreateHelper
+        - "!./dist/create/createOther.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+        
+  # OTHER
+  Delete:
+    role: deleteS3Role
+    handler: dist/delete.handler
+    events:
+      - http:
+          path: /{templateId}
+          method: delete
+          authorizer: AuthorizerFct
+          <<: *corsStuff
+          request:
+            parameters:
+              paths:
+                - templateId: true
+              headers:
+                <<: *userInHeaders
+                <<: *secretKeyInHeaders
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - "!./dist/delete.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  List:
+    role: listS3Role
+    handler: dist/list.handler
+    events:
+      - http:
+          path: /
+          method: get
+          authorizer: AuthorizerFct
+          <<: *corsStuff
+          request:
+            parameters:
+              headers:
+                <<: *userInHeaders
+                <<: *secretKeyInHeaders
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - "!./dist/list.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+  Get:
+    role: getS3Role
+    handler: dist/get.handler
+    events:
+      - http:
+          path: /{templateId}
+          method: get
+          authorizer: AuthorizerFct
+          <<: *corsStuff
+          request:
+            parameters:
+              paths:
+                - templateId: true
+              headers:
+                <<: *userInHeaders
+                <<: *secretKeyInHeaders
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+    package:
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - "!./dist/get.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+
+  # VERSION
+  GetVersion:
+    role: JustRunCodeRole
+    handler: dist/version.handler
+    events:
+      - http:
+          path: /version
+          method: get
+          authorizer: AuthorizerFct
+          <<: *corsStuff
+          request:
+            parameters:
+              headers:
+                <<: *userInHeaders
+                <<: *secretKeyInHeaders
+    package:
+      include:
+        - lib/rosaenlg_tiny_en_US_*.js
+        - '!lib/rosaenlg_tiny_en_US_*_comp.js'
+        - lib/version_flag_*
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - "!./dist/version.js"
+        - "../../node_modules/**/**"
+        - "!../../node_modules/clone/**"
+        - "!../../node_modules/node-cache/**"
+        - "!../../node_modules/rosaenlg-packager/**"
+        - "!../../node_modules/rosaenlg-server-toolkit/**"
+
+  # AUTH
+  AuthorizerFct:
+    role: AuthorizerFctRole
+    handler: dist/auth.handler
+    package:
+      exclude:
+        - *excludeDist
+        - *excludeNotHelper
+        - "!./dist/auth.js"
+        - "./dist/helper.js"
+        - "../../node_modules/clone/**"
+        - "../../node_modules/node-cache/**"
+        - "../../node_modules/rosaenlg-packager/**"
+        - "../../node_modules/rosaenlg-server-toolkit/**"
+
+resources:
+  Resources:
+    renderS3Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: rosaNlgLambdaRenderS3Role-${self:custom.myStage}
+        <<: *assumeRoleDecorationShortcut
+        Policies:
+          - PolicyName: writeLambaLogs
+            <<: *writeLambaLogsShortcut
+          - PolicyName: rosaNlgLambdaReadS3Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "s3:GetObject"
+                  Resource: 
+                    - "arn:aws:s3:::${self:custom.bucket}/*" 
+    createS3Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: rosaNlgLambdaCreateS3Role-${self:custom.myStage}
+        <<: *assumeRoleDecorationShortcut
+        Policies:
+          - PolicyName: writeLambaLogs
+            <<: *writeLambaLogsShortcut
+          - PolicyName: rosaNlgLambdaWriteS3Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "s3:PutObject" # obvious
+                    - "s3:GetObject" # used when creating templates referencing other ones
+                  Resource: 
+                    - "arn:aws:s3:::${self:custom.bucket}/*" 
+    deleteS3Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: rosaNlgLambdaDeleteS3Role-${self:custom.myStage}
+        <<: *assumeRoleDecorationShortcut
+        Policies:
+          - PolicyName: writeLambaLogs
+            <<: *writeLambaLogsShortcut
+          - PolicyName: rosaNlgLambdaReadS3Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "s3:DeleteObject"
+                  Resource: 
+                    - "arn:aws:s3:::${self:custom.bucket}/*" 
+    listS3Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: rosaNlgLambdaListS3Role-${self:custom.myStage}
+        <<: *assumeRoleDecorationShortcut
+        Policies:
+          - PolicyName: writeLambaLogs
+            <<: *writeLambaLogsShortcut
+          - PolicyName: rosaNlgLambdaListS3Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "s3:ListBucket" 
+                  Resource: 
+                    - "arn:aws:s3:::${self:custom.bucket}" 
+    getS3Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: rosaNlgLambdaGetS3Role-${self:custom.myStage}
+        <<: *assumeRoleDecorationShortcut
+        Policies:
+          - PolicyName: writeLambaLogs
+            <<: *writeLambaLogsShortcut
+          - PolicyName: rosaNlgLambdaListS3Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "s3:GetObject" 
+                  Resource: 
+                    - "arn:aws:s3:::${self:custom.bucket}/*"
+    JustRunCodeRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: rosaNlgLambdaJustRunCodeRole-${self:custom.myStage}
+        <<: *assumeRoleDecorationShortcut
+        Policies:
+          - PolicyName: writeLambaLogs
+            <<: *writeLambaLogsShortcut
+    AuthorizerFctRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: rosaNlgLambdaAuthorizerFctRole-${self:custom.myStage}
+        <<: *assumeRoleDecorationShortcut
+        Policies:
+          - PolicyName: writeLambaLogs
+            <<: *writeLambaLogsShortcut
+          - PolicyName: readLambdaRapidAPIKeySecret
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "ssm:GetParameter"
+                  Resource:
+                    - ${file(./serverless-props.json):${self:custom.myStage}.ssmKey}
+    StorageBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: ${self:custom.bucket}

@@ -1,0 +1,78 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: petal-note-service
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ap-southeast-1
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  environment:
+    NOTES_TABLE: notes-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}"
+
+custom:
+  defaultStage: dev
+  profiles:
+    dev: devProfile
+    prod: prodProfile
+
+plugins:
+  - serverless-webpack
+
+resources:
+  Resources:
+    NotesTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        KeySchema:
+          - AttributeName: noteId
+            KeyType: HASH
+          - AttributeName: title
+            KeyType: RANGE
+        AttributeDefinitions:
+          - AttributeName: noteId
+            AttributeType: S
+          - AttributeName: title
+            AttributeType: S
+          - AttributeName: content
+            AttributeType: S
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.NOTES_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: TitleContentIndex
+            KeySchema:
+              - AttributeName: title
+                KeyType: HASH
+              - AttributeName: content
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - noteId
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+
+functions:
+  graphql:
+    handler: handler.graphql
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true

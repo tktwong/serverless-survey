@@ -1,0 +1,160 @@
+service: aqts-capture-error-handler
+
+provider:
+  name: aws
+  rolePermissionsBoundary:
+    Fn::Sub:
+      - "arn:aws:iam::${accountId}:policy/csr-Developer-Permissions-Boundary"
+      - accountId:
+         Ref: "AWS::AccountId"
+  vpc: ${self:custom.vpc}
+  region: ${opt:region, 'us-west-2'}
+  stage: ${opt:stage, 'TEST'}
+  runtime: python3.8
+  memorySize: 128
+  timeout: 45
+  logRetentionInDays: 90
+  deploymentBucket:
+    name: ${opt:bucket, iow-cloud-applications}
+  stackTags:
+    "wma:project_id": "aqtscapture"
+    "wma:subSystem": "aqtscapture"
+    "wma:application_id": "Aquarius TS Capture Error Handler"
+    "wma:contact": "Andrew Yan ayan@usgs.gov"
+    "wma:role": etl
+    "wma:system": NWIS
+    "wma:environment": ${self:provider.stage}
+    "wma:taggingVersion": 0.0.1
+    "wma:costCenter": TBD
+    "wma:organization": IOW
+    "displayName": "Error Handler"
+    commitIdentifier: ${git:sha1}
+
+custom:
+  exportGitVariables: false
+  vpc:
+    securityGroupIds: ${ssm:/iow/retriever-capture/${self:provider.stage}/securityGroupIds~split}
+    subnetIds: ${ssm:/iow/aws/vpc/${self:provider.stage}/subnetIds~split}
+  esLogs:
+    endpoint: ${ssm:/iow/aws/vpc/${self:provider.stage}/elasticsearchEndpoint}
+    index: ${self:service}
+    retentionInDays: 90
+    filterPattern: "?WARNING ?ERROR ?CRITICAL"
+  prune:
+    automatic: true
+    number: 3
+  mailingList: ${ssm:/aws/reference/secretsmanager/AQTS-CAPTURE-MAILING-LISTS~true}
+
+
+functions:
+  aqtsErrorHandler:
+    handler: persist_error.handler.lambda_handler
+    role:
+      Fn::Sub:
+        - arn:aws:iam::${accountId}:role/csr-Lambda-Role
+        - accountId:
+            Ref: AWS::AccountId
+    onError:
+      Ref: snsTopic
+    reservedConcurrency: 290
+    environment:
+      AWS_SQS_QUEUE_URL:
+        Ref: errorPersistQueue
+      AWS_TERMINAL_QUEUE_URL:
+        Ref: terminalErrorsQueue
+      AWS_SNS_ARN:
+        Ref: snsTopic
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      DEPLOY_STAGE: ${self:provider.stage}
+      MAX_RETRIES: 6
+      LOG_LEVEL: WARNING
+
+resources:
+  Resources:
+    snsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: ${self:service}-${self:provider.stage}-topic
+        TopicName: ${self:service}-${self:provider.stage}-topic
+        Subscription:
+          - Protocol: email
+            Endpoint: ${self:custom.mailingList.TERMINAL_ERRORS_GROUP}
+    invocationAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-invocation-alarm
+        AlarmDescription: Notify when invocations exceeds the specified threshold
+        Namespace: 'AWS/Lambda'
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AqtsErrorHandlerLambdaFunction
+        MetricName: Invocations
+        Statistic: Sum
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        Threshold: 1000
+        Period: 60
+        EvaluationPeriods: 5
+        AlarmActions:
+          - Ref: snsTopic
+    concurrencyAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-concurrency-alarm
+        AlarmDescription: Notify when concurrency exceeds the specified threshold
+        Namespace: 'AWS/Lambda'
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AqtsErrorHandlerLambdaFunction
+        MetricName: ConcurrentExecutions
+        Statistic: Maximum
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        Threshold: 150
+        Period: 60
+        EvaluationPeriods: 1
+        AlarmActions:
+          - Ref: snsTopic
+    errorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-error-alarm
+        AlarmDescription: Notify when number of errors exceeds the specified threshold
+        Namespace: 'AWS/Lambda'
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AqtsErrorHandlerLambdaFunction
+        MetricName: Errors
+        Statistic: Sum
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        Threshold: 10
+        Period: 60
+        EvaluationPeriods: 1
+        AlarmActions:
+          - Ref: snsTopic
+    errorPersistQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: aqts-capture-error-queue-${self:provider.stage}
+        MessageRetentionPeriod: 1209600
+    terminalErrorsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: aqts-capture-terminal-errors-queue-${self:provider.stage}
+        MessageRetentionPeriod: 345600
+
+plugins:
+  - serverless-plugin-git-variables
+  - serverless-python-requirements
+  - serverless-es-logs
+  - serverless-prune-plugin
+
+package:
+  exclude:
+    - node_modules/**
+    - Dockerfile
+    - .dockerignore
+    - Jenkinsfile
+    - package.json
+    - package-lock.json

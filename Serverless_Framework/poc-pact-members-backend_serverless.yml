@@ -1,0 +1,166 @@
+# Options
+# --stage  Stage name e.g. dev / prod
+# --region AWS Region to deploy e.g. us-west-2
+
+service: poc-pact-members-api
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage}
+  region: ${opt:region}
+  timeout: 30
+  memorySize: 256
+  logRetentionInDays: 30
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+        - sns:*
+        - s3:*
+      Resource: "*"
+  deploymentBucket:
+    name: poc-pact-members-deployment-${self:provider.region}-${self:custom.awsAccountId}
+
+functions:
+  core:
+    handler: src/api.handler
+    environment: ${self:custom.envVars.${self:provider.stage}}
+    events:
+      - http:
+          path: /version
+          method: get
+          cors: ${self:custom.cors}
+          private: false
+      - http:
+          path: /registration
+          method: post
+          cors: ${self:custom.cors}
+          private: false
+      - http:
+          path: /members
+          method: get
+          cors: ${self:custom.cors}
+          private: false
+      - http:
+          path: /members/{user_id}
+          method: get
+          cors: ${self:custom.cors}
+          private: false
+      - http:
+          path: /async/download_members
+          method: post
+          cors: ${self:custom.cors}
+          private: false
+      - http:
+          path: /async/status/{request_id}
+          method: get
+          cors: ${self:custom.cors}
+          private: false
+  event:
+    handler: src/event.handler
+    environment: ${self:custom.envVars.${self:provider.stage}}
+    timeout: 300
+    events:
+      - sns: ${self:custom.sns.asyncDownloadMembersArn}
+      - s3:
+          bucket: ${self:custom.envVars.${self:provider.stage}.S3_BUCKET}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: batch_aggregation_members/
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  sns:
+    asyncDownloadMembersTopicName: poc-pact-members-async-download-members-${self:provider.stage}
+    asyncDownloadMembersArn: arn:aws:sns:${self:provider.region}:${self:custom.awsAccountId}:${self:custom.sns.asyncDownloadMembersTopicName}
+  awsAccountId: ${file(./deploy/scripts/get-aws-account-id.js)}
+  cors:
+    origin: '*'
+    headers:
+      - Content-Type
+      - X-Amz-Date
+      - Authorization
+      - X-Api-Key
+      - X-Amz-Security-Token
+      - X-Amz-User-Agent
+      - X-Requested-With
+    allowCredentials: false
+  dotenv:
+    logging: false
+  envVars:
+    dev:
+      STAGE: ${self:provider.stage}
+      LOG_LEVEL: debug
+      S3_BUCKET: poc-pact-members-${self:provider.region}-${self:custom.awsAccountId}
+      ASYNC_DOWNLOAD_MEMBERS_TOPIC_ARN: ${self:custom.sns.asyncDownloadMembersArn}
+  serverless-offline:
+    port: 3001
+    host: 0.0.0.0
+  webpack:
+    webpackConfig: ./deploy/webpack.config.js
+    includeModules:
+      forceExclude:
+        - aws-sdk
+
+resources:
+  - Resources:
+
+      ApiGatewayLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+          LogGroupName: /aws/api-gateway/${self:service}-${self:provider.stage}
+          RetentionInDays: ${self:provider.logRetentionInDays} 
+
+      MembersTable:
+        Type: AWS::DynamoDB::Table
+        DeletionPolicy: Retain
+        Properties:
+          TableName: poc-pact-members-${self:provider.stage}
+          AttributeDefinitions:
+            - AttributeName: userId
+              AttributeType: S
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+          BillingMode: PAY_PER_REQUEST
+
+      AsyncOperationsTable:
+        Type: AWS::DynamoDB::Table
+        DeletionPolicy: Retain
+        Properties:
+          TableName: poc-pact-members-async-operations-${self:provider.stage}
+          AttributeDefinitions:
+            - AttributeName: asyncRequestId
+              AttributeType: S
+          KeySchema:
+            - AttributeName: asyncRequestId
+              KeyType: HASH
+          BillingMode: PAY_PER_REQUEST
+
+      LoginHistoryTable:
+        Type: AWS::DynamoDB::Table
+        DeletionPolicy: Retain
+        Properties:
+          TableName: poc-pact-members-login-history-${self:provider.stage}
+          AttributeDefinitions:
+            - AttributeName: userId 
+              AttributeType: S
+            - AttributeName: timestamp
+              AttributeType: S
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          BillingMode: PAY_PER_REQUEST
+
+      AsyncDownloadMembersTopic:
+        Type: AWS::SNS::Topic
+        Properties:
+          TopicName: ${self:custom.sns.asyncDownloadMembersTopicName}

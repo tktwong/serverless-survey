@@ -1,0 +1,77 @@
+service: expatcinema
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-plugin-monorepo
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 's3:PutObject'
+      Resource:
+        - 'arn:aws:s3:::expatcinema-scrapers-output/*'
+    - Effect: 'Allow'
+      Action:
+        - 's3:PutObject'
+      Resource:
+        - 'arn:aws:s3:::expatcinema-public/*'
+  logRetentionInDays: 14
+
+functions:
+  scrapers:
+    handler: handler.scrapers
+    timeout: 300
+    events:
+      - schedule: cron(0 3 * * ? *)
+    environment:
+      DEBUG: '*,-resolve'
+  playground:
+    handler: handler.playground
+  notifySlack:
+    handler: handler.notifySlack
+    environment:
+      SLACK_WEBHOOK: ${env:SLACK_WEBHOOK}
+    events:
+      - cloudwatchLog: '/aws/lambda/expatcinema-dev-scrapers'
+
+resources:
+  Resources:
+    ScrapersOutputBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: expatcinema-scrapers-output
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+    PublicBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: expatcinema-public
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+              MaxAge: 3000
+    PublicBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      DependsOn: PublicBucket
+      Properties:
+        Bucket: expatcinema-public
+        PolicyDocument:
+          Statement:
+            - Principal: '*'
+              Action:
+                - s3:GetObject
+              Effect: Allow
+              Sid: 'AddPerm'
+              Resource: arn:aws:s3:::expatcinema-public/*

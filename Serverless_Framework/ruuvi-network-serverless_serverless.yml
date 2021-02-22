@@ -1,0 +1,605 @@
+# Ruuvi Network Serverless v0.02
+#
+# For full config options: docs.serverless.com
+
+service: ruuvi-network-serverless
+
+plugins:
+  - serverless-dynamodb-autoscaling
+  - serverless-offline
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+
+  writerQueueName: ${self:custom.stage}-ruuvi_network
+  gatewayReceiverLambdaConcurrency: 100 # Separate due to higher requirements
+  lambdaConcurrency: 10
+
+  # Dynamo DB Tables
+  dynamoSensorData: ${self:custom.stage}-SensorData # Main Sensor data
+  dynamoSensorDataReduced: ${self:custom.stage}-SensorDataReduced
+  dynamoGatewayWhitelist: ${self:custom.stage}-GatewayWhitelist
+  dynamoAlerts: ${self:custom.stage}-SensorAlerts
+  sensorProfileBucket: ${self:custom.stage}-sensor-profile-pictures
+  longTermStorageInterval: 900      # seconds between data points
+  rawDataTTL: 10800                 # 10800 = 3h, 7776000 = 3 months
+  verificationShortTokenLength: 4   # Length of the short verification token sent in the e-mail
+
+  sourceEmail: 'otso@ruuvi.com'
+  sourceDomain: 'https://network.ruuvi.com'
+  invitationExpirationInterval: 5  # minutes after requested
+  requireLoginForData: 1           # 1 for ENABLED
+  gatewaySendRate: 60              # every X seconds
+  gatewayEnforceSignature: 0       # 1 for ENABLED
+  gatewayRequestTTL: 10000         # ms
+
+  # Dynamo Auto-Scaling Configuration
+  capacities:
+    - table: DynamoSensorData  # Resource
+      read:
+        minimum: 25       # Minimum read capacity
+        maximum: 1000     # Maximum read capacity
+        usage: 0.2        # Targeted usage percentage
+      write:
+        minimum: 15       # Minimum write capacity
+        maximum: 1000     # Maximum write capacity
+        usage: 0.2        # Targeted usage percentage
+    - table: DynamoSensorDataReduced  # Resource
+      read:
+        minimum: 15       # Minimum read capacity
+        maximum: 100     # Maximum read capacity
+        usage: 0.2        # Targeted usage percentage
+      write:
+        minimum: 15       # Minimum write capacity
+        maximum: 200      # Maximum write capacity
+        usage: 0.2        # Targeted usage percentage
+    - table: DynamoAlerts
+      read:
+        minimum: 25       # Minimum read capacity
+        maximum: 1000     # Maximum read capacity
+        usage: 0.2        # Targeted usage percentage
+      write:
+        minimum: 1        # Minimum write capacity
+        maximum: 10       # Maximum write capacity
+        usage: 0.2        # Targeted usage percentage
+    - table: DynamoGatewayWhitelist
+      read:
+        minimum: 25       # Minimum read capacity
+        maximum: 1000     # Maximum read capacity
+        usage: 0.2        # Targeted usage percentage
+      write:
+        minimum: 1       # Minimum write capacity
+        maximum: 10     # Maximum write capacity
+        usage: 0.2        # Targeted usage percentage
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: ruuvi
+
+  # Defaults
+  stage: ${opt:stage, 'dev'}
+  region: eu-central-1
+  httpApi:
+    cors: true
+
+  # Permissions (Note: These could be more granular per lambda)
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+      Resource: { 'Fn::Join': [':', ['arn:aws:logs', { Ref: 'AWS::Region' }, { Ref: 'AWS::AccountId' }, '*']] }
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource: { 'Fn::Join': [':', ['arn:aws:logs', { Ref: 'AWS::Region' }, { Ref: 'AWS::AccountId' }, 'log-group:/aws/lambda/*writeToDatabase:*']]}
+    - Effect: "Allow"
+      Action:
+        - "sqs:DeleteMessage"
+        - "sqs:ReceiveMessage"
+        - "sqs:SendMessage"
+        - "sqs:GetQueueAttributes"
+      Resource: "arn:aws:sqs:*"
+    - Effect: "Allow"
+      Action:
+        - "sns:Publish"
+      Resource: { Ref: GatewayEventTopic }
+    - Effect: "Allow"
+      Action:
+        - "ec2:CreateNetworkInterface"
+        - "ec2:DescribeNetworkInterfaces"
+        - "ec2:DeleteNetworkInterface"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:DeleteItem"
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:Scan"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:BatchWriteItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:Query"
+      Resource: { 'Fn::Join': [':', ['arn:aws:dynamodb', { Ref: 'AWS::Region' }, { Ref: 'AWS::AccountId' }, 'table/*']] }
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+        - "ses:SendRawEmail"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "arn:aws:s3:::${self:custom.sensorProfileBucket}/*"
+
+# Lambdas
+functions:
+  # Gateway Facing API
+  requestToSQS:
+    handler: GatewayApi/requestToSQS.handler
+    #reservedConcurrency: ${self:custom.gatewayReceiverLambdaConcurrency}
+    events:
+      - httpApi:
+          method: POST
+          path: /record
+    environment:
+      GATEWAY_SEND_RATE: ${self:custom.gatewaySendRate}
+      TARGET_QUEUE: { Ref: GatewayQueue }
+      TARGET_TOPIC: { Ref: GatewayEventTopic }
+      ENFORCE_SIGNATURE: ${self:custom.gatewayEnforceSignature}
+      GATEWAY_REQUEST_TTL: ${self:custom.gatewayRequestTTL}
+      WHITELIST_TABLE_NAME: ${self:custom.dynamoGatewayWhitelist}
+
+
+  writeToDatabase:
+    handler: GatewayApi/writeToDatabase.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - GatewayQueue
+              - Arn
+          batchSize: 10
+    environment:
+      TABLE_NAME: ${self:custom.dynamoSensorData}
+      REDUCED_TABLE_NAME: ${self:custom.dynamoSensorDataReduced}
+      LONG_TERM_STORAGE_INTERVAL: ${self:custom.longTermStorageInterval}
+      RAW_DATA_TTL: ${self:custom.rawDataTTL}
+
+  # User Facing API
+  getSensorData:
+    handler: UserApi/getSensorData.handler
+    events:
+      - httpApi:
+          method: GET
+          path: /get
+          #payload: '2.0'
+    environment:
+      DEBUG: 1
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      TABLE_NAME: ${self:custom.dynamoSensorData}
+      REDUCED_TABLE_NAME: ${self:custom.dynamoSensorDataReduced}
+      RAW_DATA_TTL: ${self:custom.rawDataTTL}
+      REQUIRE_LOGIN: ${self:custom.requireLoginForData}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+      DEFAULT_RESULTS: 15
+      MAX_RESULTS: 10000
+
+  getUserData:
+    handler: UserApi/getUserData.handler
+    #reservedConcurrency: ${self:custom.lambdaConcurrency}
+    events:
+      - httpApi:
+          method: GET
+          path: /user
+          #payload: '2.0'
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+
+  requestRegistration:
+    handler: UserApi/requestRegistration.handler
+    #reservedConcurrency: ${self:custom.lambdaConcurrency}
+    events:
+      - httpApi:
+          method: POST
+          path: /register
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+      INVITATION_EXPIRATION_INTERVAL: ${self:custom.invitationExpirationInterval}
+      SOURCE_EMAIL: ${self:custom.sourceEmail}
+      SOURCE_DOMAIN: ${self:custom.sourceDomain}
+      VERIFICATION_SHORT_TOKEN_LENGTH: ${self:custom.verificationShortTokenLength}
+      INTERNAL_API_KEY: ${ssm:${self:custom.stage}-ruuvi-internal-api-key~true}
+      BASE_API_URL:
+        !Join
+          - ''
+          - - 'https://'
+            - !Ref HttpApi
+            - '.execute-api.'
+            - ${opt:region, self:provider.region}
+            - '.'
+            - !Ref AWS::URLSuffix
+
+  verifyUser:
+    handler: UserApi/verifyUser.handler
+    #reservedConcurrency: ${self:custom.lambdaConcurrency}
+    events:
+      - httpApi:
+          method: GET
+          path: /verify
+          #payload: '2.0'
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+
+  claimSensor:
+    handler: UserApi/claimSensor.handler
+    #reservedConcurrency: ${self:custom.lambdaConcurrency}
+    events:
+      - httpApi:
+          method: POST
+          path: /claim
+          #payload: '2.0'
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+
+  unclaimSensor:
+    handler: UserApi/unclaimSensor.handler
+    #reservedConcurrency: ${self:custom.lambdaConcurrency}
+    events:
+      - httpApi:
+          method: POST
+          path: /unclaim
+          #payload: '2.0'
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+
+  shareSensor:
+    handler: UserApi/shareSensor.handler
+    #reservedConcurrency: ${self:custom.lambdaConcurrency}
+    events:
+      - httpApi:
+          method: POST
+          path: /share
+          #payload: '2.0'
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+      SOURCE_EMAIL: ${self:custom.sourceEmail}
+      SOURCE_DOMAIN: ${self:custom.sourceDomain}
+      TABLE_NAME: ${self:custom.dynamoSensorData}
+
+  unshareSensor:
+    handler: UserApi/unshareSensor.handler
+    #reservedConcurrency: ${self:custom.lambdaConcurrency}
+    events:
+      - httpApi:
+          method: POST
+          path: /unshare
+          #payload: '2.0'
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+      SOURCE_EMAIL: ${self:custom.sourceEmail}
+      SOURCE_DOMAIN: ${self:custom.sourceDomain}
+
+  getSharedSensors:
+    handler: UserApi/getShared.handler
+    #reservedConcurrency: ${self:custom.lambdaConcurrency}
+    events:
+      - httpApi:
+          method: GET
+          path: /shared
+          #payload: '2.0'
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+
+  # Sensor profile + picture updates
+  updateSensor:
+    handler: UserApi/updateSensor.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /update
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+
+  uploadSensorPicture:
+    handler: UserApi/uploadSensorPicture.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /upload
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      SIGNING_SECRET: ${ssm:${self:custom.stage}-ruuvi-signing-secret~true}
+      BUCKET_NAME: ${self:custom.sensorProfileBucket}
+      BUCKET_URL:
+        !Join
+          - ''
+          - - 'https://'
+            - ${self:custom.sensorProfileBucket}
+            - '.s3.'
+            - ${opt:region, self:provider.region}
+            - '.'
+            - !Ref AWS::URLSuffix
+
+  # NOTE: Workaround for CORS preflight requests
+  corsOptions:
+    handler: UserApi/corsHelper.handler
+    events:
+      - httpApi:
+          method: OPTIONS
+          path: /register
+      - httpApi:
+          method: OPTIONS
+          path: /claim
+      - httpApi:
+          method: OPTIONS
+          path: /unclaim
+      - httpApi:
+          method: OPTIONS
+          path: /share
+      - httpApi:
+          method: OPTIONS
+          path: /shared
+      - httpApi:
+          method: OPTIONS
+          path: /unshare
+      - httpApi:
+          method: OPTIONS
+          path: /update
+      - httpApi:
+          method: OPTIONS
+          path: /upload
+      - httpApi:
+          method: OPTIONS
+          path: /verify
+      - httpApi:
+          method: OPTIONS
+          path: /whitelist
+      - httpApi:
+          method: OPTIONS
+          path: /get
+      - httpApi:
+          method: OPTIONS
+          path: /user
+      - httpApi:
+          method: OPTIONS
+          path: /apple-app-site-association
+
+  # INTERNAL API
+  whitelist:
+    handler: InternalApi/whitelist.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /whitelist
+    environment:
+      INTERNAL_API_KEY: ${ssm:${self:custom.stage}-ruuvi-internal-api-key~true}
+      WHITELIST_TABLE_NAME: ${self:custom.dynamoGatewayWhitelist}
+  appleVerification:
+    handler: InternalApi/appleVerification.handler
+    events:
+      - httpApi:
+          method: GET
+          path: /apple-app-site-association
+    environment:
+      APP_ID: ${ssm:apple-app-site-association-id}
+
+  # SERVICES AND MAINTENANCE
+  tokenInvalidator:
+    handler: services/tokenInvalidator.handler
+    events:
+      - schedule:
+          name: ${self:custom.stage}-Access-Token-Clean-Up-Timer
+          description: 'Triggers access token clean up periodically.'
+          rate: rate(1 hour)
+    environment:
+      DATABASE_USERNAME: ${ssm:${self:custom.stage}-ruuvi-db-username~true}
+      DATABASE_PASSWORD: ${ssm:${self:custom.stage}-ruuvi-db-password~true}
+      DATABASE_ENDPOINT: ${ssm:${self:custom.stage}-ruuvi-db-endpoint}
+      DATABASE_NAME: ${ssm:${self:custom.stage}-ruuvi-db-database}
+      MAX_TOKEN_AGE: 180 # Days
+
+# Resources (queues, databases, etc.)
+resources:
+  Resources:
+    GatewayQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.writerQueueName}
+    DynamoSensorData:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.dynamoSensorData}
+        AttributeDefinitions:
+          - AttributeName: SensorId
+            AttributeType: S
+          - AttributeName: MeasurementTimestamp
+            AttributeType: N
+        KeySchema:
+          - AttributeName: SensorId
+            KeyType: HASH
+          - AttributeName: MeasurementTimestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5 # Defaults, using auto-scaling by default
+          WriteCapacityUnits: 5
+        TimeToLiveSpecification:
+          AttributeName: TimeToLive
+          Enabled: TRUE
+    DynamoSensorDataReduced:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.dynamoSensorDataReduced}
+        AttributeDefinitions:
+          - AttributeName: SensorId
+            AttributeType: S
+          - AttributeName: MeasurementTimestamp
+            AttributeType: N
+        KeySchema:
+          - AttributeName: SensorId
+            KeyType: HASH
+          - AttributeName: MeasurementTimestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5 # Defaults, using auto-scaling by default
+          WriteCapacityUnits: 5
+
+    # GATEWAY SNS->SQS Data Flow
+    GatewayEventTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.stage}-RuuviGatewayEventTopic
+    SNSToGatewayQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sns-messages"
+              Effect: Allow
+              Principal: "*"
+              Resource: !GetAtt
+                - GatewayQueue
+                - Arn
+              Action: "SQS:SendMessage"
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref GatewayEventTopic
+        Queues:
+          - Ref: GatewayQueue
+    DatabaseWriterSubscription:
+      Type: 'AWS::SNS::Subscription'
+      Properties:
+        TopicArn: !Ref GatewayEventTopic
+        Endpoint: !GetAtt
+          - GatewayQueue
+          - Arn
+        Protocol: sqs
+        RawMessageDelivery: 'true'
+
+    # Alert resources and policies
+    GatewayAlertHandlerQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.stage}-RuuviAlertHandlerQueue
+    snsToAlertQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sns-messages"
+              Effect: Allow
+              Principal: "*"
+              Resource: !GetAtt
+                - GatewayAlertHandlerQueue
+                - Arn
+              Action: "SQS:SendMessage"
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref GatewayEventTopic
+        Queues:
+          - Ref: GatewayAlertHandlerQueue
+    AlertQueueSubscription:
+      Type: 'AWS::SNS::Subscription'
+      Properties:
+        TopicArn: !Ref GatewayEventTopic
+        Endpoint: !GetAtt
+          - GatewayAlertHandlerQueue
+          - Arn
+        Protocol: sqs
+        RawMessageDelivery: 'true'
+        FilterPolicy: "{\"sensors\": [\"alert\", \"demo\"]}"
+    DynamoGatewayWhitelist:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.dynamoGatewayWhitelist}
+        AttributeDefinitions:
+          - AttributeName: GatewayId
+            AttributeType: S
+#          - AttributeName: DeviceId
+#            AttributeType: S
+#          - AttributeName: DeviceAddr
+#            AttributeType: S
+        KeySchema:
+          - AttributeName: GatewayId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5 # Defaults, using auto-scaling by default
+          WriteCapacityUnits: 5
+    DynamoAlerts:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.dynamoAlerts}
+        AttributeDefinitions:
+          - AttributeName: SensorId
+            AttributeType: S
+#          - AttributeName: MetricName
+#            AttributeType: S
+#          - AttributeName: Limit
+#            AttributeType: N
+        KeySchema:
+          - AttributeName: SensorId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5 # Defaults, using auto-scaling by default
+          WriteCapacityUnits: 5
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.sensorProfileBucket}
+        AccessControl: PublicRead
+        CorsConfiguration:
+          CorsRules:
+          - AllowedMethods:
+            - GET
+            - PUT
+            - POST
+            - HEAD
+            AllowedOrigins:
+            - "*"
+            AllowedHeaders:
+            - "*"

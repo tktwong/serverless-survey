@@ -1,0 +1,61 @@
+service: cyberstaffing-api-auth
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+  - serverless-dynamodb-local
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  region: af-south-1
+  profile: classifydepl
+  apiGateway:
+    binaryMediaTypes:
+      - 'multipart/form-data'
+  environment:
+    TABLE_USERS: ${self:custom.UsersTable.name}
+    JWT_SECRET: e9t/9Wuy7Dwf4yh2oz8+lTShfvg+mzaBcxvoAKcND7KFT1
+  iamRoleStatements:
+    - ${file(resources/iam/IAM_UsersTable.yml):IAMUsersTable}
+
+functions:
+  app:
+    handler: wsgi_handler.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+  getUser:
+    handler: wsgi_handler.handler
+    events:
+      - http: 'GET /users/me'
+  createUser:
+    handler: wsgi_handler.handler
+    events:
+      - http: 'POST /users'
+  loginUser:
+    handler: wsgi_handler.handler
+    events:
+      - http: 'POST /users/login'
+
+
+resources:
+  Resources:
+    UsersTable: ${file(resources/dynamodb/UsersTable.yml):UsersTable}
+
+custom:
+  wsgi:
+    app: src.auth.app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: non-linux
+  tableName: 'users-table-${self:provider.stage}'
+  dynamodb:
+    start:
+      migrate: true
+    stages:
+      - dev
+  UsersTable:
+    arn: !GetAtt UsersTable.Arn
+    name: !Ref UsersTable

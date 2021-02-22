@@ -1,0 +1,75 @@
+service: aarpai-middleware-lexbot
+frameworkVersion: ">=1.2.0 <2.0.0"
+plugins:
+  - deploy-lexbot
+  - deploy-dynamodb
+custom:
+  defaultStage: stage
+  stage: ${opt:stage, self:custom.defaultStage}
+  config: ${file(env-vars/deploy-${self:custom.stage}.yml)}
+  lambda_environment: ${file(env-vars/lambda-environment.yml)}
+  dynamodb: ${file(./lib/Databases/index.js):all}
+provider:
+  name: aws
+  runtime: nodejs6.10
+  role: ${self:custom.config.HEALTH_CARE_TOOL_LAMBDA_ROLE}
+  stage: ${self:custom.stage}
+  profile: ${self:custom.config.PROFILE}
+  region: us-east-1
+  environment: ${self:custom.lambda_environment}
+  memorySize: 256
+  timeout: 30
+  versionFunctions: false # Optional function versioning
+
+package:
+  individually: true
+exclude:
+  - .gitignore
+  - .jshintrc
+  - .npmignore
+  - .env
+  - LexStack/**
+  - env-vars/**
+  - context.json
+  - event-data/**
+  - data/**
+  - deploy.env
+  - Gruntfile.js
+  - policy-document.txt
+  - README.md
+
+functions:
+  HealthCareTool:
+    handler: lib/Lambda/IntentResolution/handlePremiumQuery.handler
+    name: HealthCareTool
+    description: Calculate health care premium increase for proposed senate bill 2017
+
+resources:
+  Resources: 
+    HealthCarePremiumTable:
+      Type: AWS::DynamoDB::Table
+      Properties: ${self:custom.dynamodb.HealthCarePremiumTable.meta}
+    aarpAI: 
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /service-role/
+        RoleName: aarpAI
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: LambdaLoggingCapability
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow # note that these rights are given in the default policy and are required if you want logs out of your lambda(s)
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: arn:aws:logs:${self:provider.region}:${self:custom.config.OWNER_ID}:log-group:/aws/lambda/*:*:*

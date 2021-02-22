@@ -1,0 +1,63 @@
+service: code-challange-api
+custom:
+  stage:  ${opt:stage, self:provider.stage}
+  defaultProfile: default
+  defaultRegion: ap-northeast-1
+  logRetentionInDays:
+    development: "14"  # stage[development]は14日
+    production: "90"   # stage[production]は90日
+    default: "3"       # stageが見つからなかったらこれにfallbackするために設定
+  memorySize:
+    development: 128   # stage[development]は256M
+    production: 512    # stage[production]は512M
+    default: 128       # stageが見つからなかったらこれにfallbackするために設定
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  timeout: 30
+  stage: development
+  memorySize: ${self:custom.memorySize.${self:custom.stage}, self:custom.memorySize.default}
+  profile: ${opt:profile, self:custom.defaultProfile}
+  region: ${opt:region, self:custom.defaultRegion}
+  deploymentBucket: serverless.${self:provider.region}.hideokamoto.deploys
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetItem"
+        - "dynamodb:Query"
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/DepartureWeekday-inbound"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/DepartureWeekday-outbound"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/DepartureHoliday-inbound"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/DepartureHoliday-outbound"
+
+package:
+  exclude:
+    - tests/**
+    - .DS_Store
+    - circle.yml
+    - package.json
+    - event.json
+    - .git/**
+    - .serverless/**
+    - .editorconfig
+    - .eslintrc.yml
+    - coverage/**
+
+functions:
+  departure:
+    handler: handler.departure
+    events:
+      - http:
+          path: departure/{lineName}/{station}/{lineType}
+          method: get
+
+resources:
+  Resources:
+    DepartureLogGroup:
+      Properties:
+        RetentionInDays: ${self:custom.logRetentionInDays.${self:custom.stage}, self:custom.logRetentionInDays.default}
+
+plugins:
+  - serverless-prune-plugin

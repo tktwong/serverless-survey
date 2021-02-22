@@ -1,0 +1,377 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: backend-api # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+# Use serverless-webpack plugin to transpile ES6/ES7
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+# Enable auto-packing of external modules
+custom:
+  webpackIncludeModules: true
+  serverless-offline:
+    port: 9487
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${opt:stage}
+  # apiKeys:
+  #   - ${env:MY_API_KEY}
+  environment:
+    VOLUNTEER_USERS_DYNAMODB_TABLE: "volunteer.users"
+    VOLUNTEER_BILLS_DYNAMODB_TABLE: "volunteer.bills"
+    VOLUNTEER_BILLTYPES_DYNAMODB_TABLE: "volunteer.billTypes"
+    VOLUNTEER_BILLACTIONS_DYNAMODB_TABLE: "volunteer.billActions"
+    VOLUNTEER_BILLVERSIONS_DYNAMODB_TABLE: "volunteer.billVersions"
+    VOLUNTEER_BILLCATEGORIES_DYNAMODB_TABLE: "volunteer.billCategories"
+    VOLUNTEER_ROLES_DYNAMODB_TABLE: "volunteer.roles"
+    VOLUNTEER_PERSONS_DYNAMODB_TABLE: "volunteer.persons"
+    VOLUNTEER_TASKS_DYNAMODB_TABLE: "volunteer.tasks"
+    VOLUNTEER_SUBMISSIONS_DYNAMODB_TABLE: "volunteer.submissions"
+    VOLUNTEER_BILLDOWNLOADTASK_DYNAMODB_TABLE: "volunteer.billDownloadTask"
+    VOLUNTEER_BILLS_S3_BUCKET: "volunteer.bills"
+    DB_CONFIG: "remoteMongodb"
+    MY_API_KEY: ""
+    CURRENT_STAGE: ${opt:stage}
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+        - dynamodb:BatchGetItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+    - Effect: "Allow"
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:DeleteObject
+        - s3:PutObjectAcl
+      Resource: "arn:aws:s3:::*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /bill
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+
+  billMgmt-bills:
+    handler: functions/private/billManagement/billHandler.main
+    events:
+      - http:
+          path: congressional/bills
+          method: get
+          cors: true
+      - http:
+          path: congressional/bills/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+      - http:
+          path: congressional/bills/search/{q}
+          method: get
+          request:
+            parameters:
+              paths:
+                q: true
+          cors: true
+
+  billMgmt-billCategories:
+    handler: functions/private/billManagement/billCategoryHandler.main
+    events:
+      - http:
+          path: congressional/billCategories
+          method: get
+          cors: true
+      - http:
+          path: congressional/billCategories/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+
+  billMgmt-roles:
+    handler: functions/private/billManagement/roleHandler.main
+    events:
+      - http:
+          path: congressional/roles
+          method: get
+          cors: true
+      - http:
+          path: congressional/roles/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+      - http:
+          path: congressional/roles/person/{personId}
+          method: get
+          request:
+            parameters:
+              paths:
+                personId: true
+          cors: true
+      - http:
+          path: congressional/roles/person/search/{q}
+          method: get
+          request:
+            parameters:
+              paths:
+                q: true
+          cors: true
+      - http:
+          path: congressional/roles/state/{state}
+          method: get
+          request:
+            parameters:
+              paths:
+                state: true
+          cors: true
+      - http:
+          path: congressional/roles/congress/{congress}
+          method: get
+          request:
+            parameters:
+              paths:
+                congress: true
+          cors: true
+      - http:
+          path: congressional/roles/congress/{congress}/state/{state}
+          method: get
+          request:
+            parameters:
+              paths:
+                congress: true
+                state: true
+          cors: true
+      - http:
+          path: congressional/roles/state/{state}/congress/{congress}
+          method: get
+          request:
+            parameters:
+              paths:
+                congress: true
+                state: true
+          cors: true
+
+  billMgmt-tags:
+    handler: functions/private/billManagement/tagHandler.main
+    events:
+      - http:
+          path: congressional/tags
+          method: get
+          cors: true
+      - http:
+          path: congressional/tags/{tag}
+          method: get
+          request:
+            parameters:
+              paths:
+                tag: true
+          cors: true
+      - http:
+          path: congressional/tags/search/{q}
+          method: get
+          request:
+            parameters:
+              paths:
+                q: true
+          cors: true
+
+  congGov-parse:
+    handler: functions/private/congressGovAgent/congressGovHandler.main
+    events:
+      - http:
+          path: congressGov/parseText
+          method: get
+          cors: true
+          authorizer: aws_iam
+      - http:
+          path: congressGov/parseText
+          method: post
+          cors: true
+          authorizer: aws_iam
+      - http:
+          path: congressGov/parseText
+          method: put
+          cors: true
+          authorizer: aws_iam
+      - http:
+          path: congressGov/parseAllInfo
+          method: get
+          cors: true
+          authorizer: aws_iam
+      - http:
+          path: congressGov/parseAllInfo
+          method: post
+          cors: true
+          authorizer: aws_iam
+      - http:
+          path: congressGov/parseAllInfo
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  cronjobs:
+    handler: functions/events/cronjobs/dailySync.main
+    timeout: 600
+    events:
+      - schedule: cron(0 12 * * ? *) # Run at 12:00 pm (UTC) every day
+
+  googleApi:
+    handler: functions/private/googleApi/googleApiHandler.main
+    events:
+      - http:
+          path: googleApi/queryBillSheet
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  subscription:
+    handler: functions/private/sendGrid/sendGridApiHandler.main
+    events:
+      - http:
+          path: subscribe/newsletter
+          method: post
+          cors: true
+          private: true
+      - http:
+          path: unsubscribe/{list}
+          method: get
+          cors: true
+
+  donation:
+    handler: functions/private/stripe/stripeApiHandler.main
+    events:
+      - http:
+          path: stripe/charge
+          method: post
+          cors: true
+          private: true
+
+  articleSnippets:
+    handler: functions/private/articleSnippets/articleSnippetsHandler.main
+    events:
+      - http:
+          path: articles/list/{site}
+          method: get
+          request:
+            parameters:
+              path:
+                site: true
+              querystrings:
+                before: false
+                limit: false
+          cors: true
+
+  v2Ids:
+    handler: functions/private/v2/handlers.handleIds
+    events:
+      - http:
+          path: v2
+          method: get
+          request:
+            parameters:
+              querystrings:
+                id: true
+                field: false
+                lang: false
+          cors: true
+
+  v2Bills:
+    handler: functions/private/v2/handlers.handleBills
+    events:
+      - http:
+          path: v2/bills
+          method: get
+          request:
+            parameters:
+              querystrings:
+                congress: true
+                sponsorId: false
+                cosponsorId: false
+                tagId: false
+                field: false
+                lang: false
+          cors: true
+
+  v2Persons:
+    handler: functions/private/v2/handlers.handlePersons
+    events:
+      - http:
+          path: v2/persons
+          method: get
+          request:
+            parameters:
+              querystrings:
+                congress: true
+                state: false
+                district: false
+                billId: false
+                field: false
+                lang: false
+          cors: true
+
+  v2ArticleSnippets:
+    handler: functions/private/v2/handlers.handleArticleSnippets
+    events:
+      - http:
+          path: v2/article_snippets/{site}
+          method: get
+          request:
+            parameters:
+              path:
+                site: true
+              querystrings:
+                before: false
+                limit: false
+                field: false
+          cors: true

@@ -1,0 +1,330 @@
+service:
+  name: sls-todo-app-v2
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-aws-documentation
+  - serverless-reqvalidator-plugin
+  - serverless-plugin-tracing
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-plugin-canary-deployments
+
+package:
+  individually: true
+
+custom:
+
+  topicName: todo-topic-${self:provider.stage}
+  topicPublisher: sls-todo-publisher-${self:provider.stage}
+
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+    packagerOptions:
+      scripts:
+        - rm -rf node_modules/aws-sdk
+
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: ToDo API
+        description: serverless api for ToDo application
+    models:
+      - name: CreateTodo
+        contentType: application/json
+        schema: ${file(validators/create-todo-request.json)}
+      - name: UpdateTodo
+        contentType: application/json
+        schema: ${file(validators/update-todo-request.json)}
+      - name: TodoRequestSearch
+        contentType: application/json
+        schema: ${file(src/requests/search-todo-request.json)}
+  
+  serverless-offline:
+    port: 3003
+  
+  dynamobd:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    stages: 
+      - dev
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  environment:
+    TODO_TABLE: todo-${self:provider.stage}
+    IMAGE_BUCKET: udc-serverless-sat-todos-${self:provider.stage}
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    USER_ID_INDEX: userId
+    AUTH_0_SECRET_ID: Auth0Secret-${self:provider.stage}
+    AUTH_0_SECRET_FIELD: auth0Secret
+    SIGNED_URL_EXPIRATION: 300
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}
+    - Effect: Allow
+      Action:
+      - s3:PutObject
+      - s3:GetObject
+      Resource: arn:aws:s3:::${self:provider.environment.IMAGE_BUCKET}/*
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODO_TABLE}/index/${self:provider.environment.USER_ID_INDEX}
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource: !Ref Auth0Secret
+    - Effect: Allow
+      Action:
+        - kms:Decrypt
+      Resource: !GetAtt KMSKey.Arn
+
+
+functions:
+  
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetTodos:
+    handler: src/lambda/http/getTodos.handler
+    events:
+      - http:
+          method: get
+          path: todos
+          authorizer: Auth
+          cors: true
+  
+  DeleteTodo:
+    handler: src/lambda/http/deleteTodo.handler
+    events:
+      - http:
+          method: delete
+          path: todos/{todoId}
+          authorizer: Auth
+          cors: true
+
+  CreateTodo:
+    handler: src/lambda/http/createTodo.handler
+    events:
+      - http:
+          method: post
+          path: todos
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: create new ToDo Item
+            description: create and insert item into todo table
+            requestModels:
+              'application/json': CreateTodo
+
+  UpdateTodo:
+    handler: src/lambda/http/updateTodo.handler
+    events:
+      - http:
+          method: patch
+          path: todos/{todoId}
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: update todo item
+            description: updates a todo item
+            requestModels:
+              'application/json': UpdateTodo
+
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: todos/{todoId}/attachment
+          authorizer: Auth
+          cors: true
+
+  SyncWithElasticsearch:
+    handler: src/lambda/dynamodb/elasticSearchSync.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt TodoDynamoDbTable.StreamArn
+    environment:
+      ES_ENDPOINT: !GetAtt TodoSearch.DomainEndpoint
+      SNS_ARN:
+        Fn::Join:
+          - ':'
+          - - arn:aws:sns
+            - Ref: AWS::Region
+            - Ref: AWS::AccountId
+            - ${self:custom.topicName}
+      TOPIC_NAME: ${self:custom.topicName}
+
+  SearchToDo:
+    handler: src/lambda/http/searchTodo.handler
+    events:
+      - http:
+          method: post
+          path: todos/search/
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Search Todos by values
+            description: search Todo contents and display results
+            requestModels:
+              'application/json': TodoRequestSearch
+
+
+resources:
+  Resources:
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET, OPTIONS, POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+    TodoDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: todoId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: todoId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.USER_ID_INDEX}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.TODO_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+
+    TodoBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.IMAGE_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+                - POST
+                - PUT
+                - DELETE
+                - HEAD
+              AllowedOrigins:
+                - "*"
+
+    TodosTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Todo topic
+        TopicName: ${self:custom.topicName}
+
+    KMSKey:
+      Type: AWS::KMS::Key
+      Properties:
+        Description: KMS key to encrypt Auth0 secret
+        KeyPolicy:
+          Version: '2012-10-17'
+          Id: key-default-1
+          Statement:
+            - Sid: Allow administration of the key
+              Effect: Allow
+              Principal:
+                AWS:
+                  Fn::Join:
+                  - ':'
+                  - - 'arn:aws:iam:'
+                    - Ref: AWS::AccountId
+                    - 'root'
+              Action:
+                - 'kms:*'
+              Resource: '*'
+
+    KMSKeyAlias:
+      Type: AWS::KMS::Alias
+      Properties:
+        AliasName: alias/auth0Key-${self:provider.stage}
+        TargetKeyId: !Ref KMSKey
+
+    Auth0Secret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:provider.environment.AUTH_0_SECRET_ID}
+        Description: Auth0 secret
+        KmsKeyId: !Ref KMSKey
+
+    TodoSearch:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        ElasticsearchVersion: '6.3'
+        DomainName: todo-search-${self:provider.stage}
+        ElasticsearchClusterConfig:
+          DedicatedMasterEnabled: false
+          InstanceCount: '1'
+          ZoneAwarenessEnabled: false
+          InstanceType: t2.small.elasticsearch
+        EBSOptions:
+          EBSEnabled: true
+          Iops: 0
+          VolumeSize: 10
+          VolumeType: 'gp2'
+        AccessPolicies:
+          Version: '2012-10-17'
+          Statement:
+            -
+              Effect: Allow
+              Principal:
+                AWS: '*'
+              Action: 'es:*'
+              Resource: '*'
+
+

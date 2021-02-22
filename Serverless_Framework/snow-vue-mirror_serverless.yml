@@ -1,0 +1,200 @@
+plugins:
+  - serverless-aws-documentation
+  # - serverless-export-swagger
+service: wwt-snow-vue-python
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  deploymentBucket:
+    name: wwt-snow-vue-deploy
+  resourcePolicy:
+    - Effect: Allow
+      Principal: '*'
+      Action: execute-api:Invoke
+      Resource:
+        - execute-api:/*/*/*
+      Condition:
+        IpAddress:
+          aws:SourceIp:
+            - '65.158.17.194'
+            - '198.200.139.89'
+package:
+  individually: true
+  exclude:
+    - package-lock.json
+    - package.json
+    - README.md
+    - weather/keystone_weather_test.py
+    - swagger.yml
+    - config.py
+    - __init__.py
+    - swagger/**
+custom:
+  defaultStage: dev
+  profiles:
+    dev: dev
+    prod: prod
+    test: dev
+  # swaggerDestinations:
+  #   s3BucketName: 'snowvue-docs'
+  #   s3KeyName: 'swagger/SwaggerDocumentation.yml'
+  #   acl: 'private'
+  documentation:
+    models:
+      - name: 'ErrorResponse'
+        description: 'This is an error'
+        contentType: 'application/json'
+        schema:
+          type: 'object'
+          properties:
+            status_code:
+              type: 'integer'
+            message:
+              type: 'string'
+      - name: 'TrafficResponse'
+        description: 'Model for the traffic response'
+        contentType: 'application/json'
+        schema:
+          type: 'object'
+          properties:
+            TrafficReport:
+              type: 'object'
+              properties:
+                travel_time:
+                  type: 'object'
+                  properties:
+                    hour:
+                      type: 'string'
+                    minute:
+                      type: 'string'
+                start_location:
+                  type: 'string'
+                destination:
+                  type: 'string'
+      - name: 'TrafficErrorResponse'
+        description: 'Model for the traffic error response'
+        contentType: 'application/json'
+        schema:
+          type: 'object'
+          properties:
+            status_code:
+              type: 'integer'
+            message:
+              type: 'string'
+      - name: 'WeatherErrorResponse'
+        description: 'Error for weather data'
+        contentType: 'application/json'
+        schema:
+          type: 'object'
+          properties:
+            status_code:
+              type: 'integer'
+            message:
+              type: 'string'
+      - name: 'WeatherResponse'
+        description: 'Model for weather data'
+        contentType: 'application/json'
+        schema:
+          type: 'object'
+          properties:
+            error:
+              type: null
+            overnight:
+              type: "object"
+                properties:
+                  inches:
+                    type: "string"
+                  centimeters:
+                    type: "string"
+            twentyFourHour:
+              type: "object"
+                properties:
+                  inches:
+                    type: "string"
+                  centimeters:
+                    type: "string"
+            timestamp:
+              type: "string"
+            resort:
+              type: "string"
+functions:
+  weather:
+    handler: weather/weather_handler.weatherHandler
+    events:
+      - http:
+          path: weather
+          cors: true
+          method: get
+          documentation:
+            summary: 'Request resort weather data, add timestamp of retrieval, and reformat data for response'
+            description: 'Retrieve weather for particular resort'
+            methodResponses:
+              - statusCode: '200'
+                responseBody:
+                  description: 'Return current weather data with UTC ISO formatted timestamp or status code and error message'
+                responseModels:
+                  'application/json': 'WeatherResponse'
+              - statusCode: '204'
+                responseBody:
+                  description: 'Successful request with incorrect data or 3rd party error'
+                responseModels:
+                  'application/json': 'WeatherErrorResponse'
+              - statusCode: '400'
+                responseModels:
+                  'application/json': 'ErrorResponse'
+    package:
+      exclude:
+        - traffic/**
+        # - swagger/**
+    role: arn:aws:iam::963760208122:role/lambda_cli_role
+  cron_weather:
+    handler: weather/save_weather_handler.saveWeatherHandler
+    events:
+      - schedule:
+        name: cron_weather
+        description: 'CRON task that polls for weather data at midnight, 6AM - 9AM, noon, and 6PM and insert data into dynamoDB table'
+        rate: cron(0 0,6,7,8,9,12,6 * * *)
+        enabled: false
+    role: arn:aws:iam::963760208122:role/lambda_cli_role
+
+  traffic:
+    handler: traffic/traffic_handler.trafficHandler
+    events:
+      - http:
+          method: get
+          cors: true
+          path: traffic
+          documentation:
+            summary: 'Retrieve traffic estimate'
+            description: 'Retrieve traffic estimate from location. Defaults to zipcode 80202'
+            queryParams:
+              - name: 'location'
+                description: "User's five digit zipcode"
+            methodResponses:
+              - statusCode: '200'
+                responseBody:
+                  description: 'Return estimated travel duration or error status code with custom error message'
+                responseModels:
+                  'application/json': 'TrafficResponse'
+              - statusCode: '204'
+                responseBody:
+                  description: 'Successful request with incorrect data or 3rd party error'
+                responseModels:
+                  'application/json': 'TrafficErrorResponse'
+              - statusCode: '400'
+                responseModels:
+                  'application/json': 'ErrorResponse'
+    package:
+      exclude:
+        - weather/**
+        # - swagger/**
+    role: arn:aws:iam::963760208122:role/lambda_cli_role
+  # swagger:
+  #   handler: swagger.swaggerHandler
+  #   events:
+  #     - http:
+  #         method: get
+  #         cors: true
+  #         path: swagger/

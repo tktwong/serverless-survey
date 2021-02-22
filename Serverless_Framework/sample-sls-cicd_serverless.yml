@@ -1,0 +1,79 @@
+org: experiment
+app: sample-sls-cicd
+
+service:
+  name: sample-sls-cicd
+
+provider:
+  name: aws
+  region: ap-northeast-1
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${self:custom.profiles.${opt:stage, self:custom.defaultStage}}
+  runtime: python3.8
+  stackName: sample-sls-cicd
+  apiName: sample-sls-cicd
+  logRetentionInDays: 7
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+        - lambda:GetLayerVersion
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "*"
+  environment:
+    DEFAULT_DATA_LIMIT: "20"
+    ENV: ${self:custom.environments.ENV}
+
+custom:
+  defaultStage: dev
+  profiles:
+    dev: sls-dev
+    stg: sls-stg
+  environments: ${file(./config/config.${opt:stage, self:custom.defaultStage}.yml)}
+
+package:
+  exclude:
+    - .git/**
+    - .venv/**
+    - .pytest_cache/**
+    - config/**
+    - sample/**
+    - tests
+    - README.md
+
+functions:
+  ListItems:
+    name: list_items
+    handler: src/handlers/list_items.handler
+    description: "商品一覧"
+    events:
+      - http:
+          path: /items
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                limit: false
+                lastKey: false
+
+resources:
+  Resources:
+    ItemTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: Items
+        AttributeDefinitions:
+          - { AttributeName: item_id, AttributeType: S }
+        KeySchema:
+          - { AttributeName: item_id, KeyType: HASH }
+        BillingMode: PAY_PER_REQUEST

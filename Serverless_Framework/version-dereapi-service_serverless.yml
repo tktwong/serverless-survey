@@ -1,0 +1,106 @@
+service: dereapi-version-service
+
+plugins:
+  - serverless-webpack
+  - serverless-domain-manager
+  - serverless-offline #serverless-offline needs to be last in the list
+
+custom:
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    includeModules: true
+    packager: 'npm'
+  serverless-offline:
+    port: 4000
+  domains:
+    prd: ${env:DEREAPI_PROD_URL}
+    dev: ${env:DEREAPI_DEV_URL}
+  customDomain:
+    domainName: ${self:custom.domains.${self:provider.stage}}
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, env:AWS_STAGE, 'dev'}
+  region: ${opt:region, env:AWS_REGION, 'ap-southeast-1'}
+  environment:
+    REGION: ${self:provider.region}
+    DYNAMODB_TABLE: dereapi-version-info-dynamodb
+    HOOK_TABLE: dereapi-version-hook-dynamodb
+    GPLAY_ID: 'jp.co.bandainamcoent.BNEI0242'
+    ASTORE_ID: '1016318735'
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DescribeTable
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DescribeTable
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.HOOK_TABLE}"
+  versionFunctions: false  
+
+functions:
+  appver:
+    handler: src/appVersion.handler
+    name: ${self:provider.stage}-${self:service}-lambda
+    memorySize: 128
+    timeout: 20
+    events:
+      - http:
+          path: appver
+          method: get
+          cors: true
+  updatever:
+      handler: src/updateAppVersion.handler
+      name: ${self:provider.stage}-${self:service}-update-lambda
+      memorySize: 128
+      timeout: 60
+      events:
+        - schedule: 
+            rate: rate(1 hour)
+            enabled: true
+
+
+resources:
+  Resources:
+    versionTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    hookTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.HOOK_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

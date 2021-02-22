@@ -1,0 +1,86 @@
+service: sls-vpc-example
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  versionFunctions: false
+  logRetentionInDays: 1
+  deploymentBucket:
+    serverSideEncryption: AES256
+    blockPublicAccess: true
+  endpointType: regional
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: "1"
+    NODE_ENV: development
+  logs:
+    restApi:
+      accessLogging: false
+      executionLogging: false
+      fullExecutionData: false
+      roleManagedExternally: true
+
+plugins:
+  - serverless-vpc-plugin
+  - serverless-webpack
+
+package:
+  individually: true
+  excludeDevDependencies: true
+
+custom:
+  secretName: "rds-db-credentials/${self:service}/${self:provider.stage}"
+  databaseName: slsvpcexample
+  vpcConfig:
+    cidrBlock: "10.0.0.0/16"
+    createDbSubnet: true
+    createNatInstance: true
+    createParameters: true
+    zones:
+      - us-east-1a
+      - us-east-1b
+    services:
+      - secretsmanager
+      - rds-data
+      - s3
+      - elasticfilesystem
+    subnetGroups:
+      - rds
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+    packager: npm
+
+functions:
+  example:
+    handler: index.handler
+    fileSystemConfig:
+      localMountPath: /mnt/efs0
+      arn:
+        "Fn::GetAtt": "EFSAccessPoint.Arn"
+    description: Example Handler
+    dependsOn:
+      - EFSMountTarget1
+      - EFSMountTarget2
+    role: ExampleLambdaRole
+    tracing: Active
+    environment:
+      SECRET_ARN:
+        Ref: DBSecret
+      RESOURCE_ARN:
+        "Fn::Join":
+          - ":"
+          - - "arn:aws:rds"
+            - Ref: "AWS::Region"
+            - Ref: "AWS::AccountId"
+            - "cluster:${self:service}-${self:provider.stage}"
+      DATABASE_NAME: ${self:custom.databaseName}
+      SCHEMA_NAME: public
+
+resources:
+  - ${file(resources/iam_cf.yml)}
+  - ${file(resources/efs_cf.yml)}
+  - ${file(resources/rds_cf.yml)}
+  - ${file(resources/secretsmanager_cf.yml)}

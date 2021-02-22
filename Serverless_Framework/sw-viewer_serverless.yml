@@ -1,0 +1,108 @@
+service:
+  name: sw-proxy-service
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-appsync-plugin
+  - serverless-webpack
+
+provider:
+  name: aws
+  region: eu-west-1
+  runtime: nodejs8.10
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "lambda:invokeFunction"
+      Resource:
+        - "*"
+
+functions:
+  GetPeopleByName:
+    handler: src/handlers/get-people-by-name/get-people-by-name.handler
+    name: get-people-by-name
+  GetPlanetByHomeworld:
+    name: get-data-by-url
+    handler: src/handlers/get-data-by-url/get-data-by-url.handler
+  GetFilms:
+    name: get-data-by-urls
+    handler: src/handlers/get-data-by-urls/get-data-by-urls.handler
+
+custom:
+  appSync:
+    name: SW-proxy
+    authenticationType: API_KEY
+    serviceRole: AppSyncRole
+    schema: src/schema.graphql
+    mappingTemplatesLocation: src/mapping-templates
+    mappingTemplates:
+      - dataSource: GetPeopleByName
+        type: Query
+        field: getPeopleByName
+        request: "get-people-by-name/request-mapping-template.vtl"
+        response: "get-people-by-name/response-mapping-template.vtl"
+      - dataSource: GetPlanetByHomeworld
+        type: Person
+        field: homeworld
+        request: "get-planet-by-homeworld/request-mapping-template.vtl"
+        response: "get-planet-by-homeworld/response-mapping-template.vtl"
+      - dataSource: GetFilms
+        type: Person
+        field: films
+        request: "get-films/request-mapping-template.vtl"
+        response: "get-films/response-mapping-template.vtl"
+      - dataSource: GetFilms
+        type: Person
+        field: species
+        request: "get-species/request-mapping-template.vtl"
+        response: "get-species/response-mapping-template.vtl"
+    dataSources:
+      - type: AWS_LAMBDA
+        name: GetPeopleByName
+        description: 'Lambda DataSource'
+        config:
+          functionName: GetPeopleByName
+          lambdaFunctionArn: arn:aws:lambda:eu-west-1:928257710336:function:get-people-by-name
+          serviceRoleArn: { Fn::GetAtt: [AppSyncRole, Arn] }
+      - type: AWS_LAMBDA
+        name: GetPlanetByHomeworld
+        description: 'Lambda DataSource'
+        config:
+          functionName: GetPlanetByHomeworld
+          lambdaFunctionArn: arn:aws:lambda:eu-west-1:928257710336:function:get-planet-by-homeworld
+          serviceRoleArn: { Fn::GetAtt: [AppSyncRole, Arn] }
+      - type: AWS_LAMBDA
+        name: GetFilms
+        description: 'Lambda DataSource'
+        config:
+          functionName: GetFilms
+          lambdaFunctionArn: arn:aws:lambda:eu-west-1:928257710336:function:get-films
+          serviceRoleArn: { Fn::GetAtt: [AppSyncRole, Arn] }
+
+resources:
+  Resources:
+    AppSyncRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: AppSyncRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          -
+            PolicyName: "Lambda-${self:custom.appSync.serviceRole}-Policy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "lambda:invokeFunction"
+                  Resource: "*"

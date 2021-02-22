@@ -1,0 +1,81 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: email-service
+app: email-service
+org: svetlanaant97
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "lambda:InvokeFunction"
+      Resource: "arn:aws:lambda:${self:provider.region}:*:function:${self:service}*"
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+      Resource: "arn:aws:sqs:${self:provider.region}:*:*"
+  environment:
+    STAGE: ${self:custom.stage}
+    EMAIL_QUEUE_URL: https://sqs.us-east-1.amazonaws.com/157429775587/EmailQueue
+    EMAIL_SMTP: ${ssm:/xml/${self:custom.stage}/email/smtp}
+    EMAIL_LOGIN: ${ssm:/xml/${self:custom.stage}/email/login}
+    EMAIL_PASSWORD: ${ssm:/xml/${self:custom.stage}/email/password}
+
+plugins:
+  - serverless-offline
+  - serverless-offline-ssm
+  - serverless-python-requirements
+
+functions:
+  email_sqs:
+    handler: src.service.handleEmail
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - EmailQueue
+              - Arn
+          batchSize: 1
+  email:
+    handler: src.email.handle
+    events:
+      - http:
+          path: email
+          method: post
+          cors: true
+  hello:
+    handler: handler.hello
+
+package:
+  exclude:
+    - node_modules/**
+
+resources:
+  Resources:
+    EmailQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "EmailQueue"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  serverless-offline-ssm:
+    stages:
+      - offline
+  pythonRequirements:
+    dockerizePip: non-linux

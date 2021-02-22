@@ -1,0 +1,61 @@
+service: jobscrape
+
+plugins:
+  - serverless-python-requirements
+  - serverless-iam-roles-per-function
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+
+provider:
+  name: aws
+  stage: user
+  region: eu-west-1
+
+package:
+  individually: true
+
+functions:
+  scrapy:
+    runtime: python3.8
+    handler: job_scrape.lambda_handler
+    timeout: 500
+    module: lambda
+    include:
+      - lambda
+    events:
+      - schedule: cron(30 5 ? * * *)
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - s3:GetObject
+          - s3:ListBucket
+          - s3:PutObject
+        Resource:
+          - arn:aws:s3:::linkedinwebscrap
+          - arn:aws:s3:::linkedinwebscrap/*
+
+  graphing:
+    runtime: python3.8
+    handler: make_graph.graphing
+    timeout: 30
+    module: graph_lambda
+    include:
+      - graph_lambda
+    events:
+      - s3:
+          bucket: linkedinwebscrap
+          event: s3:ObjectCreated:Put
+          rules:
+            - suffix: .csv
+          existing: true
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - s3:GetObject
+          - s3:ListBucket
+          - s3:PutObject
+        Resource:
+          - arn:aws:s3:::linkedinwebscrap
+          - arn:aws:s3:::linkedinwebscrap/*

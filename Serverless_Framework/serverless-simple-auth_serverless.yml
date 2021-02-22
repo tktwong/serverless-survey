@@ -1,0 +1,67 @@
+service: authservices
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    JWT_SECRET: 'reallystrongsecret'
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        Fn::GetAtt:
+          - usersTable
+          - Arn
+
+functions:
+  verify-token:
+    handler: auth/VerifyToken.auth
+
+  login:
+    handler: auth/AuthHandler.login
+    events:
+      - http:
+          path: users/login
+          method: post
+          cors: true
+
+  register:
+    handler: auth/AuthHandler.register
+    events:
+      - http:
+          path: user/register
+          method: post
+          cors: true
+
+  me:
+    handler: auth/AuthHandler.me
+    events:
+      - http:
+          path: user/me
+          method: get
+          cors: true
+          authorizer: verify-token
+
+resources:
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: usersTable
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 10

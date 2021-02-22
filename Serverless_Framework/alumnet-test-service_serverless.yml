@@ -1,0 +1,67 @@
+service: alumnet-test
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-dynamodb-local
+  - serverless-webpack
+  - serverless-offline
+  - serverless-plugin-warmup
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${env:STAGE}
+  region: ${env:REGION}
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+        - dynamodb:*
+    Resource: 'arn:aws:dynamodb:${env:REGION}'
+  - Effect: 'Allow'
+    Action:
+      - 'lambda:InvokeFunction'
+    Resource: "*"
+
+functions:
+  prefetch-cocktails:
+    handler: src/controllers/cocktails/prefetch.handler
+    events:
+      - schedule:
+          rate: ${env:PREFETCH_RANGE}
+  get-cocktails:
+    warmup: ${env:WARM_UP}
+    handler: src/controllers/cocktails/get.handler
+    events:
+      - http:
+          path: cocktails
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    CocktailsTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: ingredientName
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ingredientName
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${env:DB_COCKTAILS_TABLE}
+
+custom:
+  customDomain:
+    domainName: '${env:STAGE}.${env:API_DOMAIN}'
+    basePath: /
+    stage: ${env:STAGE}
+    createRoute53Record: true
+  webpack:
+    webpackConfig: 'webpack.config.js'   # Name of webpack configuration file
+    includeModules: false   # Node modules configuration for packaging
+    packager: 'yarn'   # Packager that will be used to package your external modules
+    excludeFiles: src/**/*.test.ts # Provide a glob for files to ignore

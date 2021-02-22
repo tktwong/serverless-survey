@@ -1,0 +1,89 @@
+service: acs-user-sync
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 128
+  timeout: 20
+  stage: "dev"
+  region: "us-west-2"
+  environment:
+    CONFIG_BUCKET: "${file(./config/resources-${self:custom.stage}.yml):CONFIG_BUCKET}"
+    CONFIG_KEY: "${file(./config/resources-${self:custom.stage}.yml):CONFIG_KEY}"
+    awsRegion: "${file(./config/resources-${self:custom.stage}.yml):awsRegion}"
+    emailDomain: "${file(./config/resources-${self:custom.stage}.yml):emailDomain}"
+    gwsKey: "${file(./config/resources-${self:custom.stage}.yml):gwsKey}"
+    sqsQueueName: "${file(./config/resources-${self:custom.stage}.yml):sqsQueueName}"
+    usernameKey: "${file(./config/resources-${self:custom.stage}.yml):usernameKey}"
+    ignoredGroups: "${file(./config/resources-${self:custom.stage}.yml):ignoredGroups}"
+    ignoredGroupPrefixes: "${file(./config/resources-${self:custom.stage}.yml):ignoredGroupPrefixes}"
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource: "arn:aws:logs:*:*:*"
+    - Effect: "Allow"
+      Action:
+        - "kms:Decrypt"
+      Resource: ${file(./config/resources-${self:custom.stage}.yml):kmsKeys}
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource: ${file(./config/resources-${self:custom.stage}.yml):s3Buckets}
+    - Effect: "Allow"
+      Action:
+        - sqs:DeleteMessage
+        - sqs:GetQueueUrl
+        - sqs:ReceiveMessage
+      Resource: ${file(./config/resources-${self:custom.stage}.yml):sqs}
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+functions:
+  sync-user:
+    handler: src/main/node/handler.syncUser
+    memorySize: 256
+    timeout: 20 #seconds
+    vpc:
+      securityGroupIds:
+        - 'Ref': AcsUserSyncLambdaSecurityGroup
+      subnetIds: ${file(./config/resources-${self:custom.stage}.yml):subnetIds}
+
+  cron:
+    handler: src/main/node/handler.syncGroup
+    events:
+      - schedule:
+        rate: rate(1 minute)
+        enabled: ${file(./config/resources-${self:custom.stage}.yml):enableGroupSyncCron}
+    memorySize: 256
+    timeout: 300 #seconds
+    vpc:
+      securityGroupIds:
+        - 'Ref': AcsUserSyncLambdaSecurityGroup
+      subnetIds: ${file(./config/resources-${self:custom.stage}.yml):subnetIds}
+
+resources:
+  Resources:
+    AcsUserSyncLambdaSecurityGroup:
+      Type: "AWS::EC2::SecurityGroup"
+      Properties: ${file(./config/resources-${self:custom.stage}.yml):AcsUserSyncLambdaSecurityGroupProperties}
+
+package:
+  exclude:
+    - node_modules/aws-sdk/**
+    - node_modules/aws-sdk-mock/**
+    - node_modules/serverless/**
+    - src/main/resources/**
+    - src/main/**/*.spec.ts

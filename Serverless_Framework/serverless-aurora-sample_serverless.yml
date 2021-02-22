@@ -1,0 +1,52 @@
+service: serverless-aurora
+
+custom:
+  # don't change rds-db-credentials/ as it is hardcoded in the managed policy
+  rdsSecretName: rds-db-credentials/${self:service}/${self:provider.stage}/aurora
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-southeast-1
+  stage: ${opt:stage, "dev"}
+  iamManagedPolicies:
+    - arn:aws:iam::aws:policy/AmazonRDSDataFullAccess
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    AURORA_RDS_ARN:
+      Fn::Join:
+        - ''
+        - - 'arn:aws:rds:'
+          - ${self:provider.region}
+          - ':'
+          - Ref: 'AWS::AccountId'
+          - ':cluster:'
+          - Fn::Select:
+              - 0
+              - Fn::Split:
+                  - '.'
+                  - Fn::GetAtt:
+                      - RDSCluster
+                      - Endpoint.Address
+    AURORA_SECRET_ARN:
+      Ref: RDSSecrets
+    AURORA_DB_NAME: ${self:provider.stage}database
+    AURORA_CLUSTER_ID: ${self:service}-${self:provider.stage}-rdscluster
+
+functions:
+  DataAPI: ${file(./resources/dataApi.yml)}
+
+resources:
+  Resources:
+    RDSCluster: ${file(./resources/aurora.yml)}
+    RDSSecrets: ${file(./resources/rdsSecrets.yml)}
+    RDSSecretAttachment: ${file(./resources/rdsSecretAttachment.yml)}

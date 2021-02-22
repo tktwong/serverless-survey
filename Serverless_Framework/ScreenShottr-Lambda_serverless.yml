@@ -1,0 +1,87 @@
+service: screenshottr-service
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+
+  stage: dev
+  region: eu-west-1
+
+  environment:
+    SS_STAGE: ${self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::screenshottr-service-images-unprocessed-dev*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: arn:aws:s3:::screenshottr-service-images-saved-dev/*
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource: "arn:aws:dynamodb:eu-west-1:660773155982:table/screenshottr-service-uploads-dev"
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource: "arn:aws:dynamodb:eu-west-1:660773155982:table/screenshottr-service-user-dev"
+
+functions:
+  getSignedS3URL:
+    handler: src/getSignedS3URL.getSignedS3URL
+    events:
+      - http: GET api/getSignedS3URL
+    memorySize: 128
+  processUpload:
+    handler: src/processUpload.processUpload
+    events:
+      - s3: screenshottr-service-images-unprocessed-dev
+        memorySize: 256
+  getMetadata:
+    handler: src/getMetadata.getMetadata
+    events:
+      - http: GET api/getImageMetadata
+    memorySize: 128
+  createUser:
+    handler: src/createUser.createUser
+    events:
+      - http: GET api/user/createUser
+    memorySize: 128
+
+resources:
+ Resources:
+    storageBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: screenshottr-service-images-saved-dev
+    entriesDynamo:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: screenshottr-service-uploads-dev
+        AttributeDefinitions:
+          - AttributeName: image_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: image_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    usersDynamo:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: screenshottr-service-user-dev
+        AttributeDefinitions:
+          - AttributeName: user_name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_name
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

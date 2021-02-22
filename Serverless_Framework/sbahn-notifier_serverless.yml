@@ -1,0 +1,57 @@
+service: sbahn-status-update
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-west-1 # Ireland, because SES does not exist in Frankfurt
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+plugins:
+  - serverless-webpack
+
+functions:
+  scraper:
+    handler: src/scraper.handler
+    role: !GetAtt ExecutionRole.Arn
+    memorySize: 1024
+    events:
+      - schedule: rate(10 minutes)
+    environment:
+      BUCKET_NAME: !Ref AWS::StackName
+
+resources:
+  Resources:
+    ExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: !Ref AWS::StackName
+        Path: '/'
+        ManagedPolicyArns:
+          - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: S3-WriteAccess
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action: s3:PutObject
+                  Resource: '*'
+          - PolicyName: SES-WriteAccess
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action: ['ses:SendEmail', 'ses:SendRawEmail']
+                  # TODO: tighten permissions
+                  Resource: '*'
+    Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: !Ref AWS::StackName

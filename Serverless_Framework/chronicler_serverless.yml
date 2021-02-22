@@ -1,0 +1,360 @@
+# For full config options, check the docs: docs.serverless.com
+
+# GitHub App
+# CNAME for URL (Google Domains)
+# /${self:provider.stage}/${self:service}/github/webhook-secret (encrypted)
+# /${self:provider.stage}/${self:service}/github/app/key (encrypted)
+# /${self:provider.stage}/${self:service}/github/app/id (string)
+
+# Plugins
+# serverless-iam-roles-per-function: https://github.com/functionalone/serverless-iam-roles-per-function
+#    Allows inheriting default IAM settings from the provider layer, and specifying more specific permissions per function without repeating common
+# serverless-domain-manager: https://github.com/amplify-education/serverless-domain-manager
+#    Allows setting up a custom domain name (*.starchartlabs.org) for the generated API. This first requires generating an ACM cert for the domain
+# serverless-s3-deploy
+#    Allows integrated deployment of files to S3 buckets
+# serverless-apigw-binary
+#    Allows configuration of returning binary media types from API gateway
+# serverless-pseudo-parameters
+#    Allows use of AWS variables in configuration
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-domain-manager
+  - serverless-s3-deploy
+  - serverless-apigw-binary
+  - serverless-pseudo-parameters
+
+service: chronicler
+
+# Pin your service to only deploy with a specific Serverless version
+frameworkVersion: "=1.31.0"
+
+provider:
+  stage: "${opt:stage, 'dev'}"
+  name: aws
+  runtime: java8
+  logRetentionInDays: 7
+  stageTags:
+    SERVICE: "${self:service}"
+  tags:
+    SERVICE: "${self:service}"
+    STAGE: "${self:provider.stage}"
+
+custom:
+  domainOverride:
+    production: '${self:service}.starchartlabs.org'
+  topic:
+    diff: "${self:provider.stage}_chronicler_diff-topic"
+  customDomain:
+    domainName: ${self:custom.domainOverride.${self:provider.stage}, "${self:service}-${self:provider.stage}.starchartlabs.org"}
+    basePath: ''
+    certificateName: '*.starchartlabs.org'
+    createRoute53Record: false
+  apigwBinary:
+    types:
+      - 'image/png'
+      - 'image/*'
+      - 'text/html'
+  assets:
+    auto: true
+    targets:
+      - bucket:
+          Ref: UploadBucket
+        files:
+          - source: html/
+            empty: true
+            globs: 
+              - '${self:provider.stage}.html'
+              - 'privacy-policy.html'
+              - 'terms.html'
+              - '**/images/**/*'
+              - '**/styles/**/*'
+
+
+package:
+  individually: true
+
+# TODO external various names and keys to variables
+functions:
+  webhook-handler:
+    package:
+      artifact: webhook-handler/build/distributions/webhook-handler.zip
+    handler: org.starchartlabs.chronicler.webhook.handler.Handler
+    description: Receives GitHub webhook events and performs initial verification/processing
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - "ssm:GetParameter"
+         - "ssm:GetParametersByPath"
+       Resource: { Fn::Join: [":", [ "arn:aws:ssm", { "Ref" : "AWS::Region" }, { "Ref" : "AWS::AccountId" }, "parameter/${self:provider.stage}/${self:service}/github/webhook-secret" ]] }
+    -  Effect: "Allow"
+       Action:
+         - "ssm:GetParameter"
+         - "ssm:GetParametersByPath"
+       Resource: { Fn::Join: [":", [ "arn:aws:ssm", { "Ref" : "AWS::Region" }, { "Ref" : "AWS::AccountId" }, "parameter/${self:provider.stage}/major-tom/aws/sns-topic-arn" ]] }
+    -  Effect: "Allow"
+       Action:
+         - "SNS:Publish"
+       Resource: { Fn::Join: [":", ["arn:aws:sns", { "Ref" : "AWS::Region" }, { "Ref" : "AWS::AccountId" }, "${self:custom.topic.diff}" ] ] }
+    -  Effect: "Allow"
+       Action:
+         - "SNS:Publish"
+       Resource: { Fn::Join: [":", ["arn:aws:sns", { "Ref" : "AWS::Region" }, { "Ref" : "AWS::AccountId" }, "${self:provider.stage}_majortom_*" ] ] }
+    -  Effect: "Allow"
+       Action:
+         - "cloudwatch:PutMetricData"
+       Resource: "*"
+    environment:
+        GITHUB_WEBHOOK_SECRET_SSM: /${self:provider.stage}/${self:service}/github/webhook-secret
+        SNS_TOPIC_ARN: { Fn::Join: [":", ["arn:aws:sns", { "Ref": "AWS::Region" }, { "Ref" : "AWS::AccountId" }, "${self:custom.topic.diff}" ] ]  }
+        NOTIFICATION_SNS_SSM: /${self:provider.stage}/major-tom/aws/sns-topic-arn
+        METRIC_NAMESPACE: ${self:service}/${self:provider.stage}
+    events:
+        - http:
+            path: github/webhooks
+            method: post
+  diff-analyzer:
+    package:
+      artifact: diff-analyzer/build/distributions/diff-analyzer.zip
+    handler: org.starchartlabs.chronicler.diff.analyzer.aws.Handler
+    description: Takes processed GitHub data and determines if the changeset meets relevant criteria
+    timeout: 300
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - "ssm:GetParameter"
+         - "ssm:GetParametersByPath"
+       Resource: { Fn::Join: [":", [ "arn:aws:ssm", { "Ref" : "AWS::Region" }, { "Ref" : "AWS::AccountId" }, "parameter/${self:provider.stage}/${self:service}/github/app/*" ]] }
+    environment:
+        GITHUB_APP_KEY_SSM: /${self:provider.stage}/${self:service}/github/app/key
+        GITHUB_APP_ID_SSM: /${self:provider.stage}/${self:service}/github/app/id
+    events:
+        - sns: ${self:custom.topic.diff}
+
+# Creation of this based on various doc:
+# https://cloudncode.blog/2017/08/08/tidbit-api-gateway-as-a-s3-proxy-cloudformation-script-with-serverless-framework/
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-apigateway-method.html
+resources:
+  Resources:
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "${self:service}-${self:provider.stage}-statichomepagebucket"
+        AccessControl: PublicRead
+        CorsConfiguration:
+          CorsRules:
+          - AllowedMethods:
+            - GET
+            AllowedOrigins:
+            - "*"
+            AllowedHeaders:
+            - "*"
+    ReadS3Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-${self:provider.stage}-us-east-1-readS3Role
+        Path: /
+        AssumeRolePolicyDocument: 
+          Version: '2012-10-17'
+          Statement: 
+            - Effect: Allow
+              Principal:
+                Service:
+                  - s3.amazonaws.com
+                  - apigateway.amazonaws.com
+              Action: 
+                - sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+          - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+    StaticSiteEndpoint:
+      Type: "AWS::ApiGateway::Method"
+      Properties:
+        ApiKeyRequired: false
+        AuthorizationType: NONE
+        HttpMethod: GET
+        Integration:
+          Credentials: arn:aws:iam::#{AWS::AccountId}:role/${self:service}-${self:provider.stage}-us-east-1-readS3Role
+          IntegrationHttpMethod: GET
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Content-Type: "'text/html'"
+          PassthroughBehavior: WHEN_NO_MATCH
+          Type: AWS
+          Uri: arn:aws:apigateway:us-east-1:s3:path/${self:service}-${self:provider.stage}-statichomepagebucket/${self:provider.stage}.html
+        MethodResponses:
+          - StatusCode: 200
+            ResponseParameters:
+                method.response.header.Content-Type: 'text/html'
+        ResourceId:
+          Fn::GetAtt: 
+            - "ApiGatewayRestApi"
+            - "RootResourceId"
+        RestApiId:
+          Ref: "ApiGatewayRestApi"
+    PrivacyPolicy: 
+      Type: "AWS::ApiGateway::Resource"
+      Properties: 
+        RestApiId: 
+          Ref: "ApiGatewayRestApi"
+        ParentId: 
+          Fn::GetAtt: 
+            - "ApiGatewayRestApi"
+            - "RootResourceId"
+        PathPart: "privacy-policy.html"
+    TermsOfService: 
+      Type: "AWS::ApiGateway::Resource"
+      Properties: 
+        RestApiId: 
+          Ref: "ApiGatewayRestApi"
+        ParentId: 
+          Fn::GetAtt: 
+            - "ApiGatewayRestApi"
+            - "RootResourceId"
+        PathPart: "terms.html"   
+    PrivacyPolicyGet:
+      Type: "AWS::ApiGateway::Method"
+      Properties:
+        ResourceId:
+           Ref: "PrivacyPolicy"
+        RestApiId:
+          Ref: "ApiGatewayRestApi"
+        ApiKeyRequired: false
+        AuthorizationType: NONE
+        HttpMethod: GET
+        MethodResponses:
+          - StatusCode: 200
+            ResponseParameters:
+                method.response.header.Content-Type: "'text/html'"
+        Integration:
+          Credentials: arn:aws:iam::#{AWS::AccountId}:role/${self:service}-${self:provider.stage}-us-east-1-readS3Role
+          IntegrationHttpMethod: GET
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Content-Type: "'text/html'"
+          PassthroughBehavior: WHEN_NO_MATCH
+          Type: AWS
+          Uri: arn:aws:apigateway:us-east-1:s3:path/${self:service}-${self:provider.stage}-statichomepagebucket/privacy-policy.html    
+    TermsOfServiceGet:
+      Type: "AWS::ApiGateway::Method"
+      Properties:
+        ResourceId:
+           Ref: "TermsOfService"
+        RestApiId:
+          Ref: "ApiGatewayRestApi"
+        ApiKeyRequired: false
+        AuthorizationType: NONE
+        HttpMethod: GET
+        MethodResponses:
+          - StatusCode: 200
+            ResponseParameters:
+                method.response.header.Content-Type: "'text/html'"
+        Integration:
+          Credentials: arn:aws:iam::#{AWS::AccountId}:role/${self:service}-${self:provider.stage}-us-east-1-readS3Role
+          IntegrationHttpMethod: GET
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Content-Type: "'text/html'"
+          PassthroughBehavior: WHEN_NO_MATCH
+          Type: AWS
+          Uri: arn:aws:apigateway:us-east-1:s3:path/${self:service}-${self:provider.stage}-statichomepagebucket/terms.html      
+    ImageList: 
+      Type: "AWS::ApiGateway::Resource"
+      Properties: 
+        RestApiId: 
+          Ref: "ApiGatewayRestApi"
+        ParentId: 
+          Fn::GetAtt: 
+            - "ApiGatewayRestApi"
+            - "RootResourceId"
+        PathPart: "images"
+    Image: 
+      Type: "AWS::ApiGateway::Resource"
+      Properties: 
+        RestApiId: 
+          Ref: "ApiGatewayRestApi"
+        ParentId: 
+          Ref: "ImageList"
+        PathPart: "{image}"
+    ImageGet:
+      Type: "AWS::ApiGateway::Method"
+      Properties:
+        ResourceId:
+           Ref: "Image"
+        RestApiId:
+          Ref: "ApiGatewayRestApi"
+        ApiKeyRequired: false
+        AuthorizationType: NONE
+        HttpMethod: GET
+        MethodResponses:
+          - StatusCode: 200
+            ResponseParameters:
+                method.response.header.Content-Type: "'image/png'"
+        RequestParameters:
+            method.request.path.image: true
+        Integration:
+          Credentials: arn:aws:iam::#{AWS::AccountId}:role/${self:service}-${self:provider.stage}-us-east-1-readS3Role
+          ContentHandling: CONVERT_TO_BINARY
+          IntegrationHttpMethod: GET
+          RequestParameters:
+            integration.request.path.image: method.request.path.image
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Content-Type: "'image/png'"
+          PassthroughBehavior: WHEN_NO_MATCH
+          Type: AWS
+          Uri: arn:aws:apigateway:us-east-1:s3:path/${self:service}-${self:provider.stage}-statichomepagebucket/images/{image}
+    StyleList: 
+      Type: "AWS::ApiGateway::Resource"
+      Properties: 
+        RestApiId: 
+          Ref: "ApiGatewayRestApi"
+        ParentId: 
+          Fn::GetAtt: 
+            - "ApiGatewayRestApi"
+            - "RootResourceId"
+        PathPart: "styles"
+    Style: 
+      Type: "AWS::ApiGateway::Resource"
+      Properties: 
+        RestApiId: 
+          Ref: "ApiGatewayRestApi"
+        ParentId: 
+          Ref: "StyleList"
+        PathPart: "{style}"
+    StyleGet:
+      Type: "AWS::ApiGateway::Method"
+      Properties:
+        ResourceId:
+           Ref: "Style"
+        RestApiId:
+          Ref: "ApiGatewayRestApi"
+        ApiKeyRequired: false
+        AuthorizationType: NONE
+        HttpMethod: GET
+        MethodResponses:
+          - StatusCode: 200
+            ResponseParameters:
+                method.response.header.Content-Type: "'text/css'"
+        RequestParameters:
+            method.request.path.style: true
+        Integration:
+          Credentials: arn:aws:iam::#{AWS::AccountId}:role/${self:service}-${self:provider.stage}-us-east-1-readS3Role
+          ContentHandling: CONVERT_TO_TEXT
+          IntegrationHttpMethod: GET
+          RequestParameters:
+            integration.request.path.style: method.request.path.style
+          IntegrationResponses:
+            - StatusCode: 200
+              ResponseParameters:
+                method.response.header.Content-Type: "'text/css'"
+          PassthroughBehavior: WHEN_NO_MATCH
+          Type: AWS
+          Uri: arn:aws:apigateway:us-east-1:s3:path/${self:service}-${self:provider.stage}-statichomepagebucket/styles/{style}

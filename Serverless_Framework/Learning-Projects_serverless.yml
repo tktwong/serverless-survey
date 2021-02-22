@@ -1,0 +1,148 @@
+service: app-idiomas-serverless
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  groupsTable: ${self:custom.stage}-groups
+  userGroupTable: ${self:custom.stage}-userGroup
+  # Set our DynamoDB throughput for prod and all other non-prod stages.
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  # Load our webpack config
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  profile: app-idiomas
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    groupsTable: ${self:custom.groupsTable}
+    userGroupTable: ${self:custom.userGroupTable}
+  # 'iamRoleStatement' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - "Fn::GetAtt": [ GroupsTable, Arn ]
+        - "Fn::GetAtt": [ UserGroupTable, Arn ]
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource: 
+        - "arn:aws:dynamodb:us-east-1:*:table/dev-groups/index/*"
+        - "arn:aws:dynamodb:us-east-1:*:table/dev-userGroup/index/*"
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /groups
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  createGroup:
+    handler: lambda/groups.createGroup
+    events:
+      - http:
+          path: groups
+          method: post
+          cors: true
+  getGroup:
+    # Defines an HTTP API endpoint that calls the main function in get.js
+    # - path: url path is /groups/{id}
+    # - method: GET request
+    handler: lambda/groups.getGroup
+    events:
+      - http:
+          path: groups/{id}
+          method: get
+          cors: true
+
+  listGroups:
+    # Defines an HTTP API endpoint that calls the main function in list.js
+    # - path: url path is /groups
+    # - method: GET request
+    handler: lambda/groups.listGroups
+    events:
+      - http:
+          path: groups
+          method: get
+          cors: true
+
+  updateGroup:
+    # Defines an HTTP API endpoint that calls the main function in update.js
+    # - path: url path is /groups/{id}
+    # - method: PUT request
+    handler: lambda/groups.updateGroup
+    events:
+      - http:
+          path: groups/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  deleteGroup:
+    # Defines an HTTP API endpoint that calls the main function in delete.js
+    # - path: url path is /groups/{id}
+    # - method: DELETE request
+    handler: lambda/groups.deleteGroups
+    events:
+      - http:
+          path: groups/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  joinGroup:
+    handler: lambda/userGroup.joinGroup
+    events:
+      - http:
+          path: groups/join
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  getUserGroups:
+    handler: lambda/userGroup.getUserGroups
+    events:
+        - http:
+            path: users/groups/{userId}
+            method: get
+            cors: true
+            authorizeR: aws_iam
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/dynamodb-userGroupTable.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

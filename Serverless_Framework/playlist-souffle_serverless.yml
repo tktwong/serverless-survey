@@ -1,0 +1,74 @@
+service: playlist-souffle
+
+provider:
+  name: aws
+  runtime: python3.7
+
+  # TODO: Move to a fetch-spotify-access-token local role.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - KMS:Decrypt
+      Resource: ${self:custom.kmsSecrets.keyArn}
+
+package:
+  exclude:
+    - "**"
+  include:
+    - playlist_souffle/**
+
+functions:
+  fetch-spotify-access-token:
+    description: Obtain a spotify access token given a spotify refresh token
+    handler: playlist_souffle/delivery/aws_lambda/fetch_spotify_access_token.handler
+    environment:
+      SPOTIFY_CLIENT_ID: ${self:custom.spotifyClientId}
+      SPOTIFY_CLIENT_SECRET: ${self:custom.kmsSecrets.secrets.SPOTIFY_CLIENT_SECRET}
+    events:
+      - http:
+          path: /accesstoken
+          method: post # to match POST https://accounts.spotify.com/api/token
+          cors: true
+
+  fetch-spotify-refresh-token:
+    description: Obtain a spotify refresh token given a spotify auth token
+    handler: playlist_souffle/delivery/aws_lambda/fetch_spotify_refresh_token.handler
+    environment:
+      SPOTIFY_CLIENT_ID: ${self:custom.spotifyClientId}
+      SPOTIFY_CLIENT_SECRET: ${self:custom.kmsSecrets.secrets.SPOTIFY_CLIENT_SECRET}
+    events:
+      - http:
+          path: /refreshtoken
+          method: post # to match POST https://accounts.spotify.com/api/token
+          cors: true
+
+  souffle-playlist:
+    description: Shuffle a playlists tracks by artist or album
+    handler: playlist_souffle/delivery/aws_lambda/souffle_playlist.handler
+    timeout: 10
+    events:
+      - http:
+          path: /souffle
+          method: post
+          cors: true
+
+plugins:
+  - serverless-python-requirements
+  - serverless-kms-secrets
+  - serverless-domain-manager
+  - serverless-finch
+
+custom:
+  kmsSecrets: ${file(kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml)}
+  spotifyClientId: b231329aba1a4c539375436a267db917
+  customDomain:
+    domainName: api.playlistsouffle.com
+    certificateName: "*.playlistsouffle.com"
+  client:
+    bucketName: playlistsouffle.com
+    distributionFolder: web_client/build
+    errorDocument: index.html
+    objectHeaders:
+      index.html:
+        - name: Cache-Control
+          value: no-cache

@@ -1,0 +1,82 @@
+service: geoip-go # NOTE: update this with your service name
+#app: your-app-name
+#tenant: your-tenant-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+# frameworkVersion: '>=1.28.0 <2.0.0'
+
+provider:
+  name: aws
+  runtime: go1.x
+  memorySize: 256
+
+  stage: prod
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 20
+      rateLimit: 10
+
+  tracing: true # enable tracing
+  iamRoleStatements:
+    - Effect: "Allow" # xray permissions (required)
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+
+plugins:
+  - serverless-plugin-tracing
+
+package:
+  individually: true
+
+functions:
+  city:
+    handler: bin/city
+    memorySize: 256
+    package:
+      individually: true
+      include:
+        - bin/city
+      exclude:
+        - ./**
+    events:
+      - http:
+          path: /city
+          method: get
+      - schedule: rate(5 minutes)
+  country:
+    handler: bin/country
+    memorySize: 128
+    package:
+      individually: true
+      include:
+        - bin/country
+      exclude:
+        - ./**
+    events:
+      - http:
+          path: /country
+          method: get
+      - schedule: rate(5 minutes)
+  geocoder:
+    handler: bin/geocoder
+    memorySize: 128
+    package:
+      individually: true
+      include:
+        - bin/geocoder
+      exclude:
+        - ./**
+    events:
+      - http:
+          path: /geocoder
+          method: get
+      - schedule: rate(5 minutes)

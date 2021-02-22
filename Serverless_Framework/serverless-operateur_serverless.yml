@@ -1,0 +1,88 @@
+service: services-operation
+
+custom: ${file(../../serverless.common.yml):custom}
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  region: us-east-1
+  tracing:
+    apiGateway: true
+    lambda: true
+
+  environment:
+    stage: ${self:custom.stage}
+    resourcesStage: ${self:custom.resourcesStage}
+
+  iamRoleStatements:
+    - ${file(../../serverless.common.yml):lambdaPolicyXRay}
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - 'Fn::ImportValue': ${self:custom.resourcesStage}-OperationTableArn
+
+functions:
+  addition:
+    handler: add.addition
+    events:
+      - http:
+          path: addition
+          method: post
+          cors: true
+          #authorizer: aws_iam
+  soustraction:
+    handler: sous.soustraction
+    events:
+      - http:
+          path: soustraction
+          method: post
+          cors: true
+          #authorizer: aws_iam
+  division:
+    handler: div.division
+    events:
+      - http:
+          path: division
+          method: post
+          cors: true
+          #authorizer: aws_iam
+  liste:
+    handler: list.list_table
+    events:
+      - http:
+          path: liste
+          method: get
+          cors: true
+          #authorizer: aws_iam
+
+resources:
+  # API Gateway
+  - ${file(resources/api-gateway.yml)}
+
+  - Outputs:
+      ApiGatewayRestApiId:
+        Value:
+          Ref: ApiGatewayRestApi
+        Export:
+          Name: ${self:custom.stage}-OperationApiGatewayRestApiId
+    
+      ApiGatewayRestApiRootResourceId:
+        Value:
+           Fn::GetAtt:
+            - ApiGatewayRestApi
+            - RootResourceId 
+        Export:
+          Name: ${self:custom.stage}-OperationApiGatewayRestApiRootResourceId

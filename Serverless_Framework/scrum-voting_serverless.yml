@@ -1,0 +1,219 @@
+
+service: scrum-vote
+
+frameworkVersion: ">=1.9.0 <2.0.0"
+
+plugins:
+  - serverless-s3-remover
+provider:
+  name: aws
+  region: eu-central-1
+  runtime: nodejs12.x
+  memorySize: 128
+  websocketsApiName: custom-websockets-api-name
+  websocketsApiRouteSelectionExpression: $request.body.action
+  environment:
+    DDB_TABLE_SESSION: { Ref: SessionTable }
+    WS_ENDPOINT_URL: { "Fn::Join" :["", [{ Ref: WebsocketsApi }, ".execute-api.${self:provider.region}.amazonaws.com/${self:custom.stage}"]]}
+    FINALIZER_QUEUE_URL: !Ref FinalizeVoteResultQueue
+    VOTING_TIMEOUT_SECONDS: "${self:custom.votingTimeoutSeconds}"
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - dynamodb:DescribeStream
+      - dynamodb:GetRecords
+      - dynamodb:GetShardIterator
+      - dynamodb:ListStreams
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+      - dynamodb:Query
+      - dynamodb:BatchWriteItem
+      - dynamodb:UpdateItem
+      Resource:
+        - !GetAtt SessionTable.Arn
+        - { "Fn::Join" : [ "/", [{ "Fn::GetAtt" : [SessionTable, Arn] }, "index/*"] ]}
+    - Effect: Allow
+      Action:
+      - sqs:SendMessage
+      - sqs:ReceiveMessage
+      Resource:
+        - !GetAtt FinalizeVoteResultQueue.Arn
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  votingTimeoutSeconds: 5
+  extra: ${file(vars/${self:custom.stage}.yml)}
+  remover:
+     buckets:
+      - Ref: WebSite
+ 
+functions:
+  connectHandler:
+    handler: backend/handler.connectHandler
+    events:
+      - websocket:
+          route: $connect
+  disconnectHandler:
+    handler: backend/handler.disconnectHandler
+    events:
+      - websocket:
+          route: $disconnect
+  defaultHandler:
+    handler: backend/handler.defaultHandler
+    events:
+      - websocket:
+          route: $default
+  voteHandler:
+    handler: backend/votingHandler.voteHandler
+    events:
+      - websocket:
+          route: vote
+  startSession:
+    handler: backend/sessionHandler.startSession
+    events:
+      - http:
+          cors: true
+          path: /startSession
+          method: post
+          authorizer:
+            name: authorizer
+            type: COGNITO_USER_POOLS
+            authorizerId: { Ref: MyApiGatewayAuthorizer }
+
+  getSession:
+    handler: backend/sessionHandler.getSession
+    events:
+      - http:
+          cors: true
+          path: /getSession
+          method: post
+  sessionStreamHandler:
+    handler: backend/handler.handleStreamEvent
+    events:
+      - stream:
+          type: dynamodb
+          arn: {"Fn::GetAtt": [SessionTable, StreamArn]}
+  startVoting:
+    handler: backend/votingHandler.startVotingRound
+    events:
+      - http:
+          cors: true
+          path: /startVoting
+          method: post
+          authorizer:
+            name: authorizer
+            type: COGNITO_USER_POOLS
+            authorizerId: { Ref: MyApiGatewayAuthorizer }
+            
+  handleVoteFinalization:
+    handler: backend/votingHandler.handleVoteFinalization
+    events:
+      - sqs:
+          arn: {"Fn::GetAtt": [FinalizeVoteResultQueue, Arn]}
+          batchSize: 1
+
+resources:
+  Outputs:
+    WebSiteUrl:
+      Value: { "Fn::GetAtt": [WebSite, WebsiteURL] }
+    WebSiteBucket:
+      Value: { Ref: WebSite }
+    HttpEndpoint:
+      Value: { "Fn::Join" :["", ["https://", { Ref: ApiGatewayRestApi }, ".execute-api.${self:provider.region}.amazonaws.com/${self:custom.stage}"]]} 
+    WebSocketEndpoint:
+      Value: { "Fn::Join" :["", ["wss://", { Ref: WebsocketsApi }, ".execute-api.${self:provider.region}.amazonaws.com/${self:custom.stage}"]]}
+    Region:
+      Value: "${self:provider.region}"
+    UserPoolId:
+      Value: !Ref UserPool
+    UserPoolAppClientId:
+      Value: !Ref UserPoolClient
+    UserPoolArn:
+      Value: !GetAtt 'UserPool.Arn'
+  Resources:
+    WebSite:
+        Type: "AWS::S3::Bucket"
+        Properties:
+          WebsiteConfiguration:
+            ErrorDocument: index.html
+            IndexDocument: index.html
+    SessionTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: sessionId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: connectionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: sessionId
+            KeyType: HASH
+          - AttributeName: userId
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        GlobalSecondaryIndexes:
+          - IndexName: gsiConnectionToKeys
+            KeySchema:
+              - AttributeName: connectionId
+                KeyType: HASH
+            Projection:
+              ProjectionType: KEYS_ONLY
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: TTL
+          Enabled: true
+
+    FinalizeVoteResultQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        DelaySeconds: ${self:custom.votingTimeoutSeconds}
+    UserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: true
+    UserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        UserPoolId: !Ref UserPool
+        AllowedOAuthFlowsUserPoolClient: true
+        SupportedIdentityProviders:
+          - "COGNITO"
+        AllowedOAuthFlows:
+          - implicit
+        CallbackURLs:
+          - "http://localhost:8080/"
+        LogoutURLs:
+          - "http://localhost:8080/"
+        AllowedOAuthScopes:
+          - "email"
+          - "openid"
+          - "profile"
+    MyApiGatewayAuthorizer: 
+      Type: AWS::ApiGateway::Authorizer
+      Properties: 
+        AuthorizerResultTtlInSeconds: 10
+        IdentitySource: method.request.header.Authorization
+        Name: MyCognitoAuthorizer
+        RestApiId: { Ref: ApiGatewayRestApi }
+        Type: COGNITO_USER_POOLS
+        ProviderARNs: 
+          - !GetAtt 'UserPool.Arn'
+
+package:
+  exclude:
+    - frontend/**
+    - scripts/**
+    - resources/**
+    - package.json
+    - package-lock.json
+    - node_modules/**

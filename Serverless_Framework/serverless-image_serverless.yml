@@ -1,0 +1,215 @@
+service:
+  name: picture-storage
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  #stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    PICTURES_TABLE: pictures4
+    PICTURES_DATA_TABLE: pictures_data
+    PICTURES_S3_BUCKET: serverless-pictures
+    SIGNED_URL_EXPIRATION: 300
+    USER_ID_INDEX: UserIdIndex
+    AUTH_0_SECRET_ID: Auth0SecretID
+    AUTH_0_SECRET_FIELD: auth0Secret
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PICTURES_TABLE}
+    
+    - Effect: Allow
+      Action: 
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PICTURES_DATA_TABLE}
+
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+      Resource: arn:aws:s3:::${self:provider.environment.PICTURES_S3_BUCKET}/*
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource: !Ref Auth0Secret
+    - Effect: Allow
+      Action:
+        - kms:Decrypt
+      Resource: !GetAtt KMSKey.Arn
+
+functions:
+
+  RS256Auth:
+    handler: src/lambda/auth/rs256Auth0Authorizer.handler
+
+  getMyPicture:
+    handler: src/lambda/http/getMyPicture.handler
+    events:
+      - http:
+          method: get
+          path: myPicture/pictures
+          cors: true
+          authorizer: RS256Auth
+
+  postPicture:
+    handler: src/lambda/http/postPicture.handler
+    events:
+      - http:
+          method: post
+          path: myPicture
+          cors: true
+          authorizer: RS256Auth
+
+  updatePicture:
+    handler: src/lambda/http/updatePicture.handler
+    events:
+      - http:
+          method: put
+          path: myPicture
+          cors: true
+          authorizer: RS256Auth
+
+  deletePicture:
+    handler: src/lambda/http/deletePicture.handler
+    events:
+      - http:
+          method: delete
+          path: myPicture
+          cors: true
+          authorizer: RS256Auth
+
+  createImage:
+    handler: src/lambda/http/createImage.handler
+    events:
+      - http:
+          method: post
+          path: image
+          cors: true
+          
+
+resources: 
+  Resources: 
+    PictureDynamoDBTable:
+      Type: AWS::DynamoDB::Table 
+      Properties: 
+        AttributeDefinitions: 
+          - AttributeName: userId 
+            AttributeType: S
+          - AttributeName: imageId 
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: imageId
+            KeyType: RANGE
+
+          
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.PICTURES_TABLE}
+
+    PictureDataDynamoDBTable:
+      Type: AWS::DynamoDB::Table 
+      Properties: 
+        AttributeDefinitions: 
+          - AttributeName: id 
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.PICTURES_DATA_TABLE}
+    
+    AttachmentsBucket: 
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.PICTURES_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.PICTURES_S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket
+
+    KMSKey:
+      Type: AWS::KMS::Key
+      Properties:
+        Description: KMS key to encrypt Auth0 secret
+        KeyPolicy:
+          Version: '2012-10-17'
+          Id: key-default-1
+          Statement:
+            - Sid: Allow administration of the key
+              Effect: Allow
+              Principal:
+                AWS:
+                  Fn::Join:
+                  - ':'
+                  - - 'arn:aws:iam:'
+                    - Ref: AWS::AccountId
+                    - 'root'
+              Action:
+                - 'kms:*'
+              Resource: '*'
+
+    KMSKeyAlias:
+      Type: AWS::KMS::Alias
+      Properties:
+        AliasName: alias/auth0Key-${self:provider.stage}
+        TargetKeyId: !Ref KMSKey
+
+    Auth0Secret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:provider.environment.AUTH_0_SECRET_ID}
+        Description: Auth0 secret
+        KmsKeyId: !Ref KMSKey      

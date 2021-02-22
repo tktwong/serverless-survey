@@ -1,0 +1,198 @@
+service: aws-nodejs
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:eu-north-1:*:*"
+    - Effect: Allow
+      Action:
+        - "execute-api:ManageConnections"
+      Resource:
+        - "arn:aws:execute-api:*:*:**/@connections/*"
+
+  stage: prod
+  region: eu-north-1
+
+  # you can define service wide environment variables here
+  environment:
+    GITHUB_CLIENT: ${file(./config/config.json):GITHUB_CLIENT}
+    GITHUB_CLIENT_SECRET: ${file(./config/config.json):GITHUB_CLIENT_SECRET}
+    GITHUB_API_STATE: ${file(./config/config.json):GITHUB_API_STATE}
+    CLIENT_BASE_URL: ${file(./config/config.json):CLIENT_BASE_URL}
+    PUBLIC_VAPID_KEY: ${file(./config/config.json):PUBLIC_VAPID_KEY}
+    PRIVATE_VAPID_KEY: ${file(./config/config.json):PRIVATE_VAPID_KEY}
+    EMAIL: ${file(./config/config.json):EMAIL}
+
+functions:
+  authorization:
+    handler: authorization.main
+    events:
+      - http:
+          path: auth
+          method: GET
+  authorizationCallback:
+    handler: authorizationCallback.main
+    events:
+      - http:
+          path: authCallback
+          method: GET
+          cors: true
+  validate:
+    handler: getUser.main
+    events:
+      - http:
+          path: getUser
+          method: GET
+          cors: true
+  create:
+    handler: addSettings.main
+    events:
+      - http:
+          path: settings
+          method: POST
+          cors: true
+  list:
+    handler: getSettings.main
+    events:
+      - http:
+          path: settings/{user}/{organization}
+          method: GET
+          cors: true
+  deleteNotifications:
+    handler: deleteNotifications.main
+    events:
+      - http:
+          path: notifications/{user}
+          method: DELETE
+          cors: true        
+  registerWorker:
+    handler: workerHandler.main
+    events:
+      - http:
+          path: register
+          method: POST
+          cors: true        
+  createWebhook:
+    handler: createWebhook.main
+    events:
+      - http:
+          path: webhooks
+          method: POST
+          cors: true
+  logout:
+    handler: logout.main
+    events:
+      - http:
+          path: logout
+          method: POST
+          cors: true
+  corsHandler:
+    handler: corsHandler.main
+    events:
+      - http:
+          path: webhooks
+          method: OPTIONS
+          cors: true
+      - http:
+          path: notifications/{user}
+          method: OPTIONS
+          cors: true
+      - http:
+          path: logout
+          method: OPTIONS
+          cors: true    
+  payload:
+    handler: payload.main
+    events:
+      - http:
+          path: payload
+          method: POST
+          cors: true
+  connectHandler:
+    handler: connectHandler.main
+    events:
+      - websocket: $connect
+        cors: true
+  disconnectHandler:
+    handler: disconnectHandler.main
+    events:
+      - websocket: $disconnect
+        cors: true
+  
+
+resources:
+  Resources:
+    SettingsDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: organization
+            AttributeType: S
+        KeySchema:
+          - AttributeName: organization
+            KeyType: HASH
+          - AttributeName: user
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: "userSettings"
+    SocketConnectionsDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: connectionID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: connectionID
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: "socketConnections"
+    ServiceWorkersDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: "serviceWorkers"
+    NotificationsDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: notification
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+          - AttributeName: notification
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: "notifications"

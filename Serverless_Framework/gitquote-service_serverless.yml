@@ -1,0 +1,72 @@
+service:
+  name: getquote-service
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+#   # Our stage is based on what is passed in when running serverless
+#   # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+#   # Set our DynamoDB throughput for prod and all other non-prod stages.
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+#   # Load our webpack config
+
+#   # Load our secret environment variables based on the current stage.
+#   # Fallback to default if it is not in prod.
+  environment: #${file(env.yml):${self:custom.stage}, file(env.yml):default}
+    CustomReviewTable: ${self:custom.stage}-customreview
+    ProjectEstimateTable : ${self:custom.stage}-projectestimate
+    RequestTable: ${self:custom.stage}-request 
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: serverless-admin
+
+
+ # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-2:*:*"
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          method: get
+          path: hello
+  create:
+    handler: src/customerreview/create.main
+    events:
+      - http:
+          path: create
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  - ${file(resources/s3-bucket.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

@@ -1,0 +1,210 @@
+
+service: cloudwatch-monitorization-demo
+
+provider:
+  name: aws
+  stage: ${self:custom.currentStage}
+  region: ${opt:region, 'us-east-1'}
+  variableSyntax: "\\${((?!AWS|_)[ ~:a-zA-Z0-9._@'\",\\-\\/\\(\\)]+?)}"
+  stackTags:
+    Description: "Proyecto de ejemplo de monitorizacion de APIs con Cloudwatch"
+
+custom:
+  defaultStage: dev
+  currentStage: ${opt:stage, self:custom.defaultStage} # 'dev' is default unless overriden by --stage flag
+  dashboardName: "DashboardTest"
+  apiTestOne: "PetStore"
+  apiTestTwo: "Test Api"
+  notificationEmail: "xxx@xxxx.cl"
+  notificationNumber: "+56911111111"
+
+resources:
+  Resources:
+    MontApisDashboard:
+      Type: AWS::CloudWatch::Dashboard
+      Properties:
+        DashboardName: ${self:custom.dashboardName}
+        DashboardBody: !Sub
+          - |
+            {
+              "widgets": [
+                {
+                  "type":"metric",
+                  "width":12,
+                  "height":6,
+                  "properties": {
+                    "metrics": [
+                      [ "AWS/ApiGateway", "Count", "ApiName", "${_ApiTestOne}" ],
+                      [ "AWS/ApiGateway", "Count", "ApiName", "${_ApiTestTwo}" ]
+                    ],
+                    "view": "timeSeries",
+                    "stacked": true,
+                    "region": "${_AwsRegion}",
+                    "title": "Cantidad Requests",
+                    "period": 60,
+                    "stat": "Sum",
+                    "legend": {
+                        "position": "right"
+                    }
+                  }
+                },
+                {
+                  "type":"metric",
+                  "width":12,
+                  "height":6,
+                  "properties": {
+                    "metrics": [
+                      [ "AWS/ApiGateway", "Latency", "ApiName", "${_ApiTestOne}" ],
+                      [ "AWS/ApiGateway", "Latency", "ApiName", "${_ApiTestTwo}" ]
+                    ],
+                    "view": "timeSeries",
+                    "stacked": true,
+                    "region": "${_AwsRegion}",
+                    "title": "Latencia",
+                    "period": 60,
+                    "stat": "Sum",
+                    "legend": {
+                        "position": "right"
+                    }
+                  }
+                },
+                {
+                  "type":"metric",
+                  "width":12,
+                  "height":6,
+                  "properties": {
+                    "metrics": [
+                      [ "AWS/ApiGateway", "5XXError", "ApiName", "${_ApiTestOne}" ],
+                      [ "AWS/ApiGateway", "5XXError", "ApiName", "${_ApiTestTwo}" ]
+                    ],
+                    "view": "timeSeries",
+                    "stacked": true,
+                    "region": "${_AwsRegion}",
+                    "title": "Errores 500",
+                    "period": 60,
+                    "stat": "Sum",
+                    "legend": {
+                        "position": "right"
+                    }
+                  }
+                },
+                {
+                  "type":"metric",
+                  "width":12,
+                  "height":6,
+                  "properties": {
+                    "metrics": [
+                      [ "AWS/ApiGateway", "4XXError", "ApiName", "${_ApiTestOne}" ],
+                      [ "AWS/ApiGateway", "4XXError", "ApiName", "${_ApiTestTwo}" ]
+                    ],
+                    "view": "timeSeries",
+                    "stacked": true,
+                    "region": "${_AwsRegion}",
+                    "title": "Errores 400",
+                    "period": 60,
+                    "stat": "Sum",
+                    "legend": {
+                        "position": "right"
+                    }
+                  }
+                }
+              ]
+            }
+          - _ApiTestOne: ${self:custom.apiTestOne}
+            _ApiTestTwo: ${self:custom.apiTestTwo}
+            _AwsRegion: ${self:provider.region}
+
+    MonitorizationApisTopic:
+      Type: AWS::SNS::Topic
+      Properties: 
+        TopicName: ${self:custom.dashboardName}-Errors-Alarms_Topic
+        DisplayName: ${self:custom.dashboardName}-Errors-Alarms_Topic
+        Subscription: 
+          -
+            Endpoint: ${self:custom.notificationEmail}
+            Protocol: "EMAIL"
+          -
+            Endpoint: ${self:custom.notificationNumber}
+            Protocol: "SMS"
+
+    Error500ApiOneAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: ApiGateway Alarm for 500 errors on API ${self:custom.apiTestOne}
+        AlarmName: ${self:custom.apiTestOne}_Api_Error500_Alarm_cf
+        MetricName: 5XXError
+        Namespace: AWS/ApiGateway
+        Dimensions:
+          - Name: ApiName
+            Value: ${self:custom.apiTestOne}
+        ComparisonOperator: GreaterThanThreshold
+        Threshold: 0
+        Period: 60
+        EvaluationPeriods: 1
+        Statistic: Sum
+        TreatMissingData: notBreaching
+        AlarmActions:
+        - !Ref MonitorizationApisTopic
+      DependsOn: MonitorizationApisTopic
+
+    Error500ApiTwoAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: ApiGateway Alarm for 500 errors on API ${self:custom.apiTestTwo}
+        AlarmName: ${self:custom.apiTestTwo}_Api_Error500_Alarm_cf
+        MetricName: 5XXError
+        Namespace: AWS/ApiGateway
+        Dimensions:
+          - Name: ApiName
+            Value: ${self:custom.apiTestTwo}
+        ComparisonOperator: GreaterThanThreshold
+        Threshold: 0
+        Period: 60
+        EvaluationPeriods: 1
+        Statistic: Sum
+        TreatMissingData: notBreaching
+        AlarmActions:
+        - !Ref MonitorizationApisTopic
+      DependsOn: MonitorizationApisTopic
+
+    Error400ApiOneAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: ApiGateway Alarm for 400 errors on API ${self:custom.apiTestOne}
+        AlarmName: ${self:custom.apiTestOne}_Api_Error400_Alarm_cf
+        MetricName: 4XXError
+        Namespace: AWS/ApiGateway
+        Dimensions:
+          - Name: ApiName
+            Value: ${self:custom.apiTestOne}
+        ComparisonOperator: GreaterThanThreshold
+        Threshold: 0
+        Period: 60
+        EvaluationPeriods: 1
+        Statistic: Sum
+        TreatMissingData: notBreaching
+        AlarmActions:
+        - !Ref MonitorizationApisTopic
+      DependsOn: MonitorizationApisTopic
+
+    Error400ApiTwoAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: ApiGateway Alarm for 400 errors on API ${self:custom.apiTestTwo}
+        AlarmName: ${self:custom.apiTestTwo}_Api_Error400_Alarm_cf
+        MetricName: 4XXError
+        Namespace: AWS/ApiGateway
+        Dimensions:
+          - Name: ApiName
+            Value: ${self:custom.apiTestTwo}
+        ComparisonOperator: GreaterThanThreshold
+        Threshold: 0
+        Period: 60
+        EvaluationPeriods: 1
+        Statistic: Sum
+        TreatMissingData: notBreaching
+        AlarmActions:
+        - !Ref MonitorizationApisTopic
+      DependsOn: MonitorizationApisTopic
+
+

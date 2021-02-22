@@ -1,0 +1,71 @@
+service: user-activity-detection-socket
+
+frameworkVersion: "2"
+
+custom:
+  prune:
+    automatic: true
+    number: 1
+
+plugins:
+  - serverless-offline
+  - serverless-pseudo-parameters
+  - serverless-prune-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'local'}
+  region: ${opt:region, 'us-east-1'}
+  environment: ${file(serverless/env.yml)}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:DescribeStream
+        - dynamodb:GetShardIterator
+        - dynamodb:GetRecords
+      Resource:
+        - { "Fn::GetAtt": ["DynamoDBTableUserConnectionStatus", "Arn"] }
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:provider.environment.USER_CONNECTION_STATUS_TABLE}/index/ByConnectionId
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:provider.environment.USER_CONNECTION_STATUS_TABLE}/index/ByAction
+
+functions:
+  logStream:
+    handler: src/handlers/stream.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [DynamoDBTableUserConnectionStatus, StreamArn]
+  connect:
+    handler: src/handlers/connect.handler
+    events:
+      - websocket:
+          route: $connect
+  sendMessage:
+    handler: src/handlers/echo.handler
+    events:
+      - websocket:
+          route: sendMessage
+  disconnect:
+    handler: src/handlers/disconnect.handler
+    events:
+      - websocket:
+          route: $disconnect
+  default:
+    handler: src/handlers/default.handler
+    events:
+      - websocket:
+          route: $default
+  clearLogoffData:
+    handler: src/handlers/clear-logoff-data.handler
+    timeout: 600
+    events:
+      - schedule: cron(* * * * ? *)
+
+resources:
+  - ${file(serverless/resources/aws-dynamodb-user-connection-status-table.yml)}

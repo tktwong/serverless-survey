@@ -1,0 +1,60 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: serverless-hello-world
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+# The `functions` block defines what code to deploy
+functions:
+  helloWorld:
+    handler: handler.helloWorld
+    events:
+      - http:
+          path: hello-world
+          method: get
+          cors: true
+  get:
+    handler: handler.getItems
+    events:
+      - http:
+          path: get
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    PetsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain # Keeps around the DynamoDB resource when we redeploy/destroy
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

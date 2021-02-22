@@ -1,0 +1,113 @@
+# serverless.yml
+
+service: battlesnake-admin
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${opt:stage, 'local'}
+  region: us-west-2
+  # This is fine for offline, but should really use SSM
+  # https://serverless.com/framework/docs/providers/aws/guide/variables/#reference-variables-using-the-ssm-parameter-store
+  environment: ${file(../scripts/env-${self:provider.stage}.yml)}
+  vpc:
+    securityGroupIds:
+      - sg-3f7ec540
+    subnetIds:
+      - subnet-680c1720
+      - subnet-12b44c6b
+      - subnet-0d4eec57
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - arn:aws:dynamodb:us-west-2:842053936395:table/*
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+functions:
+  app:
+    handler: entry.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+# Include dependencies from package.json
+custom:
+  webpackIncludeModules: true
+  webpack: webpack.config.js
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: users
+        AttributeDefinitions:
+          - AttributeName: username
+            AttributeType: S
+          - AttributeName: teamId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+          
+        GlobalSecondaryIndexes:
+        - IndexName: membership
+          KeySchema:
+            - AttributeName: teamId
+              KeyType: HASH
+          Projection:
+            NonKeyAttributes:
+              - username
+              - displayName
+              - isTeamCaptain
+            ProjectionType: INCLUDE
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+
+    TournamentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: tournaments
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    TeamsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: teams
+        AttributeDefinitions:
+          - AttributeName: captainId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: captainId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

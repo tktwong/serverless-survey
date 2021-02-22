@@ -1,0 +1,170 @@
+service: test
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ap-southeast-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+      Resource:
+        Fn::GetAtt: [ SQSQueue, Arn ]
+    - Effect: "Allow"
+      Action:
+        - "sns:*"
+      Resource:
+        #!Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:LeadQueue'
+       !Join
+       - ':'
+       - - 'arn:aws:sns'
+         - !Ref 'AWS::Region'
+         - !Ref AWS::AccountId
+         - "*"
+functions:
+  dynamodbStream:
+    handler: handler.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [ DynamoDBTable, StreamArn ]
+    Role:
+      Fn::GetAtt:
+        - "LambdaExecutionRole"
+        - "Arn"
+  getMessageFromQueue:
+    handler: getMessageFromQueue.handler
+    events:
+      - sqs:
+         arn:
+            Fn::GetAtt:
+              - SQSQueue
+              - Arn
+    Role:
+      Fn::GetAtt:
+        - "LambdaExecutionRole"
+        - "Arn"
+#AWS Resources
+resources:
+ Resources:
+   DynamoDBTable:
+     Type: AWS::DynamoDB::Table
+     Properties:
+       AttributeDefinitions:
+       - AttributeName: FirstName
+         AttributeType: S
+       - AttributeName: LastName
+         AttributeType: S
+       - AttributeName: PhoneNumber
+         AttributeType: S
+       KeySchema:
+       - AttributeName: FirstName
+         KeyType: HASH
+       - AttributeName: LastName
+         KeyType: RANGE
+       GlobalSecondaryIndexes:
+       - IndexName: GSI
+         KeySchema:
+         - AttributeName: PhoneNumber
+           KeyType: HASH
+         Projection:
+           ProjectionType: KEYS_ONLY
+         ProvisionedThroughput:
+           ReadCapacityUnits: 5
+           WriteCapacityUnits: 5
+       StreamSpecification:
+         StreamViewType: NEW_AND_OLD_IMAGES
+       ProvisionedThroughput:
+         ReadCapacityUnits: 5
+         WriteCapacityUnits: 5
+       TableName: LeadsTable
+   SNSTopic:
+     Type: AWS::SNS::Topic
+     Properties:
+       Subscription:
+        - Endpoint:
+            Fn::GetAtt:
+              - SQSQueue
+              - Arn
+          Protocol: sqs
+       TopicName: "FailedQueue"
+   SNSSubscription:
+     Type: AWS::SNS::Subscription
+     Properties:
+         Endpoint: joussyd@mailinator.com
+         Protocol: email
+         TopicArn: !Ref 'SNSTopic'
+   SQSQueue:
+     Type: AWS::SQS::Queue
+     Properties:
+       QueueName: LeadQueue
+   LambdaExecutionRole:
+     Type: AWS::IAM::Role
+     Properties:
+       AssumeRolePolicyDocument:
+         Version: '2012-10-17'
+         Statement:
+         - Effect: Allow
+           Principal:
+             Service:
+             - lambda.amazonaws.com
+           Action:
+           - sts:AssumeRole
+       Path: "/service-role/"
+       Policies:
+       - PolicyName: LeadLambdaRolePolicy
+         PolicyDocument:
+           Version: '2012-10-17'
+           Statement:
+           - Effect: Allow
+             Action:
+             - lambda:InvokeFunction
+             - lambda:CreateEventSourceMapping
+             - lambda:ListEventSourceMappings
+             - lambda:ListFunctions
+             Resource:
+               #!Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*'
+              !Join
+              - ':'
+              - - 'arn:aws:lambda'
+                - !Ref 'AWS::Region'
+                - !Ref 'AWS::AccountId'
+                - 'function:*'
+           - Effect: Allow
+             Action:
+             - logs:CreateLogGroup
+             - logs:CreateLogStream
+             - logs:PutLogEvents
+             Resource:
+               #!Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}'
+              !Join
+              - ':'
+              - - 'arn:aws:logs'
+                - !Ref 'AWS::Region'
+                - !Ref 'AWS::AccountId'
+           - Effect: Allow
+             Action:
+             - dynamodb:DescribeStream
+             - dynamodb:GetRecords
+             - dynamodb:GetShardIterator
+             - dynamodb:ListStreams
+             Resource:
+               #!Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/LeadsTable/stream/*'
+              !Join
+              - ':'
+              - - 'arn:aws:dynamodb'
+                - !Ref 'AWS::Region'
+                - !Ref 'AWS::AccountId'
+                - "table/LeadsTable/stream/*"
+           - Effect: Allow
+             Action:
+               - sqs:sendMessage
+               - sqs:ReceiveMessage
+             Resource:
+               #!Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:LeadQueue'
+              !Join
+              - ':'
+              - - 'arn:aws:sqs'
+                - !Ref 'AWS::Region'
+                - !Ref AWS::AccountId
+                - "*"

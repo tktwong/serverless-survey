@@ -1,0 +1,107 @@
+# serverless.yml
+service: lambda-selenium
+
+package:
+  artifact: build/libs/lambda-selenium-all.jar
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  runtime: java8
+  memorySize: 3008
+  timeout: 900
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: Allow
+      Action: # Gives permission to DynamoDB tables in a specific region
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:us-east-1:*:*'
+
+functions:
+  data-reparser-lambda:
+    handler: com.buzzhome.scrappers.DataReparserLambda::handleRequest
+    name: data-reparser-lambda
+    description: Lambda Selenium Demo Tests
+  get-fb-group-content:
+    handler: com.buzzhome.api.GetFbGroupContentApi::handleRequest
+    name: get-fb-group-content
+    memory: 512
+    timeout: 15
+    events:
+      - http:
+          path: /fbGroupFeed
+          method: POST
+          integration: lambda
+          cors: true
+  lambda-selenium-web-scrapper:
+    handler: com.buzzhome.scrappers.FbGroupScrapper::handleRequest
+    name: lambda-selenium-web-scrapper
+    description: Lambda Selenium Demo Tests
+
+resources:
+  Parameters:
+    CloudWatchRule:
+      Type: String
+      Default: "rate(15 minutes)"
+      Description: " Schedule Expression"
+    env:
+      Type: String
+      Default: dev
+  Conditions:
+    ShouldNotCreateEnvResources:
+      Fn::Equals:
+        - Ref: env
+        - NONE
+  Resources:
+    fbgsaigonairbnb:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: postedTimestamp
+            AttributeType: N
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: price
+            AttributeType: N
+          - AttributeName: districtLocation
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: postedTimestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: '5'
+          WriteCapacityUnits: '5'
+        TableName: fbgsaigonairbnb
+        GlobalSecondaryIndexes:
+          - IndexName: gsi_filter
+            KeySchema:
+              - AttributeName: districtLocation
+                KeyType: HASH
+              - AttributeName: price
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: '5'
+              WriteCapacityUnits: '5'
+    operation:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: '5'
+          WriteCapacityUnits: '5'
+        TableName: operation

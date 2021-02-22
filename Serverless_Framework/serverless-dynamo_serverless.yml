@@ -1,0 +1,254 @@
+
+service: snap-architecture-xray
+
+package:
+  individually: true
+
+plugins:
+  - serverless-offline
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+
+custom:
+  allowedHeaders:
+    - Accept
+    - Content-Type
+    - Content-Length
+    - Authorization
+    - X-Amz-Date
+    - X-Api-Key
+    - X-Amz-Security-Token
+    - X-Amz-User-Agent
+    - app_user_id
+    - app_user_name
+
+provider:
+  name: aws  
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: dev
+  stackName: ${self:service}-stack
+  apiName: ${self:service}-api
+  memorySize: 128
+  timeout: 5
+  endpointType: regional
+  tracing:
+    apiGateway: true
+    lambda: true
+  environment:
+    NOTES_TABLE: ${self:service}-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 
+        - dynamodb:Query
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}"  
+  profile: snap-portal-admin
+
+
+functions:
+  validate-note:
+    handler: api/validate.handler
+    name: ${self:service}-${self:provider.stage}-validateNote
+    description: note validation
+    role: NotesLambdaRole
+  add-note:
+    handler: api/add.handler
+    name: ${self:service}-${self:provider.stage}-createNote
+    description: creates note
+    role: NotesLambdaRole
+
+  update-note:
+    handler: api/update.handler
+    description: PATCH /note
+
+  get-notes:
+    handler: api/getAll.handler
+    description: GET /notes
+
+  get-note:
+    handler: api/get.handler
+    description: GET /note/{note_id}
+
+  delete-note:
+    handler: api/delete.handler
+    description: DELETE /note/
+
+  
+stepFunctions:
+  stateMachines:
+    notes_sm:
+      role: "arn:aws:iam::#{AWS::AccountId}:role/NotesStepFunctionsRole"
+      events:
+        - http:
+            path: notes
+            method: POST
+            request:
+              passThrough: NEVER
+              template:
+                application/json: '{"input": "{\"payload\":$util.escapeJavaScript($input.json(''$'')).replaceAll("\\''", "''") ,\"x-ray-trace-id\" : \"$input.params(''X-Amzn-Trace-Id'')\"}", "name": "$context.requestId", "stateMachineArn": "notes_sm_Arn}"}'
+            cors:
+              origin: '*'
+              headers: ${self:custom.allowedHeaders}
+              
+      definition:
+        Comment: "AWS STEP FUNCTION FOR NOTES API"
+        StartAt: Validation
+        States:
+          Validation:
+            Comment: "Validate notes input lambda"
+            Type: Task
+            Resource:
+              Fn::GetAtt: [validate-note, Arn]
+            TimeoutSeconds: 15
+            Next: Create
+            ResultPath: "$.segment"
+            OutputPath: "$"
+            Retry:
+              - ErrorEquals:
+                  - RuntimeException
+                IntervalSeconds: 1
+                MaxAttempts: 2
+                BackoffRate: 1.5
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                Next: ErrorState
+
+          Create:
+            Comment: "create note lambda"
+            Type: Task
+            Resource:
+              Fn::GetAtt: [add-note, Arn]
+            TimeoutSeconds: 15
+            OutputPath: "$.body"
+            Retry:
+              - ErrorEquals:
+                  - RuntimeException
+                IntervalSeconds: 1
+                MaxAttempts: 2
+                BackoffRate: 1.5
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                Next: ErrorState
+            End: true
+
+          ErrorState:
+            Comment: "error state"
+            Type: Pass
+            Result: "there was an error"
+            End: true
+
+
+
+resources:
+  Resources:
+    NotesTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:provider.environment.NOTES_TABLE}
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: note_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH #clave particion
+          - AttributeName: note_id
+            KeyType: RANGE #clave ordenacion
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: note_id-index
+            KeySchema:
+              - AttributeName: note_id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+
+ #---------------------------ROLES-----------------------------
+    NotesLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: NotesLambdaRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - "lambda.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Path: "/"
+
+    NotesStepFunctionsRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: NotesStepFunctionsRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - "states.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Path: "/"
+    #-------------------------------------------------------------
+
+
+    #---------------------------POLICIES---------------------------
+    NotesLambdaPolicy:
+      DependsOn: NotesLambdaRole
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: NotesLambdaPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Action:    #https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc.html   https://serverless.com/framework/docs/providers/aws/guide/functions/
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+                - "ec2:DescribeSecurityGroups"
+                - "ec2:DescribeSubnets"
+                - "ec2:DescribeVpcs"
+                - "ec2:CreateNetworkInterface"
+                - "ec2:DescribeNetworkInterfaces"
+                - "ec2:DeleteNetworkInterface"
+                - "elasticache:*"
+                - "xray:*"
+                - "dynamodb:*"
+              Resource: "*"
+        Roles:
+          - Ref: NotesLambdaRole
+
+    NotesStepFunctionPolicy:
+      DependsOn: NotesStepFunctionsRole
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: NotesStepFunctionPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Action:
+                - "lambda:InvokeFunction"
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+              Resource: "*"
+        Roles:
+          - Ref: NotesStepFunctionsRole
+    #-------------------------------------------------------------

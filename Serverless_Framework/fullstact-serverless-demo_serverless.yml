@@ -1,0 +1,146 @@
+service: aws-serverless-code
+
+frameworkVersion: "2"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    shouldStartNameWithService: true
+
+functions:
+  authorizationFunc:
+    handler: dist/src/handler.authorizationFunc
+  userAuth:
+    handler: dist/src/handler.userAuth
+    events:
+      - http:
+          path: userAuth
+          method: post
+          cors: true
+  userRoleQuery:
+    handler: dist/src/handler.userRoleQuery
+    events:
+      - http:
+          path: userRoleQuery
+          method: get
+          cors: true
+          authorizer: 
+            name: authorizationFunc
+            type: TOKEN
+            identitySource: method.request.header.authorizationToken
+            resultTtlInSeconds: 0
+  userNameQuery:
+    handler: dist/src/handler.userNameQuery
+    events:
+      - http:
+          path: userNameQuery
+          method: get
+          cors: true        
+          authorizer: 
+            name: authorizationFunc
+            type: TOKEN
+            identitySource: method.request.header.authorizationToken
+            resultTtlInSeconds: 0
+  userInsert:
+    handler: dist/src/handler.userInsert
+    events:
+      - http:
+          path: userInsert
+          method: post
+          cors: true
+          authorizer: 
+            name: authorizationFunc
+            type: TOKEN
+            identitySource: method.request.header.authorizationToken
+            resultTtlInSeconds: 0
+  userUpdate:
+    handler: dist/src/handler.userUpdate
+    events:
+      - http:
+          path: userUpdate
+          method: post
+          cors: true
+          authorizer: 
+            name: authorizationFunc
+            type: TOKEN
+            identitySource: method.request.header.authorizationToken
+            resultTtlInSeconds: 0
+  userDelete:
+    handler: dist/src/handler.userDelete
+    events:
+      - http:
+          path: userDelete
+          method: post
+          cors: true           
+          authorizer: 
+            name: authorizationFunc
+            type: TOKEN
+            identitySource: method.request.header.authorizationToken
+            resultTtlInSeconds: 0     
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "Users"
+        KeySchema:
+          - AttributeName: "UserEmail"
+            KeyType: "HASH"
+          - AttributeName: "UserPassword"
+            KeyType: "RANGE"
+        AttributeDefinitions:
+          - AttributeName: "UserEmail"
+            AttributeType: "S"
+          - AttributeName: "UserPassword"
+            AttributeType: "S"
+          - AttributeName: "UserRole"
+            AttributeType: "S"
+          - AttributeName: "UserName"
+            AttributeType: "S"
+        GlobalSecondaryIndexes:
+          - IndexName: RoleIndex
+            KeySchema:
+              - AttributeName: "UserRole"
+                KeyType: "HASH"
+            Projection:
+              ProjectionType: "ALL"
+            ProvisionedThroughput:
+              ReadCapacityUnits: 20
+              WriteCapacityUnits: 20    
+          - IndexName: NameIndex
+            KeySchema:
+              - AttributeName: "UserName"
+                KeyType: "HASH"
+            Projection:
+              ProjectionType: "ALL"      
+            ProvisionedThroughput:
+              ReadCapacityUnits: 20
+              WriteCapacityUnits: 20  
+        ProvisionedThroughput:
+          ReadCapacityUnits: 20
+          WriteCapacityUnits: 20   
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'      
+
+plugins:
+  - serverless-offline

@@ -1,0 +1,238 @@
+service: wdraktuell-bot-fb
+
+provider:
+  name: aws
+  versionFunctions: false
+  region: ${file(config.yml):region}
+  runtime: nodejs12.x
+  stage: ${file(config/env.js):stage}
+  environment: ${file(config/env.js):env}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:service}-${self:provider.stage}-*"
+    - Effect: Allow
+      Action:
+        - cloudwatch:PutMetricData
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - states:StartExecution
+      Resource: "*"
+
+functions:
+  updateBreakingSubscriptions:
+    handler: entrypoint/tools.updateBreakingSubscriptions
+    timeout: 30
+  fbVerify:
+    handler: entrypoint/fb.verify
+    events:
+      - http:
+          path: fb
+          method: get
+  fbMessage:
+    handler: entrypoint/fb.message
+    timeout: 15
+    events:
+      - http:
+          path: fb
+          method: post
+  fbAttachment:
+    handler: entrypoint/fb.attachment
+    timeout: 30
+    events:
+      - http:
+          path: attachment
+          method: post
+  cronPush:
+    handler: entrypoint/fb.push
+    timeout: 30
+    events:
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-push_m
+          rate: cron(30 6 ? * MON-FRI *) # UTC+1 (No DST)
+          enabled: false
+          input:
+            timing: morning
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-push_m_dst
+          rate: cron(30 5 ? * MON-FRI *) # UTC+2 (DST)
+          enabled: false
+          input:
+            timing: morning
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-push_m_w
+          rate: cron(0 8 ? * * *) # UTC+1 (No DST)
+          enabled: false
+          input:
+            timing: morning
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-push_m_w_dst
+          rate: cron(0 7 ? * * *) # UTC+2 (DST)
+          enabled: false
+          input:
+            timing: morning
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-push_e
+          rate: cron(30 17 * * ? *) # UTC+1 (No DST)
+          enabled: false
+          input:
+            timing: evening
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-push_e_dst
+          rate: cron(30 16 * * ? *) # UTC+2 (DST)
+          enabled: false
+          input:
+            timing: evening
+
+  fbPushLegacyFetch:
+    handler: entrypoint/fbPushLegacy.fetch
+    timeout: 300
+  fbPushLegacySend:
+    handler: entrypoint/fbPushLegacy.send
+    timeout: 300
+  fbPushLegacyFinish:
+    handler: entrypoint/fbPushLegacy.finish
+    timeout: 300
+
+  metrics:
+    handler: entrypoint/metrics.prometheus
+    events:
+      - http:
+          path: metrics
+          method: get
+
+  audio:
+    handler: entrypoint/audio.scrape
+    timeout: 120
+    events:
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-audio
+          rate: rate(3 minutes)
+          enabled: false
+
+  proxy:
+    handler: entrypoint/fbPushLegacy.proxy
+    timeout: 30
+    environment:
+      statemachine_arn: "arn:aws:states:#{AWS::Region}:#{AWS::AccountId}:stateMachine:${self:service}-${self:provider.stage}-pushLegacy"
+    events:
+      - http:
+          path: push
+          method: post
+      - http:
+          path: report
+          method: post
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-pL_m
+          rate: cron(30 6 ? * MON-FRI *) # UTC+1 (No DST)
+          enabled: true
+          input:
+            timing: morning
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-pL_m_dst
+          rate: cron(30 5 ? * MON-FRI *) # UTC+2 (DST)
+          enabled: true
+          input:
+            timing: morning
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-pL_m_w
+          rate: cron(0 8 ? * * *) # UTC+1 (No DST)
+          enabled: true
+          input:
+            timing: morning
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-pL_m_w_dst
+          rate: cron(0 7 ? * * *) # UTC+2 (DST)
+          enabled: true
+          input:
+            timing: morning
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-pL_e
+          rate: cron(30 17 * * ? *) # UTC+1 (No DST)
+          enabled: false
+          input:
+            timing: evening
+      - schedule:
+          name: ${self:service}-${self:provider.stage}-pL_e_dst
+          rate: cron(30 16 * * ? *) # UTC+2 (DST)
+          enabled: false
+          input:
+            timing: evening
+  getWebtrekkConsent:
+    handler: entrypoint/tools.getWebtrekkConsent
+    timeout: 900
+
+  # Special events
+  uploadSchoolImages:
+    handler: entrypoint/events.uploadSchoolImages
+    timeout: 900
+
+stepFunctions:
+  stateMachines:
+    pushLegacy:
+      name: ${self:service}-${self:provider.stage}-pushLegacy
+      definition:
+        StartAt: fetching
+        States:
+          fetching:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-fbPushLegacyFetch"
+            Next: loop
+          loop:
+            Type: Choice
+            Choices:
+              - Variable: "$.state"
+                StringEquals: "nextChunk"
+                Next: sending
+              - Variable: "$.state"
+                StringEquals: "finished"
+                Next: finished
+          sending:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-fbPushLegacySend"
+            Next: loop
+          finished:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-fbPushLegacyFinish"
+            End: true
+
+custom:
+  customDomain:
+    domainName: "${self:provider.stage}.${file(config.yml):domain_base}"
+    basePath: ""
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    enabled: ${file(config/env.js):enableDomain}
+  scripts:
+    hooks:
+      "package:initialize": npm run lint
+  webpack:
+    includeModules:
+      forceInclude:
+        - source-map-support
+      forceExclude:
+        - aws-sdk
+    packagerOptions:
+      scripts:
+        - npm rebuild grpc --target=12.0.0 --target_arch=x64 --target_platform=linux --target_libc=glibc
+  sentry:
+    dsn: ${file(config/env.js):env.SENTRY_DSN}
+
+plugins:
+  - serverless-offline
+  - serverless-domain-manager
+  - serverless-plugin-scripts
+  - serverless-pseudo-parameters
+  - serverless-step-functions
+  - serverless-webpack
+  - serverless-sentry
+
+resources:
+  Resources: ${file(config/env.js):resources}

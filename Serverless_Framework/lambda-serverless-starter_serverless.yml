@@ -1,0 +1,73 @@
+service: service-name
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'staging'} # i.e. default to staging if no --stage command line option is provided.
+  region: eu-west-1
+  endpointType: edge
+  iamRoleStatements:
+    # Enable functions to read any parameter in a folder matching its service name
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter
+      Resource:
+        - arn:aws:ssm:${self:provider.region}:*:parameter/${self:service}/*
+
+  environment:
+    STAGE: ${self:provider.stage}
+    ENVIRONMENT: ${self:provider.stage}
+    EXAMPLE_ENDPOINT: ${self:custom.${self:provider.stage}.EXAMPLE_ENDPOINT}
+plugins:
+  - serverless-domain-manager
+
+custom:
+  # For variables which are different from staging vs production
+  staging:
+    EXAMPLE_ENDPOINT: "https://staging.example.com"
+    certificateArn: "arn:aws:staging-certificate-arn"
+    domainName: my-service.staging.my-staging-domain.com
+
+  production:
+    EXAMPLE_ENDPOINT: "https://example.com"
+    certificateArn: "arn:aws:production-certificate-arn"
+    domainName: my-service.production.my-production-domain.com
+
+  # serverless-domain-manager
+  # https://github.com/amplify-education/serverless-domain-manager
+  customDomain:
+    domainName: ${self:custom.${self:provider.stage}.domainName}
+    basePath: ""
+    stage: ${self:provider.stage}
+    certificateArn: ${self:custom.${self:provider.stage}.certificateArn}
+    createRoute53Record: true
+    endpointType: "edge"
+    securityPolicy: tls_1_2
+
+functions:
+  getExample:
+    handler: services/getExample.handler
+    events:
+      - http:
+          path: /example
+          method: get
+          cors: true
+  postExample:
+    handler: services/postExample.handler
+    events:
+      - http:
+          path: /example
+          method: post
+          cors: true
+  pathParamExample:
+    handler: services/pathParamExample.handler
+    events:
+      - http:
+          path: /examples/{id}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                orgId: true
+                name: true

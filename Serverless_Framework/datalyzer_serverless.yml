@@ -1,0 +1,77 @@
+service: datalyzer
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: default
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource:
+        Fn::Join: ['/',[Fn::GetAtt: [S3Bucket, Arn],'*']]
+    - Effect: "Allow"
+      Action:
+        - "firehose:PutRecord"
+      Resource: 
+        Fn::GetAtt: [FirehoseStream, Arn]
+  environment:
+    DATALYZER_INGEST_STREAM_NAME: 
+      Ref: FirehoseStream
+
+functions:
+  ingestGdeltData:
+    handler: handler.ingestGdeltData
+    timeout: 60
+    events:
+      - s3:
+          bucket: 
+            Ref: S3Bucket             
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .csv
+          existing: true
+          
+resources:
+  Resources:
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+         BucketName: ${self:service}-${self:provider.stage}-bucket-wipe
+    FirehoseRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-${self:provider.stage}-firehose-role
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - firehose.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: root
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: s3:*
+                  Resource:
+                    Fn::Join: ['/',[Fn::GetAtt: [S3Bucket, Arn],'*']]
+    FirehoseStream:
+      Type: AWS::KinesisFirehose::DeliveryStream
+      DependsOn: S3Bucket
+      Properties:
+        DeliveryStreamName: ${self:service}-${self:provider.stage}-firehose-stream
+        S3DestinationConfiguration:
+          BucketARN:
+            Fn::GetAtt: [S3Bucket, Arn]
+          Prefix: firehose/
+          BufferingHints:
+            IntervalInSeconds: 60
+            SizeInMBs: 1
+          CompressionFormat: UNCOMPRESSED
+          RoleARN:
+            Fn::GetAtt: [FirehoseRole, Arn]

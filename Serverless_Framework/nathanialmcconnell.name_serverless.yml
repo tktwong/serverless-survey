@@ -1,0 +1,506 @@
+service: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.service}
+
+frameworkVersion: ">=1.0.0 <2.0.0"
+
+package:
+  excludeDevDependencies: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  awsId: #{AWS::AccountId}
+  stage: ${opt:stage, env:SLS_STAGE, 'dev'}
+  region: ${opt:region, env:SLS_REGION, 'us-east-1'}
+  profile: ${opt:aws-profile, env:AWS_PROFILE, env:AWS_DEFAULT_PROFILE, 'default'}
+  stackName: ${self:service}
+  memorySize: 128
+  timeout: 10
+  logRetentionInDays: 14
+  deploymentBucket:
+    name: #{SiteBucket.BucketName}-deploys
+    serverSideEncryption: AES256
+  environment:
+    algoliaAdminApiKey: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.algoliaAdminApiKey}
+    algoliaAppId: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.algoliaAppId}
+    algoliaIndexName: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.algoliaIndexName}
+    algoliaSearchOnlyApiKey: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.algoliaSearchOnlyApiKey}
+    buildComputeType: BUILD_GENERAL1_SMALL
+    buildImage: aws/codebuild/nodejs:8.11.0
+    buildType: LINUX_CONTAINER
+    cloudFrontHostedZoneId: Z2FDTNDATAQYW2
+    corsOrigin: "*"
+    domainKey1: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.domainKey1}
+    domainKey2: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.domainKey2}
+    domainKey3: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.domainKey3}
+    emailSender: nate@${self:provider.environment.siteDomainName}
+    gitHubBranch: master
+    gitHubOwner: FluxAugur
+    gitHubRepo: ${self:provider.environment.siteDomainName}
+    gitHubToken: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.gitHubToken}
+    keybaseVerification: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.keybaseVerification}
+    siteBucketName: ${self:service}
+    siteDomainName: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.siteDomainName}
+    siteDomainNameReversed: ${file(config.${self:provider.region}.${self:provider.stage}.yml):default.siteDomainNameReversed}
+    siteHostedZoneId: Z3GHCWB8V7K4G7
+    siteHostedZoneName: ${self:provider.environment.siteDomainName}.
+    siteWwwDomainName: www.${self:provider.environment.siteDomainName}
+
+custom:
+  # deploymentBucket:
+  #   versioning: true
+  # encodeEnvObjects:
+  #   - ONLY_THIS_ENV
+  # pseudoParameters:
+  #   skipRegionReplace: false
+  #   allowReferences: false
+  remover:
+    - Ref: SiteBucket
+    - Ref: PipelineBucket
+  stages:
+    - dev
+    - prod
+    - staging
+  static:
+    path: ./public
+    port: 8000
+
+functions:
+  currentTime:
+    handler: src/handlers/currentTime.handler
+    events:
+      - http: get /ping
+  sendEmail:
+    handler: src/handlers/sendEmail.handler
+    environment:
+      FROM_EMAIL: ${self:provider.environment.emailSender}
+    events:
+      - http: get /email/send
+      - http: options /email/send
+
+resources:
+  Resources:
+    LambdaAcmExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:provider.environment.siteBucketName}-LambdaAcmExecutionRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Path: "/service-role/"
+        Policies:
+          - PolicyName: lambda-service
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "acm:*"
+                    - "cloudfront:List*"
+                    - "cloudfront:Get*"
+                    - "cloudfront:UpdateDistribution"
+                  Resource: "*"
+                - Effect: Allow
+                  Action:
+                    - "logs:*"
+                  Resource: "arn:aws:logs:*:*:*"
+    CodeBuildRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:provider.environment.siteBucketName}-CodeBuildRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - codebuild.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Path: "/service-role/"
+        Policies:
+          - PolicyName: codebuild-service
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:GetObjectVerion
+                    - s3:GetBucketVersioning
+                    - s3:PutObject
+                  Resource:
+                    -  #{PipelineBucket.Arn}
+                    - "#{PipelineBucket.Arn}/*"
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:GetObjectVersion
+                    - s3:GetBucketVersioning
+                    - s3:PutObject
+                    - s3:PutObjectAcl
+                  Resource:
+                    -  #{SiteBucket.Arn}
+                    - "#{SiteBucket.Arn}/*"
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    - cloudfront:CreateInvalidation
+                  Resource: "*"
+    CodePipelineRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:provider.environment.siteBucketName}-CodePipelineRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - codepipeline.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Path: "/service-role/"
+        Policies:
+          - PolicyName: codepipeline-service
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:getObjectVersion
+                    - s3:GetBucketVersioning
+                  Resource:
+                    -  #{PipelineBucket.Arn}
+                    - "#{PipelineBucket.Arn}/*"
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                  Resource:
+                    - arn:aws:s3:::codepipeline*
+                - Effect: Allow
+                  Action:
+                    - codebuild:BatchGetBuilds
+                    - codebuild:StartBuild
+                  Resource: "*"
+                - Effect: Allow
+                  Action:
+                    - s3:*
+                    - cloudformation:*
+                    - iam:PassRole
+                  Resource: "*"
+    SiteBucket:
+      Type: AWS::S3::Bucket
+      Description: An S3 bucket holding static file website
+      DeletionPolicy: Delete
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:provider.environment.siteBucketName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    PipelineBucket:
+      Type: AWS::S3::Bucket
+      Description: An S3 bucket holding CodePipeline artifacts
+      DeletionPolicy: Delete
+      Properties:
+        BucketName: ${self:provider.environment.siteBucketName}-pipeline
+    CodeBuildDeploySite:
+      Type: AWS::CodeBuild::Project
+      DependsOn: CodeBuildRole
+      Properties:
+        Name: ${self:service}-CodeBuildDeploySite
+        Description: Deploy site to S3
+        ServiceRole:
+          Fn::GetAtt:
+            - CodeBuildRole
+            - Arn
+        Artifacts:
+          Type: CODEPIPELINE
+        Environment:
+          Type: ${self:provider.environment.buildType}
+          ComputeType: ${self:provider.environment.buildComputeType}
+          Image: ${self:provider.environment.buildImage}
+          EnvironmentVariables:
+            - Name: ALGOLIA_APP_ID
+              Value: ${self:provider.environment.algoliaAppId}
+            - Name: ALGOLIA_SEARCH_ONLY_API_KEY
+              Value: ${self:provider.environment.algoliaSearchOnlyApiKey}
+            - Name: ALGOLIA_ADMIN_API_KEY
+              Value: ${self:provider.environment.algoliaAdminApiKey}
+            - Name: ALGOLIA_INDEX_NAME
+              Value: ${self:provider.environment.algoliaIndexName}
+        Source:
+          Type: CODEPIPELINE
+          BuildSpec:
+            Fn::Sub: |
+              version: 0.2
+              phases:
+                pre_build:
+                  commands:
+                  - echo Installing source NPM dependencies...
+                  - npm install
+                  - echo Cleaning project...
+                  - npm run clean
+                build:
+                  commands:
+                  - echo Build started on `date`
+                  - npm run build
+                post_build:
+                  commands:
+                  - aws s3 sync --acl public-read public s3://#{SiteBucket.BucketName}
+                  - aws s3 cp --acl public-read --cache-control='max-age=0, no-cache, no-store, must-revalidate' public/sw.js s3://#{SiteBucket.BucketName}/
+                  - aws s3 cp --acl public-read --cache-control='max-age=0, no-cache, no-store, must-revalidate' public/index.html s3://#{SiteBucket.BucketName}/
+              artifacts:
+                files:
+                - "**/*"
+                base-directory: public
+        TimeoutInMinutes: 10
+    Pipeline:
+      Type: AWS::CodePipeline::Pipeline
+      Properties:
+        Name: #{SiteBucket.BucketName}-Pipeline
+        RoleArn: #{CodePipelineRole.Arn}
+        Stages:
+          - Name: Source
+            Actions:
+              - InputArtifacts: []
+                Name: Source
+                ActionTypeId:
+                  Category: Source
+                  Owner: ThirdParty
+                  Version: "1"
+                  Provider: GitHub
+                OutputArtifacts:
+                  - Name: SourceArtifacts
+                Configuration:
+                  Owner: ${self:provider.environment.gitHubOwner}
+                  Repo: ${self:provider.environment.gitHubRepo}
+                  Branch: ${self:provider.environment.gitHubBranch}
+                  OAuthToken: ${self:provider.environment.gitHubToken}
+                RunOrder: 1
+          - Name: Deploy
+            Actions:
+              - Name: Artifact
+                ActionTypeId:
+                  Category: Build
+                  Owner: AWS
+                  Version: "1"
+                  Provider: CodeBuild
+                InputArtifacts:
+                  - Name: SourceArtifacts
+                OutputArtifacts:
+                  - Name: DeploymentArtifacts
+                Configuration:
+                  ProjectName:
+                    Ref: CodeBuildDeploySite
+                RunOrder: 1
+        ArtifactStore:
+          Type: S3
+          Location:
+            Ref: PipelineBucket
+    SiteCertificate:
+      Type: Custom::Certificate
+      Description: ACM SSL certificate for site
+      Properties:
+        DomainName: ${self:provider.environment.siteDomainName}
+        ValidationMethod: DNS
+        ServiceToken: arn:aws:lambda:us-east-1:096188391785:function:binxio-cfn-certificate-provider
+    IssuedCertificate:
+      Type: Custom::IssuedCertificate
+      Properties:
+        CertificateArn:
+          Ref: SiteCertificate
+        ServiceToken: arn:aws:lambda:us-east-1:096188391785:function:binxio-cfn-certificate-provider
+    Distribution:
+      Type: AWS::CloudFront::Distribution
+      DependsOn: IssuedCertificate
+      Description: CDN for site content
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          DefaultRootObject: index.html
+          Origins:
+            - DomainName:
+                Fn::GetAtt:
+                  - SiteBucket
+                  - DomainName
+              Id: ${self:provider.environment.siteBucketName}
+              S3OriginConfig:
+                OriginAccessIdentity: ""
+          Aliases:
+            - ${self:provider.environment.siteDomainName}
+            - "*.${self:provider.environment.siteDomainName}"
+          PriceClass: PriceClass_100
+          HttpVersion: http2
+          IPV6Enabled: true
+          DefaultCacheBehavior:
+            MinTTL: 300
+            MaxTTL: 31536000
+            Compress: true
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            ForwardedValues:
+              QueryString: true
+            TargetOriginId: ${self:provider.environment.siteBucketName}
+            ViewerProtocolPolicy: allow-all
+          ViewerCertificate:
+            SslSupportMethod: sni-only
+            AcmCertificateArn:
+              Ref: SiteCertificate
+    CertificateDNSRecord:
+      Type: Custom::CertificateDNSRecord
+      Properties:
+        CertificateArn:
+          Ref: SiteCertificate
+        DomainName: ${self:provider.environment.siteDomainName}
+        ServiceToken: arn:aws:lambda:us-east-1:096188391785:function:binxio-cfn-certificate-provider
+    DomainValidationRecord:
+      Type: AWS::Route53::RecordSetGroup
+      Description: IPV4 zone apex alias record
+      Properties:
+        HostedZoneId: ${self:provider.environment.siteHostedZoneId}
+        RecordSets:
+          - Name:
+              Fn::GetAtt: CertificateDNSRecord.Name
+            Type:
+              Fn::GetAtt: CertificateDNSRecord.Type
+            TTL: 60
+            Weight: 1
+            SetIdentifier:
+              Ref: SiteCertificate
+            ResourceRecords:
+              - Fn::GetAtt: CertificateDNSRecord.Value
+    ZoneApexRecords:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneId: ${self:provider.environment.siteHostedZoneId}
+        RecordSets:
+          - Name: ${self:provider.environment.siteHostedZoneName}
+            Type: A
+            AliasTarget:
+              HostedZoneId: ${self:provider.environment.cloudFrontHostedZoneId}
+              DNSName:
+                Fn::GetAtt:
+                  - Distribution
+                  - DomainName
+          - Name: ${self:provider.environment.siteHostedZoneName}
+            Type: AAAA
+            AliasTarget:
+              HostedZoneId: ${self:provider.environment.cloudFrontHostedZoneId}
+              DNSName:
+                Fn::GetAtt:
+                  - Distribution
+                  - DomainName
+    WwwRedirectRecord:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneId: ${self:provider.environment.siteHostedZoneId}
+        RecordSets:
+          - Name: "${self:provider.environment.siteWwwDomainName}."
+            Type: CNAME
+            TTL: 300
+            ResourceRecords:
+              - Fn::GetAtt:
+                  - Distribution
+                  - DomainName
+    MailRecords:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneId: ${self:provider.environment.siteHostedZoneId}
+        RecordSets:
+          - Name: "${self:provider.environment.domainKey1}._domainkey.${self:provider.environment.siteDomainName}."
+            Type: CNAME
+            TTL: 300
+            ResourceRecords:
+              - ${self:provider.environment.domainKey1}.dkim.amazonses.com
+          - Name: "${self:provider.environment.domainKey2}._domainkey.${self:provider.environment.siteDomainName}."
+            Type: CNAME
+            TTL: 300
+            ResourceRecords:
+              - ${self:provider.environment.domainKey2}.dkim.amazonses.com
+          - Name: "${self:provider.environment.domainKey3}._domainkey.${self:provider.environment.siteDomainName}."
+            Type: CNAME
+            TTL: 300
+            ResourceRecords:
+              - ${self:provider.environment.domainKey3}.dkim.amazonses.com
+          - Name: "_dmarq.${self:provider.environment.siteHostedZoneName}"
+            Type: TXT
+            TTL: 300
+            ResourceRecords:
+              - '"v=DMARC1;p=quarantine;pct=25;ruf=mailto:dmarcreports@nathanialmcconnell.name;rua=mailto:dmarcreports@nathanialmcconnell.com"'
+          - Name: "_amazonses.${self:provider.environment.siteHostedZoneName}"
+            Type: TXT
+            TTL: 300
+            ResourceRecords:
+              - '"+tuTXzx4vouPJYPOeGNzeO5MINYN42Qpd0Yim2rWuM0="'
+          - Name: "mail.${self:provider.environment.siteHostedZoneName}"
+            Type: MX
+            TTL: 300
+            ResourceRecords:
+              - "10 feedback-smtp.us-east-1.amazonses.com"
+          - Name: ${self:provider.environment.siteHostedZoneName}
+            Type: MX
+            TTL: 300
+            ResourceRecords:
+              - "10 inbound-smtp.us-east-1.amazonaws.com"
+          - Name: "mail.${self:provider.environment.siteHostedZoneName}"
+            Type: SPF
+            TTL: 300
+            ResourceRecords:
+              - '"v=spf1 include:amazonses.com ~all"'
+    KeybaseVerificationRecord:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneId: ${self:provider.environment.siteHostedZoneId}
+        RecordSets:
+          - Name: ${self:provider.environment.siteHostedZoneName}
+            Type: TXT
+            TTL: 300
+            ResourceRecords:
+              - '"${self:provider.environment.keybaseVerification}"'
+
+  Outputs:
+    DNSRecord:
+      Value:
+        Fn::Join:
+          - " "
+          - - Fn::GetAtt: CertificateDNSRecord.Name
+            - Fn::GetAtt: CertificateDNSRecord.Type
+            - Fn::GetAtt: CertificateDNSRecord.Value
+    DistributionUrl:
+      Value:
+        Fn::GetAtt:
+          - Distribution
+          - DomainName
+    PipelineUrl:
+      Value:
+        Fn::Join:
+          - ""
+          - - "https://console.aws.amazon.com/codepipeline/home?region=${self:provider.region}#/view/"
+            - Ref: Pipeline
+      Description: CodePipeline URL
+    SiteUrl:
+      Value:
+        Fn::GetAtt:
+          - SiteBucket
+          - WebsiteURL
+      Description: S3 Website URL
+
+plugins:
+  - serverless-deployment-bucket
+  - serverless-dynalite
+  - serverless-offline
+  - serverless-plugin-common-excludes
+  - serverless-plugin-encode-env-var-objects
+  - serverless-plugin-stack-outputs
+  - serverless-pseudo-parameters
+  - serverless-sam
+  - serverless-static
+  - serverless-s3-remover

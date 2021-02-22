@@ -1,0 +1,65 @@
+org: binhrobles
+service:
+  name: ghosts-api
+  org: binhrobles
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+
+  domains:
+    production: ghosts-api.binhrobles.com
+    other: personal.ghosts-api.binhrobles.com
+
+  # Configures throttling settings for all http endpoints
+  apiGatewayThrottling:
+    maxRequestsPerSecond: 100
+    maxConcurrentRequests: 100
+
+  webpack:
+    includeModules: true
+    packager: 'yarn'
+    webpackConfig: ./webpack.config.js
+
+  customDomain:
+    stage: ${self:custom.stage}
+    domainName: ${self:custom.domains.${self:custom.stage}, self:custom.domains.other}
+    basePath: ""
+    createRoute53Record: false
+    endpointType: 'regional'
+
+  serverless-offline:
+    httpPort: 4000
+    useChildProcesses: true
+
+plugins:
+  - serverless-webpack
+  - serverless-api-gateway-throttling
+  - serverless-domain-manager
+  - serverless-pseudo-parameters
+  - serverless-offline
+
+provider:
+  name: aws
+  region: us-west-2
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  logs:
+    restApi:
+      level: ERROR
+      fullExecutionData: false
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    STAGE: ${self:custom.stage}
+
+package:
+  individually: true
+
+functions:
+  - ${file(./src/entries/definition.yml)}
+  - ${file(./src/indexer/definition.yml)}
+  - ${file(./src/query/definition.yml)}
+  - ${file(./src/provision/definition.yml)}
+
+resources:
+  - ${file(./resources/iam-roles.yml)}

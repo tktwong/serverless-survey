@@ -1,0 +1,96 @@
+service: bartender
+provider:
+  name: aws
+  region: us-west-2
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:ConditionCheckItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:GetItem
+        - dynamodb:Query
+        - dynamodb:UpdateItem
+      Resource:
+        - arn:aws:dynamodb:*:*:table/${self:custom.table-name} # The table itself
+        - arn:aws:dynamodb:*:*:table/${self:custom.table-name}/index/* # The indexes for the table
+  environment:
+    REVERSE_LOOKUP_INDEX: ${self:custom.reverse-lookup-index-name}
+    BARTENDER_TABLE_NAME: ${self:custom.table-name}
+    STAGE: ${self:provider.stage}
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-stack-output
+
+functions:
+  graphql:
+    # this is formatted as <FILENAME>.<HANDLER>
+    handler: src/index.graphqlHandler
+    events:
+    - http:
+        path: graphql
+        method: post
+        cors: true
+    - http:
+        path: graphql
+        method: get
+        cors: true
+  ping:
+    handler: src/index.ping
+    events:
+      - http:
+          path: ping
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    Table:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST 
+        AttributeDefinitions:
+          - AttributeName: primaryId
+            AttributeType: S
+          - AttributeName: secondaryId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: primaryId
+            KeyType: HASH
+          - AttributeName: secondaryId
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:custom.reverse-lookup-index-name}
+            KeySchema: 
+              - AttributeName: secondaryId
+                KeyType: HASH
+              - AttributeName: primaryId
+                KeyType: RANGE
+            Projection: 
+              ProjectionType: ALL
+
+        TableName: ${self:custom.table-name}
+
+custom:
+  table-name: bartender-service-${self:provider.stage}
+  reverse-lookup-index-name: ReverseLookup
+  serverless-offline:
+    httpPort: 4000
+  output:
+    file: stacks/${self:provider.stage}.stack.json
+  dynamodb:
+    start:
+      inMemory: true
+      migrate: true
+    stages:
+      - ${self:provider.stage}
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    packager: 'yarn'
+    includeModules: true

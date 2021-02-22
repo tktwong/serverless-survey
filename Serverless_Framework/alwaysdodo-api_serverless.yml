@@ -1,0 +1,119 @@
+service:
+  name: alwaysdodo-api
+
+plugins:
+  - serverless-domain-manager
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  runtime: nodejs8.10
+  region: ${env:AWS_DEFAULT_REGION, 'us-east-1'}
+  environment:
+    NODE_ENV: ${file(.env.${self:provider.stage}.yml):NODE_ENV}
+    JWT_SECRET: ${file(.env.${self:provider.stage}.yml):JWT_SECRET}
+    MANAGER_USERNAME: ${file(.env.${self:provider.stage}.yml):MANAGER_USERNAME}
+    MANAGER_PASSWORD: ${file(.env.${self:provider.stage}.yml):MANAGER_PASSWORD}
+    S3_ATTACHMENTS: ${self:provider.stage}-dodo-attachments
+    DDB_DOCUMENTS: ${self:provider.stage}-dodo-documents
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:GetBucketLocation"
+        - "s3:GetObject"
+        - "s3:ListBucket"
+        - "s3:ListBucketMultipartUploads"
+        - "s3:ListMultipartUploadParts"
+        - "s3:AbortMultipartUpload"
+        - "s3:CreateBucket"
+        - "s3:PutObject"
+      Resource:
+        - "Fn::Join": 
+          - ""
+          - - "arn:aws:s3:::"
+            - Ref: S3Attachment
+        - "Fn::Join": 
+          - ""
+          - - "arn:aws:s3:::"
+            - Ref: S3Attachment
+            - "/*"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:DescribeTable"
+        - "dynamodb:Query"
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:UpdateItem"
+      Resource:
+        - !GetAtt DDBDocuments.Arn
+
+custom:
+  webpack:
+    includeModules: true
+  customDomain:
+    stage: prod
+    domainName: graph.alwaysdodo.com
+    certificateName: graph.alwaysdodo.com
+    createRoute53Record: true
+    endpointType: regional
+
+resources:
+  Resources:
+    DDBDocuments:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DDB_DOCUMENTS}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+    S3Attachment:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_ATTACHMENTS}
+        AccessControl: PublicRead
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              AllowedOrigins:
+                - "*"
+              MaxAge: 3000
+functions:
+  home:
+    handler: src/entry.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - Authorization
+            allowCredentials: false
+      - http:
+          path: /{any+}
+          method: ANY
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - Authorization
+            allowCredentials: false

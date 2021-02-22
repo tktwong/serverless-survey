@@ -1,0 +1,79 @@
+# prettier-ignore
+service: live-demo
+app: live-demo
+
+frameworkVersion: "2"
+
+custom:
+  settings:
+    TABLE: hackathon-table #table name in our env variable
+
+provider:
+  name: aws
+  runtime: nodejs12.x #whatever the most current subversion of nodejs is
+  environment: ${self:custom.settings} #similar to ${} in JS but injects pointers to elsewhere in the file. this.whatever is like self(look in the same yml file)
+  region: eu-west-1 #ireland
+  iamRoleStatements:
+    - Effect: "Allow" #this is an array in yml
+      Action:
+        - dynamoDB:DescribeTable #similar to the http head request. Gets information about the table
+        - dynamoDB:Scan #it's allowed to get all things, allowed to scan
+        - dynamoDB:GetBootcamper #allowed to GET
+        - dynamoDB:PutBootcamper #allowed to PUT
+        - dynamoDB:updateBootcamper  #to UPDATE
+        - dynamoDB:deleteBootcamper #allowed to DELETE
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.TABLE}" #similar to the heroku resource
+#the above is the same as this, white space is impotant in yml const provider = {name: aws, runtime: nodejs12.x}
+
+functions: #function object
+  getAllBootcampers:
+    handler: handler.getAllBootcampers
+    events:
+      - http:
+          path: / #this is our root path
+          method: get #GET method
+          cors: true #with our express server we have cors middleware, there we do this to allow them
+  getBootcamperById: #to get one item
+    handler: handler.getBootcamperById
+    events:
+      - http:
+          path: /{id} #wrap it in {} because they're path parameters
+          method: get
+          cors: true
+  addBootcamper:
+    handler: handler.addBootcamper
+    events:
+      - http:
+          path: /
+          method: post
+          cors: true
+  updateBootcamper:
+    handler: handler.updateBootcamper
+    events:
+      - http:
+          path: /{id}
+          method: put
+          cors: true
+  deleteBootcamper:
+    handler: handler.deleteBootcamper
+    events:
+      - http:
+          path: /{id}
+          method: delete
+          cors: true
+
+resources:
+  Resources:
+    LiveDomoTable:
+      Type: AWS::DynamoDB::Table #this is how we want this resource to become a dynamo table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: 'id'
+            AttributeType: 'S' #telling it to be a string
+        KeySchema:
+          - AttributeName: 'id'
+            KeyType: 'HASH' #our patrition key. Theer is also a sort key to be able to interact with data in out table
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1 # this is 3600 reads/hour
+          WriteCapacityUnits: 1 #how time you can read and write per hour 3600 writes/hour. Prevents us from reading or writing way too much that Amazon sends us a big bill
+        TableName: ${self:custom.settings.TABLE}

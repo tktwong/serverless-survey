@@ -1,0 +1,152 @@
+service: awsapp
+
+custom:
+  USER_POOL_ARN: ${file(./config.js):config.pool.arn}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-central-1
+  environment:
+    DB_HOST: ${file(./config.js):config.db.host}
+    DB_USER: ${file(./config.js):config.db.user}
+    DB_BASE: ${file(./config.js):config.db.base}
+    DB_PASSWORD: ${file(./config.js):config.db.password}
+    DB_PORT: ${file(./config.js):config.db.port}
+    USER_POOL_ID: ${file(./config.js):config.pool.id}
+    CLIENT_ID: ${file(./config.js):config.pool.clientId}
+
+
+plugins:
+  - serverless-iam-roles-per-function
+
+package:
+  include:
+    - node_modules/**
+  exclude:
+    - config.js
+
+functions:
+
+  getImages:
+    handler: lambdas/getImages.handler
+    events:
+      - http:
+          path: images
+          method: get
+          authorizer:
+            name: cognito_auth
+            arn: ${self:custom.USER_POOL_ARN}
+
+  uploadImage:
+    handler: lambdas/uploadImage.handler
+    environment:
+      BUCKET: !Ref Bucket
+    iamRoleStatementsName: "uploadImageRole"
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "s3:PutObject"
+          - "s3:GetObject"
+          - "s3:PutObjectVersionAcl"
+          - "s3:PutObjectAcl"
+        Resource: 
+          Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - Ref: Bucket
+    events:
+      - http:
+          path: uploadimage
+          method: post
+          authorizer:
+            name: cognito_auth
+            arn: ${self:custom.USER_POOL_ARN}
+
+  saveOnPut:
+    handler: lambdas/saveOnPut.handler
+    iamRoleStatementsName: "saveOnPutRole"
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "s3:GetObject"
+        Resource: 
+          Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - Ref: Bucket
+    events:
+      - s3:
+          bucket: !Ref Bucket
+          event: s3:ObjectCreated:*
+          existing: true
+          authorizer:
+            name: cognito_auth
+            arn: ${self:custom.USER_POOL_ARN}
+
+  signUp:
+    handler: lambdas/signUp.handler
+    iamRoleStatementsName: "signUpRole"
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "cognito-idp:AdminCreateUser"
+        Resource: ${self:custom.USER_POOL_ARN}
+    events:
+      - http:
+          path: register
+          method: post
+
+  signIn:
+    handler: lambdas/signIn.handler
+    iamRoleStatementsName: "signInRole"
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "cognito-idp:AdminInitiateAuth"
+          - "cognito-idp:AdminRespondToAuthChallenge"
+        Resource: ${self:custom.USER_POOL_ARN}
+    events:
+      - http:
+          path: login
+          method: post
+
+
+resources:
+  Resources:
+
+    Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: aws-app-images-inqq
+        VersioningConfiguration:
+          Status: Enabled
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [POST, GET, PUT, HEAD, DELETE]
+              AllowedOrigins: ['*']
+    
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: cognito_auth_user_pool
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+        UsernameAttributes:
+          - email
+        Schema:
+          - AttributeDataType: String
+            Name: email
+            Required: false
+
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: cognito_auth_user_pool_client
+        UserPoolId: !Ref CognitoUserPool
+        ExplicitAuthFlows:
+          - ALLOW_ADMIN_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH

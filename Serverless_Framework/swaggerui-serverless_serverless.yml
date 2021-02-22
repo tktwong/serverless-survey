@@ -1,0 +1,96 @@
+# Author: Vineet Eldochan
+# Date: 2019-11-17
+
+service: swaggerui
+# frameworkVersion: "=1.56.1"
+
+# Each module would be packaged independently optimizing the zip file for lambda
+package:
+  individually: true
+
+# We use webpack to repackage dependencies
+plugins:
+  - serverless-webpack
+
+# Including node modules and explicitly excluding aws-sdk as it is already available in lambda
+custom:
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+
+# Runs using nodejs 10, change the region if required
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-central-1
+
+# This project requires a bucket to be created for swagger and credentials. Replace vintest-swagger with your bucket name
+# You can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: "arn:aws:s3:::vintest-swagger"
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource:
+        "arn:aws:s3:::vintest-swagger/*"
+
+functions:
+  swagger:
+    handler: swagger/swaggerUI.swagger
+    events:
+      - http:
+          path: /{proxy+}
+          method: get
+          request:
+            parameters:  
+              headers:
+                Authorization: false
+          authorizer:
+            name: auth
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+      - http:
+          path: /
+          method: get
+          request:
+            parameters:  
+              headers:
+                Authorization: false
+          authorizer:
+            name: auth
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+
+#    Define function environment variables here
+    environment:
+      SWAGGER_BUCKET: vintest-swagger
+      SWAGGER_FILE: test.json
+      EXPIRE_SECONDS: 3600
+
+  # Authorizer for the api gateway. Credentials file is picked up from S3
+  auth:
+    handler: authorizer/auth.handler
+    environment:
+      CREDENTIALS_BUCKET: vintest-swagger
+      CREDENTIALS_FILE: credentials.json
+
+# Setting up API gateway to handle Basic Authentication
+resources:
+  Resources:
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          # Realm not shown in Chrome and Opera. Known issue.
+          gatewayresponse.header.WWW-Authenticate: "'Basic realm=\"Please provide username and password to access the swagger document\", charset=\"UTF-8\"'"
+        ResponseType: UNAUTHORIZED
+        RestApiId: 
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'

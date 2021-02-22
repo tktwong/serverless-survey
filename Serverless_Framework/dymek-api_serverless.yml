@@ -1,0 +1,297 @@
+service: dymek-api
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: ${self:custom.appRegion}
+  runtime: nodejs6.10
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { Fn::GetAtt: ["MarkersDynamoDBTable", "Arn"] }
+        - { Fn::GetAtt: ["UsersDynamoDBTable", "Arn"] }
+        - { Fn::GetAtt: ["ReportsDynamoDBTable", "Arn"] }
+        - { Fn::Join: [ "/", [{ Fn::GetAtt: ["MarkersDynamoDBTable", "Arn"] }, 'index/geohash-index' ] ]}
+        - { Fn::Join: [ "/", [{ Fn::GetAtt: ["MarkersDynamoDBTable", "Arn"] }, 'index/id-index' ] ]}
+        - { Fn::Join: [ "/", [{ Fn::GetAtt: ["MarkersDynamoDBTable", "Arn"] }, 'index/userId-createdAt-index' ] ]}
+        - { Fn::Join: [ "/", [{ Fn::GetAtt: ["MarkersDynamoDBTable", "Arn"] }, 'index/reportId-createdAt-index' ] ]}
+        - { Fn::Join: [ "/", [{ Fn::GetAtt: ["ReportsDynamoDBTable", "Arn"] }, 'index/geohash-index' ] ]}
+        - { Fn::Join: [ "/", [{ Fn::GetAtt: ["ReportsDynamoDBTable", "Arn"] }, 'index/geohash-type-index' ] ]}
+        - { Fn::Join: [ "/", [{ Fn::GetAtt: ["ReportsDynamoDBTable", "Arn"] }, 'index/id-index' ] ]}
+    - Effect: Allow
+      Action:
+        - SNS:Publish
+        - SNS:Subscribe
+      Resource:
+        - ${self:custom.snsNotificationTopicArn}
+        - ${self:custom.snsReportTopicArn}
+
+  environment:
+    MARKERS_TABLE: ${self:custom.markersTableName}
+    REPORTS_TABLE: ${self:custom.reportsTableName}
+    USERS_TABLE: ${self:custom.usersTableName}
+    DEV_DB_PORT: ${self:custom.dynamodb.start.port}
+    DEV_SNS_PORT: ${self:custom.serverless-offline-sns.port}
+    GCLOUD_PROJECT: dymek-web-1519202400328
+    SNS_NOTIFICATION_TOPIC_ARN: ${self:custom.snsNotificationTopicArn}
+    SNS_NOTIFICATION_TOPIC_NAME: ${self:custom.snsNotificationTopicName}
+    SNS_REPORT_TOPIC_NAME: ${self:custom.snsReportTopicName}
+    SNS_REPORT_TOPIC_ARN: ${self:custom.snsReportTopicArn}
+    APP_REGION: ${self:custom.appRegion}
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline-sns
+  - serverless-offline
+
+custom:
+  markersTableName: 'markers-table-${self:provider.stage}-geo'
+  reportsTableName: 'reports-table-${self:provider.stage}'
+  usersTableName: 'users-table-${self:provider.stage}'
+  snsNotificationTopicName: 'notify-${self:provider.stage}'
+  snsReportTopicName: 'report-${self:provider.stage}'
+  snsNotificationTopicArn:
+    Fn::Join:
+      - ':'
+      - - arn
+        - aws
+        - sns
+        - Ref: AWS::Region
+        - Ref: AWS::AccountId
+        - ${self:custom.snsNotificationTopicName}
+  snsReportTopicArn:
+    Fn::Join:
+      - ':'
+      - - arn
+        - aws
+        - sns
+        - Ref: AWS::Region
+        - Ref: AWS::AccountId
+        - ${self:custom.snsReportTopicName}
+  dynamodb:
+    start:
+      migrate: true
+      port: 9123
+  serverless-offline-sns:
+    port: 4002 # a free port for the sns server to run on
+    debug: true
+  appRegion: ${opt:region, 'eu-centarl-1'}
+
+functions:
+  notifications:
+    handler: handlers/notifications.handler
+    events:
+      - sns: ${self:custom.snsNotificationTopicName}
+  reports:
+    handler: handlers/reports.handler
+    events:
+      - sns: ${self:custom.snsReportTopicName}
+  api:
+    handler: handlers/api.handler
+    events:
+      - http:
+          path: /api/q
+          method: get
+          cors:
+            origins:
+              - '*'
+            headers:
+              - x-dymek-user-id
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+      - http:
+          path: /api/q
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - x-dymek-user-id
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+    allowCredentials: false
+
+
+resources:
+  Resources:
+    MarkersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: hashKey
+            AttributeType: N
+          -
+            AttributeName: createdAt
+            AttributeType: S
+          -
+            AttributeName: geohash
+            AttributeType: N
+          -
+            AttributeName: userId
+            AttributeType: S
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: reportId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: hashKey
+            KeyType: HASH
+          -
+            AttributeName: createdAt
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          -
+            IndexName: 'geohash-index'
+            KeySchema:
+              -
+                KeyType: HASH
+                AttributeName: hashKey
+              -
+                KeyType: RANGE
+                AttributeName: geohash
+            Projection:
+              ProjectionType: ALL
+        GlobalSecondaryIndexes:
+          -
+            IndexName: userId-createdAt-index
+            KeySchema:
+              -
+                AttributeName: userId
+                KeyType: HASH
+              -
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          -
+            IndexName: id-index
+            KeySchema:
+              -
+                AttributeName: id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          -
+            IndexName: reportId-createdAt-index
+            KeySchema:
+              -
+                AttributeName: reportId
+                KeyType: HASH
+              -
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 5
+        TableName: ${self:custom.markersTableName}
+    UsersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: userId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.usersTableName}
+    ReportsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: hashKey
+            AttributeType: N
+          -
+            AttributeName: createdAt
+            AttributeType: S
+          -
+            AttributeName: geohash
+            AttributeType: N
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: type
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: hashKey
+            KeyType: HASH
+          -
+            AttributeName: createdAt
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          -
+            IndexName: 'geohash-index'
+            KeySchema:
+              -
+                KeyType: HASH
+                AttributeName: hashKey
+              -
+                KeyType: RANGE
+                AttributeName: geohash
+            Projection:
+              ProjectionType: ALL
+        GlobalSecondaryIndexes:
+          -
+            IndexName: id-index
+            KeySchema:
+              -
+                AttributeName: id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          -
+            IndexName: geohash-type-index
+            KeySchema:
+              -
+                AttributeName: geohash
+                KeyType: HASH
+              -
+                AttributeName: type
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 5
+        TableName: ${self:custom.reportsTableName}

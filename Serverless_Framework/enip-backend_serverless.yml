@@ -1,0 +1,130 @@
+service: enip-backend
+
+custom:
+  stage: ${opt:stage, 'staging'}
+  pythonRequirements:
+    dockerizePip: true
+    slim: false # jsonschema package fails with true: https://github.com/Julian/jsonschema/issues/628#issuecomment-564456058
+    useDownloadCache: false
+    noDeploy: [
+        'boto3',
+        'botocore',
+        'docutils',
+        'jmespath',
+        'python-dateutil',
+        's3transfer',
+        'six',
+        'pip',
+        'setuptools'
+    ]
+
+  datadog:
+    forwarder: "${ssm:/shared/enip/datadog_forwarder_arn~true}"
+    flushMetricsToLogs: true
+    addLayers: true
+    logLevel: 'INFO'
+    enableDDTracing: true
+
+  prune:
+    automatic: true
+    number: 3
+
+  schedule:
+    staging:
+      run: []
+      run_states: []
+      run_sync_calls_gsheet: []
+      run_sync_comments_gsheet: []
+    prod:
+      run:
+        - schedule: "rate(5 minutes)"
+      run_states:
+        - schedule: "rate(15 minutes)"
+      run_sync_calls_gsheet:
+        - schedule: "rate(5 minutes)"
+      run_sync_comments_gsheet:
+        - schedule: "rate(5 minutes)"
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: us-west-2
+  vpc:
+    subnetIds:
+      - "${ssm:/vpc/subnets/private/id/0~true}"
+      - "${ssm:/vpc/subnets/private/id/1~true}"
+      - "${ssm:/vpc/subnets/private/id/2~true}"
+    securityGroupIds:
+      - "${ssm:/vpc/security-group/default/id~true}"
+  tags:
+    env: ${self:custom.stage}
+
+  environment:
+    SENTRY_DSN: ${ssm:/shared/enip/sentry_dsn~true}
+    SENTRY_ENVIRONMENT: ${self:custom.stage}
+    POSTGRES_URL: "${ssm:/${self:custom.stage}/enip/db/url~true}"
+    POSTGRES_RO_URL: "${ssm:/${self:custom.stage}/enip/db/url_ro~true}"
+    INGEST_TEST_DATA: "false"
+    ELECTION_DATE: "2020-11-03"
+    AP_API_KEY: ${ssm:/shared/enip/ap_api_key~true}
+    S3_BUCKET: voteamerica-enip-data
+    S3_PREFIX: ${self:custom.stage}
+    GSHEET_API_CREDENTIALS_SSM_PATH: /shared/enip/gsheets_service_account
+    CALLS_GSHEET_ID: ${ssm:/${self:custom.stage}/enip/calls_gsheet_id~true}
+    COMMENTS_GSHEET_ID: ${ssm:/${self:custom.stage}/enip/comments_gsheet_id~true}
+    HISTORICAL_START: "2020-11-03T23:00:00Z"
+  memorySize: 3008
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource: 'arn:aws:s3:::voteamerica-enip-data'
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource: 'arn:aws:s3:::voteamerica-enip-data/*'
+    - Effect: 'Allow'
+      Action:
+        - 'ssm:GetParameter'
+      Resource: 'arn:aws:ssm:us-west-2:*:parameter/shared/enip/gsheets_service_account'
+    - Effect: 'Allow'
+      Action:
+        - 'kms:Decrypt'
+      Resource: 'arn:aws:kms:us-west-2:*:key/facb0cd4-8df6-4455-9b34-27849f2b3e3f'
+
+plugins:
+  - serverless-python-requirements
+  - serverless-prune-plugin
+  - serverless-plugin-datadog
+
+functions:
+  run:
+    handler: enip_backend.lambda_handlers.run
+    # events: ${self:custom.schedule.${self:custom.stage}.run}
+    timeout: 170
+    maximumRetryAttempts: 0
+
+  run_states:
+    handler: enip_backend.lambda_handlers.run_states
+    # events: ${self:custom.schedule.${self:custom.stage}.run_states}
+
+    # Time out in a little less than 3 minutes so if we're overloaded we don't
+    # end up stacking multiple invocations
+    timeout: 850
+    maximumRetryAttempts: 0
+  run_sync_calls_gsheet:
+    handler: enip_backend.lambda_handlers.run_sync_calls_gsheet
+    # events: ${self:custom.schedule.${self:custom.stage}.run_sync_calls_gsheet}
+    timeout: 170
+  run_sync_comments_gsheet:
+    handler: enip_backend.lambda_handlers.run_sync_comments_gsheet
+    # events: ${self:custom.schedule.${self:custom.stage}.run_sync_comments_gsheet}
+    timeout: 170
+
+package:
+  exclude:
+    - 'node_modules/**'
+    - '.vscode/**'
+    - '.mypy_cache/**'
+    - 'package.json'
+    - 'yarn.lock'

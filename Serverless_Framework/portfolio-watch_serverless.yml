@@ -1,0 +1,87 @@
+service: portfolio-watch
+
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sns:Publish"
+      Resource:
+        - Ref: snsFanoutTopic
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:custom.dynamoTableName}"
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+      Resource: "arn:aws:ses:${self:provider.region}:*:*"
+
+custom:
+  snsFanoutTopicName: fanout-topic
+  snsFanoutTopicArn: !Ref snsFanoutTopic
+  dynamoTableName: ${self:service}-dev
+
+functions:
+  checkProfit:
+    handler: src/checkProfit/lambda.main
+    description: Checks if there is profit from specific symbol
+    memorySize: 128
+    timeout: 30
+    events:
+      - sns:
+          arn: ${self:custom.snsFanoutTopicArn}
+          topicName: ${self:custom.snsFanoutTopicName}
+
+  loadSymbols:
+    handler: src/loadSymbols/lambda.main
+    description: Loads all portfolio symbols and sends to SNS
+    memorySize: 128
+    timeout: 30
+    environment:
+      snsFanoutTopicArn: ${self:custom.snsFanoutTopicArn}
+      dynamoTableName: ${self:custom.dynamoTableName}
+    events:
+      - schedule: cron(0 14 ? * MON-FRI *)
+      - schedule: cron(0 18 ? * MON-FRI *)
+
+  stockPropositions:
+    handler: src/stockPropositions/lambda.main
+    description: Suggests cheap stocks to buy
+    memorySize: 128
+    timeout: 30
+    events:
+      - schedule: cron(0 13 ? * FRI *)
+
+resources:
+  Resources:
+    snsFanoutTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: "PotfolioWatch fan-out topic"
+        TopicName: ${self:custom.snsFanoutTopicName}
+
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: symbol
+            AttributeType: S
+        KeySchema:
+          - AttributeName: symbol
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.dynamoTableName}

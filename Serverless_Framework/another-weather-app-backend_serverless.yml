@@ -1,0 +1,65 @@
+service: weather
+
+plugins:
+  - serverless-plugin-tracing
+  - serverless-appsync-plugin
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 256
+  region: eu-west-1
+  stage: ${opt:stage, self:custom.defaultStage}
+  tracing: true
+  environment:
+    awsAccountId: ${self:custom.env.awsAccountId}
+
+resources:
+  Description: "Weather App with GraphQL, Lambda and DynamoDB"
+  Resources: ${file(./resources/resources.yml)}
+
+functions:
+  getWeatherData:
+    handler: handler.getWeatherDataFn
+    role: LambdaWeatherServiceRole
+    environment: 
+      APPID: ${self:custom.env.APPID}
+
+custom:
+  defaultStage: dev
+  env: ${file(./env/${self:provider.stage}.yml)}
+  roleName: AppSyncServiceRole
+  appSync:
+    name: weatherApp
+    authenticationType: API_KEY
+    schema: schema.graphql
+    serviceRole: ${self:custom.roleName}
+    mappingTemplates:
+      - dataSource: Destinations
+        type: Query
+        field: getAllDestinations
+        request: getAllDestinations-request-mapping-template.txt
+        response: getAllDestinations-response-mapping-template.txt
+      - dataSource: WeatherConditions
+        type: Destination
+        field: conditions
+        request: conditionsWeather-request-mapping-template.txt
+        response: conditionsWeather-response-mapping-template.txt
+      - dataSource: Destinations
+        type: Mutation
+        field: addDestination
+        request: addDestination-request-mapping-template.txt
+        response: addDestination-response-mapping-template.txt
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: Destinations
+        description: Weather App Places
+        config:
+          tableName: { Ref: DestinationsDynamoDBTable } 
+          serviceRoleArn: { Fn::GetAtt: [ AppSyncDynamoDBServiceRole, Arn ] }
+      - type: AWS_LAMBDA
+        name: WeatherConditions
+        description: Weather App Temperatures
+        config:
+          lambdaFunctionArn: { Fn::GetAtt: [ GetWeatherDataLambdaFunction, Arn ] }
+          serviceRoleArn: { Fn::GetAtt: [ AppSyncWeatherLambdaServiceRole, Arn ] }

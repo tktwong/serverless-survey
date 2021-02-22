@@ -1,0 +1,37 @@
+service: update-sg
+
+provider:
+  name: aws
+  profile: ${opt:stage}
+  runtime: python3.7
+  stage: ${opt:stage}
+  region: ${opt:region, 'us-east-1'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ec2:AuthorizeSecurityGroupIngress"
+        - "ec2:RevokeSecurityGroupIngress"
+        - "ecs:UpdateService"
+      Resource: "arn:aws:ec2:${file(./config-${self:provider.stage}.json):SGR}:${file(./config-${self:provider.stage}.json):AID}:security-group/*"
+    - Effect: "Allow"
+      Action:
+        - "ec2:DescribeSecurityGroups"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource: "arn:aws:logs:*:*:*"
+
+functions:
+  updatesg:
+    handler: handler.initial_handler
+    name: update-sg-lambda
+    description: Auto updates new cloudfront ips in security groups
+    timeout: 5
+    reservedConcurrency: 1
+    environment:
+      SGREGION: ${file(./config-${self:provider.stage}.json):SGR}
+    events:
+      - sns: arn:aws:sns:us-east-1:806199016981:AmazonIpSpaceChanged

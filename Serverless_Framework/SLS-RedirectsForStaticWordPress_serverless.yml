@@ -1,0 +1,79 @@
+service: sls-wpnh-simple-redirects
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '1'
+
+custom:
+  stage: ${opt:stage, "dev1"} # dev1, v1, dev2, v2, etc
+  config: ${file(resources/config.json)}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 128
+  timeout: 30
+  region: us-east-1
+  stage: ${self:custom.stage}
+  # IAM statements
+  # Give lambda role access to domain settings file in S3
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: "arn:aws:s3:::${self:custom.config.envvars.SETTINGSS3BUCKET}"
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource: "arn:aws:s3:::${self:custom.config.envvars.SETTINGSS3BUCKET}/${self:custom.config.envvars.SETTINGSS3KEY}"
+
+# you can add packaging information here
+package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+  exclude:
+    - docs/**
+    - resources/*.sample
+    - README.md
+
+functions:
+  simpleRedirectAtEdge:
+    handler: lambdas/simpleRedirect.handler
+    timeout: 30
+    events:
+      - cloudFront:
+          eventType: origin-request
+          pathPattern: /
+          behavior:
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+              QueryString: true
+          origin:
+            DomainName: ${self:custom.config.cloudfront.DOMAINNAME}
+            CustomOriginConfig:
+              OriginProtocolPolicy: "http-only"
+
+# CloudFormation resource templates
+resources:
+  Resources:
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Comment: CF for S3 WPNH
+          PriceClass: PriceClass_100
+          Aliases: ${self:custom.config.cloudfront.ALIASES}
+          ViewerCertificate:
+            AcmCertificateArn: ${self:custom.config.cloudfront.ACMCERTIFICATEARN}
+            SslSupportMethod: sni-only
+          DefaultCacheBehavior:
+            ViewerProtocolPolicy: redirect-to-https
+          CustomErrorResponses:
+          - ErrorCode: '404'
+            ErrorCachingMinTTL: '10'
+            ResponseCode: '404'
+            ResponsePagePath: "/page-not-found/"

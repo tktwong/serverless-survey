@@ -1,0 +1,85 @@
+service: nodejs-assignment
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-1
+  profile: serverless
+  environment:
+    APP_NAME: ${self:service}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Resource: "*"
+      Action:
+        - "sns:*"
+
+package:
+  exclude:
+    - .env
+    - coverage/**
+    - node_modules/**
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-pseudo-parameters
+  - serverless-dynamodb-local
+  - serverless-offline-sns
+  - serverless-offline
+
+custom:
+  serverless-offline-sns:
+    port: 4002
+    debug: true
+
+functions:
+  pubDisburseLoan:
+    name: pubDisburseLoan
+    handler: src/app1/publishDisburse.default
+    events:
+      - http:
+          path: /disburse/{id}
+          method: post
+          cors: true
+          parameters:
+            paths:
+              id: true
+  subDisburseLoan:
+    name: subDisburseLoan
+    handler: src/app2/consumeDisburse.default
+    events:
+      - sns: publishDisburseLoan
+  subLoanDisbursed:
+    name: subLoanDisbursed
+    handler: src/app1/consumeDisbursed.default
+    events:
+      - sns: publishLoanDisbursed
+  create:
+    name: create
+    handler: src/app1/create.default
+    events:
+      - http:
+          path: /create
+          method: post
+          request:
+            parameters:
+              querystrings:
+                companyId: true
+
+  delete:
+    name: delete
+    handler: src/app1/delete.default
+    events:
+      - http:
+          path: /delete/{id}
+          method: post
+          parameters:
+            paths:
+              id: true
+
+  getAll:
+    name: getAll
+    handler: src/app1/getAll.default
+    events:
+      - http:
+          path: /all
+          method: get

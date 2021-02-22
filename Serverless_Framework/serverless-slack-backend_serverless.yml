@@ -1,0 +1,121 @@
+service: serverless-slack
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: "=1.7.0"
+
+custom:
+  defaultRegion: us-east-1
+  defaultStage: dev
+  webpackIncludeModules: true # enable auto-packing of external modules
+
+provider:
+  environment:
+    DYNAMODB_TABLE: ${{self:service}}-${{self:provider.stage}}-messages
+  memorySize: 256
+  name: aws
+  profile: serverless-slack
+  region: ${{opt:region, self:custom.defaultRegion}}
+  runtime: nodejs4.3
+  stage: ${{opt:stage, self:custom.defaultStage}}
+  timeout: 30
+  variableSyntax: '\${{([\s\S]+?)}}'
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "iot:DescribeEndpoint"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "sts:AssumeRole"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${{self:provider.region}}:*:table/${{self:provider.environment.DYNAMODB_TABLE}}"
+
+functions:
+  iotKeys:
+    handler: handler.iotKeys
+    events:
+      - http:
+          path: iot/keys
+          method: get
+
+resources:
+  Resources:
+    ServerlessSlackMessages:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${{self:provider.environment.DYNAMODB_TABLE}}
+        AttributeDefinitions:
+          -
+            AttributeName: Topic
+            AttributeType: S
+          -
+            AttributeName: Timestamp
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: Topic
+            KeyType: HASH
+          -
+            AttributeName: Timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+
+    IoTRole:
+     Type: AWS::IAM::Role
+     Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: Allow
+              Principal:
+                Service:
+                  - iot.amazonaws.com
+              Action:
+                - sts:AssumeRole
+
+    IoTRolePolicies:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: IoTRole_Policy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: "*"
+        Roles: [{ Ref: IoTRole }]
+
+    IoTToDyanmoDBRule:
+      Type: AWS::IoT::TopicRule
+      Properties:
+        TopicRulePayload:
+          RuleDisabled: false
+          Sql: "SELECT * FROM '${{self:provider.stage}}/serverlessslack/chat'"
+          Actions:
+            -
+              DynamoDB:
+                TableName: { Ref: ServerlessSlackMessages }
+                HashKeyField: "Topic"
+                HashKeyValue: "${topic()}"
+                RangeKeyField: "Timestamp"
+                RangeKeyValue: "${timestamp()}"
+                RoleArn: { Fn::GetAtt: [ IoTRole, Arn ] }
+
+plugins:
+  - serverless-webpack

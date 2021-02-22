@@ -1,0 +1,104 @@
+service: fgc-backend
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+
+  tableName: ${self:custom.stage}-products
+
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: eu-west-1
+
+  environment:
+    tableName: ${self:custom.tableName}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ NotesTable, Arn ]
+
+functions:
+  create:
+    handler: create.main
+    events:
+      - http:
+          path: products
+          method: post
+          cors: true
+          authorizer: aws_iam
+  get:
+    handler: get.main
+    events: 
+      - http:
+          path: products/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  list:
+    handler: list.main
+    events:
+      - http:
+          path: products
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  update:
+    handler: update.main
+    events:
+      - http:
+          path: products/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  delete:
+    handler: delete.main
+    events:
+      - http:
+          path: products/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+
+
+
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  - ${file(resources/s3-bucket.yml)}
+    # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

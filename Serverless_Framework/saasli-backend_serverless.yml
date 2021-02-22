@@ -1,0 +1,122 @@
+service: api
+
+provider:
+  name: aws
+  runtime: python2.7
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:GetFunction
+        - lambda:InvokeAsync
+        - lambda:InvokeFunction
+      Resource: arn:aws:lambda:* #let this guy call all the lambda
+
+# Packaging
+package:
+  individually: true
+  exclude: # Globally exclude all the submodules, each function will include their own
+    - account
+    - contact
+    - encryption
+    - event
+# Functions
+functions:
+  account:
+    timeout: 60
+    handler: account/handler.account
+    events:
+      - http:
+          integration: lambda
+          method: post
+          path: account/{account}
+          # response:
+          #   statusCodes:
+          #     200:
+          #       pattern: '' # Default response method
+          #       template: $input.json('$.body')
+          #       headers:
+          #       Content-Type: "'application/json'"
+          #     400:
+          #       pattern: '.*\[400\].*'
+          #       template: $input.path('$.errorMessage')
+          #       headers:
+          #       Content-Type: "'application/json'"
+          #     422:
+          #       pattern: '.*\[422\].*'
+          #       template: $input.path('$.errorMessage')
+          #       headers:
+          #       Content-Type: "'application/json'"
+          #     500:
+          #       pattern: '.*(Process\s?exited\s?before\s?completing\s?request|\[500\]).*'
+          #       template: '{"Message" : "Please"}'
+          #       headers:
+          #       Content-Type: "'application/json'"
+    package:
+      include:
+        - account
+  contact:
+    timeout: 60
+    handler: contact/handler.contact
+    events:
+      - http:
+          integration: lambda
+          method: post
+          path: contact/{account}/{contact}
+    package:
+      include:
+        - contact
+  encrypt:
+    handler: encryption/handler.encrypt
+    events:
+      - http:
+          integration: lambda
+          path: encryption/encrypt
+          method: post
+          cors: true
+    package:
+      include:
+        - encryption
+  decrypt:
+    handler: encryption/handler.decrypt
+    events:
+      - http:
+          integration: lambda
+          path: encryption/decrypt
+          method: post
+          cors: true
+    package:
+      include:
+        - encryption
+  event:
+    timeout: 60
+    handler: event/handler.event
+    events: #confusing, but this is the triggering events not the name of the endpoints
+      - http:
+          integration: lambda
+          method: post
+          path: event
+    package:
+      include:
+        - event
+  events:
+    timeout: 300
+    handler: event/handler.events
+    events: #confusing, but this is the triggering events not the name of the endpoints
+      - http:
+          integration: lambda
+          method: post
+          path: events
+    package:
+      include:
+        - event
+  objects:
+    timeout: 300
+    handler: object/handler.objects
+    events:
+      - http:
+          integration: lambda
+          method: post
+          path: "{client_id}/bulk/{object}/{external_id}"
+    package:
+      include:
+        - object

@@ -1,0 +1,119 @@
+service: singleproductstore
+
+# frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-1
+  environment:
+    USER_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    EMAIL_INDEX: email-index
+    USER_EMAIL_TABLE: "user-email-${opt:stage, self:provider.stage}"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+functions:
+  userSubmission:
+    handler: api/rest.submit
+    memorySize: 128
+    description: Submit candidate information and starts interview process.
+    events:
+      - http: 
+          path: user
+          method: post
+  userGet:
+    handler: api/rest.getUser
+    memorySize: 128
+    description: Submit user information
+    events:
+      - http: 
+          path: getuser/{id}
+          method: get
+  userUpdate:
+    handler: api/rest.updateConfig
+    memorySize: 128
+    description: Update user information.
+    events:
+      - http: 
+          path: updateuser/{id}
+          method: post
+  graphql:
+    handler: api/graphql.handler
+    memorySize: 128
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+      - http:
+          path: graphql
+          method: options
+          cors: true
+      - http:
+          path: graphql
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    UsersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+          -
+            AttributeName: "info"
+            AttributeType: "S"
+          - 
+            AttributeName: "email"
+            AttributeType: "S"
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+          -
+            AttributeName: "info"
+            KeyType: "RANGE"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.USER_TABLE}
+        GlobalSecondaryIndexes: 
+          - 
+            IndexName: ${self:provider.environment.EMAIL_INDEX}
+            KeySchema: 
+              - 
+                AttributeName: "email"
+                KeyType: "HASH"
+              - 
+                AttributeName: "info"
+                KeyType: "RANGE"
+            Projection: 
+              NonKeyAttributes: 
+                - "id"
+              ProjectionType: "INCLUDE"
+            ProvisionedThroughput: 
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

@@ -1,0 +1,72 @@
+org: petruboulescu
+app: servicii-auto
+service: servicii-auto
+
+custom:
+  servicesTableName: 'java-servicii-auto-${self:provider.stage}'
+
+provider:
+  name: aws
+  runtime: java11
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+      - { "Fn::GetAtt": [ "ServicesDynamoDBTable", "Arn" ] }
+  environment:
+        SERVICES_TABLE_NAME: ${self:custom.servicesTableName}
+
+package:
+  artifact: 'target/${self:service}-${self:provider.stage}.jar'
+
+functions:
+    getServices:
+        handler: com.serverless.handlers.ListServicesHandler
+        events:
+          - http:
+              path: /services
+              method: get
+    getService:
+        handler: com.serverless.handlers.GetServiceHandler
+        events:
+          - http:
+              path: /services/{id}
+              method: get
+    createService:
+        handler: com.serverless.handlers.CreateServiceHandler
+        events:
+            - http:
+                path: /services
+                method: post
+    deleteService:
+        handler: com.serverless.handlers.DeleteServiceHandler
+        events:
+          - http:
+              path: /services/{id}
+              method: delete
+
+resources:
+  Resources:
+    ServicesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.servicesTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: name
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

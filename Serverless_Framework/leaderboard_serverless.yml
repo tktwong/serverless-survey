@@ -1,0 +1,170 @@
+service: fifo-leaderboard
+frameworkVersion: ">=1.8.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  versionFunctions: false
+  environment:
+    # AWS Resources
+    SEMAPHORE_TABLE: ${self:custom.dynamodb.tables.semaphoreTable.baseTable}
+    LEADERBOARD_TABLE: ${self:custom.dynamodb.tables.leaderboardTable.baseTable}
+    LEADERBOARD_SCORES_BY_BLOCK_GSI: ${self:custom.dynamodb.tables.leaderboardTable.gsi.scoresByLeaderboardBlock}
+    QUEUE_URL: ${self:custom.sqs.queueURL}
+    SELF_FUNCTION: ${self:service}-${opt:stage}-scoreQueueReader
+       
+    # Determines semaphore count
+    #   Calculated knowing that
+    #     - 1GB Lambda maxes out at ~600 Read + Write ops / s
+    #     - Latency to DDB is ~ 6-8ms
+    WORKER_WRITE_SPEED: 500
+    
+    # Semaphore Specific
+    SEMAPHORE_KEY: 'semaphore'
+    LEASE_DURATION: 300000 # 5 minutes -- functions cannot run longer than this
+    MAX_ATTEMPTS: 1
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:*
+      Resource:
+        - arn:aws:sqs:${env:AWS_REGION}:${env:AWS_ACCOUNT_ID}:scoreQueue.fifo*
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+        - dynamodb:BatchGetItem
+      Resource:
+        - arn:aws:dynamodb:${env:AWS_REGION}:${env:AWS_ACCOUNT_ID}:table/${self:custom.dynamodb.tables.leaderboardTable.baseTable}*
+        - arn:aws:dynamodb:${env:AWS_REGION}:${env:AWS_ACCOUNT_ID}:table/${self:custom.dynamodb.tables.semaphoreTable.baseTable}*
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource:
+        - arn:aws:lambda:${env:AWS_REGION}:${env:AWS_ACCOUNT_ID}:function:*
+
+package:
+  include:
+    - src/
+  exclude:
+    - config/**
+    - .envrc
+    - .gitignore
+    - package.json
+    - yarn.lock
+    - src/yarn.lock
+    - src/package.json
+    - README.md
+    - .eslintrc.yml
+    - tests/**
+    - coverage/**
+    - "*.sh"
+    - "**/*.test.js"
+    - npm-packages-offline-cache/**
+    - src/__mocks__/**
+
+custom:
+  sqs:
+    queueURL: https://sqs.${env:AWS_REGION}.amazonaws.com/${env:AWS_ACCOUNT_ID}/scoreQueue.fifo
+  dynamodb:
+    tables:
+      semaphoreTable:
+        baseTable: ${self:service}-${opt:stage}-semaphoreTable
+      leaderboardTable:
+        baseTable: ${self:service}-${opt:stage}-leaderboardTable
+        gsi:
+          scoresByLeaderboardBlock: ${self:service}-${opt:stage}-leaderboardTable-scoresByLeaderboardBlock
+
+functions:
+  semaphoreHandler:
+    handler: src/handlers/semaphore-processor.handler
+    timeout: 30
+    memorySize: 256
+    events:
+      - schedule: rate(1 minute) # Kicks off workers if all have gone to sleep
+
+  scoreQueueReader:
+    handler: src/handlers/score-queue-reader.handler
+    timeout: 300
+    memorySize: 1024
+    events:
+      - schedule: rate(1 minute) # Periodically update semaphore count
+
+  # Designed to put dummy scores into queue for teating purposes
+  scoreQueueWriter:
+    handler: src/handlers/score-queue-writer.handler
+    timeout: 300
+
+
+resources:
+  Resources:
+    scoreQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: scoreQueue.fifo
+        FifoQueue: true
+        ContentBasedDeduplication: true
+        VisibilityTimeout: 300
+    leaderboardTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:custom.dynamodb.tables.leaderboardTable.baseTable}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S # eg. <uuid>
+          - AttributeName: leaderboard
+            AttributeType: S # eg. month_2017/09
+          - AttributeName: leaderboardBlock
+            AttributeType: S # eg. month_2017/09_1
+          - AttributeName: score
+            AttributeType: N # eg. 10
+        KeySchema:
+          # Allows us to fetch a scores by a specific userId
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: leaderboard
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2000
+          WriteCapacityUnits: 2000
+        GlobalSecondaryIndexes:
+          # Allows us to lookup top scores in a block
+          - IndexName: ${self:custom.dynamodb.tables.leaderboardTable.gsi.scoresByLeaderboardBlock}
+            KeySchema:
+             - AttributeName: leaderboardBlock
+               KeyType: HASH
+             - AttributeName: score
+               KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 10
+              WriteCapacityUnits: 2000
+
+    semaphoreTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:custom.dynamodb.tables.semaphoreTable.baseTable}
+        AttributeDefinitions:
+          - AttributeName: semaphore_key
+            AttributeType: S
+          - AttributeName: semaphore_sort_key
+            AttributeType: S            
+        KeySchema:
+          - AttributeName: semaphore_key
+            KeyType: HASH
+          - AttributeName: semaphore_sort_key
+            KeyType: RANGE
+        TimeToLiveSpecification:
+          AttributeName: 'expires'
+          Enabled: true
+        BillingMode: PAY_PER_REQUEST

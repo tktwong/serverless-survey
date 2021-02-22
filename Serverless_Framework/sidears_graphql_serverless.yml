@@ -1,0 +1,232 @@
+app: sidears
+service: sidears-appsync
+org: karstene
+
+frameworkVersion: ">=1.21.0 <2.0.0"
+
+plugins:
+  - serverless-appsync-plugin
+  - serverless-dynamodb-local
+  - serverless-appsync-offline
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: ap-southeast-1
+  environment:
+    ELASTICSEARCH_URL:
+      Fn::GetAtt: ["IdeaSearch", "DomainEndpoint"]
+  tags:
+    project: sidears
+    service: ${self:service}
+
+functions:
+  IndexIdeasWithElasticsearch:
+    handler: functions/idea-indexing.handler
+    memorySize: 128
+    timeout: 60
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 2
+          enable: true
+          arn: 'arn:aws:dynamodb:${self:provider.region}:348342725339:table/sidears-Ideas/stream/2019-10-27T09:46:57.943'
+    enviroment:
+      esURL:
+        Fn::GetAtt: [ ElasticSearchInstance , DomainEndpoint ]
+      esRegion: ${self:provider.region}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - 'dynamodb:DescribeStream'
+          - 'dynamodb:ListStreams'
+          - 'dynamodb:GetShardIterator'
+          - 'dynamodb:GetRecords'
+        Resource:
+          - "arn:aws:dynamodb:${self:provider.region}:*:table/sidears-Ideas"
+      - Effect: 'Allow'
+        Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+        Resource: 'arn:aws:logs:${self:provider.region}:*:*'
+      - Effect: Allow
+        Action:
+          - es:ESHttpPost
+          - es:ESHttpPut
+          - es:ESHttpDelete
+          - es:ESHttpGet
+        Resource:
+          - { "Fn::GetAtt": ["IdeaSearch", "DomainArn"] }
+          - { "Fn::Join": ["", ["Fn::GetAtt": ["IdeaSearch", "DomainArn"], "/*"]] }
+
+
+custom:
+  appsync-offline:
+    port: 62222
+    dynamodb:
+      client:
+        endpoint: "http://localhost:8000"
+        region: localhost
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+      test:
+        source:
+          - table: Ideas
+            source: [seed-data/Ideas.json]
+
+  appSync:
+    name: sidearsGraphQL
+    serviceRole: ${self:app}-${self:provider.stage}-${self:service}-serviceRole
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      awsRegion: ${self:provider.region}
+      defaultAction: ALLOW
+      userPoolId: ap-southeast-1_8DPdGUugz # sidears-dev
+    mappingTemplates:
+      # --- Idea fields ---
+      - dataSource: Ideas
+        type: Query
+        field: getIdea
+      - dataSource: Ideas
+        type: Query
+        field: listIdeasByTags
+      - dataSource: Ideas
+        type: Mutation
+        field: createIdea
+      # --- Upvote fields ---
+      - dataSource: Upvotes
+        type: Query
+        field: listUpvotesByUser
+      - dataSource: Upvotes
+        type: Mutation
+        field: upvoteIdea
+      # --- Collection fields ---
+      - dataSource: IdeaCollections
+        type: Query
+        field: getCollection
+      - dataSource: IdeaCollections
+        type: Query
+        field: listCollectionsByUser
+      - dataSource: IdeaCollections
+        type: Mutation
+        field: createCollection
+      - dataSource: IdeaCollections
+        type: Mutation
+        field: addIdeaToCollection
+      # --- User fields
+      - dataSource: UserInfo
+        type: Query
+        field: getUserInfo
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: IdeaCollections
+        description: 'Table for Users Idea Collection'
+        config:
+          tableName: 'sidears-IdeaCollections'
+          iamRoleStatements:
+            - Effect: "Allow"
+              Action:
+                - "dynamodb:GetItem"
+                - "dynamodb:Query"
+                - "dynamodb:putItem"
+                - "dynamodb:UpdateItem"
+              Resource:
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/sidears-IdeaCollections"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/sidears-IdeaCollections/*"
+      - type: AMAZON_DYNAMODB
+        name: UserInfo
+        description: 'Table for Users Information'
+        config:
+          tableName: 'sidears-UserInfo'
+          iamRoleStatements:
+            - Effect: "Allow"
+              Action:
+                - "dynamodb:GetItem"
+                - "dynamodb:Query"
+                - "dynamodb:putItem"
+                - "dynamodb:UpdateItem"
+              Resource:
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/sidears-UserInfo"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/sidears-UserInfo/*"
+      - type: AMAZON_DYNAMODB
+        name: Ideas
+        description: 'Table for ideas'
+        config:
+          tableName: 'sidears-Ideas'
+          iamRoleStatements:
+            - Effect: "Allow"
+              Action:
+                - "dynamodb:GetItem"
+                - "dynamodb:Query"
+                - "dynamodb:putItem"
+                - "dynamodb:UpdateItem"
+                - "dynamodb:BatchGetItem"
+                - "dynamodb:Scan"
+              Resource:
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/sidears-Ideas"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/sidears-Ideas/*"
+      - type: AMAZON_DYNAMODB
+        name: Upvotes
+        description: 'Table for Upvotes'
+        config:
+          tableName: 'sidears-Upvotes'
+          iamRoleStatements:
+            - Effect: "Allow"
+              Action:
+                - "dynamodb:GetItem"
+                - "dynamodb:Query"
+                - "dynamodb:putItem"
+                - "dynamodb:UpdateItem"
+              Resource:
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/sidears-Upvotes"
+                - "arn:aws:dynamodb:${self:provider.region}:*:table/sidears-Upvotes/*"
+#      - type: RELATIONAL_DATABASE
+#        name: Ideas
+#        config:
+#          dbClusterIdentifier: 'projects-db-cluster'
+#          awsSecretStoreArn: 'arn:aws:secretsmanager:${self:provider.region}:*:secret:RDS/projects/admin-v2uC52'
+#          databaseName: sidears
+#          schema: mysql
+#          iamRoleStatements:
+#            - Effect: "Allow"
+#              Action:
+#                - "rds-data:DeleteItems"
+#                - "rds-data:ExecuteSql"
+#                - "rds-data:GetItems"
+#                - "rds-data:InsertItems"
+#                - "rds-data:UpdateItems"
+#              Resource:
+#                - "arn:aws:rds:${self:provider.region}:*:cluster:projects-db-cluster"
+#                - "arn:aws:rds:${self:provider.region}:*:cluster:projects-db-cluster:*"
+#            - Effect: "Allow"
+#              Action:
+#                - "secretsmanager:GetSecretValue"
+#              Resource:
+#                - "arn:aws:secretsmanager:${self:provider.region}:*:secret:RDS/projects/admin-v2uC52"
+#                - "arn:aws:secretsmanager:${self:provider.region}:*:secret:RDS/projects/admin-v2uC52:*"
+
+resources:
+  Resources:
+    IdeaSearch:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        ElasticsearchVersion: '2.3'  # 7.1 is not supported on the t2 micro instance
+        DomainName: 'idea-search'
+        EBSOptions:
+          EBSEnabled: true
+          VolumeType: 'standard'
+          VolumeSize: 10
+        ElasticsearchClusterConfig:
+          InstanceType: 't2.micro.elasticsearch'
+          InstanceCount: 1
+          DedicatedMasterEnabled: false
+          ZoneAwarenessEnabled: false

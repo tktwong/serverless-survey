@@ -1,0 +1,56 @@
+service: aws-nodejs-promise
+
+custom:
+  tableName: 'aws-nodejs-promise-table-${self:provider.stage}'
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  environment:
+    MESSAGES_TABLE: ${self:custom.tableName}
+    AWS_DEPLOY_REGION: ${self:provider.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["PostFetchDynamoDBTable", "Arn" ] }
+
+functions:
+  post:
+    handler: handler.post
+    events:
+      - http:
+          method: POST
+          path: /post
+          private: false
+  fetch:
+    handler: handler.fetch
+    events:
+      - http:
+          method: GET
+          path: /fetch
+          private: false
+
+resources:
+  Resources:
+    PostFetchDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: messageId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: messageId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

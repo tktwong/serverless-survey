@@ -1,0 +1,130 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: email-scheduler # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+  # you can overwrite defaults here
+  stage: dev
+  region: ap-south-1
+
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'states:StartExecution'
+      Resource:
+        - Ref: EmailSchedulingStateMachine
+    - Effect: 'Allow'
+      Action:
+        - 'states:StopExecution'
+      Resource:
+        - '*'
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+custom:
+  EMAIL_END_POINT: 'https://services.purpletutor.com/api/V1/email'
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+package:
+  individually: true
+  include:
+    - node_modules/**
+    - '!node_modules/axios/**'
+    - '!node_modules/aws-sdk/**'
+    - src/**
+  exclude:
+    - exclude-me.js
+    - exclude-me-dir/**
+
+functions:
+  ScheduleEmail:
+    handler: lambdas/email-schedular/handler.scheduleEmail
+    environment:
+      STATEMACHINE_ARN: ${self:resources.Outputs.EmailSchedulingStateMachine.Value}
+    events:
+      - http:
+          path: scheduleemail
+          method: post
+  SendEmail:
+    handler: lambdas/email/handler.sendEmail
+    environment:
+      EMAIL_SENDER_ADDRESS: ${self:custom.EMAIL_END_POINT}
+  StopEmail:
+    handler: lambdas/email-deschedular/handler.deScheduleEmail
+    events:
+      - http:
+          path: deScheduleemail
+          method: post
+
+stepFunctions:
+  stateMachines:
+    EmailSchedulingStateMachine:
+      name: EmailSchedulingStateMachine
+      definition:
+        Comment: 'Schedules an email to be sent at a future date'
+        StartAt: WaitForDueDate
+        States:
+          WaitForDueDate:
+            Type: Wait
+            TimestampPath: '$.dueDate'
+            Next: SendEmail
+          SendEmail:
+            Type: Task
+            Resource: 'arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-SendEmail'
+            End: true
+    EmailSchedulingStopStateMachine:
+      name: EmailSchedulingStopStateMachine
+      definition:
+        Comment: 'Stop the email that is already scheduled for futhur date'
+        StartAt: StopEmail
+        States:
+          StopEmail:
+            Type: Wait
+            TimestampPath: '$.dueDate'
+            End: true
+
+resources:
+  Outputs:
+    EmailSchedulingStateMachine:
+      Description: The ARN of the EmailSchedulingStateMachine
+      Value:
+        Ref: EmailSchedulingStateMachine
+    EmailSchedulingStopStateMachine:
+      Description: The date the execution is stopped
+      Value:
+        Ref: EmailSchedulingStopStateMachine
+
+plugins:
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+  - serverless-webpack # to keep package size low

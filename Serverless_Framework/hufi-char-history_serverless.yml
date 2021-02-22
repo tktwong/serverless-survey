@@ -1,0 +1,161 @@
+service: hufi-char-history
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules:
+      forceExclude:
+        - aws-sdk
+  charListJob:
+    events:
+      prod:
+        schedule: rate(24 hours)
+      dev:
+        schedule:
+  charRequireUpdateJob:
+    events:
+      prod:
+        schedule: rate(3 hours)
+      dev:
+        schedule:
+
+provider:
+  name: aws
+  stage: dev
+  runtime: nodejs10.x
+  memorySize: 128
+  environment:
+    AWS_ACCOUNT_ID: 175586613496
+    STAGE: ${opt:stage, self:provider.stage}
+    DYNAMODB_CHAR_TABLE: Char-${opt:stage, self:provider.stage}
+    DYNAMODB_CHAR_HISTORY_TABLE: CharHistory-${opt:stage, self:provider.stage}
+    SQS_CHAR_RAIDER_IO_QUEUE: CharRaiderIOQuery-${opt:stage, self:provider.stage}
+    S3_CHAR_HISTORY_BUCKET: hufi-char-history-${opt:stage, self:provider.stage}
+    REGION: us
+    REALM: azralon
+    SEASON: season-sl-1
+    TIER: 26
+    GUILD: RED Canids
+
+resources:
+  Resources:
+    CharDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+          - AttributeName: realm
+            AttributeType: S
+        KeySchema:
+          - AttributeName: realm
+            KeyType: HASH
+          - AttributeName: name
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_CHAR_TABLE}
+    CharHistoryDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: charId
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: N
+        KeySchema:
+          - AttributeName: charId
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_CHAR_HISTORY_TABLE}
+    CharRaiderIOQueryQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:provider.environment.SQS_CHAR_RAIDER_IO_QUEUE}
+        VisibilityTimeout: 300
+    CharHistoryBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: ${self:provider.environment.S3_CHAR_HISTORY_BUCKET}
+
+functions:
+  charListJob:
+    handler: handlers/charListJob.handle
+    timeout: 900
+    events:
+      - schedule: ${self:custom.charListJob.events.${opt:stage, self:provider.stage}.schedule}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+        Resource:
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:${self:provider.environment.AWS_ACCOUNT_ID}:table/${self:provider.environment.DYNAMODB_CHAR_TABLE}"
+  charRequireUpdateJob:
+    handler: handlers/charRequireUpdateJob.handle
+    timeout: 900
+    events:
+      - schedule: ${self:custom.charRequireUpdateJob.events.${opt:stage, self:provider.stage}.schedule}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+        Resource:
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:${self:provider.environment.AWS_ACCOUNT_ID}:table/${self:provider.environment.DYNAMODB_CHAR_TABLE}"
+      - Effect: Allow
+        Action:
+          - sqs:SendMessage
+        Resource:
+          - "arn:aws:sqs:${opt:region, self:provider.region}:${self:provider.environment.AWS_ACCOUNT_ID}:${self:provider.environment.SQS_CHAR_RAIDER_IO_QUEUE}"
+  charScoreUpdate:
+    handler: handlers/charScoreUpdate.handle
+    reservedConcurrency: 10
+    timeout: 300
+    events:
+      - sqs:
+          arn: "arn:aws:sqs:${opt:region, self:provider.region}:${self:provider.environment.AWS_ACCOUNT_ID}:${self:provider.environment.SQS_CHAR_RAIDER_IO_QUEUE}"
+          batchSize: 10
+          enabled: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+        Resource:
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:${self:provider.environment.AWS_ACCOUNT_ID}:table/${self:provider.environment.DYNAMODB_CHAR_TABLE}"
+          - "arn:aws:dynamodb:${opt:region, self:provider.region}:${self:provider.environment.AWS_ACCOUNT_ID}:table/${self:provider.environment.DYNAMODB_CHAR_HISTORY_TABLE}"
+      - Effect: Allow
+        Action:
+          - sqs:ReceiveMessage
+          - sqs:DeleteMessage
+          - sqs:GetQueueAttributes
+        Resource:
+          - "arn:aws:sqs:${opt:region, self:provider.region}:${self:provider.environment.AWS_ACCOUNT_ID}:${self:provider.environment.SQS_CHAR_RAIDER_IO_QUEUE}"
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:PutObjectAcl
+        Resource:
+          - "arn:aws:s3:::${self:provider.environment.S3_CHAR_HISTORY_BUCKET}"
+          - "arn:aws:s3:::${self:provider.environment.S3_CHAR_HISTORY_BUCKET}/*"

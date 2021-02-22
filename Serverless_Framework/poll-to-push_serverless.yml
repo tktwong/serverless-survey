@@ -1,0 +1,113 @@
+service: wojtek-poll-to-push
+
+provider:
+  name: aws
+  region: eu-central-1
+  runtime: go1.x
+  httpApi:
+    payload: '2.0'
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-go-plugin
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+
+custom:
+  TABLE_NAME: ${self:service}-table
+  go:
+    baseDir: ./src
+functions:
+  websocket:
+    handler: ./functions/websocket
+    events:
+      - websocket: $default
+    environment:
+      TABLE_NAME: ${self:custom.TABLE_NAME}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource:
+          - !GetAtt DataTable.Arn
+          - !Sub "#{DataTable.Arn}/*"
+          
+  beingWork:
+    handler: ./functions/begin-work
+    environment:
+      MACHINE_ARN: !Ref Machine
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - states:StartExecution
+        Resource: !Ref Machine
+    events:
+      - httpApi:
+          method: POST
+          path: /begin-work
+  doWork:
+    handler: ./functions/do-work
+    timeout: 40
+    
+  notifyFinish:
+    handler: ./functions/notify-finish
+    environment:
+      WEBSOCKET_ADDRESS: !Sub "https://#{WebsocketsApi}.execute-api.#{AWS::Region}.amazonaws.com/${self:provider.stage}"
+      TABLE_NAME: ${self:custom.TABLE_NAME}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - execute-api:ManageConnections
+          - execute-api:Invoke
+        Resource:
+          - !Sub "arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:#{WebsocketsApi}/*"
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource:
+          - !GetAtt DataTable.Arn
+          - !Sub "#{DataTable.Arn}/*"
+    
+          
+stepFunctions:
+  validate: true
+  stateMachines:
+    machine:
+      name: ${self:service}-machine
+      id: Machine
+      definition:
+        StartAt: DoWork
+        States:
+          DoWork:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: !GetAtt doWork.Arn
+              Payload:
+                "name.$": "$.name"
+            Next: NotifyFinish
+          NotifyFinish:
+            Type: Task
+            End: true
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: !GetAtt notifyFinish.Arn
+              Payload:
+                "taskID.$": "$$.Execution.Id"
+                "result.$": "$.Payload"
+            
+resources:
+  Resources:
+    DataTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: taskID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: taskID
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+  
+

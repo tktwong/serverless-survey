@@ -1,0 +1,397 @@
+service:
+  name: would-you-rather-backend
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  documentation:
+    api:
+      info:
+        version: v0.0.1
+        title: Would You Rather (Backend)
+        description: Serverless backend persistence for the Would You Rather application
+    models:
+      - name: AddNewQuestion
+        contentType: application/json
+        schema: ${file(models/AddNewQuestion.json)}
+      - name: CastVote
+        contentType: application/json
+        schema: ${file(models/CastVote.json)}
+      - name: GetUserList
+        contentType: application/json
+        schema: ${file(models/GetUserList.json)}
+      - name: UpdateUser
+        contentType: application/json
+        schema: ${file(models/UpdateUser.json)}
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-offline
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    LOG_LEVEL: debug
+
+    QUESTIONS_TABLE: questions-${self:service.name}-${self:provider.stage}
+    QUESTION_ID_INDEX: questionId
+    QUESTION_AUTHOR_ID_INDEX: authorId
+    QUESTION_CREATED_AT_INDEX: createdAt
+
+    QUESTION_IDS_BY_DATE_TABLE: questions-by-date-${self:service.name}-${self:provider.stage}
+    DATE_TABLE_PARTITION_KEY_NAME: questionCreateDate
+    MAX_QUERY_LIMIT: 40
+
+    USERS_TABLE: users-${self:service.name}-${self:provider.stage}
+    USER_ID_INDEX: userId
+
+    AVATAR_BUCKET: ${self:service.name}-${self:provider.stage}-avatars
+    URL_EXPIRATION_IN_SECONDS: 300
+
+    REQUEST_VALIDATOR: request-body-validator
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  AddNewQuestion:
+    handler: src/lambda/questions/addNewQuestion.handler
+    iamRoleStatementsName: AddNewQuestion
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.QUESTIONS_TABLE}
+    events:
+      - http:
+          method: post
+          authorizer: Auth
+          path: questions
+          cors: true
+          reqValidatorName: !Ref RequestBodyValidator
+          documentation:
+            requestModels:
+              application/json: AddNewQuestion
+
+  DeleteQuestion:
+    handler: src/lambda/questions/deleteQuestion.handler
+    iamRoleStatementsName: DeleteQuestion
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.QUESTIONS_TABLE}/index/${self:provider.environment.QUESTION_ID_INDEX}
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.QUESTIONS_TABLE}
+    events:
+      - http:
+          method: delete
+          authorizer: Auth
+          path: questions/{questionId}
+          cors: true
+
+  GetQuestionById:
+    handler: src/lambda/questions/getQuestionById.handler
+    iamRoleStatementsName: GetQuestionById
+    iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.QUESTIONS_TABLE}/index/${self:provider.environment.QUESTION_ID_INDEX}
+    events:
+      - http:
+          method: get
+          path: questions/{questionId}
+          cors: true
+
+  GetQuestionsByAuthor:
+    handler: src/lambda/questions/getQuestionsByAuthor.handler
+    iamRoleStatementsName: GetQuestionsByAuthor
+    iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.QUESTIONS_TABLE}
+    events:
+      - http:
+          method: get
+          path: questions/author/{authorId}
+          cors: true
+
+  # todo: needs a better name to reflect actual functionality
+  # nts this is paginated, returns most recent if no path params
+  GetAllQuestions:
+    handler: src/lambda/questions/getAllQuestions.handler
+    iamRoleStatementsName: GetAllQuestions
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:DescribeTable
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.QUESTION_IDS_BY_DATE_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:BatchGetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.QUESTIONS_TABLE}
+    events:
+      - http:
+          method: get
+          path: questions
+          cors: true
+
+  HandleQuestionUpdateStream:
+    handler: src/lambda/questions/handleQuestionUpdateStream.handler
+    iamRoleStatementsName: HandleQuestionUpdateStream
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.QUESTION_IDS_BY_DATE_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt QuestionsDynamoDBTable.StreamArn
+
+  CastVote:
+    handler: src/lambda/questions/castVote.handler
+    iamRoleStatementsName: CastVote
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.QUESTIONS_TABLE}/index/${self:provider.environment.QUESTION_ID_INDEX}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.QUESTIONS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+    events:
+      - http:
+          method: put
+          authorizer: Auth
+          path: questions
+          cors: true
+          reqValidatorName: !Ref RequestBodyValidator
+          documentation:
+            requestModels:
+              application/json: CastVote
+
+  HandleLogin:
+    handler: src/lambda/users/handleLogin.handler
+    iamRoleStatementsName: HandleLogin
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+    events:
+      - http:
+          method: post
+          path: users
+          cors: true
+
+  GetUser:
+    handler: src/lambda/users/getUser.handler
+    iamRoleStatementsName: GetUser
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+    events:
+      - http:
+          method: get
+          path: users/{userId}
+          cors: true
+
+  BatchGetUsers:
+    handler: src/lambda/users/batchGetUsers.handler
+    iamRoleStatementsName: BatchGetUsers
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:BatchGetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+    events:
+      - http:
+          method: post
+          path: users/list
+          cors: true
+          reqValidatorName: !Ref RequestBodyValidator
+          documentation:
+            requestModels:
+              application/json: GetUserList
+
+  GetUploadUrl:
+    handler: src/lambda/s3/getUploadUrl.handler
+    iamRoleStatementsName: GetUploadUrl
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.AVATAR_BUCKET}/*
+    events:
+      - http:
+          method: get
+          authorizer: Auth
+          path: users/uploadUrl
+          cors: true
+
+  UpdateUser:
+    handler: src/lambda/users/updateUser.handler
+    iamRoleStatementsName: UpdateUser
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+    events:
+      - http:
+          method: put
+          authorizer: Auth
+          path: users
+          cors: true
+          reqValidatorName: !Ref RequestBodyValidator
+          documentation:
+            requestModels:
+              application/json: UpdateUser
+resources:
+  Resources:
+    GatewayResponseDefault4xx:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId: !Ref ApiGatewayRestApi
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: ${self:provider.environment.REQUEST_VALIDATOR}
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    QuestionsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.QUESTIONS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        AttributeDefinitions:
+          - AttributeName: ${self:provider.environment.QUESTION_ID_INDEX}
+            AttributeType: S
+          - AttributeName: ${self:provider.environment.QUESTION_AUTHOR_ID_INDEX}
+            AttributeType: S
+          - AttributeName: ${self:provider.environment.QUESTION_CREATED_AT_INDEX}
+            AttributeType: N
+        KeySchema:
+          - AttributeName: ${self:provider.environment.QUESTION_AUTHOR_ID_INDEX}
+            KeyType: HASH
+          - AttributeName: ${self:provider.environment.QUESTION_CREATED_AT_INDEX}
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.QUESTION_ID_INDEX}
+            KeySchema:
+              - AttributeName: ${self:provider.environment.QUESTION_ID_INDEX}
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    QuestionsDateDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.QUESTION_IDS_BY_DATE_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: ${self:provider.environment.DATE_TABLE_PARTITION_KEY_NAME}
+            AttributeType: S
+          - AttributeName: ${self:provider.environment.QUESTION_CREATED_AT_INDEX}
+            AttributeType: N
+        KeySchema:
+          - AttributeName: ${self:provider.environment.DATE_TABLE_PARTITION_KEY_NAME}
+            KeyType: HASH
+          - AttributeName: ${self:provider.environment.QUESTION_CREATED_AT_INDEX}
+            KeyType: RANGE
+
+    UsersDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.USERS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        AttributeDefinitions:
+          - AttributeName: ${self:provider.environment.USER_ID_INDEX}
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ${self:provider.environment.USER_ID_INDEX}
+            KeyType: HASH
+
+    AvatarS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.AVATAR_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    AvatarBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: ${self:provider.environment.AVATAR_BUCKET}-policy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.AVATAR_BUCKET}/*'
+        Bucket: !Ref AvatarS3Bucket

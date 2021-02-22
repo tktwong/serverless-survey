@@ -1,0 +1,222 @@
+service:
+  name: DevsTopics
+
+package:
+  individually: true
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-prune-plugin
+  - serverless-offline-sns
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom: ${file(./serverless.env.yml)}
+
+resources:
+  Resources:
+    postsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tables.posts.name}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: site
+            AttributeType: S
+          - AttributeName: publishedAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:custom.tables.posts.indexes.publishedAtAndSite}
+            KeySchema:
+              - AttributeName: site
+                KeyType: HASH
+              - AttributeName: publishedAt
+                KeyType: RANGE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+            Projection:
+              ProjectionType: ALL
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  frameworkVersion: ‘1.64.1’
+  stage: ${opt:stage, 'development'}
+  region: ${opt:region, 'eu-west-1'}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    DEBUG: '*'
+    NODE_ENV: ${self:provider.stage}
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    SLS_DEBUG: '*'
+  tracing:
+    lambda: false
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: "*"
+
+functions:
+  hackernoon:
+    handler: src/sources/hackerNoon/hackerNoonHandler.findPosts
+    name: "hackernoon-scrapper-${self:provider.stage}"
+    memorySize: 256
+    events:
+      - http:
+          method: get
+          path: hackernoon
+    environment:
+      PUBLISH_TOPIC_ARN: ${self:custom.newPostsFoundSnsTopicArn.${self:provider.stage}}
+      SNS_ENDPOINT_URL: ${self:custom.snsHostURL.${self:provider.stage}}
+      RSS_FEED_URL: "https://hackernoon.com/feed"
+    iamRoleStatements:
+      - Effect: Allow
+        Action: SNS:Publish
+        Resource: { "Fn::Join": ["", ["arn:aws:sns:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":${self:custom.newPostsFoundSnsTopic}" ] ]  }
+
+  hackernews:
+    handler: src/sources/hackerNews/hackerNewsHandler.findPosts
+    name: "hackernews-scrapper-${self:provider.stage}"
+    memorySize: 256
+    events:
+      - http:
+          method: get
+          path: hackernews
+    environment:
+      PUBLISH_TOPIC_ARN: ${self:custom.newPostsFoundSnsTopicArn.${self:provider.stage}}
+      SNS_ENDPOINT_URL: ${self:custom.snsHostURL.${self:provider.stage}}
+      RSS_FEED_URL: "https://hnrss.org/newest?points=100"
+    iamRoleStatements:
+      - Effect: Allow
+        Action: SNS:Publish
+        Resource: { "Fn::Join": ["", ["arn:aws:sns:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":${self:custom.newPostsFoundSnsTopic}" ] ]  }
+
+  devto:
+    handler: src/sources/devTo/devToHandler.findPosts
+    name: "devto-scrapper-${self:provider.stage}"
+    memorySize: 256
+    events:
+      - http:
+          method: get
+          path: devto
+    environment:
+      PUBLISH_TOPIC_ARN: ${self:custom.newPostsFoundSnsTopicArn.${self:provider.stage}}
+      SNS_ENDPOINT_URL: ${self:custom.snsHostURL.${self:provider.stage}}
+      RSS_FEED_URL: "https://dev.to/feed"
+    iamRoleStatements:
+      - Effect: Allow
+        Action: SNS:Publish
+        Resource: { "Fn::Join": ["", ["arn:aws:sns:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":${self:custom.newPostsFoundSnsTopic}" ] ]  }
+
+  infoq:
+    handler: src/sources/infoQ/infoQHandler.findPosts
+    name: "infoq-scrapper-${self:provider.stage}"
+    memorySize: 256
+    events:
+      - http:
+          method: get
+          path: infoq
+    environment:
+      PUBLISH_TOPIC_ARN: ${self:custom.newPostsFoundSnsTopicArn.${self:provider.stage}}
+      SNS_ENDPOINT_URL: ${self:custom.snsHostURL.${self:provider.stage}}
+      RSS_FEED_URL: "https://feed.infoq.com/"
+    iamRoleStatements:
+      - Effect: Allow
+        Action: SNS:Publish
+        Resource: { "Fn::Join": ["", ["arn:aws:sns:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":${self:custom.newPostsFoundSnsTopic}" ] ]  }
+
+  dZone:
+    handler: src/sources/dZone/dZoneHandler.findPosts
+    name: "dzone-scrapper-${self:provider.stage}"
+    memorySize: 256
+    events:
+      - http:
+          method: get
+          path: dzone
+    environment:
+      PUBLISH_TOPIC_ARN: ${self:custom.newPostsFoundSnsTopicArn.${self:provider.stage}}
+      SNS_ENDPOINT_URL: ${self:custom.snsHostURL.${self:provider.stage}}
+      RSS_FEED_URL: "http://feeds.dzone.com/home"
+    iamRoleStatements:
+      - Effect: Allow
+        Action: SNS:Publish
+        Resource: { "Fn::Join": ["", ["arn:aws:sns:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":${self:custom.newPostsFoundSnsTopic}" ] ]  }
+
+  postsListener:
+    handler: src/management/postsListenerHandler.listen
+    name: "posts-listener-${self:provider.stage}"
+    memorySize: 256
+    environment:
+      POSTS_TABLE_NAME: ${self:custom.tables.posts.name}
+      DYNAMODB_ENDPOINT_URL: ${self:custom.dynamodb.endpoint.${self:provider.stage}}
+    events:
+      - sns:
+          displayName: ${self:custom.newPostsFoundSnsTopic}
+          topicName: ${self:custom.newPostsFoundSnsTopic}
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action: dynamodb:PutItem
+        Resource: { "Fn::Join": ["", ["arn:aws:dynamodb:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":table/${self:custom.tables.posts.name}" ] ]  }
+
+  postPromoter:
+    handler: src/management/simplePostFanHandler.publish
+    name: "post-promoter-${self:provider.stage}"
+    memorySize: 200
+    environment:
+      POSTS_TABLE_NAME: ${self:custom.tables.posts.name}
+      POSTS_PUBLISHED_AT_SITE_INDEX_NAME: ${self:custom.tables.posts.indexes.publishedAtAndSite}
+      DYNAMODB_ENDPOINT_URL: ${self:custom.dynamodb.endpoint.${self:provider.stage}}
+      PUBLISH_TOPIC_ARN: ${self:custom.newPostCandidateToPublishTopicArn.${self:provider.stage}}
+      SNS_ENDPOINT_URL: ${self:custom.snsHostURL.${self:provider.stage}}
+    events:
+      - http:
+          method: get
+          path: promoter
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action: dynamodb:Query
+        Resource: { "Fn::Join": ["", ["arn:aws:dynamodb:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":table/${self:custom.tables.posts.name}/index/${self:custom.tables.posts.indexes.publishedAtAndSite}" ] ]  }
+      - Effect: Allow
+        Action: SNS:Publish
+        Resource: { "Fn::Join": ["", ["arn:aws:sns:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":${self:custom.newPostCandidateToPublishTopic}" ] ]  }
+
+  telegramPublisher:
+    handler: src/promoters/telegram/telegramPublisherHandler.publish
+    name: "telegram-publisher-${self:provider.stage}"
+    memorySize: 200
+    environment:
+      TELEGRAM_CHANNEL_ID: ${self:custom.TELEGRAM_CHANNEL_ID}
+      TELEGRAM_BOT_TOKEN: ${self:custom.TELEGRAM_BOT_TOKEN}
+      TELEGRAM_MAX_NUMBER_OF_MESSAGES: 3
+    events:
+      - sns:
+          displayName: ${self:custom.newPostCandidateToPublishTopic}
+          topicName: ${self:custom.newPostCandidateToPublishTopic}
+
+  twitterPublisher:
+    handler: src/promoters/twitter/twitterPublisherHandler.publish
+    name: "twitter-publisher-${self:provider.stage}"
+    memorySize: 200
+    environment:
+      TWITTER_APP_API_KEY: ${self:custom.TWITTER_APP_API_KEY}
+      TWITTER_APP_API_SECRET: ${self:custom.TWITTER_APP_API_SECRET}
+      TWITTER_APP_ACCESS_TOKEN_KEY: ${self:custom.TWITTER_APP_ACCESS_TOKEN_KEY}
+      TWITTER_APP_ACCESS_TOKEN_SECRET: ${self:custom.TWITTER_APP_ACCESS_TOKEN_SECRET}
+      TWITTER_TWEET_MAX_LENGTH: 280
+      TWITTER_MAX_NUMBER_OF_TWEETS: 3
+    events:
+      - sns:
+          displayName: ${self:custom.newPostCandidateToPublishTopic}
+          topicName: ${self:custom.newPostCandidateToPublishTopic}

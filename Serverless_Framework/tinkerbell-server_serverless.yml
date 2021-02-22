@@ -1,0 +1,247 @@
+service: tinkerbell-server
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ${file(${self:custom.configureFile}):ENVS.SLS_AWS_REGION}
+  profile: ${file(${self:custom.configureFile}):ENVS.SLS_AWS_CRED_PROFILE}
+
+
+functions:
+  register:
+    handler: ${self:custom.sourcePath}/handler/register-user.register
+    events:
+      - http:
+          path: register
+          method: post
+    environment:
+      DYNAMODB_USER_TABLE_NAME: ${file(${self:custom.configureFile}):ENVS.DYNAMODB_USER_TABLE_NAME}
+      S3_CUSTOMER_VOICES_BUCKET_NAME: ${file(${self:custom.configureFile}):ENVS.S3_CUSTOMER_VOICES_BUCKET_NAME}
+      AZURE_COGNITIVE_SERVICE_KEY: ${file(${self:custom.configureFile}):ENVS.AZURE_COGNITIVE_SERVICE_KEY}
+      AZURE_COGNITIVE_SERVICE_ENDPOINT: ${file(${self:custom.configureFile}):ENVS.AZURE_COGNITIVE_SERVICE_ENDPOINT}
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-register-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - s3:GetObject
+        Resource:
+          - Fn::GetAtt: [ DynamoDBUsers, Arn ]
+          - Fn::Join: ['', [Fn::GetAtt: [ S3BucketCustomerVoices, Arn ], '/*'] ]
+
+  enqueue-request:
+    handler: ${self:custom.sourcePath}/handler/enqueue-request.enqueue
+    events:
+      - http:
+          path: note
+          method: post
+    environment:
+      DYNAMODB_HISTORY_TABLE_NAME: ${file(${self:custom.configureFile}):ENVS.DYNAMODB_HISTORY_TABLE_NAME}
+      SQS_TRANSCRIPT_REQUEST_QUEUE_URL:
+        Ref: SQSTranscriptRequestQueue
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-enqueue-request-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - sqs:SendMessage
+        Resource:
+          - Fn::GetAtt: [ DynamoDBHistory, Arn ]
+          - Fn::GetAtt: [ SQSTranscriptRequestQueue, Arn ]
+
+  result-getter:
+    handler: ${self:custom.sourcePath}/handler/get-result.getResult
+    events:
+      - http:
+          path: note/{uuid}
+          method: get
+    environment:
+      DYNAMODB_HISTORY_TABLE_NAME: ${file(${self:custom.configureFile}):ENVS.DYNAMODB_HISTORY_TABLE_NAME}
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-result-getter-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource:
+          - Fn::GetAtt: [ DynamoDBHistory, Arn ]
+
+  list-getter:
+    handler: ${self:custom.sourcePath}/handler/get-list.getList
+    events:
+      - http:
+          path: note
+          method: get
+    environment:
+      DYNAMODB_HISTORY_TABLE_NAME: ${file(${self:custom.configureFile}):ENVS.DYNAMODB_HISTORY_TABLE_NAME}
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-list-getter-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Scan
+        Resource:
+          - Fn::GetAtt: [ DynamoDBHistory, Arn ]
+
+  invoke-transcribe:
+    handler: ${self:custom.sourcePath}/handler/invoke-transcribe.invoke
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [ SQSTranscriptRequestQueue, Arn ]
+    environment:
+      AWS_REGION_INFO: ${self:provider.region}
+      S3_MEETING_RECORDS_BUCKET_NAME: ${file(${self:custom.configureFile}):ENVS.S3_MEETING_RECORDS_BUCKET_NAME}
+      S3_TRANSCRIPTS_BUCKET_NAME: ${file(${self:custom.configureFile}):ENVS.S3_TRANSCRIPTS_BUCKET_NAME}
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-invoke-transcribe-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+          - sqs:ReceiveMessage
+        Resource:
+          - Fn::GetAtt: [ SQSTranscriptRequestQueue, Arn ]
+          - Fn::GetAtt: [ DynamoDBHistory, Arn ]
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource:
+          - Fn::Join: ['', [Fn::GetAtt: [ S3BucketMeetingRecords, Arn ], '/*'] ]
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource:
+          - Fn::Join: ['', [Fn::GetAtt: [ S3BucketTranscripts, Arn ], '/*'] ]
+      - Effect: Allow
+        Action:
+          - transcribe:StartTranscriptionJob
+        Resource:
+          - '*'
+
+  enqueue-result:
+    handler: ${self:custom.sourcePath}/handler/enqueue-transcribe-results.enqueue
+    events:
+      - s3:
+          bucket: transcripts
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .json
+    environment:
+      SQS_TRANSCRIPT_RESULT_QUEUE_URL:
+        Ref: SQSTranscriptResultQueue
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-enqueue-transcribe-result-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - sqs:SendMessage
+        Resource:
+          - Fn::GetAtt: [ SQSTranscriptResultQueue, Arn ]
+
+  generate-note:
+    handler: ${self:custom.sourcePath}/handler/generate-note.generate
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [ SQSTranscriptResultQueue, Arn ]
+    environment:
+      FFMPEG_PATH: '/opt/ffmpeg/ffmpeg'
+      FFPROBE_PATH: '/opt/ffmpeg/ffprobe'
+      S3_TRANSCRIPTS_BUCKET_NAME: ${file(${self:custom.configureFile}):ENVS.S3_TRANSCRIPTS_BUCKET_NAME}
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}-generate-note-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+          - s3:GetObject
+          - sqs:ReceiveMessage
+        Resource:
+          - Fn::GetAtt: [ SQSTranscriptResultQueue, Arn ]
+          - Fn::Join: ['', [Fn::GetAtt: [ S3BucketMeetingRecords, Arn ], '/*'] ]
+          - Fn::Join: ['', [Fn::GetAtt: [ S3BucketTranscripts, Arn ], '/*'] ]
+          - Fn::GetAtt: [ DynamoDBHistory, Arn ]
+
+resources:
+  Resources:
+    DynamoDBUsers:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(${self:custom.configureFile}):ENVS.DYNAMODB_USER_TABLE_NAME}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: identificationProfileId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: identificationProfileId
+            KeyType: HASH
+
+    DynamoDBHistory:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(${self:custom.configureFile}):ENVS.DYNAMODB_HISTORY_TABLE_NAME}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+
+    S3BucketCustomerVoices:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(${self:custom.configureFile}):ENVS.S3_CUSTOMER_VOICES_BUCKET_NAME}
+
+    S3BucketMeetingRecords:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(${self:custom.configureFile}):ENVS.S3_MEETING_RECORDS_BUCKET_NAME}
+
+    S3BucketTranscripts:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(${self:custom.configureFile}):ENVS.S3_TRANSCRIPTS_BUCKET_NAME}
+
+    EnqueueDashresultLambdaPermissionTranscriptsS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Fn::GetAtt: [ EnqueueDashresultLambdaFunction, Arn ]
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: ${file(${self:custom.configureFile}):ENVS.S3_TRANSCRIPTS_BUCKET_ARN}
+
+    SQSTranscriptRequestQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        FifoQueue: true
+        QueueName: ${file(${self:custom.configureFile}):ENVS.SQS_TRANSCRIPT_REQUEST_QUEUE_NAME}
+
+    SQSTranscriptResultQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        FifoQueue: true
+        QueueName: ${file(${self:custom.configureFile}):ENVS.SQS_TRANSCRIPT_RESULT_QUEUE_NAME}
+
+layer:
+  ffmpeg:
+    path: ffmpeg-static-build
+
+custom:
+  configureFile: 'config/config.js'
+  sourcePath: 'dist'
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    packager: 'yarn'
+    includeModules:
+      forceExclude:
+        - aws-sdk
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-offline
+  - serverless-webpack
+
+package:
+  individually: true

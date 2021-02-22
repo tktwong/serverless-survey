@@ -1,0 +1,54 @@
+service: CloudWatchLogsToElasticsearch
+
+custom:
+  elasticsearchDomainName: ${env:ES_DOMAIN_NAME, "dw-es-dev"}
+  region: ${opt:region, "us-east-1"}
+  stage: ${opt:stage, "dev"}
+
+provider:
+  name: aws
+  region: ${self:custom.region}
+  runtime: python3.8
+  stage: ${self:custom.stage}
+  versionFunctions: true
+
+  iamRoleStatements:
+    - Action: es:DescribeElasticsearchDomain
+      Effect: Allow
+      Resource: arn:aws:es:*:*:domain/${self:custom.elasticsearchDomainName}
+      Sid: DescribeElasticsearchDomain
+    - Action: es:ESHttp*
+      Effect: Allow
+      Resource: arn:aws:es:*:*:domain/${self:custom.elasticsearchDomainName}/*
+      Sid: AccessToElasticsearchDomain
+
+package:
+  individually: true
+  exclude:
+    - "./**"
+
+functions:
+  lambdaHandler:
+    description: Stream CloudWatch Logs to Elasticsearch Service
+    environment:
+      ES_DOMAIN_NAME: ${self:custom.elasticsearchDomainName}
+    handler: cw_logs_to_es.lambda_handler.process
+    memorySize: 256  # in MB
+    timeout: 60  # in seconds
+
+    package:
+      include:
+        - cw_logs_to_es/**
+        - certifi/**
+        - chardet/**
+        - elasticsearch/**
+        - idna/**
+        - requests/**
+        - requests_aws4auth/**
+        - urllib3/**
+
+resources:
+  extensions:
+    LambdaHandlerLogGroup:
+      Properties:
+        RetentionInDays: "30"

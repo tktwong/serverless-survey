@@ -1,0 +1,58 @@
+service: myhello-world-app
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'local'}
+  environment: ${file(./configs/vars/vars-${self:provider.stage}.yml)}
+  region: ${opt:region, 'us-east-1'}
+  accountId: ''
+  deploymentBucket:
+    name: myhello-world-app.serverless.deploys
+  deploymentPrefix: serverless.${self:provider.region}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "apigateway:GET"
+      Resource:
+        - "arn:aws:apigateway:${self:provider.region}::/restapis*"
+    - Effect: "Allow"
+      Action:
+        - ssm:GetParameter
+        - ssm:GetParameters
+      Resource:
+        - "arn:aws:ssm:${self:provider.region}:${self:provider.accountId}:parameter/*"
+    - Effect: "Allow"
+      Action:
+        - kms:Decrypt
+      Resource: "arn:aws:kms:${self:provider.region}:${self:provider.accountId}:key/${self:custom.ssmKms}"
+
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-stack-output
+
+package:
+  excludeDevDependencies: true
+
+functions:
+  hello:
+    handler: src/hello/hello.greeting
+    description: Greets you.
+    events:
+      - http:
+          path: hello/{name}
+          method: get
+          request:
+            parameters:
+              paths:
+                name: true
+
+custom:
+  output:
+    file: .serverless/output.json
+
+  serverless-offline:
+    httpPort: 3015
+  ssmKms: ''

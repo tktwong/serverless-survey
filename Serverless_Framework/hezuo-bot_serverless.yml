@@ -1,0 +1,277 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: hezuo
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: "<=1.9.0"
+
+custom:
+  namespace: ${self:service}-${self:custom.stage}
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  stage: ${env:ENV_TYPE}
+  region: ap-southeast-2
+  environment:
+    APP_NAME: ${self:service}
+    CLIENT_ID: ${env:SLACK_APP_CLIENT_ID}
+    CLIENT_SECRET: ${env:SLACK_APP_CLIENT_SECRET}
+    INSTALL_SUCCESS_URL: https://s3-ap-southeast-2.amazonaws.com/aws-davidiog-syd-hezuo/static/success.html
+    INSTALL_ERROR_URL: https://s3-ap-southeast-2.amazonaws.com/aws-davidiog-syd-hezuo/static/error.html
+    NAMESPACE: ${self:custom.namespace}
+    SLACK_TABLE: ${self:custom.namespace}-slack-bot
+    VERIFICATION_TOKEN: ${env:SLACK_APP_VERIFICATION_TOKEN}
+    TEAMS_TABLE: ${self:custom.namespace}-teams
+    MEMBERS_TABLE: ${self:custom.namespace}-members
+    DEVELOPERS_TABLE: ${self:custom.namespace}-developers
+    ACTIVITY_TABLE: ${self:custom.namespace}-activity
+    CEU_TABLE: ${self:custom.namespace}-ceu
+    COMMAND_TABLE: ${self:custom.namespace}-command
+    MEMBERS_TEAM_INDEX: ${self:custom.namespace}-members-team-index
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.SLACK_TABLE}
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.MEMBERS_TABLE}
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.DEVELOPERS_TABLE}
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.TEAMS_TABLE}
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.ACTIVITY_TABLE}
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.CEU_TABLE}
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.COMMAND_TABLE}
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.MEMBERS_TABLE}/index/${self:provider.environment.MEMBERS_TEAM_INDEX}
+    - Effect: Allow
+      Action:
+        - lambda:invokeFunction
+      Resource:
+        - arn:aws:lambda:*:*:function:${self:custom.namespace}-actions
+        - arn:aws:lambda:*:*:function:${self:custom.namespace}-parser
+        - arn:aws:lambda:*:*:function:${self:custom.namespace}-test
+        - arn:aws:lambda:*:*:function:${self:custom.namespace}-list*
+        - arn:aws:lambda:*:*:function:${self:custom.namespace}-remove*
+        - arn:aws:lambda:*:*:function:${self:custom.namespace}-add*
+        - arn:aws:lambda:*:*:function:${self:custom.namespace}-update*
+        - arn:aws:lambda:*:*:function:${self:custom.namespace}-describe*
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  list-commands:
+    handler: commands/list-commands.handler
+  list-ceus:
+    handler: commands/list-ceus.handler
+  list-developers:
+    handler: commands/list-developers.handler
+  list-members:
+    handler: commands/list-members.handler
+  list-teams:
+    handler: commands/list-teams.handler
+  list-team-members:
+    handler: commands/list-team-members.handler
+  add-team:
+    handler: commands/add-team.handler
+  add-member:
+    handler: commands/add-member.handler
+  describe-member:
+    handler: commands/describe-member.handler
+  update-member-team:
+    handler: commands/update-member-team.handler
+  remove-team:
+    handler: commands/remove-team.handler
+  remove-member:
+    handler: commands/remove-member.handler
+  add-activity:
+    handler: commands/add-activity.handler
+  list-activities:
+    handler: commands/list-activities.handler
+  parser:
+    handler: parser.handler
+  actions:
+    handler: actions.handler
+  events:
+    handler: events.handler
+    events:
+      - http:
+          path: events
+          method: post
+  install:
+    handler: install.handler
+    events:
+      - http:
+          path: install
+          method: get
+
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+     HezuoMembersDynamoDbTable:
+       Type: AWS::DynamoDB::Table
+       Properties:
+         TableName: ${self:provider.environment.MEMBERS_TABLE}
+         AttributeDefinitions:
+           - AttributeName: username
+             AttributeType: S
+           - AttributeName:  teamname
+             AttributeType: S
+         KeySchema:
+           - AttributeName: username
+             KeyType: HASH
+         ProvisionedThroughput:
+           ReadCapacityUnits: 1
+           WriteCapacityUnits: 1
+         GlobalSecondaryIndexes:
+           - IndexName: ${self:provider.environment.MEMBERS_TEAM_INDEX}
+             KeySchema:
+               - AttributeName: teamname
+                 KeyType: HASH
+             Projection:
+               NonKeyAttributes:
+                 - teamname
+               ProjectionType: INCLUDE
+             ProvisionedThroughput:
+               ReadCapacityUnits: 1
+               WriteCapacityUnits: 1
+     HezuoDevelopersDynamoDbTable:
+       Type: AWS::DynamoDB::Table
+       Properties:
+         TableName: ${self:provider.environment.DEVELOPERS_TABLE}
+         AttributeDefinitions:
+           - AttributeName: username
+             AttributeType: S
+         KeySchema:
+           - AttributeName: username
+             KeyType: HASH
+         ProvisionedThroughput:
+           ReadCapacityUnits: 1
+           WriteCapacityUnits: 1
+     HezuoTeamsDynamoDbTable:
+       Type: AWS::DynamoDB::Table
+       Properties:
+         TableName: ${self:provider.environment.TEAMS_TABLE}
+         AttributeDefinitions:
+           - AttributeName: teamname
+             AttributeType: S
+         KeySchema:
+           - AttributeName: teamname
+             KeyType: HASH
+         ProvisionedThroughput:
+           ReadCapacityUnits: 1
+           WriteCapacityUnits: 1
+     HezuoCEUDynamoDbTable:
+       Type: AWS::DynamoDB::Table
+       Properties:
+         TableName: ${self:provider.environment.CEU_TABLE}
+         AttributeDefinitions:
+           - AttributeName: ceuname
+             AttributeType: S
+         KeySchema:
+           - AttributeName: ceuname
+             KeyType: HASH
+         ProvisionedThroughput:
+           ReadCapacityUnits: 1
+           WriteCapacityUnits: 1
+     HezuoCommandynamoDbTable:
+       Type: AWS::DynamoDB::Table
+       Properties:
+         TableName: ${self:provider.environment.COMMAND_TABLE}
+         AttributeDefinitions:
+           - AttributeName: commandname
+             AttributeType: S
+         KeySchema:
+           - AttributeName: commandname
+             KeyType: HASH
+         ProvisionedThroughput:
+           ReadCapacityUnits: 1
+           WriteCapacityUnits: 1
+     HezuoActivityDynamoDbTable:
+       Type: AWS::DynamoDB::Table
+       Properties:
+         TableName: ${self:provider.environment.ACTIVITY_TABLE}
+         AttributeDefinitions:
+           - AttributeName: username
+             AttributeType: S
+           - AttributeName: updated_at
+             AttributeType: S
+         KeySchema:
+           - AttributeName: username
+             KeyType: HASH
+           - AttributeName: updated_at
+             KeyType: RANGE
+         ProvisionedThroughput:
+           ReadCapacityUnits: 1
+           WriteCapacityUnits: 1
+     SlackBotDynamoDbTable:
+       Type: AWS::DynamoDB::Table
+       Properties:
+         TableName: ${self:provider.environment.SLACK_TABLE}
+         AttributeDefinitions:
+           - AttributeName: team_id
+             AttributeType: S
+         KeySchema:
+           - AttributeName: team_id
+             KeyType: HASH
+         ProvisionedThroughput:
+           ReadCapacityUnits: 1
+           WriteCapacityUnits: 1
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

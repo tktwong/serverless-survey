@@ -1,0 +1,91 @@
+service: api-pub
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  namespace: ${opt:namespace, 'api-pub'}
+  environment:
+    NODE_ENV: ${self:provider.stage}
+  region: ${opt:region, 'us-east-1'}
+  deploymentBucket: ${self:provider.namespace}-serverless-${self:provider.region}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:*'
+      Resource:
+        Fn::GetAtt: 
+          - apipub
+          - Arn
+  apiKeys:
+    - ${self:provider.namespace}-key-${self:provider.stage}
+
+functions:
+  get:
+    handler: handler.getRecord
+  create:
+    handler: handler.createRecord
+  update:
+    handler: handler.updateRecord
+  delete:
+    handler: handler.deleteRecord
+
+resources:
+  Resources:
+    getRetryConfig:
+      Type: AWS::Lambda::EventInvokeConfig
+      Properties: 
+        FunctionName: 
+          Ref: GetLambdaFunction
+        MaximumRetryAttempts: 0
+        Qualifier: $LATEST
+    createRetryConfig:
+      Type: AWS::Lambda::EventInvokeConfig
+      Properties: 
+        FunctionName: 
+          Ref: CreateLambdaFunction
+        MaximumRetryAttempts: 0
+        Qualifier: $LATEST
+    updateRetryConfig:
+      Type: AWS::Lambda::EventInvokeConfig
+      Properties: 
+        FunctionName: 
+          Ref: UpdateLambdaFunction
+        MaximumRetryAttempts: 0
+        Qualifier: $LATEST
+    deleteRetryConfig:
+      Type: AWS::Lambda::EventInvokeConfig
+      Properties: 
+        FunctionName: 
+          Ref: DeleteLambdaFunction
+        MaximumRetryAttempts: 0
+        Qualifier: $LATEST
+
+    datatable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.namespace}-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: gsi1pk
+            AttributeType: S
+          - AttributeName: gsi1sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk 
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: gsi1
+            KeySchema:
+              - AttributeName: gsi1pk
+                KeyType: HASH
+              - AttributeName: gsi1sk
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL

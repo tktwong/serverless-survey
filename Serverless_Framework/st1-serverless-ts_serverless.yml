@@ -1,0 +1,58 @@
+service: st1
+
+plugins:  
+  - serverless-webpack
+  - serverless-offline
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: dev
+
+  environment:
+    TZ: Europe/Stockholm
+    MONGODB_ATLAS_CLUSTER_URI_R: ${ssm:MONGODB_ATLAS_CLUSTER_URI_R~true}
+    MONGODB_ATLAS_CLUSTER_URI_RW: ${ssm:MONGODB_ATLAS_CLUSTER_URI_RW~true}
+    TWITTER_ACCESS_TOKEN: ${ssm:TWITTER_ACCESS_TOKEN~true}
+    TWITTER_ACCESS_TOKEN_SECRET: ${ssm:TWITTER_ACCESS_TOKEN_SECRET~true}
+    TWITTER_CONSUMER_KEY: ${ssm:TWITTER_CONSUMER_KEY~true}
+    TWITTER_CONSUMER_SECRET: ${ssm:TWITTER_CONSUMER_SECRET~true}
+    ST1_CACHE_URI: https://st1price.s3.amazonaws.com/tweets-2020-01-25.parsed.json
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+package: # Optional deployment packaging configuration
+  exclude: # Specify the directories and files which should be excluded in the deployment package
+    - scripts/**
+    - env.sh
+    - .travis.yml
+
+functions:
+  st1price:
+    handler: src/handler.price
+    memorySize: 1024
+    events:
+      - http:
+          path: /price/{station}/{petrol}
+          method: get
+          cors: true
+
+  twitterpoller:
+    handler: src/pollerhandler.poller
+    memorySize: 256
+    events:
+      - schedule: cron(0/15 * * * ? *)

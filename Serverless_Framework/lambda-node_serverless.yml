@@ -1,0 +1,109 @@
+frameworkVersion: ">=1.25.0 <2.0.0"
+service: 
+  name: ${self:custom.config.ServiceName}
+# Use serverless-webpack plugin to transpile ES6/ES7
+plugins:
+  - serverless-webpack
+custom:
+  webpack: './webpack.config.js'
+  webpackIncludeModules: # If including any modules, the output will be in the node_modules in the zipped package.
+    packagePath: './package.json'
+    forceExclude: # exclude some externals that provider already has in the runtime environment; 
+      - aws-sdk
+      - uuid
+  config: ${file(./config.js)} 
+  fpath: functions
+  table_resource_env_local: "arn:aws:dynamodb:${self:provider.environment.TableRegion}:*:table/${self:provider.environment.TableName}"
+  table_resource_env_cloud: 
+      'Fn::ImportValue': '${self:custom.config.TableArnImport}'
+provider:
+  name: aws
+  environment: ${self:custom.config.LambdaEnv}
+  stage: ${self:custom.config.Stage}
+  region: ${self:custom.config.StackRegion} 
+  memorySize: 128 # optional, in MB, default is 1024
+  timeout: 6 # optional, in seconds, default is 6  
+  runtime: nodejs6.10
+  deploymentBucket:
+    name: ${self:custom.config.DeploymentBucket} # code is uploaded in this existing bucket   
+  versionFunctions: false # optional, default is true
+  package: 
+    individually: true # separate packaging for each function.
+    # No need of the following when using webpackIncludeModules.
+   # excludeDevDependencies: true # Config if Serverless should automatically exclude dev dependencies in the deployment package. Defaults to true
+    # exclude: # Specify the directories and files which should be excluded in the deployment package
+     # - node_modules/**
+     # - node_modules/uuid/**
+     # - .git/**
+    #include: # Specify the directories and files which should be included in the deployment package
+    #  - functions/**
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: ${self:custom.table_resource_env_${opt:envtype}}
+
+functions:
+  create:
+    handler: ${self:custom.fpath}/create.main
+    events:
+      - http:
+          path: notes
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  get:
+    handler: ${self:custom.fpath}/get.main
+    events:
+      - http:
+          path: notes/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  list:
+    handler: ${self:custom.fpath}/list.main
+    events:
+      - http:
+          path: notes
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  update:
+    handler: ${self:custom.fpath}/update.main
+    events:
+      - http:
+          path: notes/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  delete:
+    handler: ${self:custom.fpath}/delete.main
+    events:
+      - http:
+          path: notes/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+resources:
+  Outputs:
+    ApigId:
+      Value: 
+        "Ref": ApiGatewayRestApi
+      Export:
+        Name: # not using Fn::Sub to avoid conflicts with serverlessJS parser
+          'Fn::Join':
+            - ''
+            -
+              - Ref: 'AWS::StackName'
+              - '-ApigId'           
+  

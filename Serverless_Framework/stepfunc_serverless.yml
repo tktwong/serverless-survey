@@ -1,0 +1,51 @@
+service: stepfunc
+
+plugins:
+  - serverless-step-functions
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: eu-west-1
+
+functions:
+  fanin:
+    handler: handler.fanin
+  fanout:
+    handler: handler.fanout
+  mapJob:
+    handler: handler.mapJob
+
+stepFunctions:
+  stateMachines:
+    mapMachine:
+      definition:
+        StartAt: FirstState
+        States:
+          FirstState:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [fanout, Arn]
+            Next: mapped_task
+          mapped_task:
+            Type: Map
+            Iterator:
+              StartAt: FirstMapTask
+              States:
+                FirstMapTask:
+                  Type: Task
+                  Resource:
+                    Fn::GetAtt: [mapJob, Arn]
+                  End: true
+            Next: LastState
+          LastState:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [fanin, Arn]
+            End: true
+
+package:
+  include:
+    - "handler.py"
+  exclude:
+    - "**"

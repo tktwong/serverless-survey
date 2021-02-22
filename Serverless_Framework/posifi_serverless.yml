@@ -1,0 +1,122 @@
+service: posifi
+
+custom:
+  serviceId: ${self:service}-${opt:stage, 'dev'}
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: sa-east-1
+  environment:
+      serviceId: ${self:service}
+      stage: ${opt:stage, 'dev'}
+      region: ${self:provider.region}
+      PYTHONPATH: '/var/task/:/var/runtime:/opt'
+
+      AI_BUCKET_NAME: ${self:custom.serviceId}.ai
+      DYNAMODB_FINGERPRINTS: ${self:service}-${opt:stage, 'dev'}-fingerprints
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_FINGERPRINTS}"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+          - "arn:aws:s3:::*"
+
+  iamManagedPolicies:
+    - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+
+resources:
+  Resources:
+
+    AIBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.AI_BUCKET_NAME}
+        AccessControl: Private
+
+    FingerprintsTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: timestamp
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: timestamp
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_FINGERPRINTS}
+
+layers:
+  Requirements:
+    path: .requirements 
+    name: ${self:custom.serviceId}-requirements-layer
+    description: This Layer contains the python requirements for all lambdas.
+    compatibleRuntimes:
+      - python3.7
+
+package:
+  individually: true
+  excludeDevDependencies: false
+
+functions:
+
+  train-models:
+    handler: lambda_handlers/train_models.run
+    layers:
+        - {Ref: RequirementsLambdaLayer}
+    timeout: 900
+    package:
+      include:
+        - lambda_handlers/train_models.py
+        - commons/**
+      exclude:
+        - '**'
+    events:
+      - http:
+          path: train_models
+          method: post
+          async: true
+
+  localize:
+    handler: lambda_handlers/localize.run
+    layers:
+        - {Ref: RequirementsLambdaLayer}
+    timeout: 30
+    package:
+      include:
+        - lambda_handlers/localize.py
+        - commons/**
+      exclude:
+        - '**'
+    events:
+      - http:
+          path: localize
+          method: post
+
+  add-fingerprint:
+    handler: lambda_handlers/add_fingerprint.run
+    layers:
+        - {Ref: RequirementsLambdaLayer}
+    timeout: 30
+    package:
+      include:
+        - lambda_handlers/add_fingerprint.py
+        - commons/**
+      exclude:
+        - '**'
+    events:
+      - http:
+          path: fingerprint
+          method: post

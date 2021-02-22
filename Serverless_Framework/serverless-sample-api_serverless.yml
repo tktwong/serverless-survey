@@ -1,0 +1,89 @@
+service: sample-api
+
+provider:
+  name: aws
+  stage: dev
+  region: eu-central-1
+  
+  #Below 3 parameters can be changed in each function
+  runtime: nodejs6.10
+  memorySize: 256 # optional, default is 1024
+  timeout: 10 # optional, default is 6
+  #
+
+  apiKeys: # List of API keys to be used by your service API Gateway REST API
+    - ${self:service}-${self:custom.stage}-key
+
+  versionFunctions: false # optional, default is true
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sns:publish"
+        - "sns:create"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "*"
+
+custom:
+  # bucket: bucketReference
+  bucket: awsmeetupbucket
+  stage: ${opt:stage, self:provider.stage}
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: hello
+          method: GET
+#        path: hello
+#        method: GET
+#        private: true
+  getIp:
+    handler: iphandler.getIp
+    events:
+      - http:
+          path: getip
+          method: GET
+
+  watchdog:
+    handler: handler.watchdog
+    events:
+      - schedule: rate(1 minute)
+#      - schedule: cron(0 6 * * ? *) #run at 6:00 am (UTC)(9AM TR time) every day
+
+  postprocess:
+    handler: handler.s3postprocess
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .png
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectRemoved:*
+    environment:
+      snsTopicArn: 
+        Fn::Join:
+          - ":"
+          - - "arn:aws:sns"
+            - Ref: AWS::Region
+            - Ref: AWS::AccountId
+            - "MySNSTopic"
+
+
+resources:
+ Resources:
+  MySNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: MySNSTopic
+      DisplayName: AWSMeetup Demo
+      Subscription:
+      - Endpoint: "ekremkenter@gmail.com"
+        Protocol: email
+plugins:
+  - serverless-offline

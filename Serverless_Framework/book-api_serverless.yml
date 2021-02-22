@@ -1,0 +1,108 @@
+service: book-api # NOTE: update this with your service name
+
+provider:
+  name: aws
+  runtime: java8
+  stage: dev
+  region: us-east-1
+  apiName: book-api
+
+package:
+  artifact: target/book-api-dev.jar
+
+functions:
+  readBook:
+    handler: com.serverless.requests.ReadBook
+    role: arn:aws:iam::423672971386:role/DBA
+    environment:
+      TABLE_NAME: Book
+    events:
+      - http:
+          path: book
+          method: GET
+          integration: lambda
+          request:
+            parameters:
+              querystrings:
+                id: true
+            template:
+              application/json: '{"id":"$input.params(''id'')"}'
+
+  listBooks:
+    role: arn:aws:iam::423672971386:role/DBA
+    handler: com.serverless.requests.ListBooks
+    environment:
+      TABLE_NAME: Book
+    events:
+      - http:
+          path: book/all
+          method: GET
+          integration: lambda-proxy
+
+  updateBook:
+    handler: com.serverless.requests.UpdateBook
+    role: arn:aws:iam::423672971386:role/DBA
+    environment:
+      TABLE_NAME: Book
+    events:
+      - http:
+          path: book
+          method: put
+          integration: lambda
+          request:
+            schema:
+              application/json: ${file(models/book.json)}    #crie o esquema json da classe produto dentro de pasta model
+            template:
+              application/json: $input.json('$')
+
+  deleteBook:
+    role: arn:aws:iam::423672971386:role/DBA
+    handler: com.serverless.requests.DeleteBook
+    environment:
+      TABLE_NAME: Book
+    events:
+      - http:
+          path: book/{id}
+          method: delete
+          integration: lambda-proxy
+
+  saveBook:
+    role: arn:aws:iam::423672971386:role/DBA
+    handler: com.serverless.requests.SaveBook
+    environment:
+      TABLE_NAME: Book
+    events:
+      - http:
+          path: book
+          method: post
+          integration: lambda-proxy
+
+resources:
+  Resources:
+    BookTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: Book
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: N
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+#    ApiGatewayRestApi:
+#      Type: 'AWS::ApiGateway::RestApi'
+#      Properties:
+#        Name: ${self:provider.apiName}-${self:provider.stage}
+#        Body:
+#          ${file(api-doc-swagger.yml)}
+#
+#    ApiGatewayDeployment:
+#      Type: AWS::ApiGateway::Deployment
+#      Properties:
+#        RestApiId:
+#          Ref: ApiGatewayRestApi
+#        StageName: ${self:provider.stage}

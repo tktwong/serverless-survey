@@ -1,0 +1,79 @@
+# app and org for use with dashboard.serverless.com
+app: my-first-app
+org: ivanchuchman
+
+service: sls-books-api
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+package:
+  exclude:
+    - offline/**
+    - .dynamodb/**
+    - .git/**
+    - src/**
+    - test/**
+    - e2e/**
+    - README.md
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  environment:
+    BOOKS_TABLE: ${self:service}-${opt:stage, self:provider.stage}-books
+    STAGE: ${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.BOOKS_TABLE}"
+
+functions:
+  app:
+    handler: dist/app.handler
+    events:
+      - http:
+          cors: true
+          path: '/'
+          method: any
+      - http:
+          cors: true
+          path: '/{any+}'
+          method: any
+
+resources:
+  Resources:
+    BooksDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.BOOKS_TABLE}

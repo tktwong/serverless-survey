@@ -1,0 +1,75 @@
+service: scache-example
+provider:
+  name: aws
+  runtime: go1.x
+  stage: dev
+  region: us-east-1
+  timeout: 60
+  environment:
+    DYNAMODB_REGION: ${opt:region, self:provider.region}
+    DYNAMODB_USER_TABLE: "scache-example-user-${opt:stage, self:provider.stage}"
+    KINESIS_STREAM_NAME: "scache-example-cache-invalidation-stream-${opt:stage, self:provider.stage}"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:UpdateItem
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:Query
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_USER_TABLE}"
+    - Effect: Allow
+      Action:
+        - kinesis:Get*
+        - kinesis:ListShards
+        - kinesis:DescribeStream
+        - kinesis:PutRecord
+        - kinesis:PutRecords
+      Resource: "arn:aws:kinesis:${opt:region, self:provider.region}:*:stream/${self:provider.environment.KINESIS_STREAM_NAME}"
+
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+
+functions:
+  api:
+    handler: bin/api
+    events:
+      - http:
+          path: /{any+}
+          method: ANY
+
+resources:
+  Resources:
+    UserTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete # You'll want this to be Retain for things that aren't examples.
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 3
+          WriteCapacityUnits: 3
+        TableName: ${self:provider.environment.DYNAMODB_USER_TABLE}
+        Tags:
+          - Key: Environment
+            Value: ${opt:stage, self:provider.stage}
+          - Key: Service
+            Value: scache-example
+    CacheInvalidationStream:
+      Type: 'AWS::Kinesis::Stream'
+      Properties:
+        Name: ${self:provider.environment.KINESIS_STREAM_NAME}
+        RetentionPeriodHours: 24
+        ShardCount: 1
+        Tags:
+          - Key: Environment
+            Value: ${opt:stage, self:provider.stage}
+          - Key: Service
+            Value: scache-example

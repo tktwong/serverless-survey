@@ -1,0 +1,75 @@
+service: homeday-github-stats-backend
+
+plugins:
+  - serverless-prune-plugin
+
+provider:
+  name: aws
+  region: eu-central-1
+  runtime: nodejs10.x
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource: "arn:aws:s3:::${env:DEPLOYMENT_S3_BUCKET}/results/*"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*"
+  environment:
+    API_ENDPOINT: ${env:API_ENDPOINT}
+    APP_DOMAIN: ${env:APP_DOMAIN}
+    AUTH0_BACKEND_CLIENT_ID: ${env:AUTH0_BACKEND_CLIENT_ID}
+    AUTH0_BACKEND_CLIENT_SECRET: ${env:AUTH0_BACKEND_CLIENT_SECRET}
+    AUTH0_BACKEND_DOMAIN: ${env:AUTH0_BACKEND_DOMAIN}
+    AUTH0_CLIENT_ID: ${env:AUTH0_CLIENT_ID}
+    AUTH0_DOMAIN: ${env:AUTH0_DOMAIN}
+    DEPLOYMENT_S3_BUCKET: ${env:DEPLOYMENT_S3_BUCKET}
+    SERVERLESS_STAGE: ${env:SERVERLESS_STAGE}
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  githubAnalyze:
+    handler: index.githubAnalyze
+    events:
+      - http:
+          path: github/analyze
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                user: true
+                repo: true
+                dateFrom: true
+                dateTo: true
+    timeout: 30
+  githubAnalyzeWorker:
+    handler: index.githubAnalyzeWorker
+    timeout: 90
+  githubRepositories:
+    handler: index.getGithubRepositories
+    events:
+      - http:
+          path: github/repositories
+          method: get
+          cors: true
+    timeout: 30
+
+custom:
+  prune:
+    automatic: true
+    number: 2

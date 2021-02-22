@@ -1,0 +1,198 @@
+service: sl-appsync-angular
+app: sl-appsync-angular
+org: bennuashes
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  # iamRoleStatements:
+  #   - Effect: 'Allow'
+  #     Action:
+  #       - 's3:ListBucket'
+  #     Resource:
+  #       Fn::Join:
+  #         - ''
+  #         - - 'arn:aws:s3:::'
+  #           - Ref: ServerlessDeploymentBucket
+  #   - Effect: 'Allow'
+  #     Action:
+  #       - 's3:PutObject'
+  #     Resource:
+  #       Fn::Join:
+  #         - ''
+  #         - - 'arn:aws:s3:::'
+  #           - Ref: ServerlessDeploymentBucket
+  #           - '/*'
+
+# # you can overwrite defaults here
+# stage: dev
+# region: us-east-1
+package:
+  excludeDevDependencies: true
+
+plugins:
+  - serverless-appsync-plugin
+  - serverless-appsync-simulator
+  - serverless-offline
+  - serverless-prune-plugin
+
+functions:
+  # getTodos:
+  #   handler: handler.getTodos
+  getHello:
+    handler: dist/handler.getHello
+  getWorld:
+    handler: dist/handler.getWorld
+  # addTodo: 
+  #   handler: addTodoInput/handler.addTodo
+  # updateTodo: 
+  #   handler: updateTodoInput/handler.updateTodo
+
+custom:
+  prune:
+    automatic: true
+    number: 1
+  logConfig:
+      loggingRoleArn: { Fn::GetAtt: [AppSyncLoggingServiceRole, Arn] } # Where AppSyncLoggingServiceRole is a role with CloudWatch Logs write access
+      level: ALL # Logging Level: NONE | ERROR | ALL
+      excludeVerboseContent: false
+  appSync:    
+    name: AppSync Todo # defaults to api
+    # apiKey # only required for update-appsync/delete-appsync
+    authenticationType: API_KEY # AMAZON_COGNITO_USER_POOLS # or OPENID_CONNECT | API_KEY or AWS_IAM or 
+    schema: schema.graphql # schema file or array of files to merge, defaults to schema.graphql
+    # if AMAZON_COGNITO_USER_POOLS
+    # userPoolConfig:
+    #   awsRegion: us-east-1 # defaults to provider region
+    #   defaultAction: ALLOW # required # ALLOW or DENY
+    #   userPoolId: us-east-1_bxqznVvpX # required # user pool ID
+    mappingTemplates:
+      - dataSource: TodosDynamoDb
+        type: Mutation
+        field: addTodo
+        request: addTodo.request.vtl
+        response: common.response.vtl
+      - dataSource: TodosDynamoDb
+        type: Mutation
+        field: updateTodo
+        request: updateTodo.request.vtl
+        response: common.response.vtl
+      - dataSource: TodosDynamoDb
+        type: Query
+        field: todos
+        request: getTodos.request.vtl
+        response: getTodos.response.vtl
+    dataSources:
+      - type: NONE
+        name: none
+      - type: AMAZON_DYNAMODB
+        name: TodosDynamoDb
+        config:
+          tableName: { Ref: TodosDynamoDb }
+          serviceRoleArn: { Fn::GetAtt: [AppSyncDynamoDBServiceRole, Arn] } # Where AppSyncDynamoDBServiceRole is an IAM role defined in Resources
+      - type: AWS_LAMBDA
+        name: GetHello
+        config:
+          functionName: getHello
+      - type: AWS_LAMBDA
+        name: GetWorld
+        config:
+          functionName: getWorld
+resources:
+  Resources:
+    QueryHelloResolver:
+      Type: "AWS::AppSync::Resolver"
+      Properties:
+        ApiId: !GetAtt GraphQlApi.ApiId
+        TypeName: "Query"
+        FieldName: "hello"
+        DataSourceName: !GetAtt GraphQlDsGetHello.Name
+    TodosDynamoDb:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH            
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    AppSyncLoggingServiceRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        Path: "/"
+        RoleName: "AppSyncLoggingServiceRole"
+        ManagedPolicyArns:
+          - "arn:aws:iam::aws:policy/service-role/AWSAppSyncPushToCloudWatchLogs"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+    
+    AppSyncDynamoDBServiceRole:  
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          -
+            PolicyName: "appsync-policy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action:
+                    - "dynamodb:PutItem"
+                    - "dynamodb:UpdateItem"
+                    - "dynamodb:DeleteItem"
+                    - "dynamodb:GetItem"
+                    - "dynamodb:Query"
+                    - "dynamodb:Scan"
+                  Resource: "*"
+    awsAppSyncServiceRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Path: "/"
+    lambdaAccessPolicy:
+      Type: "AWS::IAM::Policy"
+      Properties:
+        PolicyName: "DirectAppSyncLambda"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Action: "lambda:invokeFunction"
+              Resource:
+                - Fn::GetAtt: [GetHelloLambdaFunction, Arn]
+        Roles:
+          -
+            Ref: "awsAppSyncServiceRole"

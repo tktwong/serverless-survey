@@ -1,0 +1,64 @@
+service: apigw-websocket
+
+provider:
+  name: aws
+  stage: dev
+  # API GW config 
+  websocketsApiName: ${self:provider.stage}-${self:service}
+  websocketsApiRouteSelectionExpression: $request.body.action
+  # Lambda config
+  runtime: nodejs8.10
+  memorySize: 128 # optional, in MB, default is 1024
+  timeout: 10 # optional, in seconds, default is 6
+  environment:
+    DYNAMODB_TABLE: users
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  connectionHandler:
+    handler: src/on-connect/app.handler
+    name: ${self:provider.stage}-connection-handler
+    description: Handles Websocket connections
+    events:
+      - websocket: $connect
+      - websocket: $disconnect
+      - websocket: $default
+  loginHandler:
+    handler: src/login/app.handler
+    name: ${self:provider.stage}-websocket-login-handler
+    description: Handles Websocket login events
+    events:
+      - websocket: login
+  messageHandler:
+    handler: src/send-message/app.handler
+    name: ${self:provider.stage}-websocket-message-handler
+    description: Handles Websocket message events
+    events:
+      - websocket: message
+resources:
+  Resources:
+    UsersTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: connectionId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: connectionId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

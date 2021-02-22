@@ -1,0 +1,188 @@
+service: tasks
+
+custom:
+  title: ML Task List
+  email:
+    domain: tiliq.com
+    mailFrom: tasks@tiliq.com
+  swag:
+    host: duki4yrm34.execute-api.us-east-1.amazonaws.com
+    definitions:
+      UUID: ${file(./schema/uuid.json)}
+      Task: ${file(./schema/task.json)}
+      Tasks: ${file(./schema/tasks.json)}
+      User: ${file(./schema/user.json)}
+      Error: ${file(./schema/error.json)}
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  region: us-east-1
+  environment:
+    TABLE_NAME: ${self:service}-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:Scan"
+        - "dynamodb:PutItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:DeleteItem"
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:service}-${self:provider.stage}"
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+      Resource: "arn:aws:ses:${self:provider.region}:*:identity/${self:custom.email.domain}"
+
+plugins:
+  - swagger-export
+
+package:
+  exclude:
+    - README.md
+    - .*
+
+functions:
+  list:
+    handler: list.handler
+    events:
+      - http:
+          path: tasks
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                user: true
+          swag:
+            summary: List tasks for a user
+            responses:
+              '200':
+                description: A list of tasks for the specified user.
+                schema:
+                  $ref: "#/definitions/Tasks"
+              '400':
+                description: Bad Request. Most likely `user` parameter missing.
+                schema:
+                  $ref: "#/definitions/Error"
+              '500':
+                description: Internal Server Error.
+                schema:
+                  $ref: "#/definitions/Error"
+  update:
+    handler: update.handler
+    events:
+      - http:
+          path: tasks/{id}
+          method: patch
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+              body: Task
+          swag:
+            summary: Update a specific task for a user.
+            responses:
+              '200':
+                description: Task updated successfully.
+                schema:
+                  $ref: "#/definitions/UUID"
+              '400':
+                description: Bad Request.
+                schema:
+                  $ref: "#/definitions/Error"
+              '500':
+                description: Internal Server Error.
+                schema:
+                  $ref: "#/definitions/Error"
+  add:
+    handler: add.handler
+    events:
+      - http:
+          path: tasks
+          method: post
+          cors: true
+          request:
+            parameters:
+              body: Task
+          swag:
+            summary: Add a task for a specific user.
+            responses:
+              '200':
+                description: Task added successfully.
+                schema:
+                  $ref: "#/definitions/UUID"
+              '400':
+                description: Bad Request.
+                schema:
+                  $ref: "#/definitions/Error"
+              '500':
+                description: Internal Server Error.
+                schema:
+                  $ref: "#/definitions/Error"
+  delete:
+    handler: delete.handler
+    events:
+      - http:
+          path: tasks/{id}
+          method: delete
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+          swag:
+            summary: Delete a specific task for a user.
+            responses:
+              '200':
+                description: Task deleted successfully.
+                schema:
+                  $ref: "#/definitions/UUID"
+              '400':
+                description: Bad Request.
+                schema:
+                  $ref: "#/definitions/Error"
+              '500':
+                description: Internal Server Error.
+                schema:
+                  $ref: "#/definitions/Error"
+  cron:
+    handler: cron.handler
+    environment:
+      MAIL_FROM: ${self:custom.email.mailFrom}
+    events:
+      - schedule: cron(0 0 * * ? *)
+
+resources:
+  Resources:
+    TasksTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user
+            AttributeType: S
+        #   - AttributeName: description
+        #     AttributeType: S
+        #   - AttributeName: priority
+        #     AttributeType: N
+        #   - AttributeName: completed
+        #     AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: user
+            KeySchema:
+              - AttributeName: user
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

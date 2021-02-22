@@ -1,0 +1,64 @@
+service: image-to-mp3
+# A valid option to satisfy the declaration 
+# 'opt:profile,yann_personal' could not be found.
+provider:
+  name: aws
+  stage: ${opt:stage, "staging"}
+  region: ${opt:region, "us-west-2"}
+  profile: ${file(./config/envVars.js):getEnvVars.profile}
+  runtime: python3.7
+  timeout: 30
+  memorySize: 128
+  environment:
+    BUCKET: text-to-audio-${self:custom.randomString}-${self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - rekognition:DetectText
+        - polly:StartSpeechSynthesisTask
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+      Resource: arn:aws:s3:::${self:provider.environment.BUCKET}/*
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource: arn:aws:s3:::${self:provider.environment.BUCKET}
+
+custom:
+  randomString: 1569198769635215h
+  lambda: convert-img-mp3
+  PROFILE: ${file(./config/envVars.js):getEnvVars.profile}
+
+functions:
+  convert-img-mp3:
+    handler: lambdas/${self:custom.lambda}.lambda_handler
+
+resources:
+  Resources:
+    MediaBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.BUCKET}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: TRUE
+          BlockPublicPolicy: TRUE
+          IgnorePublicAcls: TRUE
+          RestrictPublicBuckets: TRUE
+          # For now, just manually upload a sample JPEG img to this new bucket
+
+    DetectTextLambdaPermissionImagesS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: arn:aws:lambda:${self:provider.region}:662697835133:function:${self:service}-${self:provider.stage}-${self:custom.lambda}
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceArn: arn:aws:s3:::${self:provider.environment.BUCKET}
+
+  Outputs:
+    MediaBucketName:
+      Value:
+        Ref: MediaBucket

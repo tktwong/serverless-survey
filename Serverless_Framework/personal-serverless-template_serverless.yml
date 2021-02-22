@@ -1,0 +1,202 @@
+# For full config options, check the docs:
+#    docs.serverless.com
+
+# This should be short as aws has a 64 char limit you will usually append --stage to this
+service: slsTemplate
+
+plugins:
+  - serverless-webpack
+  - serverless-stack-output
+  - serverless-plugin-aws-alerts
+  - serverless-offline
+  - serverless-domain-manager
+  - serverless-aws-documentation
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  deploymentBucket:
+    name: ${self:custom.s3Bucket}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: '*'
+
+  environment:
+    API_BASE_URL: ${self:custom.apiBaseUrl, http://localhost:3000}
+    TABLE_NAME: ${self:custom.tableName}
+    BASIC_AUTH_USERNAME: ${self:custom.basicAuthUsername}
+    BASIC_AUTH_PASSWORD: ${self:custom.basicAuthPassword}
+    STAGE: ${self:custom.stage}
+    SERVICE_NAME: ${self:service}
+
+custom:
+  documentation: ${file(resources/documentation.yml)}
+  notificationEmail:
+    prod: "something@pagerduty.com"
+    int1: "something@pagerduty.com"
+    uat: "something@pagerduty.com"
+  alerts:
+    stages: # Optionally - select which stages to deploy alarms to
+      - prod
+      - uat
+      - int1
+    dashboards:
+      - vertical
+      #- default
+
+    topics:
+      alarm:
+        topic: ${self:service}-${opt:stage}-alerts-alarm
+        notifications:
+          - protocol: email
+            endpoint: ${self:custom.notificationEmail.${opt:stage}, ''}
+
+    definitions:  # these defaults are merged with your definitions
+      functionInvocations:
+        threshold: 1000
+        period: 60
+      functionDuration:
+        threshold: 1000
+        period: 60
+    alarms:
+    - functionThrottles
+    - functionErrors
+    - functionInvocations
+    - functionDuration
+
+  stage: ${opt:stage, 'dev'}
+  apiBaseUrl: ${env:API_BASE_URL, self:custom.${self:custom.stage}.apiBaseUrl, self:custom.ci.apiBaseUrl}
+  customDomain:
+    enabled: ${self:custom.${self:custom.stage}.customDomainEnabled, self:custom.ci.customDomainEnabled}
+    domainName: ${self:custom.${self:custom.stage}.domainName, ''}
+    certificateName: ${self:custom.${self:custom.stage}.certificate, ''}
+    createRoute53Record: true
+    endpointType: 'regional'
+  tableName: personal-serverless-template-${opt:stage, 'dev'}
+  basicAuthUsername: ${env:BASIC_AUTH_CREDS_USR, self:custom.${self:custom.stage}.basicAuthUsername, self:custom.ci.basicAuthUsername}
+  basicAuthPassword: ${env:BASIC_AUTH_CREDS_PSW, self:custom.${self:custom.stage}.basicAuthPassword, self:custom.ci.basicAuthPassword}
+  s3Bucket: ${self:custom.${self:custom.stage}.s3Bucket, self:custom.ci.s3Bucket}
+  output:
+    file: .serverless/output.json
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+    packager: 'yarn'
+    excludeFiles: spec/**/*.spec.ts
+  ci:
+    apiBaseUrl:
+      'Fn::Join':
+        - ''
+        - - 'https://'
+          - !Ref ApiGatewayRestApi
+          - '.execute-api.'
+          - ${opt:region, self:provider.region}
+          - '.amazonaws.com/'
+          - ${self:custom.stage}
+    basicAuthUsername: 'test'
+    basicAuthPassword: 'test'
+    s3Bucket: 'jeremiah'
+    customDomainEnabled: false
+  int1:
+    apiBaseUrl:
+      'Fn::Join':
+        - ''
+        - - 'https://'
+          - !Ref ApiGatewayRestApi
+          - '.execute-api.'
+          - ${opt:region, self:provider.region}
+          - '.amazonaws.com/'
+          - ${self:custom.stage}
+    basicAuthUsername: ${ssm:/<company>/slsObjects/int1/basic_auth_user, self:custom.ci.basicAuthUsername}
+    basicAuthPassword: ${ssm:/<company>/slsObjects/int1/basic_auth_pass, self:custom.ci.basicAuthUsername}
+    customDomainEnabled: true
+    s3Bucket: 'jeremiah-int1'
+    certificate: '*.jeremiah.parrack.com'
+    domainName: int1-slsObjects.jeremiah.parrack.com
+  uat:
+    apiBaseUrl:
+      'Fn::Join':
+        - ''
+        - - 'https://'
+          - !Ref ApiGatewayRestApi
+          - '.execute-api.'
+          - ${opt:region, self:provider.region}
+          - '.amazonaws.com/'
+          - ${self:custom.stage}
+    basicAuthUsername: ${ssm:/<company>/slsObjects/int1/basic_auth_user, self:custom.ci.basicAuthUsername}
+    basicAuthPassword: ${ssm:/<company>/slsObjects/int1/basic_auth_pass, self:custom.ci.basicAuthUsername}
+    customDomainEnabled: true
+    s3Bucket: 'jeremiah-uat'
+    certificate: '*.jeremiah.parrack.com'
+    domainName: uat-slsObjects.jeremiah.parrack.com
+  prod:
+    apiBaseUrl:
+      'Fn::Join':
+        - ''
+        - - 'https://'
+          - !Ref ApiGatewayRestApi
+          - '.execute-api.'
+          - ${opt:region, self:provider.region}
+          - '.amazonaws.com/'
+          - ${self:custom.stage}
+    basicAuthUsername: ${ssm:/<company>/slsObjects/int1/basic_auth_user, self:custom.ci.basicAuthUsername}
+    basicAuthPassword: ${ssm:/<company>/slsObjects/int1/basic_auth_pass, self:custom.ci.basicAuthUsername}
+    customDomainEnabled: true
+    s3Bucket: 'jeremiah-prod'
+    certificate: '*.jeremiah.parrack.com'
+    domainName: prod-slsObjects.jeremiah.parrack.com
+  stackTags:
+    environment: ${self:custom.stage}
+    team: 'whatever'
+    project: 'slsTemplate'
+    application: 'Personal Serverless Template'
+resources:
+  - Conditions:
+      TestEnvironment:
+        !And [
+          !Not [!Equals ['${self:provider.stage}', 'int1']],
+          !Not [!Equals ['${self:provider.stage}', 'uat']],
+          !Not [!Equals ['${self:provider.stage}', 'prod']],
+        ]
+
+  - Outputs:
+      Stage:
+        Description: 'Stage'
+        Value: ${self:custom.stage}
+      Region:
+        Description: 'Region'
+        Value: ${opt:region, self:provider.region}
+      ServiceName:
+        Description: 'Name of a service'
+        Value: ${self:service}
+      BasicAuthUsername:
+        Description: 'Basic auth username'
+        Value: ${ssm:/<company>/slsObjects/int1/basic_auth_user, 'test'}
+      BasicAuthPassword:
+        Description: 'Basic auth password'
+        Value: ${ssm:/<company>/slsObjects/int1/basic_auth_pass, 'test'}
+      TableName:
+        Description: 'Service table name'
+        Value: ${self:custom.tableName, 'tableName'}
+      ApiUrl:
+        Description: 'The API Gateway URL'
+        Value:
+          Fn::Join:
+            - ''
+            - - 'https://'
+              - Ref: ApiGatewayRestApi
+              - '.execute-api.${self:provider.region}.amazonaws.com/${self:custom.stage}'
+  - ${file(./resources/dynamo.yml)}
+
+functions:
+  - ${file(./resources/functions.yml)}

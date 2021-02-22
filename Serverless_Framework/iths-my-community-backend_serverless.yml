@@ -1,0 +1,163 @@
+# serverless.yml
+
+service: my-community-serverless
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-north-1
+  stage: ${opt:stage}
+  memorySize: 512
+  timeout: 30
+  environment: ${file(./.env.${self:provider.stage}.yml)}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - "sqs:SendMessage"
+      Resource: 
+        - "Fn::GetAtt": [ myCommunityUser1, Arn ]
+        - "Fn::Join": ['/', ["Fn::GetAtt": [ myCommunityUser1, Arn ], 'index', '*']]
+        - "Fn::GetAtt": [ myCommunityPost, Arn ]
+        - "Fn::GetAtt": [ SQSQueue, Arn ]
+
+package:
+  exclude:
+    - "src/**"
+    - "SQS-SES-Docker/**"
+    - "node_modules/**"
+    - "*"
+    - ".vscode/**"
+
+layers:
+  nodeModules:
+    path: layerNodeModules # required, path to layer contents on disk
+    name: ${opt:stage, self:provider.stage, 'dev'}-node-modules #
+
+plugins:
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    httpPort: 3009
+    lambdaPort: 3004
+resources: ${file(./resources.yml)} 
+
+
+functions:
+  userCreate:
+    handler: build/controllers/user.routeCreate
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: "api/user"
+          method: POST
+          cors: true
+
+  userLogin:
+    handler: build/controllers/user.routeLogin
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: "api/user/login"
+          method: POST
+          cors: true
+  userInfo:
+    handler: build/controllers/user.routeUserInfo
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: "api/user/info"
+          method: GET
+          cors: true
+  userUpdate:
+    handler: build/controllers/user.routeUserUpdate
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: "api/user"
+          method: "PUT"
+          cors: true
+  userFindAll:
+    handler: build/controllers/user.routeFindAll
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: "api/users"
+          method: GET
+          cors: true
+  userFind:
+    handler: build/controllers/user.routeFind
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: "api/profile/{username}"
+          method: GET
+          cors: true
+
+  postCreate:
+    handler: build/controllers/post.routeCreate
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: api/post
+          method: POST
+          cors: true
+  postDelete:
+    handler: build/controllers/post.routeDelete
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: api/post/{postId}
+          method: DELETE
+          cors: true
+  postUser:
+    handler: build/controllers/post.routeUserPosts
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: api/user/posts
+          method: GET
+          cors: true
+  follow:
+    handler: build/controllers/follow.route
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: api/follow/{targetUserId}
+          method: POST
+          cors: true
+  unFollow:
+    handler: build/controllers/follow.route
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: api/follow/{targetUserId}
+          method: DELETE
+          cors: true
+  testRoute:
+    handler: build/controllers/testDynamoDB.runTest
+    layers:
+      - { Ref: NodeModulesLambdaLayer }
+    events:
+      - http:
+          path: api/testing2000
+          method: POST
+          cors: true

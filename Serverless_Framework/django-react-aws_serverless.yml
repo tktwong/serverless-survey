@@ -1,0 +1,83 @@
+service: django-aws
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-finch
+  - serverless-prune-plugin
+  - serverless-python-requirements
+  - serverless-wsgi
+useDotenv: true
+
+custom:
+  dotenv:
+    logging: false
+  pythonRequirements:
+    dockerizePip: non-linux
+    fileName: requirements/production.txt
+  stage: ${env:STAGE}
+  wsgi:
+    app: config.wsgi.application
+    packRequirements: false
+  prune:
+    automatic: true
+    number: 3
+  client:
+    distributionFolder: ${env:CLIENT_DIR}
+    bucketName: ${env:DJANGO_AWS_STORAGE_BUCKET_NAME}
+    manageResources: false
+    objectHeaders:
+      '*.png':
+        - name: "Content-Type"
+          value: "image/png"
+
+functions:
+  - app:
+      handler: wsgi_handler.handler
+      events:
+        - http: ANY /
+        - http: ANY /{proxy+}
+      timeout: 30
+  - migrate:
+      handler: config.tasks.migrate
+  - run_manage:
+      handler: config.tasks.run_manage
+  - collectstatic:
+      handler: config.tasks.collectstatic
+
+provider:
+  name: aws
+  role: arn:aws:iam::198784529794:role/exec_lambda
+  profile: vadymkhodak
+  runtime: python3.8
+  endpointType: regional
+  versionFunctions: false
+  stage: ${env:STAGE}
+  timeout: 60
+  vpc:
+    securityGroupIds:
+      - sg-e2a9ddd5
+      - sg-01d23aa5252981a2b
+    subnetIds:
+      - subnet-5751da76
+      - subnet-36aa2369
+      - subnet-65ea6603
+      - subnet-3927f708
+      - subnet-31623e7c
+      - subnet-ff4f09f1
+  deploymentBucket:
+    name: ${env:DJANGO_AWS_STORAGE_BUCKET_NAME}
+  apiGateway:
+    shouldStartNameWithService: true
+  lambdaHashingVersion: 20201221
+
+package:
+  exclude:
+    - .env
+    - .git/**
+    - .github/**
+    - .serverless
+    - .cache/
+    - .pytest_cache/**
+    - node_modules/**
+    - client/**
+    - "!client/build/index.html"

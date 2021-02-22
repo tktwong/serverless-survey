@@ -1,0 +1,50 @@
+service: my-auth-auth0
+
+custom:
+  # implementing custom authorization
+  authorizer:
+    auth0:
+      ## the name of function
+      name: authorizer
+      type: TOKEN
+      identitySource: method.request.header.Authorization
+      identityValidationExpression: Bearer (.*)
+      resultTtlInSeconds: 1
+
+  # Configuration for the serverless-offline plugin https://github.com/dherault/serverless-offline
+  serverless-offline:
+    host: localhost
+    port: 3000
+    # Adds a prefix to every path, to send your requests to http://localhost:3000/[prefix]/[your_path] instead. E.g. -p dev
+    # prefix: ${self:provider.stage}
+    # Disable the authorizers
+    # noAuth: true
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  profile: serverless-cli
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: eu-central-1
+
+package:
+  include:
+    - node_modules/**
+    - handler-authorizer.js
+    - handler-api.js
+
+functions:
+  - authorizer:
+      handler: handler-authorizer.handler
+
+  - api:
+      handler: handler-api.handler
+      events:
+        - http:
+            path: api/{any+}
+            method: ANY
+            cors: true
+            authorizer: ${self:custom.authorizer.auth0}

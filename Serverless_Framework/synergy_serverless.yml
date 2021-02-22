@@ -1,0 +1,325 @@
+service: synergydeployment
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:AWS_ENV}
+  region: us-west-2
+  timeout: 900
+  memorySize: 3008
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "kms:Decrypt"
+      Resource: 'arn:aws:kms:us-west-2:${file(./serverless.env.yml):${opt:AWS_ENV}.aws_account_number}:key/${file(./serverless.env.yml):${opt:AWS_ENV}.key_guid}'
+    - Effect: "Allow"
+      Action:
+        - "sns:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "cloudformation:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "lambda:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "apigateway:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - dynamodb:*
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - logs:*
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - iam:*
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - iot:*
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - sts:AssumeRole
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - acm:ListCertificates
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - apigateway:GET
+        - apigateway:DELETE
+        - apigateway:POST
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - route53:ListHostedZones
+        - route53:ChangeResourceRecordSets
+        - route53:GetHostedZone
+        - route53:ListResourceRecordSets
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - events:*
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - application-autoscaling:*
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - cloudfront:*
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - datapipeline:*
+      Resource:
+        - "*"
+  environment:
+    AWS_ENV: ${opt:AWS_ENV}
+    GIT_SECRET: ${file(./serverless.env.yml):${opt:AWS_ENV}.git_secret}
+    GIT_TOKEN: ${file(./serverless.env.yml):${opt:AWS_ENV}.github_token}
+    AWS_ACCOUNT_NUMBER: ${file(./serverless.env.yml):${opt:AWS_ENV}.aws_account_number}
+    IOT_ENDPOINT: ${file(./serverless.env.yml):${opt:AWS_ENV}.iot_endpoint}
+    REGION: us-west-2
+
+
+package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+  exclude:
+    - node_modules/aws-sdk/**
+
+functions:
+  githook:
+    timeout: 30
+    memorySize: 128
+    handler: handler.authenticate
+    events:
+      - http:
+          path: githook
+          method: post
+  deploy:
+    handler: handler.deploy
+    events:
+      - sns: ${opt:AWS_ENV}-clone
+  locks:
+    timeout: 30
+    handler: handler.locks
+    events:
+      - http:
+          path: locks
+          method: get
+          cors: true
+  builds:
+    timeout: 30
+    handler: handler.builds
+    events:
+      - http:
+          path: build/{repo}
+          method: get
+          cors: true
+  steps:
+    timeout: 30
+    handler: handler.steps
+    events:
+      - http:
+          path: build/{repo}/{build_start}
+          method: get
+          cors: true
+  iot:
+    timeout: 30
+    handler: handler.iot
+    events:
+      - http:
+          path: iot
+          method: get
+          cors: true
+
+plugins:
+  - serverless-domain-manager
+
+custom:
+  customDomain:
+    domainName: ${file(./serverless.env.yml):${opt:AWS_ENV}.api_url}
+    basePath: 'synergy'
+    createRoute53Record: true
+
+resources:
+  Resources:
+    websiteBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${file(./serverless.env.yml):${opt:AWS_ENV}.subdomain}.build.magickpics.com
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    websiteBucketPolicy:
+      Type: "AWS::S3::BucketPolicy"
+      Properties:
+        Bucket: ${file(./serverless.env.yml):${opt:AWS_ENV}.subdomain}.build.magickpics.com
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: Allow
+              Principal: "*"
+              Action: s3:GetObject
+              Resource: "arn:aws:s3:::${file(./serverless.env.yml):${opt:AWS_ENV}.subdomain}.build.magickpics.com/*"
+    magickBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${file(./serverless.env.yml):${opt:AWS_ENV}.magick_url}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    magickBucketPolicy:
+      Type: "AWS::S3::BucketPolicy"
+      Properties:
+        Bucket: ${file(./serverless.env.yml):${opt:AWS_ENV}.magick_url}
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: Allow
+              Principal: "*"
+              Action: s3:GetObject
+              Resource: "arn:aws:s3:::${file(./serverless.env.yml):${opt:AWS_ENV}.magick_url}/*"
+    codeBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: ${opt:AWS_ENV}-magickpics-code
+    logsBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: ${opt:AWS_ENV}-magickpics-pipeline-logs
+    lambdaKey:
+      Type: AWS::KMS::Key
+      Properties:
+        Description: "Used for encryption/decryption of lambda secrets"
+        KeyPolicy:
+          Version: "2012-10-17"
+          Id: "${opt:AWS_ENV}-synergy-lambda-key"
+          Statement:
+            -
+              Sid: "Super User"
+              Effect: "Allow"
+              Principal:
+                AWS: "arn:aws:iam::${file(./serverless.env.yml):${opt:AWS_ENV}.aws_account_number}:user/evan.zlotnick"
+              Action:
+                - "kms:*"
+              Resource: "*"
+            -
+              Sid: "Lambda Role"
+              Effect: "Allow"
+              Principal:
+                AWS: "arn:aws:iam::${file(./serverless.env.yml):${opt:AWS_ENV}.aws_account_number}:role/${self:service}-${opt:AWS_ENV}-us-west-2-lambdaRole"
+              Action:
+                - "kms:Decrypt"
+              Resource: "*"
+            -
+              Sid: "Decrypt From Metadata"
+              Effect: "Allow"
+              Principal:
+                AWS: "arn:aws:iam::${file(./serverless.env.yml):${opt:AWS_ENV}.aws_account_number}:role/meta-data-${opt:AWS_ENV}-us-west-2-lambdaRole"
+              Action:
+                - "kms:Decrypt"
+              Resource: "*"
+    buildLock:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "repo_name"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "repo_name"
+            KeyType: "HASH"
+        BillingMode: PAY_PER_REQUEST
+        TableName: "build_lock"
+    builds:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "repo_name"
+            AttributeType: "S"
+          - AttributeName: "build_start"
+            AttributeType: "N"
+        KeySchema:
+          - AttributeName: "repo_name"
+            KeyType: "HASH"
+          - AttributeName: "build_start"
+            KeyType: "RANGE"
+        BillingMode: PAY_PER_REQUEST
+        TableName: "builds"
+    buildStep:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "repo_name"
+            AttributeType: "S"
+          - AttributeName: "build_step_time"
+            AttributeType: "N"
+          - AttributeName: "build_start"
+            AttributeType: "N"
+        KeySchema:
+          - AttributeName: "repo_name"
+            KeyType: "HASH"
+          - AttributeName: "build_step_time"
+            KeyType: "RANGE"
+        GlobalSecondaryIndexes:
+        - IndexName: BuildStart
+          KeySchema:
+          - AttributeName: "build_start"
+            KeyType: "HASH"
+          Projection:
+            ProjectionType: "ALL"
+        BillingMode: PAY_PER_REQUEST
+        TableName: "build_step"
+    streamRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                AWS: arn:aws:iam::${file(./serverless.env.yml):${opt:AWS_ENV}.aws_account_number}:root
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          -
+            PolicyName: stream-function-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action:
+                    - iot:Connect
+                    - iot:Subscribe
+                    - iot:Publish
+                    - iot:Receive
+                  Resource: "*"
+        RoleName: stream-function-role
+  Outputs:

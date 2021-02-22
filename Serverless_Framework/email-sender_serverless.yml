@@ -1,0 +1,74 @@
+service: email-sender-service
+# app and org for use with dashboard.serverless.com
+app: sendmail
+org: mazharul
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-southeast-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+        - "sqs:GetQueueUrl"
+        - "sqs:DeleteMessage"
+        - "sqs:GetQueueAttributes"
+        - "sqs:ReceiveMessage"
+      Resource: 
+        Fn::GetAtt: [EmailSender, Arn]
+    # - Effect: "Allow"
+    #   Action:
+    #     - "sqs:ListQueues"
+    #   Resource: "arn:aws:sqs:${self:provider.region}::*"
+  environment: 
+    SENDGRID_KEY: ''
+    SENDGRID_API_URL: ''
+    MAILGUN_USER: ''
+    MAILGUN_KEY: ''
+    MAILGUN_URL: ''
+    QUEUE_URL: ''
+    
+plugins:
+  - serverless-mocha-plugin
+
+functions:
+  queueMails:
+    handler: src/queueMails/handler.queueMails
+    events:
+      - http:
+          path: /mail/send
+          method: post
+          cors: true
+
+  delivery-sendgrid:
+    handler: src/delivery/sendgrid/handler.sendEmail
+    batchSize: 1
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - EmailSender
+              - Arn
+      - batchSize: 1
+
+  delivery-mailgun:
+    handler: src/delivery/mailgun/handler.sendEmail
+    batchSize: 1
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - EmailSender
+              - Arn
+      - batchSize: 1
+
+
+resources:
+  Resources:
+    EmailSender:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "EmailSender"
+

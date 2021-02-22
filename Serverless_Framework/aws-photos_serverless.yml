@@ -1,0 +1,67 @@
+service: PhotoService
+
+custom:
+  inputBucket: krokicki-photo-input
+  outputBucket: krokicki-photo-output
+
+frameworkVersion: ">=1.10.0"
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  memorySize: 128
+  timeout: 6
+  stage: dev
+  region: us-east-1
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+        - s3:DeleteObject
+      Resource: "arn:aws:s3:::${self:custom.outputBucket}/*"
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:GetObjectAcl
+      Resource: "arn:aws:s3:::${self:custom.inputBucket}/*"
+
+functions:
+  ResizeImage:
+    handler: resize.handler
+    environment:
+      OUTPUT_BUCKET: ${self:custom.outputBucket}
+      OUTPUT_WIDTH: 400
+      OUTPUT_HEIGHT: 300
+    events:
+      - s3:
+          bucket: ${self:custom.inputBucket}
+          event: s3:ObjectCreated:*
+          rules: 
+            - suffix: .jpg
+
+  Cleanup:
+    handler: cleanup.handler
+    environment:
+      OUTPUT_BUCKET: ${self:custom.outputBucket}
+    events:
+      - s3:
+          bucket: ${self:custom.inputBucket}
+          event: s3:ObjectRemoved:*
+          rules: 
+            - suffix: .jpg
+
+resources:
+
+  Resources:
+#    S3BucketInputs:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: ${self:custom.inputBucket}
+
+    S3BucketOutputs:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.outputBucket}
+

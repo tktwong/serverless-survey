@@ -1,0 +1,59 @@
+service: emojichat-resources
+
+provider:
+  name: aws
+  region: eu-west-1
+  stage: ${opt:stage, 'dev'}
+
+plugins:
+  - serverless-dynamodb-local
+
+custom:
+  chatEventsTableName: EmojiChatEvents 
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8001
+      inMemory: true
+      migrate: true
+
+resources:
+  Resources:
+    chatEventsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.chatEventsTableName}
+        AttributeDefinitions:
+          - AttributeName: chatId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: N
+        KeySchema:
+          - AttributeName: chatId
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+  Outputs:
+    chatEventsTableArn:
+      Description: The ARN for the EmojiChat Events Table
+      Value:
+        Fn::GetAtt:
+          - chatEventsTable
+          - Arn
+      Export:
+        Name: ${self:service}:${self:provider.stage}:${self:custom.chatEventsTableName}TableArn
+    chatEventsStreamArn:
+      Description: The ARN for the EmojiChat Events Stream
+      Value:
+        Fn::GetAtt:
+          - chatEventsTable
+          - StreamArn
+      Export:
+        Name: ${self:service}:${self:provider.stage}:${self:custom.chatEventsTableName}StreamArn

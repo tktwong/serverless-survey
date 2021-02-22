@@ -1,0 +1,82 @@
+service: sls-product-master
+
+custom:
+  myStage: ${opt:stage, self:provider.stage}
+  settings:
+    dev:
+      ITEMS_DYNAMODB_TABLE: product-master-dev
+    prod:
+      ITEMS_DYNAMODB_TABLE: product-master-prod
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: default
+  region: us-east-1
+  environment: ${self:custom.settings.${self:custom.myStage}}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetProduct"
+        - "dynamodb:PutProduct"
+        - "dynamodb:UpdateProduct"
+        - "dynamodb:DeleteProduct"
+        - "dynamodb:ListStreams"
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.${self:custom.myStage}.ITEMS_DYNAMODB_TABLE}"
+
+functions:
+  saveProduct:
+    handler: handler.saveProduct
+    events:
+      - http:
+          path: product
+          method: post
+  getProduct:
+    handler: handler.getProduct
+    events:
+      - http:
+          path: product/{productId}
+          method: get
+  deleteProduct:
+    handler: handler.deleteProduct
+    events:
+        - http:
+            path: product/{productId}
+            method: delete
+  updateProduct:
+    handler: handler.updateProduct
+    events:
+      - http:
+          path: product/{productId}
+          method: put
+  triggerStream:
+    handler: handler.triggerStream
+    events:
+       - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - ImagesTable
+              - StreamArn
+
+resources:
+  Resources:
+    ImagesTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: "productId"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "productId"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.settings.${self:custom.myStage}.ITEMS_DYNAMODB_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE

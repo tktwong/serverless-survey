@@ -1,0 +1,84 @@
+service: email-service
+
+provider:
+  name: aws
+  runtime: go1.x
+  apiKeys:
+    - ${ssm:API_KEY_TOKEN}
+  memorySize: 128
+  environment:
+    SENDGRID_API_KEY: ${ssm:SENDGRID_API_KEY}
+    MG_API_KEY: ${ssm:MG_API_KEY}
+    MG_DOMAIN: ${ssm:MG_DOMAIN}
+    MG_PUBLIC_API_KEY: ${ssm:MG_PUBLIC_API_KEY}
+    MG_URL: ${ssm:MG_URL}
+    DYNAMODB_TABLE: email-service-db
+    EMAIL_FROM: boni@bbdev.com.pl
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetRecords
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:BatchGetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeStream
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+
+functions:
+  email_rest_api_index:
+    handler: bin/rest_api_index
+    events:
+      - http:
+          path: mails
+          method: get
+          cors: true
+          private: true
+  email_rest_api_create:
+    handler: bin/rest_api_create
+    events:
+      - http:
+          path: mails
+          method: post
+          cors: true
+          private: true
+  email_processing:
+    handler: bin/email_processing
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - EmailServiceDB
+              - StreamArn
+
+resources:
+  Resources:
+    EmailServiceDB:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "EmailId"
+            AttributeType: "S"
+        KeySchema:
+          -
+            AttributeName: "EmailId"
+            KeyType: "HASH"
+        TableName: email-service-db
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

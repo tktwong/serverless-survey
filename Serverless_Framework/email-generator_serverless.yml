@@ -1,0 +1,53 @@
+# NOTE: update this with your service name
+service: aws-email-generator
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+    - serverless-offline-ssm-parameter-store
+    - serverless-webpack
+    - serverless-offline
+    - serverless-finch
+
+provider:
+    name: aws
+    runtime: nodejs8.10
+    stage: ${opt:stage, 'dev'}
+    region: ap-southeast-2
+    environment:
+        MAILGUN_API_TOKEN: ${ssm:/mail/mailgun-api-token~true}
+        MAILGUN_DOMAIN_URL: ${ssm:/mail/mailgun-domain-url~true}
+        SENDGRID_API_TOKEN: ${ssm:/mail/sendgrid-api-token~true}
+
+custom:
+    vars:
+        client:
+            url:
+                dev: http://localhost:1234
+                prod: http://email-generator-frontend-vdtn359.s3-website-ap-southeast-2.amazonaws.com
+    webpack:
+        webpackConfig: ./build/webpack/webpack.config.babel.js
+        includeModules: true
+
+    serverless-offline:
+        port: 5000
+
+    bucketNames:
+        fe: email-generator-frontend-vdtn359
+
+    ssm-parameter-store:
+        file: 'offline.parameters'
+
+    client:
+        bucketName: ${self:custom.bucketNames.fe}
+        distributionFolder: ./client/dist
+
+functions:
+    email:
+        handler: src/functions/email.handler
+        events:
+            - http:
+                  path: email
+                  method: post
+                  cors:
+                      origin: ${self:custom.vars.client.url.${self:provider.stage}}
+                      allowCredentials: true

@@ -1,0 +1,44 @@
+service: McDrink
+app: mc-drink
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-central-1
+  stage: ${opt:stage, 'dev'}
+  environment:
+    STAGE: ${self:provider.stage}
+
+plugins:
+  - serverless-offline
+  - serverless-iam-roles-per-function
+
+functions:
+  telegramBot:
+    handler: handler.telegramBot
+    timeout: 30
+    events:
+      - http:
+          path: telegram
+          method: ANY
+          cors: true
+    environment:
+      BOT_TOKEN: ${file(./secrets/${self:provider.stage}-secrets.yml):BOT_TOKEN}
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - lambda:InvokeFunction
+          - lambda:InvokeAsync
+        Resource: "*"
+  telegramApi:
+    handler: handler.telegramApi
+    timeout: 900
+    environment:
+      BOT_TOKEN: ${file(./secrets/${self:provider.stage}-secrets.yml):BOT_TOKEN}
+      CHROME_PATH: ${file(./secrets/${self:provider.stage}-secrets.yml):CHROME_PATH}
+      CAPTCHA_KEY: ${file(./secrets/${self:provider.stage}-secrets.yml):CAPTCHA_KEY}
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - textract:DetectDocumentText
+        Resource: "*"

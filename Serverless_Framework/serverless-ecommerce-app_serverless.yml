@@ -1,0 +1,175 @@
+service: serverless-ecommerce-app
+
+custom:
+  restaurantTableName: restaurants
+  orderEventsStreamName: orderEvents
+  restaurantTopicName: restaurantNotification
+  userTopicName: userNotification
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-southeast-2
+  stage: ${opt:stage, 'dev'}
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-pseudo-parameters
+
+functions:
+  getIndex:
+    handler: functions/getIndex.handler
+    events:
+      - http:
+          path: /
+          method: get
+    iamRoleStatements:
+      - Effect: Allow
+        Action: execute-api:Invoke
+        Resource: arn:aws:execute-api:${self:provider.region}:#{AWS::AccountId}:*/*/GET/restaurants
+    environment:
+      # TODO: find a way to point to this programmatically
+      RESTAURANT_API: https://v4t6fxxhhe.execute-api.ap-southeast-2.amazonaws.com/dev
+      REGION: ${self:provider.region}
+      COGNITO_USER_POOL_ID: ap-southeast-2_kAlQ39eSA
+      COGNITO_CLIENT_ID: 57t2dd7nsrsi9vrj50osv2mtnk
+
+  getRestaurants:
+    handler: functions/getRestaurants.handler
+    events:
+      - http:
+          path: /restaurants/
+          method: get
+          authorizer: aws_iam
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:#{AWS::AccountId}:table/${self:custom.restaurantTableName}
+    environment:
+      restaurantTable: ${self:custom.restaurantTableName}
+
+  acceptOrder:
+    handler: functions/acceptOrder.handler
+    events:
+      - http:
+          path: /order/accept
+          method: post
+    iamRoleStatementsName: ecommerce-${self:provider.stage}-acceptOrder-${self:provider.region}-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource: arn:aws:kinesis:${self:provider.region}:#{AWS::AccountId}:stream/${self:custom.orderEventsStreamName}
+    environment:
+      orderEventStream: ${self:custom.orderEventsStreamName}
+
+  placeOrder:
+    handler: functions/placeOrder.handler
+    events:
+      - http:
+          path: /order
+          method: post
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:#{AWS::AccountId}:userpool/${self:provider.region}_kAlQ39eSA
+    iamRoleStatementsName: ecommerce-${self:provider.stage}-placeOrder-${self:provider.region}-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource: arn:aws:kinesis:${self:provider.region}:#{AWS::AccountId}:stream/${self:custom.orderEventsStreamName}
+    environment:
+      orderEventStream: ${self:custom.orderEventsStreamName}
+
+  fulfillOrder:
+    handler: functions/fulfillOrder.handler
+    events:
+      - http:
+          path: /order/fulfill
+          method: post
+    iamRoleStatementsName: ecommerce-${self:provider.stage}-fulfillOrder-${self:provider.region}-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource: arn:aws:kinesis:${self:provider.region}:#{AWS::AccountId}:stream/${self:custom.orderEventsStreamName}
+    environment:
+      orderEventStream: ${self:custom.orderEventsStreamName}
+
+  searchRestaurants:
+    handler: functions/searchRestaurants.handler
+    events:
+      - http:
+          path: /restaurants/search
+          method: post
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:#{AWS::AccountId}:userpool/${self:provider.region}_kAlQ39eSA
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:#{AWS::AccountId}:table/${self:custom.restaurantTableName}
+    environment:
+      restaurantTable: ${self:custom.restaurantTableName}
+
+  notifyRestaurant:
+    handler: functions/notifyRestaurant.handler
+    events:
+      - stream:
+          arn: arn:aws:kinesis:${self:provider.region}:#{AWS::AccountId}:stream/${self:custom.orderEventsStreamName}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: sns:Publish
+        Resource: arn:aws:sns:${self:provider.region}:#{AWS::AccountId}:${self:custom.restaurantTopicName}
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource: arn:aws:kinesis:${self:provider.region}:#{AWS::AccountId}:stream/${self:custom.orderEventsStreamName}
+    environment:
+      orderEventStream: ${self:custom.orderEventsStreamName}
+      restaurantNotificationTopic: arn:aws:sns:${self:provider.region}:#{AWS::AccountId}:${self:custom.restaurantTopicName}
+
+  notifyUser:
+    handler: functions/notifyUser.handler
+    events:
+      - stream:
+          arn: arn:aws:kinesis:${self:provider.region}:#{AWS::AccountId}:stream/${self:custom.orderEventsStreamName}
+    iamRoleStatementsName: ecommerce-${self:provider.stage}-notifyUser-${self:provider.region}-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: sns:Publish
+        Resource: arn:aws:sns:${self:provider.region}:#{AWS::AccountId}:${self:custom.userTopicName}
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource: arn:aws:kinesis:${self:provider.region}:#{AWS::AccountId}:stream/${self:custom.orderEventsStreamName}
+    environment:
+      orderEventStream: ${self:custom.orderEventsStreamName}
+      userNotificationTopic: arn:aws:sns:${self:provider.region}:#{AWS::AccountId}:${self:custom.userTopicName}
+
+resources:
+  Resources:
+    restaurantTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.restaurantTableName}
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    orderEventsStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${self:custom.orderEventsStreamName}
+        ShardCount: 1
+
+    restaurantNotificationTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: ${self:custom.restaurantTopicName}
+        TopicName: ${self:custom.restaurantTopicName}
+
+    userNotificationTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: ${self:custom.userTopicName}
+        TopicName: ${self:custom.userTopicName}

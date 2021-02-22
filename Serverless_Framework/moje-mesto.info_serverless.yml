@@ -1,0 +1,171 @@
+service: moje-mesto
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+
+package:
+  individually: true
+  
+custom:
+  s3Bucket: moje-mesto-serve
+  SubjectMatterTable: moje-mesto-subject-matter
+  corsOrigin: '*'
+  stage: ${opt:stage, 'dev'}
+  authorizer:
+    name: Auth
+    resultTtlInSeconds: 0
+    identitySource: method.request.header.privateApi
+    type: request
+  environment:
+    SERVE_BUCKET: ${self:custom.s3Bucket}
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-central-1
+  stage: ${self:custom.stage}
+  profile: tomaspesek
+
+  environment:
+    NODE_ENV: ${self:custom.stage}
+
+functions:
+  rss:
+    handler: src/RssHandler.rss
+    timeout: 30
+    events:
+      - http:
+          method: POST
+          path: /rss
+          authorizer: ${self:custom.authorizer}
+      - schedule:
+          rate: rate(60 minutes)
+    iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - s3:*
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - Ref: S3Bucket
+            - "/*"
+  twitter:
+    handler: src/TwitterHandler.twitter
+    timeout: 30
+    events:
+      - http:
+          method: POST
+          path: /twitter
+          authorizer: ${self:custom.authorizer}
+      - schedule:
+          rate: rate(15 minutes)
+    iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - Ref: S3Bucket
+            - "/*"
+  facebook:
+    handler: src/FacebookHandler.facebook
+    timeout: 30
+    events:
+      - http:
+          method: POST
+          path: /facebook
+          authorizer: ${self:custom.authorizer}
+      - schedule:
+          rate: rate(15 minutes)
+    iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - Ref: S3Bucket
+            - "/*"
+  subjectMatterSend:
+    handler: src/SubjectMatterHandler.send
+    events:
+      - http:
+          method: POST
+          path: /subject-matter/send
+          authorizer: ${self:custom.authorizer}
+          cors:
+            origin: ${self:custom.corsOrigin}
+            headers:
+              - Content-Type
+              - privateApi
+              - Access-Control-Allow-Origin
+            allowCredentials: false
+    iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.SubjectMatterTable}
+  subjectMatterGet:
+    handler: src/SubjectMatterHandler.get
+    events:
+      - http:
+          method: GET
+          path: /subject-matter/get
+          authorizer: ${self:custom.authorizer}
+          cors:
+            origin: ${self:custom.corsOrigin}
+            headers:
+              - Content-Type
+              - privateApi
+              - Access-Control-Allow-Origin
+            allowCredentials: false
+    iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.SubjectMatterTable}
+  Auth:
+      handler: src/Authorization.auth
+      cors: true
+      memorySize: 128
+
+resources:
+  Resources:
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3Bucket}
+        AccessControl: PublicRead
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+              AllowedOrigins:
+                - ${self:custom.corsOrigin}
+    SubjectMatterTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.SubjectMatterTable}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: sended
+            AttributeType: N
+        ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: sended
+            KeyType: RANGE

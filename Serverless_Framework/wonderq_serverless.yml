@@ -1,0 +1,177 @@
+service: wonderq-backend
+
+provider:
+  name: aws
+  stage: prod
+  runtime: nodejs12.x
+  region: us-east-1
+  role:
+    Fn::GetAtt: [LambdaRolePolicy, Arn]
+  deploymentBucket:
+    name: wonderq-deploy-versions
+  vpc:
+    securityGroupIds:
+      - "Fn::GetAtt": LambdaSecurityGroup.GroupId
+  SubnetIds:
+    - subnet-0e4a9cc4ed67e4429
+    - subnet-039ceb32944173cc5
+  environment:
+    REGION: ${self:provider.region}
+    STAGE: ${self:custom.environments.${self:custom.environments.env}.STAGE}
+    DB_DRIVER: ${self:custom.environments.${self:custom.environments.env}.DB_DRIVER}
+    DB_HOST: ${self:custom.environments.${self:custom.environments.env}.DB_HOST}
+    DB_PORT: ${self:custom.environments.${self:custom.environments.env}.DB_PORT}
+    DB_DATABASE: ${self:custom.environments.${self:custom.environments.env}.DB_DATABASE}
+    DB_USERNAME: ${self:custom.environments.${self:custom.environments.env}.DB_USERNAME}
+    DB_PASSWORD: ${self:custom.environments.${self:custom.environments.env}.DB_PASSWORD}
+    LOG_LEVEL: ${self:custom.environments.${self:custom.environments.env}.LOG_LEVEL}
+    SERVICE_AUTH_KEY: ${self:custom.environments.${self:custom.environments.env}.SERVICE_AUTH_KEY}
+
+custom:
+  environments:
+    env: ${self:custom.environments.env_by_stage.${self:provider.stage}}
+    ssm_env: ${self:custom.environments.ssm_envs.${self:provider.stage}}
+    env_by_stage:
+      dev: local
+      prod: aws
+      stage: aws
+    ssm_envs:
+      dev: DEV
+      prod: PROD
+      stage: STAGE
+    local:
+      STAGE: ${self:provider.stage}
+      DB_DRIVER: pg
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: dev
+      DB_USERNAME: dev
+      DB_PASSWORD: dev
+      LOG_LEVEL: silly
+      SERVICE_AUTH_KEY: SECRET
+    aws:
+      STAGE: ${self:provider.stage}
+      DB_DRIVER: pg
+      DB_HOST:
+        Fn::GetAtt: [Database, Endpoint.Address]
+      DB_PORT:
+        Fn::GetAtt: [Database, Endpoint.Port]
+      DB_DATABASE: wonderq123
+      DB_USERNAME: wonderq123
+      DB_PASSWORD: wonderq123
+      LOG_LEVEL: silly
+      SERVICE_AUTH_KEY: BIGGESTSECRET
+
+functions:
+  run_migrations:
+    handler: app/handlers/run_migrations_handler.handler
+    timeout: 300
+    reservedConcurrency: 1
+    tags:
+      WONDERQ: ${self:custom.environments.ssm_env}
+  check_message_timeout:
+    handler: app/handlers/check_message_timeout_handler.handler
+    timeout: 300
+    reservedConcurrency: 1
+    events:
+      - schedule:
+          rate: rate(1 minute)
+    tags:
+      WONDERQ: ${self:custom.environments.ssm_env}
+  web:
+    handler: app/handlers/serverless_handler.handler
+    timeout: 30
+    events:
+      - http:
+          method: any
+          path: /{proxy+}
+          cors: true
+    tags:
+      WONDERQ: ${self:custom.environments.ssm_env}
+
+resources:
+  Resources:
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for wonderq api service.
+        VpcId: vpc-027fe0582cab21a40
+    DatabaseSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      DependsOn: LambdaSecurityGroup
+      Properties:
+        GroupDescription: Security group for wonderq api databases.
+        VpcId: vpc-027fe0582cab21a40
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 5432
+            ToPort: 5432
+            CidrIp: 0.0.0.0/0
+          - IpProtocol: tcp
+            FromPort: 6379
+            ToPort: 6379
+            SourceSecurityGroupId:
+              "Fn::GetAtt": LambdaSecurityGroup.GroupId
+    Database:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        DBName: ${self:provider.environment.DB_DATABASE}
+        DBInstanceIdentifier: ${self:service}-${self:provider.stage}
+        DBInstanceClass: db.t2.micro
+        DeletionProtection: true
+        Engine: postgres
+        EngineVersion: 10.11
+        AllowMajorVersionUpgrade: true
+        MultiAZ: false
+        AllocatedStorage: 20
+        MasterUsername: ${self:provider.environment.DB_USERNAME}
+        MasterUserPassword: ${self:provider.environment.DB_PASSWORD}
+        PubliclyAccessible: true
+        DBSubnetGroupName:
+          Ref: DBSubnetGroup
+        VPCSecurityGroups:
+          - "Fn::GetAtt": DatabaseSecurityGroup.GroupId
+    DBSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupName: PublicDbSubnet
+        DBSubnetGroupDescription: PublicDbSubnet
+        SubnetIds:
+          - subnet-0e4a9cc4ed67e4429
+          - subnet-039ceb32944173cc5
+    LambdaRolePolicy:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: wonderq-api-lambda-role-prod
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: wonderq-api-cloudwatch-policy-prod
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Resource: '*'
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+          - PolicyName: wonderq-api-network-policy-prod
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ec2:CreateNetworkInterface
+                    - ec2:DescribeNetworkInterfaces
+                    - ec2:DetachNetworkInterface
+                    - ec2:DeleteNetworkInterface
+                  Resource: '*'
+
+plugins:
+  - serverless-offline
+  - serverless-offline-scheduler
+  - serverless-dotenv-plugin

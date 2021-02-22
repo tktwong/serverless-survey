@@ -1,0 +1,97 @@
+
+service: ali-serverless
+
+plugins:
+  - serverless-python-requirements
+  - serverless-iam-roles-per-function
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  region: eu-west-1
+
+package:
+  individually: true
+  exclude:
+    - node_modules/**
+    - local_*
+    - env/**
+
+functions:
+  hello:
+    handler: handler.hello
+    module: ali-serverless/read_stream
+    # events:
+    #   - stream:
+    #       arn: arn:aws:kinesis:eu-west-1:221045559352:stream/ali-test-stream
+    #       batchSize: 100
+    #       maximumRetryAttempts: 2
+    #       enabled: true
+  data-producer:
+    handler: kinesis.start
+    module: ali-serverless/kinesis
+    # iamRoleStatements:
+    #   - Effect: 'Allow'
+    #     Action:
+    #       - kinesis:PutRecords
+    #       - kinesis:PutRecord
+    #     Resource: arn:aws:kinesis:eu-west-1:221045559352:stream/ali-test-stream
+  covid-app: 
+    handler: covid.start
+    module: ali-serverless/covid
+    events:
+      - schedule: rate(24 hours)
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - s3:PutObject
+          - s3:ListBucket
+        Resource:
+          - arn:aws:s3:::ali-covid-bucket
+          - arn:aws:s3:::ali-covid-bucket/*
+      - Effect: 'Allow'
+        Action:
+          - sqs:SendMessage
+          - sqs:GetQueueUrl
+        Resource: !GetAtt CovidQueue.Arn
+  redshift:
+    handler: redshift.start
+    module: ali-serverless/redshift
+    events:
+      - sqs:
+          arn: !GetAtt CovidQueue.Arn
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - redshift:GetClusterCredentials
+          - redshift:DescribeClusters
+          - redshift-data:ExecuteStatement
+        Resource:
+          - arn:aws:redshift:eu-west-1:221045559352:cluster:redshift-cluster-3
+          - arn:aws:redshift:eu-west-1:221045559352:dbuser:redshift-cluster-3/awsuser
+          - arn:aws:redshift:eu-west-1:221045559352:dbname:redshift-cluster-3/dev
+      - Effect: 'Allow'
+        Action:
+          - sqs:ReceiveMessage
+        Resource: !GetAtt CovidQueue.Arn
+    vpc:
+      securityGroupIds:
+        - sg-085bef4142b2f901a
+      subnetIds:
+        - subnet-0bb63cbfde5d93e63
+      
+  
+
+resources:
+  Resources:
+    CovidQueue: 
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: covid-queue
+        RedrivePolicy: 
+          deadLetterTargetArn: !GetAtt DLQ.Arn
+          maxReceiveCount: 2
+    DLQ:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: dlq

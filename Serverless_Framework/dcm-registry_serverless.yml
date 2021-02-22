@@ -1,0 +1,61 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: dcm-registry
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  environment:
+    REGISTRY_TABLE: dcm_registry_${opt:stage, self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.REGISTRY_TABLE}'
+
+# The `functions` block defines what code to deploy
+functions:
+  getRegisteredClans:
+    handler: src/handler.getRegisteredClans
+    events:
+      - http:
+          path: registry
+          method: get
+
+  registerClan:
+    handler: src/handler.registerClan
+    events:
+      - http:
+          path: registry
+          method: post
+
+resources:
+  Resources:
+    DestinyClanManagerRemovalHistoryTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.REGISTRY_TABLE}

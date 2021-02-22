@@ -1,0 +1,187 @@
+service:
+  name: mysense-tech-test
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+
+provider:
+  region: eu-west-1
+  name: aws
+  runtime: nodejs10.x
+  environment:
+    TABLE_NAME: ${file(env.yml):TABLE_NAME}
+
+functions:
+  auth:
+    handler: dist/handlers/auth.handler
+    environment:
+      SECRET_NAME: ${file(env.yml):SECRET_NAME}
+    iamRoleStatementsName: ${self:service}-auth
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - 'ssm:GetParameter'
+        Resource:
+          Fn::Join:
+            - ''
+            - - 'arn:aws:ssm:eu-west-1:'
+              - Ref: AWS::AccountId
+              - ':parameter/${file(env.yml):SECRET_NAME}'
+
+  create:
+    handler: dist/handlers/create.handler
+    events:
+      - http:
+          method: post
+          path: create
+          authorizer:
+            name: auth
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: token
+    iamRoleStatementsName: ${self:service}-create
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:PutItem
+        Resource:
+          - "Fn::GetAtt": [ SensorDataTable, Arn ]
+    
+  
+  fetch:
+    handler: dist/handlers/fetch.handler
+    events:
+      - http:
+          method: get
+          path: read/{id}
+          request:
+            parameters:
+              paths:
+                id: true
+          authorizer:
+            name: auth
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: token
+    iamRoleStatementsName: ${self:service}-fetch
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:GetItem
+        Resource:
+          - "Fn::GetAtt": [ SensorDataTable, Arn ]
+  
+  list:
+    handler: dist/handlers/list.handler
+    events:
+      - http:
+          method: get
+          path: read
+          request:
+            parameters:
+              paths:
+                id: true
+          authorizer:
+            name: auth
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: token
+    iamRoleStatementsName: ${self:service}-list
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:Scan
+        Resource:
+          - "Fn::GetAtt": [ SensorDataTable, Arn ]
+
+  
+  update:
+    handler: dist/handlers/update.handler
+    events:
+      - http:
+          method: put
+          path: update
+          authorizer:
+            name: auth
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: token
+    iamRoleStatementsName: ${self:service}-update
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:UpdateItem
+        Resource:
+          - "Fn::GetAtt": [ SensorDataTable, Arn ]
+  
+  delete:
+    handler: dist/handlers/delete.handler
+    environment:
+      DELETE_SNS_ARN:
+        Fn::Join:
+            - ':'
+            - - 'arn:aws:sns:eu-west-1'
+              - Ref: AWS::AccountId
+              - '${self:service}-deleted-topic'
+    events:
+      - http:
+          method: delete
+          path: delete/{id}
+          request:
+            parameters:
+              paths:
+                id: true
+          authorizer:
+            name: auth
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: token
+    iamRoleStatementsName: ${self:service}-delete
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:DeleteItem
+        Resource:
+          - "Fn::GetAtt": [ SensorDataTable, Arn ]
+
+      - Effect: "Allow"
+        Action:
+          - sns:Publish
+        Resource: !Ref DeletedTopic
+
+  notify-slack:
+    handler: dist/handlers/notify-slack.handler
+    environment:
+      SLACK_ENDPOINT: ${file(env.yml):SLACK_ENDPOINT}
+    events:
+      - sns:
+          arn: !Ref DeletedTopic
+          topicName: ${self:service}-deleted-topic
+    
+
+resources:
+ Resources:
+  
+  DeletedTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-deleted-topic
+
+  SNSSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+          Endpoint: ${file(env.yml):EMAIL_SUBSCRIBER_ADDRESS}
+          Protocol: email
+          TopicArn: !Ref DeletedTopic
+
+  SensorDataTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TABLE_NAME}
+        AttributeDefinitions:
+          - {AttributeName: id, AttributeType: S}
+        KeySchema:
+          - {AttributeName: id, KeyType: HASH}
+        BillingMode: PAY_PER_REQUEST

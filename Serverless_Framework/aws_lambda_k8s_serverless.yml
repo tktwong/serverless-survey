@@ -1,0 +1,83 @@
+service: stp-sequence-activity
+
+plugins:
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: us-east-2
+ 
+  iamRoleStatements:
+  - Effect: "Allow"
+    Action:
+      - "states:ListStateMachines"
+      - "states:StartExecution"
+    Resource: "arn:aws:states:*:*:*"
+
+functions:
+  executeStepFunction:
+    handler: handler.executeStepFunction
+    events:
+      - http:
+          path: run
+          method: get
+
+stepFunctions:
+  stateMachines:
+    sequenceActivityMachine:
+      name: SequenceNumActivityMachine
+      definition:
+        Comment: "Run Three Activity Tasks"
+        StartAt: calculateTwoNumber
+        States:
+          calculateTwoNumber:
+            Type: Task
+            Resource: arn:aws:states:us-east-2:912778368198:activity:calculateTwoNumber
+            Catch:
+            - ErrorEquals: ["HandledError"]
+              Next: CustomErrorFallback
+            - ErrorEquals: ["States.TaskFailed"]
+              Next: ReservedTypeFallback
+            - ErrorEquals: ["States.ALL"]
+              Next: CatchAllFallback
+            Next: displayFirstMessage
+          displayFirstMessage:
+            Type: Task
+            Resource: arn:aws:states:us-east-2:912778368198:activity:displayFirstMessage
+            Catch:
+            - ErrorEquals: ["HandledError"]
+              Next: CustomErrorFallback
+            - ErrorEquals: ["States.TaskFailed"]
+              Next: ReservedTypeFallback
+            - ErrorEquals: ["States.ALL"]
+              Next: CatchAllFallback
+            Next: displaySecondMessage
+          displaySecondMessage:
+            Type: Task
+            Resource: arn:aws:states:us-east-2:912778368198:activity:displaySecondMessage
+            Catch:
+            - ErrorEquals: ["HandledError"]
+              Next: CustomErrorFallback
+            - ErrorEquals: ["States.TaskFailed"]
+              Next: ReservedTypeFallback
+            - ErrorEquals: ["States.ALL"]
+              Next: CatchAllFallback
+            End: true
+          CustomErrorFallback:
+            Type: Pass
+            Result: "This is a fallback from a custom lambda function exception"
+            End: true
+          ReservedTypeFallback:
+            Type: Pass
+            Result: "This is a fallback from a reserved error code"
+            End: true
+          CatchAllFallback:
+            Type: Pass
+            Result: "This is a fallback from a reserved error code"
+            End: true
+  activities:
+    - calculateTwoNumber
+    - displayFirstMessage
+    - displaySecondMessage

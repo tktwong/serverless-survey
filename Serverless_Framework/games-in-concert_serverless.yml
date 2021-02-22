@@ -1,0 +1,124 @@
+service: games-in-concert-web
+
+provider:
+  name: aws
+  region: eu-west-1
+  runtime: nodejs10.x
+
+plugins:
+  - serverless-s3-sync
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  siteName:
+    prod: games-in-concert.harmoniedelft.nl
+    other: ${self:custom.stage}.games-in-concert.harmoniedelft.nl
+  hostedZoneName: ${self:custom.siteName.prod}
+  hostedZoneId: Z078679117A6O1WMKH5F7
+  certArn: arn:aws:acm:us-east-1:000914857670:certificate/84986503-b334-4a1c-8aa8-7aabc9b0bb16
+  bucketName: ${self:custom.siteName.${self:custom.stage}, self:custom.siteName.other}
+  s3Sync:
+    - bucketName: ${self:custom.bucketName}
+      localDir: public
+
+resources:
+  Conditions:
+    IsProd:
+      Fn::Equals:
+        - ${self:custom.stage}
+        - prod
+    IsDev:
+      Fn::Equals:
+        - ${self:custom.stage}
+        - dev
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.bucketName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: '*'
+              Action:
+                - s3:GetObject
+              Resource:
+                Fn::Join: ['', ['arn:aws:s3:::', { 'Ref': 'StaticSite' }, '/*']]
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Condition: IsProd
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName:
+                Fn::Select: [2, !Split ['/', !GetAtt StaticSite.WebsiteURL]]
+              Id: hostingS3Bucket
+              CustomOriginConfig:
+                OriginProtocolPolicy: http-only
+          Enabled: 'true'
+          Aliases:
+            - ${self:custom.siteName.prod}
+            - www.${self:custom.siteName.prod}
+          DefaultRootObject: index.html
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            TargetOriginId: hostingS3Bucket
+            ForwardedValues:
+              QueryString: 'false'
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+          ViewerCertificate:
+            AcmCertificateArn: ${self:custom.certArn}
+            SslSupportMethod: 'sni-only'
+    RootDnsRecord:
+      Type: AWS::Route53::RecordSet
+      Condition: IsProd
+      Properties:
+        HostedZoneName: ${self:custom.hostedZoneName}.
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt: CloudFrontDistribution.DomainName
+          HostedZoneId: Z2FDTNDATAQYW2
+        Name: ${self:custom.siteName.prod}
+        Type: 'A'
+    WwwDnsRecord:
+      Type: AWS::Route53::RecordSet
+      Condition: IsProd
+      Properties:
+        HostedZoneName: ${self:custom.hostedZoneName}.
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt: CloudFrontDistribution.DomainName
+          HostedZoneId: Z2FDTNDATAQYW2
+        Name: www.${self:custom.siteName.prod}
+        Type: 'A'
+
+Outputs:
+  TargetUrl:
+    Value: ${self:custom.siteName.${self:custom.stage}, self:custom.siteName.other}
+  CloudFrontId:
+    Description: ID of CloudFront Distribution
+    Value:
+      Ref: CloudFrontDistribution

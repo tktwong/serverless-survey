@@ -1,0 +1,87 @@
+service: lambda-test-serverless
+
+custom:
+  region: "us-east-2"
+  serviceName: 'test-rest'
+  authorizer: "arn:aws:cognito-idp:us-east-2:606727731259:userpool/us-east-2_g5KQWNye0"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: prod
+  region: us-east-2
+  environment:
+    DYNAMODB_TABLE: ${self:custom.serviceName}-db-5
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  create:
+    handler: create.main
+    events:
+      - http:
+          path: ${self:custom.serviceName}
+          method: put
+          cors: true
+          authorizer:
+            arn: ${self:custom.authorizer}
+
+  list:
+    handler: list.main
+    events:
+      - http:
+          path: ${self:custom.serviceName}
+          method: get
+          cors: true
+          authorizer:
+            arn: ${self:custom.authorizer}
+
+  get:
+    handler: get.main
+    events:
+      - http:
+          path: ${self:custom.serviceName}/{id}
+          method: get
+          cors: true
+          authorizer:
+            arn: ${self:custom.authorizer}
+
+  update:
+    handler: update.main
+    events:
+      - http:
+          path: ${self:custom.serviceName}/{id}
+          method: post
+          cors: true
+          authorizer:
+            arn: ${self:custom.authorizer}
+
+resources:  # CloudFormation template syntax
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+         - AttributeName: "apiId"
+           AttributeType: "S"
+         - AttributeName: "ownerId"
+           AttributeType: "S"
+        KeySchema:
+         - AttributeName: "apiId"
+           KeyType: "HASH"
+         - AttributeName: "ownerId"
+           KeyType: "RANGE"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

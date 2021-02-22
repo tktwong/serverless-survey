@@ -1,0 +1,104 @@
+service:
+  name: slack-rustat
+
+custom:
+  dynamodb:
+    stages:
+      - local
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      convertEmptyValues: true
+  installationsTableName: installations-${opt:stage, 'local'}
+  rustatsTableName: rustats-${opt:stage, 'local'}
+  # Workaround for hot-reloading
+  # Ref: https://github.com/dherault/serverless-offline/issues/931
+  serverless-offline:
+    useChildProcesses: true
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+package:
+  individually: true
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-dynamodb-local
+  - serverless-webpack
+  - serverless-offline # must be last
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'local'}
+  region: ap-southeast-1
+  profile: slack-bots
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["InstallationsDynamoDBTable", "Arn"] }
+        - { "Fn::GetAtt": ["RustatsDynamoDBTable", "Arn"] }
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    DEFAULT_ACCESS_KEY: ${env:DEFAULT_ACCESS_KEY, ''}
+    DEFAULT_SECRET: ${env:DEFAULT_SECRET, ''}
+    INSTALLATIONS_TABLE_NAME: ${self:custom.installationsTableName}
+    RUSTATS_TABLE_NAME: ${self:custom.rustatsTableName}
+
+resources:
+  Resources:
+    InstallationsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.installationsTableName}
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    RustatsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.rustatsTableName}
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+functions:
+  slackEvents:
+    handler: src/api/slack.handler
+    events:
+      - http: 'POST /slack/events'
+  oauthCallback:
+    handler: src/api/oauth.handler
+    events:
+      - http: 'GET /oauth/{proxy+}'

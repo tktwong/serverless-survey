@@ -1,0 +1,89 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: mp3-files-service
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject 
+      Resource: "arn:aws:s3:::${self:resources.Resources.OriginalsMediaFile.Properties.BucketName}/*"
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource: "arn:aws:s3:::${self:resources.Resources.OriginalsMediaFile.Properties.BucketName}"
+
+functions:
+  getUploadUrl:
+    handler: api/get_upload_url.get
+    environment:
+      BUCKET_NAME: ${file(./config.dev.json):BUCKET_NAME}
+      URL_EXPIRATION_TIME: ${file(./config.dev.json):URLS_EXPIRATION}
+    events:
+      - http:
+          path: get_upload_url
+          method: get
+  getSongUrls:
+    handler: api/get_urls_download.get
+    environment:
+      BUCKET_NAME: ${file(./config.dev.json):BUCKET_NAME}
+      URL_EXPIRATION_TIME: ${file(./config.dev.json):URLS_EXPIRATION}
+    events:
+      - http:
+          path: get_song_urls
+          method: get
+  trimMediaFile:
+    handler: services/trim_song.trim
+    environment:
+      TRIM_DURATION: ${file(./config.dev.json):TRIM_DURETATION} 
+    events:
+      - s3:
+          bucket: ${self:resources.Resources.OriginalsMediaFile.Properties.BucketName}    
+          event: s3:ObjectCreated:*
+          existing: true 
+    layers:
+      - {Ref: FfmpegLambdaLayer}  
+resources:
+  Resources:
+    OriginalsMediaFile:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(./config.dev.json):BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [GET, PUT]
+              AllowedOrigins: ['*']
+              Id: CORSRuleId1
+              MaxAge: '3600'
+layers:
+  ffmpeg:
+    path: layer

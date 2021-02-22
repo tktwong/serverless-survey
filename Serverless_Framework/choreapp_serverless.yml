@@ -1,0 +1,108 @@
+service: choreapp-api
+frameworkVersion: ">=1.21.0 <2.0.0"
+conditions:
+  createProd:
+    Fn::Equals:
+      - ${opt:stage}
+      - prod
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  package:
+    individually: true
+    exclude:
+      - node_modules
+  environment:
+    RANDOM_FEDERATION_URL: ${file(./serverless.env.yml):${self:provider.stage}.RANDOM_FEDERATION_URL}
+    DYNAMO_DB_ENV: ${file(./serverless.env.yml):${self:provider.stage}.DYNAMO_DB_ENV}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:BatchGetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/Random-${self:provider.environment.DYNAMO_DB_ENV}"
+    - Effect: Allow
+      Action:
+        - lambda:GetLayerVersion
+      Resource: "*"
+
+plugins:
+  - serverless-domain-manager
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  domain:
+    dev: "chores-dev.api.zclabs.io"
+    prod: "chores.api.zclabs.io"
+  serverless-offline:
+    port: 4000
+  webpack:
+    webpackConfig: "webpack.config.js"
+    includeModules: false
+    packager: "yarn"
+  customDomain:
+    domainName: ${self:custom.domain.${self:provider.stage}}
+    basePath: ""
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+functions:
+  gateway:
+    handler: src/gateway.handler
+    memorySize: 1024
+    timeout: 6
+    layers:
+      - { Ref: DependenciesLayerLambdaLayer }
+    events:
+      - http:
+          path: /
+          method: post
+          cors: true
+  random:
+    handler: src/services/random/resolver.handler
+    memorySize: 1024
+    timeout: 6
+    layers:
+      - { Ref: DependenciesLayerLambdaLayer }
+    events:
+      - http:
+          path: /random
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    RandomTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: "Random-${self:provider.environment.DYNAMO_DB_ENV}"
+        AttributeDefinitions:
+          - AttributeName: randomNumberId
+            AttributeType: S
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: randomNumberId
+            KeyType: HASH
+          - AttributeName: username
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+layers:
+  dependenciesLayer:
+    path: src/layer
+    package:
+      include:
+        - node_modules
+        - node_modules/**/
+        - src/lib/**/
+    compatibleRuntimes:
+      - nodejs10.x

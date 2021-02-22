@@ -1,0 +1,155 @@
+# Welcome to Serverless!
+#    docs.serverless.com
+
+service: aws-node-CRUD-rest-api-lambda-dynamodb
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: '2'
+plugins:
+  - serverless-offline
+  - serverless-domain-manager
+
+custom:
+  allowedHeaders:
+    - Accept
+    - Content-Type
+    - Content-Length
+    - Authorization
+    - X-Amz-Date
+    - X-Api-Key
+    - X-Amz-Security-Token
+    - X-Amz-User-Agent
+    - app_user_id
+    - app_user_name
+  customDomain:
+    domainName: api.XXXXX.com [CREATE AWS ROUTE53 HOSTED ZONE FOR CUSTOM DOMAIN AND ADD THE NAME HERE]
+    basePath: 'V1'
+    stage: ${self:provider.stage}
+    certificateName: XXXXX.com [ADD YOUR DOMAIN NAME HERE AND GENERATE SSL CERTIFICATE IN AWS ACM]
+    createRoute53Record: true
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-south-1
+  stage: prod
+  memorySize: 128
+  timeout: 5
+  endpointType: regional 
+  environment:
+    DYNAMO_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMO_TABLE}"
+  - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMO_TABLE}/index/*"
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  add-order:
+    handler: api/add-order.handler
+    description: POST /order
+    events:
+      - http:
+          path: order
+          method: post
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+  update-order:
+    handler: api/update-order.handler
+    description: PATCH /order
+    events:
+      - http:
+          path: order
+          method: patch
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+            
+  get-orders:
+    handler: api/get-orders.handler
+    description: GET /orders
+    events:
+      - http:
+          path: orders
+          method: get
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+        
+  get-order:
+    handler: api/get-order.handler
+    description: GET /order/n/{order_id}
+    events:
+      - http:
+          path: order/n/{order_id}
+          method: get
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+  delete-order:
+    handler: api/delete-order.handler
+    description: DELETE /order/t/{timestamp}
+    events:
+      - http:
+          path: order/t/{timestamp}
+          method: delete
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+resources:
+  Resources:
+    DynamoTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.environment.DYNAMO_TABLE}
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: N
+          - AttributeName: order_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: order_id-index
+            KeySchema:
+             - AttributeName: order_id
+               KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          

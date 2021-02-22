@@ -1,0 +1,94 @@
+service: blog
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${opt:profile, self:custom.defaultProfile}
+  region: ${opt:region, self:custom.defaultRegion}
+  apiGateway:
+    shouldStartNameWithService: true
+
+package:
+  excludeDevDependencies: true
+  exclude:
+    - serverless-http
+
+custom:
+  defaultStage: default
+  defaultProfile: default
+  defaultRegion: ap-northeast-1
+  serverless-offline:
+    host: ${env:HOST, 'localhost'}
+    httpPort: ${env:PORT, 3000}
+  webpack:
+    config: './webpack.config.js'
+    packager: 'yarn'
+    packagerOptions:
+
+resources:
+  Resources:
+    # ServerlessSubnetGroup:
+    #   Type: AWS::RDS::DBSubnetGroup
+    #   Properties:
+    #     DBSubnetGroupDescription: "RDS Subnet Group"
+    #     SubnetIds:
+    #       - Ref: ServerlessSubnetA
+    #       - Ref: ServerlessSubnetB
+    #       - Ref: ServerlessSubnetC
+    #     Tags:
+    #       -
+    #         Key: "Name"
+    #         Value: "ServerlessSubnetGroup"
+    AuroraRDSClusterParameter:
+      Type: AWS::RDS::DBClusterParameterGroup
+      Properties:
+        Description: Parameter group for the Serverless Aurora RDS DB.
+        Family: aurora-mysql5.7
+        Parameters:
+          character_set_database: 'utf32'
+    # ServerlessSecurityGroup:
+    #   DependsOn: ServerlessVPC
+    #   Type: AWS::EC2::SecurityGroup
+    #   Properties:
+    #     GroupDescription: SecurityGroup for Serverless Functions
+    #     VpcId:
+    #       Ref: ServerlessVPC
+    #     SecurityGroupIngress:
+    #       - IpProtocol: tcp
+    #         FromPort: '0'
+    #         ToPort: '65535'
+    #         CidrIp: "0.0.0.0/0"
+    #     Tags: 
+    #       - 
+    #         Key: "Name"
+    #         Value: "ServerlessSecurityGroup"
+    AuroraRDSCluster:
+      Type: AWS::RDS::DBCluster
+      Properties:
+        MasterUsername: ${env.AURORA_DATABASE}
+        MasterUserPassword: ${env.AURORA_USER}
+        # DBSubnetGroupName:
+        #   Ref: ServerlessSubnetGroup
+        Engine: aurora-mysql
+        EngineVersion: 5.7.mysql_aurora.2.09.0
+        DatabaseName: ${env.AURORA_PASSWORD}
+        BackupRetentionPeriod: 3
+        DBClusterParameterGroupName:
+          Ref: AuroraRDSClusterParameter
+        # VpcSecurityGroupIds:
+        #   - !Ref 'ServerlessSecurityGroup'
+
+functions:
+  api:
+    handler: src/index.handler
+    events:
+      - http:
+          method: get
+          path: '/ping'
+          cors: true

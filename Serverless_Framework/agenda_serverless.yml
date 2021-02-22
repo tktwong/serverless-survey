@@ -1,0 +1,144 @@
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+
+service:
+  name: Agenda
+  description: "Basic todo app that I called agenda because its 'different' as two chains would say"
+
+####################
+## Custom Configs ##
+####################
+custom:
+  DEFAULT_STAGE: dev
+  ACTIVE_PREFIX_STAGE: ${self:service}_${opt:stage, self:custom.DEFAULT_STAGE}
+  TABLE_AGENDA:   ${self:custom.ACTIVE_PREFIX_STAGE}_agenda
+  # Lambda Role
+  LAMBDA_ROLE_NAME: ${self:custom.ACTIVE_PREFIX_STAGE}_lambda_role
+   ### custom service configs ###
+  jest:
+    collectCoverage: true
+    globals:
+#      "IS_OFFLINE" : true
+  serverless-offline:
+    resourceRoutes: true
+#    port: 3000
+  ## DynamoDb Offline Config
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: false
+    seed:
+      test:
+        sources:
+          - table: ${self:custom.TABLE_AGENDA}
+
+provider:
+  name: aws
+  description: 'Agenda'
+  runtime: nodejs6.10
+  stage: ${self:custom.DEFAULT_STAGE}
+  region: us-east-1
+  environment:
+    TABLE_AGENDA: ${self:custom.TABLE_AGENDA}
+  apiKeys:
+      - ${self:custom.ACTIVE_PREFIX_STAGE}_api_key
+  role:
+    Fn::GetAtt:
+      - LambdaRole
+      - Arn
+
+functions:
+  create:
+    handler: api/create.handler
+    description: "Create a new agenda item "
+    events:
+      - http:
+          path: agenda/
+          method: post
+          cors: true
+          private: true
+  list:
+      handler: api/list.handler
+      description: "list all agenda items "
+      events:
+        - http:
+            path: agenda/
+            method: get
+            cors: true
+            private: true
+  get:
+    handler: api/get.handler
+    description: "Create a new agenda item "
+    events:
+      - http:
+          path: agenda/{id}
+          method: get
+          cors: true
+          private: true
+  update:
+    handler: api/update.handler
+    description: "update an existing agenda item "
+    events:
+      - http:
+          path: agenda/{id}
+          method: put
+          cors: true
+          private: true
+  delete:
+    handler: api/delete.handler
+    description: "delete an agenda item "
+    events:
+      - http:
+          path: agenda/{id}
+          method: delete
+          cors: true
+          private: true
+
+
+
+#################
+### resources ###
+#################
+resources:
+  Resources:
+    ############################################################
+    ## Agenda table
+    AgendaTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.TABLE_AGENDA}
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    ## Create Lambda ROLE
+    LambdaRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "lambda.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+          - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+        Path: "/"
+        RoleName: ${self:custom.LAMBDA_ROLE_NAME}
+

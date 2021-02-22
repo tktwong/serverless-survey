@@ -1,0 +1,180 @@
+service: cake-financials-app-api
+
+# Use serverless-webpack plugin to transpile ES6/ES7
+plugins:
+  - serverless-webpack
+  - serverless-plugin-warmup
+
+# Configuration for serverless-webpack
+# Enable auto-packing of external modules
+custom:
+  myStage: ${opt:stage, self:provider.stage}
+  warmup_enabled:
+    dev: false
+    prod: true
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-2
+  profile: cake-financials
+  environment:
+    MY_STAGE: ${self:custom.myStage}
+    AWS_SDK_REGION: ${s3:cake-financials-config/AWS_SDK_REGION}
+    ROLLBAR_ACCESS_TOKEN: ${s3:cake-financials-config/ROLLBAR_ACCESS_TOKEN}
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::cake-financials-user-data/*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::cake-financials-user-data"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::cake-financials-zapier-dump/*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::cake-financials-zapier-dump"
+    - Effect: Allow
+      Action:
+        - cognito-idp:ListUsers
+      Resource: "arn:aws:cognito-idp:us-east-2:951721516169:userpool/us-east-2_9v5RltuvI"
+
+functions:
+  proxy_zapier_post:
+    handler: server/functions/entry_points.proxy_zapier_post
+    warmup: ${self:custom.warmup_enabled.${self:custom.myStage}}
+    events:
+      - http:
+          path: proxy/zapier
+          method: post
+          cors: true
+
+  save_user_email_identity_link:
+    handler: server/functions/save_user_email_identity_link.main
+    warmup: ${self:custom.warmup_enabled.${self:custom.myStage}}
+    environment:
+      CAKE_USER_POOL_ID: ${s3:cake-financials-config/CAKE_USER_POOL_ID}
+      USER_DATA_BUCKET: ${s3:cake-financials-config/USER_DATA_BUCKET}
+    events:
+      - http:
+          path: link_email_to_id
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  save_brokerage_creds:
+    handler: server/functions/save_brokerage_credentials.main
+    warmup: ${self:custom.warmup_enabled.${self:custom.myStage}}
+    environment:
+      USER_DATA_PUBLIC_KEY: ${s3:cake-financials-config/USER_DATA_PUBLIC_KEY}
+      USER_DATA_BUCKET: ${s3:cake-financials-config/USER_DATA_BUCKET}
+    events:
+      - http:
+          path: brokerage/credentials
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  get_brokerage_creds_exists:
+    handler: server/functions/get_brokerage_credentials_exists.main
+    warmup: ${self:custom.warmup_enabled.${self:custom.myStage}}
+    environment:
+      USER_DATA_BUCKET: ${s3:cake-financials-config/USER_DATA_BUCKET}
+    events:
+      - http:
+          path: brokerage/credentials/exists
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  get_obf_brokerage_creds:
+    handler: server/functions/get_obfuscated_brokerage_credentials.main
+    warmup: ${self:custom.warmup_enabled.${self:custom.myStage}}
+    environment:
+      USER_DATA_BUCKET: ${s3:cake-financials-config/USER_DATA_BUCKET}
+    events:
+      - http:
+          path: brokerage/credentials/obfuscated
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  get_bank_info_exists:
+    handler: server/functions/get_bank_info_exists.main
+    warmup: ${self:custom.warmup_enabled.${self:custom.myStage}}
+    environment:
+      USER_DATA_BUCKET: ${s3:cake-financials-config/USER_DATA_BUCKET}
+    events:
+      - http:
+          path: bank/account_info/exists
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  get_user_state_bag:
+    handler: server/functions/entry_points.get_user_state_bag
+    warmup: ${self:custom.warmup_enabled.${self:custom.myStage}}
+    environment:
+      USER_DATA_BUCKET: ${s3:cake-financials-config/USER_DATA_BUCKET}
+    events:
+      - http:
+          path: user/state
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  save_user_state_bag:
+    handler: server/functions/entry_points.save_user_state_bag
+    warmup: ${self:custom.warmup_enabled.${self:custom.myStage}}
+    environment:
+      USER_DATA_BUCKET: ${s3:cake-financials-config/USER_DATA_BUCKET}
+    events:
+      - http:
+          path: user/state
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  get_user_dashboard_data:
+    handler: server/functions/entry_points.get_user_dashboard_data
+    warmup: ${self:custom.warmup_enabled.${self:custom.myStage}}
+    environment:
+      CAKE_USER_POOL_ID: ${s3:cake-financials-config/CAKE_USER_POOL_ID}
+      USER_DASHBOARD_DATA_BUCKET: ${s3:cake-financials-config/USER_DASHBOARD_DATA_BUCKET}
+      USER_DASHBOARD_DATA_BUCKET_REGION: ${s3:cake-financials-config/USER_DASHBOARD_DATA_BUCKET_REGION}
+    events:
+      - http:
+          path: user/dashboard_data
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  save_user_plaid_data:
+    handler: server/functions/entry_points.save_user_plaid_data
+    warmup: ${self:custom.warmup_enabled.${self:custom.myStage}}
+    environment:
+      USER_DATA_BUCKET: ${s3:cake-financials-config/USER_DATA_BUCKET}
+      PLAID_CLIENT_ID: ${s3:cake-financials-config/PLAID_CLIENT_ID}
+      PLAID_PUBLIC_KEY: ${s3:cake-financials-config/PLAID_PUBLIC_KEY}
+      PLAID_SECRET_KEY: ${s3:cake-financials-config/${self:custom.myStage}/PLAID_SECRET_KEY}
+      PLAID_ENVIRONMENT: ${s3:cake-financials-config/${self:custom.myStage}/PLAID_ENVIRONMENT}
+    events:
+      - http:
+          path: user/plaid_data
+          method: post
+          cors: true
+          authorizer: aws_iam

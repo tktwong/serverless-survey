@@ -1,0 +1,224 @@
+service:
+  name: serverless-todo-app
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  #- serverless-dynamodb-local
+  #- serverless-offline
+  - serverless-reqvalidator-plugin
+  #- serverless-aws-documentation
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  environment:
+    TODOS_TABLE: TODOS-${self:provider.stage}
+    USER_ID_INDEX: userId
+    S3_BUCKET: "abhi-todo-${self:provider.stage}"
+    SIGNED_URL_EXPIRATION: 300
+    
+  
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+    
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  # TODO: Configure this function
+  GetTodos:
+    handler: src/lambda/http/getTodos.handler
+    events:
+      - http:
+          method: get
+          path: todos
+          cors: true
+    iamRoleStatements: 
+      - 
+        Action: 
+          - "dynamodb:Query"
+          - "dynamodb:Scan"
+        Effect: Allow
+        Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}"
+      - 
+        Action: 
+          - "dynamodb:Query"
+          - "dynamodb:Scan"
+        Effect: Allow
+        Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}/index/${self:provider.environment.USER_ID_INDEX}"
+
+  CreateTodo:
+    handler: src/lambda/http/createTodo.handler
+    events:
+      - http:
+          method: post
+          path: todos
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+    request: 
+      schema: 
+        application/json: "${file(src/schemas/todo-item-create.json)}"
+
+  UpdateTodo: 
+    events: 
+      - 
+        http: 
+          authorizer: Auth
+          cors: true
+          method: patch
+          path: "todos/{todoId}"
+    handler: src/lambda/http/updateTodo.handler
+    iamRoleStatements: 
+      - 
+        Action: 
+          - "dynamodb:UpdateItem"
+          - "dynamodb:GetItem"
+        Effect: Allow
+        Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}"
+    request: 
+      schema: 
+        application/json: "${file(src/schemas/todo-item-update.json"      
+
+  DeleteTodo: 
+    events: 
+      - 
+        http: 
+          authorizer: Auth
+          cors: true
+          method: delete
+          path: "todos/{todoId}"
+    handler: src/lambda/http/deleteTodo.handler
+    iamRoleStatements: 
+      - 
+        Action: 
+          - "dynamodb:DeleteItem"
+          - "dynamodb:GetItem"
+        Effect: Allow
+        Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}"
+  
+  GenerateUploadUrl: 
+    events: 
+      - 
+        http: 
+          authorizer: Auth
+          cors: true
+          method: post
+          path: "todos/{todoId}/attachment"
+    handler: src/lambda/http/generateUploadUrl.handler
+    iamRoleStatements: 
+      - 
+        Action: 
+          - "s3:PutObject"
+          - "s3:GetObject"
+        Effect: Allow
+        Resource: "arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*"
+
+# custom:
+
+#   documentation:
+#     api:
+#       info:
+#         version: v1.0.0
+#         title: ToDo API
+#         description: Serverless application for ToDos Application
+#     models:
+#       - name: ToDoItem
+#         contentType: application/json
+#         schema: ${file(models/TodoItem.ts)}
+   
+
+    
+resources:
+  Resources:
+    # TODO: Add any necessary AWS resources
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    TodosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+          - AttributeName: todoId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: todoId
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.USER_ID_INDEX}
+            KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.TODOS_TABLE}
+
+    AttachmentBucket: 
+      Properties: 
+        BucketName: "${self:provider.environment.S3_BUCKET}"
+        CorsConfiguration: 
+          CorsRules: 
+            - 
+              AllowedHeaders: 
+                - "*"
+              AllowedMethods: 
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              AllowedOrigins: 
+                - "*"
+              MaxAge: 3000
+      Type: "AWS::S3::Bucket"
+    BucketPolicy: 
+      Properties: 
+        Bucket: !Ref AttachmentBucket
+        PolicyDocument: 
+          Id: Policy
+          Statement: 
+            - 
+              Action: 
+                - "s3:GetObject"
+                - "s3:PutObject"
+              Effect: Allow
+              Principal: "*"
+              Resource: "arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*"
+              Sid: PublicReadWriteBucketPolicy
+          Version: "2012-10-17"
+      Type: "AWS::S3::BucketPolicy"

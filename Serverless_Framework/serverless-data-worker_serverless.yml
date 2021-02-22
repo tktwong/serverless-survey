@@ -1,0 +1,64 @@
+# Removes serveless enterprise plugin injection
+# org: benoitmarchant
+app: serverless-data-worker
+service: phront-data-worker
+
+package:
+    exclude:
+      - ~/**
+      - tools/**
+      - .vscode/**
+      - node_modules/montage/demo/**
+      - node_modules/montage/ui/**
+      - node_modules/montage/test/**
+      - node_modules/montage/testing/**
+      - node_modules/montage/tools/**
+      - node_modules/phront/test/**
+      - node_modules/phront/sandbox/**
+
+plugins:
+  - serverless-offline
+
+custom:
+  stage: ${opt:stage, 'prod'}
+  
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: prod # Set the default stage used. Default is dev
+  profile: phront-code
+  role: arn:aws:iam::537014313177:role/phront-data-service
+  cfnRole: arn:aws:iam::537014313177:role/cloudphront-data-service # ARN of an IAM role for CloudFormation service. If specified, CloudFormation uses the role's credentials
+  region: us-west-2 # Overwrite the default region used. Default is us-east-1
+  websocketsApiName: phront-data-worker
+  websocketsApiRouteSelectionExpression: $request.body.action # custom routes are selected by the value of the action property in the body
+  environment:
+    APIG_ENDPOINT:
+      Fn::Join:
+        - ''
+        - - Ref: WebsocketsApi
+          - .execute-api.
+          - Ref: AWS::Region
+          - .amazonaws.com/
+          - ${self:custom.stage}
+    # CONNECTIONS_TABLE:
+    #   Ref: ConnectionsTable
+
+functions:
+  connect:
+    handler: handler.connect
+    events:
+      - websocket:
+          route: $connect # authorizers are only for connect routes
+          # authorizer:
+          #   name: auth
+          #   identitySource:
+          #     - 'route.request.header.Auth'
+  default:
+    handler: handler.default
+    events:
+      - websocket:
+          route: $default
+
+  # auth:
+  #   handler: handler.auth

@@ -1,0 +1,729 @@
+service: SearchService
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  endpointType: REGIONAL
+  stage: ${opt:stage, 'stage'}
+  region: ${file(./config/${self:provider.stage}.json):region, 'us-east-1'}
+  domain: ${file(./config/${self:provider.stage}.json):search.domain}
+  es-arn: ${file(./config/${self:provider.stage}.json):search.arn}
+  cognito-arn: ${file(./config/${self:provider.stage}.json):cognito-arn}
+  channel-arn: ${file(./config/${self:provider.stage}.json):channel-arn}
+  cors-origin: ${file(./config/${self:provider.stage}.json):cors-origin, '*'}
+  gigs-queue-arn: ${file(./config/${self:provider.stage}.json):queues.gigs.arn}
+  profiles-queue-arn: ${file(./config/${self:provider.stage}.json):queues.profiles.arn}
+  reviews-queue-arn: ${file(./config/${self:provider.stage}.json):queues.reviews.arn}
+  gigs-queue-url: ${file(./config/${self:provider.stage}.json):queues.gigs.url}
+  profiles-queue-url: ${file(./config/${self:provider.stage}.json):queues.profiles.url}
+  reviews-queue-url: ${file(./config/${self:provider.stage}.json):queues.reviews.url}
+  gigs-bus: ${file(./config/${self:provider.stage}.json):bus.gigs}
+  profiles-bus: ${file(./config/${self:provider.stage}.json):bus.profiles}
+  reviews-bus: ${file(./config/${self:provider.stage}.json):bus.reviews}
+  logRetentionInDays: 7
+  tracing:
+    lambda: ${file(./config/${self:provider.stage}.json):trace.lambda, true}
+    apiGateway: ${file(./config/${self:provider.stage}.json):trace.apiGateway, true}
+  logs:
+    restApi:
+      level: ${file(./config/${self:provider.stage}.json):logs.restApi, 'INFO'}
+#  vpc:
+#    securityGroupIds: ${file(./config/${self:provider.stage}.json):securityGroupIds}
+#    subnetIds: ${file(./config/${self:provider.stage}.json):subnetIds}
+  usagePlan:
+    throttle:
+      burstLimit: ${file(./config/${self:provider.stage}.json):limits.burst, 500}
+      rateLimit: ${file(./config/${self:provider.stage}.json):limits.rate, 300}
+  apiGateway:
+    description: SearchService Gateway
+  stackTags:
+    name: ${self:service}
+    component: ${self:service}
+    environment: ${self:provider.region}
+  tags:
+    name: ${self:service}
+    component: ${self:service}
+    environment: ${self:provider.region}
+package:
+  individually: true
+  excludeDevDependencies: true
+  exclude:
+    - test/**
+    - .git/**
+    - .serverless/**
+    - coverage/**
+    - README.md
+    - TODO.md
+    - LICENSE
+
+plugins:
+  - serverless-plugin-typescript
+
+functions:
+  createGigs:
+    name: createGigs-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/CreateGigsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.gigs
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: CreateGigs
+    events:
+      - http:
+          path: api/v1/gigs
+          method: post
+          integration: lambda
+          request:
+            schema:
+              application/json: ${file(./contract/gig.json)}
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          authorizer:
+            name: authorizer
+            arn: ${self:provider.cognito-arn}
+            claims:
+              - phone_number
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - Authorization
+  updateGigs:
+    name: updateGigs-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/UpdateGigsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.gigs
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: UpdateGigs
+    events:
+      - http:
+          path: api/v1/gigs/{id}
+          method: put
+          integration: lambda
+          request:
+            schema:
+              application/json: ${file(./contract/gig.json)}
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          authorizer:
+            name: authorizer
+            arn: ${self:provider.cognito-arn}
+            claims:
+              - phone_number
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - Authorization
+  deleteGigs:
+    name: deleteGigs-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/DeleteGigsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.gigs
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: DeleteGigs
+    events:
+      - http:
+          path: api/v1/gigs/{id}
+          method: delete
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          authorizer:
+            name: authorizer
+            arn: ${self:provider.cognito-arn}
+            claims:
+              - phone_number
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - Authorization
+  getGigs:
+    name: getGigs-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/GetGigsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.gigs
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: GetGigs
+    events:
+      - http:
+          path: api/v1/gigs/{id}
+          method: get
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          cors:
+            origins:
+             - '*'
+            headers:
+             - Content-Type
+             - Authorization
+  publishGigs:
+    name: publishGigs-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/PublishGigsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.gigs
+      FUNC_REGION: ${self:provider.region}
+      SQS_QUEUE: ${self:provider.gigs-queue-url}
+      BUS_NAME: ${self:provider.gigs-bus}
+    tags:
+      purpose: PublishGigs
+    events:
+      - http:
+          path: api/v1/gigs/publish/{id}
+          method: post
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          authorizer:
+            name: authorizer
+            arn: ${self:provider.cognito-arn}
+            claims:
+              - phone_number
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - Authorization
+  unpublishGigs:
+    name: unpublishGigs-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/UnPublishGigsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.gigs
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: UnPublishGigs
+    events:
+      - http:
+          path: api/v1/gigs/unpublish/{id}
+          method: post
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          authorizer:
+            name: authorizer
+            arn: ${self:provider.cognito-arn}
+            claims:
+              - phone_number
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - Authorization
+  searchGigs:
+    name: searchGigs-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/SearchGigsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.gigs
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: SearchGigs
+    events:
+      - http:
+          path: api/v1/gigs
+          method: post
+          integration: lambda
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          cors:
+            origins:
+             - '*'
+            headers:
+             - Content-Type
+             - Authorization
+  createProfiles:
+    name: createProfiles-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/UpdateProfilesHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.profiles
+      FUNC_REGION: ${self:provider.region}
+      SQS_QUEUE: ${self:provider.profiles-queue-url}
+      BUS_NAME: ${self:provider.profiles-bus}
+    tags:
+      purpose: CreateProfiles
+    events:
+      - http:
+          path: api/v1/profiles/{id}
+          method: post
+          integration: lambda
+          request:
+            schema:
+              application/json: ${file(./contract/profile.json)}
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          authorizer:
+            name: authorizer
+            arn: ${self:provider.cognito-arn}
+            claims:
+              - phone_number
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - Authorization
+  updateProfiles:
+    name: updateProfiles-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/UpdateProfilesHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.profiles
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: UpdateProfiles
+    events:
+      - http:
+          path: api/v1/profiles/{id}
+          method: put
+          integration: lambda
+          request:
+            schema:
+              application/json: ${file(./contract/profile.json)}
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          authorizer:
+            name: authorizer
+            arn: ${self:provider.cognito-arn}
+            claims:
+              - phone_number
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - Authorization
+  deleteProfiles:
+    name: deleteProfiles-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/DeleteProfilesHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.profiles
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: DeleteProfiles
+    events:
+      - http:
+          path: api/v1/profiles/{id}
+          method: delete
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          authorizer:
+            name: authorizer
+            arn: ${self:provider.cognito-arn}
+            claims:
+              - phone_number
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - Authorization
+  getProfiles:
+    name: getProfiles-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/GetProfilesHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.profiles
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: GetProfiles
+    events:
+      - http:
+          path: api/v1/profiles/{id}
+          method: get
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          cors:
+            origins:
+             - '*'
+            headers:
+             - Content-Type
+  createReviews:
+    name: createReviews-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/CreateReviewsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.reviews
+      FUNC_REGION: ${self:provider.region}
+      SQS_QUEUE: ${self:provider.reviews-queue-url}
+      BUS_NAME: ${self:provider.profiles-bus}
+    tags:
+      purpose: CreateReviews
+    events:
+      - http:
+          path: api/v1/reviews
+          method: post
+          integration: lambda
+          request:
+            schema:
+              application/json: ${file(./contract/review.json)}
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+            authorizer:
+              name: authorizer
+              arn: ${self:provider.cognito-arn}
+              claims:
+                - phone_number
+            cors:
+              origins:
+                - '*'
+              headers:
+                - Content-Type
+                - Authorization
+  updateReviews:
+    name: updateReviews-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/UpdateReviewsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.reviews
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: UpdateReviews
+    events:
+      - http:
+          path: api/v1/reviews/{id}
+          method: put
+          integration: lambda
+          request:
+            schema:
+              application/json: ${file(./contract/review.json)}
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          authorizer:
+            name: authorizer
+            arn: ${self:provider.cognito-arn}
+            claims:
+              - phone_number
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - Authorization
+  deleteReviews:
+    name: deleteReviews-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/DeleteReviewsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.reviews
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: DeleteReviews
+    events:
+      - http:
+          path: api/v1/reviews/{id}
+          method: delete
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          authorizer:
+            name: authorizer
+            arn: ${self:provider.cognito-arn}
+            claims:
+              - phone_number
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - Authorization
+  getReviews:
+    name: getReviews-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/GetReviewsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.reviews
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: GetReviews
+    events:
+      - http:
+          path: api/v1/reviews/{id}
+          method: get
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          cors:
+            origins:
+             - '*'
+            headers:
+             - Content-Type
+             - Authorization
+  searchReviews:
+    name: searchReviews-${self:provider.stage}
+    role: SearchServiceFunctionsLambdaRole
+    handler: app/src/SearchService/SearchReviewsHandler.fun
+    memorySize: 128
+    timeout: 10
+    environment:
+      DOMAIN: ${self:provider.domain}
+      CORS_ORIGIN: ${self:provider.cors-origin}
+      ES_INDEX: ${self:provider.stage}.reviews
+      FUNC_REGION: ${self:provider.region}
+    tags:
+      purpose: SearchReviews
+    events:
+      - http:
+          path: api/v1/reviews
+          method: post
+          integration: lambda
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'${self:provider.cors-origin}'"
+          cors:
+            origins:
+             - '*'
+            headers:
+             - Content-Type
+             - Authorization
+
+resources:
+  Resources:
+    SearchServiceFunctionsLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: "sts:AssumeRole"
+        Path: /services/
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        Policies:
+          - PolicyName: lambda
+            PolicyDocument:
+              Statement:
+                Effect: Allow
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource: "*"
+          - PolicyName: xray
+            PolicyDocument:
+              Statement:
+                Effect: Allow
+                Action:
+                  - "xray:PutTraceSegments"
+                Resource: "*"
+          - PolicyName: SQSAccess
+            PolicyDocument:
+              Statement:
+                Effect: Allow
+                Action:
+                  - "sqs:SendMessage"
+                  - "sqs:DeleteMessage"
+                  - "sqs:GetQueueAttributes"
+                  - "sqs:GetQueueUrl"
+                  - "sqs:ListQueues"
+                  - "sqs:ReceiveMessage"
+                  - "sqs:SetQueueAttributes"
+                Resource: ${self:provider.channel-arn}
+          - PolicyName: ESAccess
+            PolicyDocument:
+              Statement:
+                Effect: Allow
+                Action:
+                  - "es:*"
+                Resource: ${self:provider.es-arn}
+          - PolicyName: GigsSQSAccess
+            PolicyDocument:
+              Statement:
+                Effect: Allow
+                Action:
+                  - "sqs:SendMessage"
+                  - "sqs:DeleteMessage"
+                  - "sqs:GetQueueAttributes"
+                  - "sqs:GetQueueUrl"
+                  - "sqs:ListQueues"
+                  - "sqs:ReceiveMessage"
+                  - "sqs:SetQueueAttributes"
+                Resource: ${self:provider.gigs-queue-arn}
+          - PolicyName: ProfilesSQSAccess
+            PolicyDocument:
+              Statement:
+                Effect: Allow
+                Action:
+                  - "sqs:SendMessage"
+                  - "sqs:DeleteMessage"
+                  - "sqs:GetQueueAttributes"
+                  - "sqs:GetQueueUrl"
+                  - "sqs:ListQueues"
+                  - "sqs:ReceiveMessage"
+                  - "sqs:SetQueueAttributes"
+                Resource: ${self:provider.profiles-queue-arn}
+          - PolicyName: ReviewsSQSAccess
+            PolicyDocument:
+              Statement:
+                Effect: Allow
+                Action:
+                  - "sqs:SendMessage"
+                  - "sqs:DeleteMessage"
+                  - "sqs:GetQueueAttributes"
+                  - "sqs:GetQueueUrl"
+                  - "sqs:ListQueues"
+                  - "sqs:ReceiveMessage"
+                  - "sqs:SetQueueAttributes"
+                Resource: ${self:provider.reviews-queue-arn}
+          - PolicyName: EventBridgeAccess
+            PolicyDocument:
+              Statement:
+                Effect: Allow
+                Action:
+                  - "events:PutEvents"
+                Resource: "*"

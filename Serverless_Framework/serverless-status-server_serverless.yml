@@ -1,0 +1,76 @@
+service: serverless-status
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${opt:stage, 'dev'}
+  environment:
+    SERVICE_NAME: 'My First Status Server'
+    SERVICE_TOKEN: 'foo'
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  list:
+    handler: handler.list
+    name: ${self:provider.stage}-list
+    events:
+      - http:
+          path: statuses
+          method: get
+          cors: true
+  update:
+    handler: handler.update
+    name: ${self:provider.stage}-update
+    events:
+      - http:
+          path: statuses
+          method: post
+          cors: true
+
+
+resources:
+  Resources:
+    LikesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+        -
+          AttributeName: "key"
+          AttributeType: S
+        -
+          AttributeName: "state"
+          AttributeType: S
+        -
+          AttributeName: "message"
+          AttributeType: S
+        KeySchema:
+        -
+          AttributeName: "state"
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+plugins:
+  - serverless-domain-manager
+
+### UNCOMMENT below for custom domains
+
+# custom:
+#   customDomain:
+#     domainName: <registered_domain_name>
+#     basePath: ''
+#     stage: ${self:provider.stage}
+#     createRoute53Record: true

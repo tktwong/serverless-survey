@@ -1,0 +1,70 @@
+service: inventory-service
+
+app: commercejs
+org: shopdevco
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region,'us-east-1'}
+  logRetentionInDays: 3
+  memorySize: ${self:custom.memorySize.${self:provider.stage}, '1024'}
+
+plugins:
+  - serverless-webpack
+  - serverless-dotenv-plugin
+  - serverless-offline
+  - serverless-offline-sns
+
+include:
+  - app/**
+  - .env
+
+custom:
+  cors:
+    default:
+      origin: '*'
+      headers:
+        - Content-Type
+        - X-Amz-Date
+        - Authorization
+        - X-Api-Key
+        - X-Amz-Security-Token
+        - X-Amz-User-Agent
+        - x-site-context
+      allowCredentials: false
+  webpack:
+    webpackConfig: /webpack.config.js
+    includeModules: true
+    packager: npm
+  environment:
+    mongodb: ${env:mongodb}
+
+functions:
+  updateInventory:
+    handler: handler.updateInventory
+    events:
+      - http:
+          path: inventory
+          method: post
+      - sns: orderCreated
+      - sns: productCreated
+      # - sns: 
+      #     arn: arn:aws:sns:us-east-1:403302655770:orderCreated # orderCreated
+      # - sns:
+      #     arn: 'arn:aws:sns:us-east-1:403302655770:productCreated' # productCreated
+  getInventoryCount:
+    handler: handler.getInventoryCount
+    events:
+      - http:
+          path: inventory/count/{sku}
+          method: get
+  getAllInventory:
+    handler: handler.getAllInventory
+    events:
+      - http:
+          path: inventory/all
+          method: get

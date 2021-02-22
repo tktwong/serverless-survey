@@ -1,0 +1,616 @@
+service: sde
+
+plugins:
+  - serverless-webpack
+  - serverless-step-functions
+  - serverless-stack-output
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  esArn: ${ssm:/${self:service}-${self:custom.stage}-elasticsearch-arn}
+  esEndpoint: ${ssm:/${self:service}-${self:custom.stage}-elasticsearch-endpoint}
+  s3BucketArn: ${ssm:/${self:service}-${self:custom.stage}-s3-bucket-arn}
+  s3BucketName: ${ssm:/${self:service}-${self:custom.stage}-s3-bucket-name}
+  s3websiteURL: ${ssm:/${self:service}-${self:custom.stage}-s3-bucket-site-url}
+  subscriptionsTableName: ${self:custom.stage}-${self:service}-subscriptions
+  webpack:
+    includeModules: true # enable auto-packing of external modules
+  output:
+    handler: build_scripts/output.handler
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  tags:
+    Project: ${self:service}
+    Environment: ${self:custom.stage}
+  stackTags:
+    Project: ${self:service}
+    Environment: ${self:custom.stage}
+  logs:
+    restApi: true
+
+# you can overwrite defaults here
+  stage: dev
+  region: eu-west-1
+
+functions:
+  pushNotificationOpenConnection:
+    handler: functions/pushNotificationOpenConnection.handler
+    description: Notified when client connects to websocket to complete activity
+    role: pushNotificationOpenConnectionLambdaRole
+    events:
+      - websocket:
+          route: OpenConnection
+  pushNotificationToClient:
+    handler: functions/pushNotificationToClient.handler
+    description: Send report URL to client over websocket
+    role: pushNotificationToClientLambdaRole
+    environment:
+      WEBSOCKET_ENDPOINT_URL:
+        !Join
+          - ''
+          - - 'https://'
+            - !Ref WebsocketsApi
+            - '.execute-api.'
+            - ${self:custom.region}
+            - '.amazonaws.com/'
+            - ${self:custom.stage}
+  downloadRequest:
+    handler: functions/downloadRequest.handler
+    description: Triggered when client requests a download
+    role: downloadRequestLambdaRole
+    events:
+      - http:
+          path: download-request
+          method: post
+          cors: true
+          request:
+            schema:
+              application/json: ${file(api_models/DownloadRequestInputModel.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      CSV_DOWNLOAD_REQUEST_STEP_FUNCTION_NAME: "${self:service}-${self:custom.stage}-csv-download-request"
+      CSV_DOWNLOAD_REQUEST_STEP_FUNCTION_ARN:
+        !Join
+          - ':'
+          -
+            - 'arn:aws:states'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'stateMachine'
+            - '${self:service}-${self:custom.stage}-csv-download-request'
+      OPEN_CONNECTION_ACTIVITY_ARN:
+        !Join
+          - ':'
+          -
+            - 'arn:aws:states'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'activity:AwaitOpenConnectionFromClient'
+  createPostRequest:
+    handler: functions/createPostRequest.handler
+    description: Triggered when a client requests to add a new post
+    role: createPostRequestLambdaRole
+    events:
+      - http:
+          path: posts
+          method: post
+          cors: true
+          request:
+            schema:
+              application/json: ${file(api_models/CreatePostRequestInputModel.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      CREATE_POST_STEP_FUNCTION_ARN:
+        !Join
+          - ':'
+          -
+            - 'arn:aws:states'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'stateMachine'
+            - '${self:service}-${self:custom.stage}-create-post-request-step-function'
+  search:
+    handler: functions/search.handler
+    description: Performs an ES search and returns the resulting hits
+    role: searchLambdaRole
+    events:
+      - http:
+          path: search
+          method: post
+          cors: true
+          request:
+            schema:
+              application/json: ${file(api_models/SearchInputModel.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      ES_SEARCH_API: ${self:custom.esEndpoint}
+  graphicalReport:
+    handler: functions/graphicalReport.handler
+    role: graphicalReportLambdaRole
+    events:
+      - http:
+          path: report/graphical
+          method: post
+          cors: true
+          request:
+            schema:
+              application/json: ${file(api_models/ReportInputModel.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      ES_SEARCH_API: ${self:custom.esEndpoint}
+      S3_BUCKET_NAME: ${self:custom.s3BucketName}
+  hybridReport:
+    handler: functions/hybridReport.handler
+    runtime: nodejs8.10
+    role: hybridReportLambdaRole
+    events:
+      - http:
+          path: report/hybrid
+          method: post
+          cors: true
+          request:
+            schema:
+              application/json: ${file(api_models/ReportInputModel.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      ES_SEARCH_API: ${self:custom.esEndpoint}
+      S3_BUCKET_NAME: ${self:custom.s3BucketName}
+  sendEmail:
+    handler: functions/sendEmail.handler
+    description: Sends an email to the specified email address with the report S3 link
+    role: sendEmailLambdaRole
+    environment:
+      EMAIL_SENDER_ADDRESS  : "rharrington@scottlogic.com"
+  reportStatus:
+    handler: functions/reportStatus.handler
+    description: Returns the execution status of a generate report task
+    role: reportStatusLambdaRole
+    events:
+      - http:
+          path: report-status
+          method: post
+          cors: true
+          request:
+            schema:
+              application/json: ${file(api_models/ReportStatusInputModel.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  reportGenerator:
+    handler: functions/reportGenerator.handler
+    description: Performs an ES search and generates a report in S3
+    role: reportGeneratorLambdaRole
+    environment:
+      ES_SEARCH_API: ${self:custom.esEndpoint}
+      S3_BUCKET_NAME: ${self:custom.s3BucketName}
+  createPost:
+    handler: functions/createPost.handler
+    description: Save a new post into ES
+    role: createPostLambdaRole
+    environment:
+      ES_SEARCH_API: ${self:custom.esEndpoint}
+  matchRealTimeDigests:
+    handler: functions/matchRealTimeDigests.handler
+    description: Uses ES to match a new post to existing real time subscriptions
+    role: matchRealTimeDigestsLambdaRole
+    environment:
+      ES_SEARCH_API: ${self:custom.esEndpoint}
+  realTimeDigestEmailIterator:
+    handler: functions/realTimeDigestEmailIterator.handler
+    description: Gets the data for the next email to be sent
+    role: realTimeDigestEmailIteratorLambdaRole
+  sendDigestEmail:
+    handler: functions/sendDigestEmail.handler
+    description: Sends an email to a given user containing posts matching their daily subscriptions
+    role: sendDigestEmailLambdaRole
+    environment:
+      EMAIL_SENDER_ADDRESS: "rharrington@scottlogic.com"
+      USER_POOL_ID:
+        Ref: CognitoUserPool
+      WEBSITE_LINK_URL: ${self:custom.s3websiteURL}
+  createSubscription:
+    handler: functions/createSubscription.handler
+    description: Adds a daily subscription for an SDE user
+    role: createSubscriptionLambdaRole
+    events:
+      - http:
+          path: subscriptions/daily
+          method: post
+          cors: true
+          request:
+            schema:
+              application/json: ${file(api_models/CreateSubscriptionInputModel.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      SUBSCRIPTIONS_TABLE: ${self:custom.subscriptionsTableName}
+  deleteSubscription:
+    handler: functions/deleteSubscription.handler
+    description: Deletes a specified daily subscription for an SDE user
+    role: deleteSubscriptionLambdaRole
+    events:
+      - http:
+          path: subscriptions/daily
+          method: delete
+          cors: true
+          request:
+            schema:
+              application/json: ${file(api_models/DeleteSubscriptionInputModel.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      SUBSCRIPTIONS_TABLE: ${self:custom.subscriptionsTableName}
+  getUserSubscriptions:
+    handler: functions/getUserSubscriptions.handler
+    description: Gets the daily subscriptions for an SDE user
+    role: getUserSubscriptionsLambdaRole
+    events:
+      - http:
+          path: subscriptions/daily
+          method: get
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      SUBSCRIPTIONS_TABLE: ${self:custom.subscriptionsTableName}
+  createRealTimeSubscription:
+    handler: functions/createRealTimeSubscription.handler
+    description: Adds a real time subscription for an SDE user
+    role: createRealTimeSubscriptionLambdaRole
+    events:
+      - http:
+          path: subscriptions/real-time
+          method: post
+          cors: true
+          request:
+            schema:
+              application/json: ${file(api_models/CreateRealTimeSubscriptionInputModel.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      ES_SEARCH_API: ${self:custom.esEndpoint}
+  deleteRealTimeSubscription:
+    handler: functions/deleteRealTimeSubscription.handler
+    description: Deletes a specified real time subscription for an SDE user
+    role: deleteRealTimeSubscriptionLambdaRole
+    events:
+      - http:
+          path: subscriptions/real-time
+          method: delete
+          cors: true
+          request:
+            schema:
+              application/json: ${file(api_models/DeleteRealTimeSubscriptionInputModel.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      ES_SEARCH_API: ${self:custom.esEndpoint}
+  getUserRealTimeSubscriptions:
+    handler: functions/getUserRealTimeSubscriptions.handler
+    description: Gets the real time subscriptions for an SDE user
+    role: getUserRealTimeSubscriptionsLambdaRole
+    events:
+      - http:
+          path: subscriptions/real-time
+          method: get
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      ES_SEARCH_API: ${self:custom.esEndpoint}
+  scheduledDailyDigests:
+    handler: functions/scheduledDailyDigests.handler
+    description: Runs daily, invokes the calculateUserDailyDigest function for each user with daily subscriptions
+    role: scheduledDailyDigestsLambdaRole
+    events:
+      - schedule:
+          name: ${self:service}-${self:custom.stage}-scheduled-daily-digests
+          description: 'A daily event to trigger the sendDailyDigests function'
+          rate: cron(0 1 * * ? *)
+    environment:
+      SUBSCRIPTIONS_TABLE: ${self:custom.subscriptionsTableName}
+      USER_DIGEST_LAMBDA_NAME: ${self:service}-${self:custom.stage}-calculateUserDailyDigest
+  calculateUserDailyDigest:
+    handler: functions/calculateUserDailyDigest.handler
+    description: Calculates and collates previous day's new posts which matching the user's daily subscriptions
+    role: calculateUserDailyDigestLambdaRole
+    environment:
+      ES_SEARCH_API: ${self:custom.esEndpoint}
+      EMAIL_MAX_POSTS: 50
+      SEND_DIGEST_EMAIL_LAMBDA_NAME: ${self:service}-${self:custom.stage}-sendDigestEmail
+
+stepFunctions:
+  stateMachines:
+    csvDownloadRequest:
+      name: "${self:service}-${self:custom.stage}-csv-download-request"
+      definition:
+        Comment: "My test step function"
+        StartAt: "Choose download type"
+        States:
+          "Choose download type":
+            Type: Choice
+            Choices:
+            -
+              Variable: "$.type"
+              StringEquals: email
+              Next: "Email report request"
+            -
+              Variable: "$.type"
+              StringEquals: direct
+              Next: "Direct download of report"
+            -
+              Variable: "$.type"
+              StringEquals: push
+              Next: "Push notification report request"
+          "Email report request":
+            Type: Pass
+            Next: "Generate CSV Report for email"
+          "Generate CSV Report for email":
+            Type: Task
+            Resource:
+              Fn::GetAtt: [reportGenerator, Arn]
+            ResultPath: "$.reportOutput"
+            Next: "Email CSV Report link to user"
+          "Email CSV Report link to user":
+            Type: Task
+            Resource: "arn:aws:states:::lambda:invoke"
+            Parameters:
+              FunctionName:
+                Fn::GetAtt: [sendEmail, Arn]
+              Payload:
+                email:
+                  "to.$": "$.parameters.emailAddress"
+                  subject: "CSV Email report"
+                  "reportURL.$": "$.reportOutput.reportURL"
+            End: true
+          "Direct download of report":
+            Type: Pass
+            Next: "Generate CSV Report for direct download"
+          "Generate CSV Report for direct download":
+            Type: Task
+            Resource:
+              Fn::GetAtt: [reportGenerator, Arn]
+            ResultPath: "$.reportOutput"
+            OutputPath: "$.reportOutput"
+            End: true
+          "Push notification report request":
+            Type: Pass
+            Next: "Push notification parallel"
+          "Push notification parallel":
+            Type: Parallel
+            Next: "Push Report URL To Client"
+            Branches:
+            -
+              StartAt: "Generate CSV Report for push notification"
+              States:
+                "Generate CSV Report for push notification":
+                  Type: Task
+                  Resource:
+                    Fn::GetAtt: [reportGenerator, Arn]
+                  ResultPath: "$.reportOutput"
+                  OutputPath: "$.reportOutput"
+                  End: true
+            -
+              StartAt: "Await OpenConnection from Client"
+              States:
+                "Await OpenConnection from Client":
+                  Type: Task
+                  Resource:
+                    !Join
+                      - ':'
+                      -
+                        - 'arn:aws:states'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'activity:AwaitOpenConnectionFromClient'
+                  End: true
+          "Push Report URL To Client":
+            Type: Task
+            Resource:
+              Fn::GetAtt: [pushNotificationToClient, Arn]
+            End: true
+    createPostRequestStepFunction:
+      name: "${self:service}-${self:custom.stage}-create-post-request-step-function"
+      definition:
+        Comment: "Create post and send real-time notifications for matching searches"
+        StartAt: "Create post"
+        States:
+          "Create post":
+            Type: Task
+            Resource:
+              Fn::GetAtt: [createPost, Arn]
+            Next: "Find matching real-time posts"
+          "Find matching real-time posts":
+            Type: Task
+            Resource:
+              Fn::GetAtt: [matchRealTimeDigests, Arn]
+            Next: "Get next email to send"
+          "Get next email to send":
+            Type: Task
+            Resource:
+              Fn::GetAtt: [realTimeDigestEmailIterator, Arn]
+            Next: "Check all emails sent"
+          "Check all emails sent":
+            Type: Choice
+            Choices:
+            -
+              Variable: "$.shouldContinue"
+              BooleanEquals: true
+              Next: "Send email"
+            Default: "Done"
+          "Send email":
+            Type: Task
+            Resource:
+              Fn::GetAtt: [sendDigestEmail, Arn]
+            InputPath: "$.data"
+            ResultPath: null
+            Next: "Get next email to send"
+          "Done":
+            Type: Pass
+            End: true
+  activities:
+    - AwaitOpenConnectionFromClient
+
+resources:
+  - Resources:
+      CognitoUserPool:
+        Type: AWS::Cognito::UserPool # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cognito-userpool.html
+        Properties:
+          UserPoolName: ${self:custom.stage}-${self:service}-users-pool
+          UsernameAttributes:
+            - email
+          AutoVerifiedAttributes:
+            - email
+      CognitoUserPoolClient:
+        Type: AWS::Cognito::UserPoolClient # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cognito-userpoolclient.html
+        Properties:      
+          ClientName: ${self:custom.stage}-${self:service}-user-pool-client
+          UserPoolId:
+            Ref: CognitoUserPool
+          GenerateSecret: false
+      CognitoIdentityPool:
+        Type: AWS::Cognito::IdentityPool # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cognito-identitypool.html
+        Properties:
+          IdentityPoolName: ${self:custom.stage}SdeIdentityPool
+          AllowUnauthenticatedIdentities: false
+          CognitoIdentityProviders:
+            - ClientId:
+                Ref: CognitoUserPoolClient
+              ProviderName:
+                Fn::GetAtt: [ "CognitoUserPool", "ProviderName" ]
+      ApiGatewayAuthorizer: # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-apigateway-authorizer.html
+        DependsOn:
+          - ApiGatewayRestApi
+        Type: AWS::ApiGateway::Authorizer
+        Properties:
+          Name: ${self:custom.stage}-${self:service}-api-authorizer
+          IdentitySource: method.request.header.Authorization
+          RestApiId:
+            Ref: ApiGatewayRestApi
+          Type: COGNITO_USER_POOLS
+          ProviderARNs:
+            - Fn::GetAtt: [CognitoUserPool, Arn]
+      SubscriptionsTable:
+        Type: AWS::DynamoDB::Table # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-dynamodb-table.html
+        Properties:
+          TableName: ${self:custom.subscriptionsTableName}
+          AttributeDefinitions:
+            - AttributeName: userId
+              AttributeType: S
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+      CognitoIdentityPoolRoles:
+        Type: AWS::Cognito::IdentityPoolRoleAttachment
+        Properties:
+          IdentityPoolId:
+            Ref: CognitoIdentityPool
+          Roles:
+            authenticated:
+              Fn::GetAtt: [CognitoAuthRole, Arn]
+      CognitoAuthRole:
+        Type: AWS::IAM::Role
+        Properties:
+          Path: /
+          AssumeRolePolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Principal:
+                  Federated: 'cognito-identity.amazonaws.com'
+                Action:
+                  - 'sts:AssumeRoleWithWebIdentity'
+                Condition:
+                  StringEquals:
+                    'cognito-identity.amazonaws.com:aud':
+                      Ref: CognitoIdentityPool
+                  'ForAnyValue:StringLike':
+                    'cognito-identity.amazonaws.com:amr': authenticated
+          Policies:
+            - PolicyName: 'CognitoAuthorizedPolicy'
+              PolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                  - Effect: 'Allow'
+                    Action:
+                      - 'cognito-sync:*'
+                      - 'cognito-identity:*'
+                    Resource: '*'
+      GatewayResponseDefault4XX:
+        Type: 'AWS::ApiGateway::GatewayResponse'
+        Properties:
+          ResponseParameters:
+            gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+            gatewayresponse.header.Content-Type: "'application/json'"
+          ResponseType: DEFAULT_4XX
+          RestApiId:
+            Ref: 'ApiGatewayRestApi'
+      GatewayResponseDefault5XX:
+        Type: 'AWS::ApiGateway::GatewayResponse'
+        Properties:
+          ResponseParameters:
+            gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+            gatewayresponse.header.Content-Type: "'application/json'"
+          ResponseType: DEFAULT_5XX
+          RestApiId:
+            Ref: 'ApiGatewayRestApi'
+
+  - ${file(iam-role-resources/pushNotificationOpenConnection.yml)}
+  - ${file(iam-role-resources/pushNotificationToClient.yml)}
+  - ${file(iam-role-resources/downloadRequest.yml)}
+  - ${file(iam-role-resources/createPostRequest.yml)}
+  - ${file(iam-role-resources/search.yml)}
+  - ${file(iam-role-resources/graphicalReport.yml)}
+  - ${file(iam-role-resources/hybridReport.yml)}
+  - ${file(iam-role-resources/sendEmail.yml)}
+  - ${file(iam-role-resources/reportStatus.yml)}
+  - ${file(iam-role-resources/reportGenerator.yml)}
+  - ${file(iam-role-resources/createPost.yml)}
+  - ${file(iam-role-resources/matchRealTimeDigests.yml)}
+  - ${file(iam-role-resources/realTimeDigestEmailIterator.yml)}
+  - ${file(iam-role-resources/sendDigestEmail.yml)}
+  - ${file(iam-role-resources/createSubscription.yml)}
+  - ${file(iam-role-resources/deleteSubscription.yml)}
+  - ${file(iam-role-resources/getUserSubscriptions.yml)}
+  - ${file(iam-role-resources/createRealTimeSubscription.yml)}
+  - ${file(iam-role-resources/deleteRealTimeSubscription.yml)}
+  - ${file(iam-role-resources/getUserRealTimeSubscriptions.yml)}
+  - ${file(iam-role-resources/scheduledDailyDigests.yml)}
+  - ${file(iam-role-resources/calculateUserDailyDigest.yml)}

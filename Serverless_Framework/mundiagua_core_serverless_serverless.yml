@@ -1,0 +1,115 @@
+service: com-xsc-mundiagua
+
+custom:
+  customerTableName: 'customer-table-${self:provider.stage}'
+  idTableName: 'id-table-${self:provider.stage}'
+
+provider:
+  name: aws
+  runtime: java11
+  stage: ${opt:stage, 'dev'}
+  logs:
+    restApi: true
+  tracing:
+    apiGateway: true
+    lambda: true
+  region: eu-west-3
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        - { "Fn::GetAtt": ["CustomerDynamoTable", "Arn" ] }
+        - { "Fn::GetAtt": ["IdDynamoTable", "Arn" ] }
+        - { "Fn::Join": [ "/", [{ "Fn::GetAtt": ["CustomerDynamoTable", "Arn" ] }, "index", "*" ] ] }
+  environment:
+    CUSTOMER_TABLE: ${self:custom.customerTableName}
+    ID_TABLE: ${self:custom.idTableName}
+
+package:
+  artifact: ${opt:artifact}
+
+functions:
+  # CUSTOMER
+  getCustomer:
+    handler: com.xsc.mundiagua.api.serverless.customer.GetCustomerHandler
+    events:
+      - http:
+          path: customer/{uuid}
+          method: get
+  getCustomerList:
+    handler: com.xsc.mundiagua.api.serverless.customer.GetCustomerListHandler
+    events:
+      - http:
+          path: customer/list
+          method: get
+  createCustomer:
+    handler: com.xsc.mundiagua.api.serverless.customer.CreateCustomerHandler
+    events:
+      - http:
+          path: customer
+          method: post
+  createCustomerPhone:
+    handler: com.xsc.mundiagua.api.serverless.customer.CreatePhoneHandler
+    events:
+      - http:
+          path: customer/{uuid}/phone
+          method: post
+  createCustomerAddress:
+    handler: com.xsc.mundiagua.api.serverless.customer.CreateAddressHandler
+    events:
+      - http:
+          path: customer/{uuid}/address
+          method: post
+
+resources:
+  Resources:
+    CustomerDynamoTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: keyType
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: N
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: mundiaguaKeyType
+            KeySchema:
+              - AttributeName: keyType
+                KeyType: HASH
+              - AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: "ALL"
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        TableName: ${self:custom.customerTableName}
+    IdDynamoTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: keyType
+            AttributeType: S
+        KeySchema:
+          - AttributeName: keyType
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.idTableName}

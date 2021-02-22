@@ -1,0 +1,123 @@
+service: ${opt:app,'app'}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ${opt:region,'us-west-1'}
+
+  environment:
+    elasticURL:
+      Fn::GetAtt: [ ElasticSearchInstance , DomainEndpoint ]
+    region: ${opt:region,'us-west-1'}
+    metaTable: ${opt:app,'app'}-Meta
+    dataTable: ${opt:app,'app'}-Data
+
+  iamRoleStatements:
+     - Effect: Allow
+       Action:
+          - dynamodb:DescribeTable
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+          - dynamodb:DescribeStream
+          - dynamodb:GetRecords
+          - dynamodb:GetShardIterator
+          - dynamodb:ListStreams
+          - es:UpdateElasticsearchDomainConfig
+          - es:ESHttpPut
+          - es:ESHttpDelete
+          - es:DescribeElasticsearchDomain
+          - es:DeleteElasticsearchDomain
+          - es:DescribeElasticsearchDomains
+          - es:RemoveTags
+          - es:ESHttpPost
+          - es:CreateElasticsearchDomain
+          - es:ESHttpHead
+          - es:ListTags
+          - es:AddTags
+          - es:ListDomainNames
+          - es:ESHttpGet
+          - es:DescribeElasticsearchDomainConfig
+       Resource: "*"
+
+functions:
+  DataHandler:
+    handler: data-handler.dataHandler
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - DataTable
+              - StreamArn
+          batchSize: 1
+
+
+  MetaHandler:
+    handler: meta-handler.metaHandler
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - MetaTable
+              - StreamArn
+          batchSize: 1
+
+resources:
+  Resources:
+    DataTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${opt:app,'app'}-Data
+        AttributeDefinitions:
+          - AttributeName: "type"
+            AttributeType: "S"
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "type"
+            KeyType: "HASH"
+          - AttributeName: "id"
+            KeyType: "RANGE"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+    MetaTable:
+          Type: AWS::DynamoDB::Table
+          DeletionPolicy: Retain
+          Properties:
+            TableName: ${opt:app,'app'}-Meta
+            AttributeDefinitions:
+              - AttributeName: "type"
+                AttributeType: "S"
+            KeySchema:
+              - AttributeName: "type"
+                KeyType: "HASH"
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+            StreamSpecification:
+              StreamViewType: NEW_AND_OLD_IMAGES
+
+
+    ElasticSearchInstance:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        EBSOptions:
+          EBSEnabled: true
+          VolumeType: gp2
+          VolumeSize: 10
+        ElasticsearchClusterConfig:
+          InstanceType: t2.small.elasticsearch
+          InstanceCount: 2
+          DedicatedMasterEnabled: true
+          ZoneAwarenessEnabled: true
+        ElasticsearchVersion: "5.5"

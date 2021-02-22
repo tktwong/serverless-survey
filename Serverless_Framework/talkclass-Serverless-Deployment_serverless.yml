@@ -1,0 +1,457 @@
+
+
+service: talkclass
+
+provider:
+  name: aws
+  runtime: python2.7
+  environment:
+    #-----------------DynamoDB Environment--------
+    DYNAMO_USER_TABLE: Users
+    DYNAMO_CLASSROOMS_TABLE: Classrooms
+    DYNAMO_EVENTS_TABLE: Eventos
+    DYNAMO_MULTIMEDIA_TABLE: Multimedia
+    DYNAMO_USERSLOGGED_TABLE: Users_logged
+    #-----------------S3 Environment--------------
+    BUCKET_NAME: ${self:service}-tcbucket3332
+    #-----------------Auth0 Environment--------
+    AUTH0_DB_PARENT: Username-Password-Connection2
+    AUTH0_CLIENT_ID_PARENT: mMzOE026lgtsO6FzhIWjW3NvbQ0EAL8H
+    AUTH0_DB_TEACHER: Username-Password-Authentication
+    AUTH0_CLIENT_ID_TEACHER: 1Omp2yeIhGP3wOnqMNzgL5y18RUc5p80
+    AUTH0_URL_SESSION_0AUTH: https://talkclass.auth0.com/oauth/ro
+    AUTH0_URL_SESSION_DELEGATION: https://talkclass.auth0.com/delegation
+    AUTH0_URL_SIGNUP: https://talkclass.auth0.com/dbconnections/signup
+    #----------------AWS Rekognition-----------#
+    REK_MAX_LABEL: 6
+    #---------------API GATEWAY----------------#
+    PATH_BASE: talkclass
+    #-------------NAME PHOTO EVENT ------------#
+    PHOTO_EVENT_NAME: eventpicture
+    PHOTO_PROFILE_NAME: profile
+
+#----------------------------------------------- IAM POLICY----------------------------------------------------------
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+
+      Resource: "*"
+
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "*"
+
+    - Effect: "Allow"
+      Action:
+        - "sns:*"
+      Resource: "*"
+
+    - Effect: "Allow"
+      Action:
+        - "rekognition:*"
+      Resource: "*"
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+
+
+
+
+#----------------------------------------------- LAMBDA----------------------------------------------------------
+functions:
+  #---------------------------AUTHENTICATION-----------------
+  login:
+    handler: login_returning_profile_and_credentials.handler
+    environment:
+      #----AUTH0 URL-------
+      urlSessionOauth: ${self:provider.environment.AUTH0_URL_SESSION_0AUTH}
+      urlSessionDelegation: ${self:provider.environment.AUTH0_URL_SESSION_DELEGATION}
+      urlSignUp: ${self:provider.environment.AUTH0_URL_SIGNUP}
+      #---AUTH0 DB---------
+      clientIdTeacher: ${self:provider.environment.AUTH0_CLIENT_ID_TEACHER}
+      connectionTeacher: ${self:provider.environment.AUTH0_DB_TEACHER}
+      clientIdParent: ${self:provider.environment.AUTH0_CLIENT_ID_PARENT}
+      connectionParent: ${self:provider.environment.AUTH0_DB_PARENT}
+      #---Dynamo Tables--
+      tableUsersLogged: ${self:provider.environment.DYNAMO_USERSLOGGED_TABLE}
+      tableUsers: ${self:provider.environment.DYNAMO_USER_TABLE}
+    events:
+      - http:
+          path: ${self:provider.environment.PATH_BASE}/authentication
+          method: post
+          cors: true
+
+  #---------------------------CLASSROOMS----------------------
+
+  post_classroom:
+    # VIA API
+    handler: post_classroom.handler
+    environment:
+      #---Dynamo Tables--
+      tableClassroom: ${self:provider.environment.DYNAMO_CLASSROOMS_TABLE}
+      #----S3 Buckets------
+      originalBucket: ${self:provider.environment.BUCKET_NAME}
+      resizedBucket: ${self:provider.environment.BUCKET_NAME}-resized
+    events:
+      - http:
+          path: ${self:provider.environment.PATH_BASE}/classrooms
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  get_classrooms:
+    # VIA API
+    handler: get_classrooms.handler
+    environment:
+      #---Dynamo Tables--
+      tableClassroom: ${self:provider.environment.DYNAMO_CLASSROOMS_TABLE}
+      #----S3 Buckets------
+      originalBucket: ${self:provider.environment.BUCKET_NAME}
+      resizedBucket: ${self:provider.environment.BUCKET_NAME}-resized
+    events:
+      - http:
+          # Get Classrooms with or without queries level
+          # PE: /classrooms?level='Infantil'
+          path: ${self:provider.environment.PATH_BASE}/classrooms
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  get_classrooms_with_path_parameters:
+    # VIA API
+    handler: get_classrooms.handler_with_path_parameters
+    environment:
+      #---Dynamo Tables--
+      tableClassroom: ${self:provider.environment.DYNAMO_CLASSROOMS_TABLE}
+      #----S3 Buckets------
+      originalBucket: ${self:provider.environment.BUCKET_NAME}
+      resizedBucket: ${self:provider.environment.BUCKET_NAME}-resized
+    events:
+      - http:
+          # Using the resource /classrooms/infantil
+          path: ${self:provider.environment.PATH_BASE}/classrooms/{level}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  #-----------------------------EVENTS---------------------------
+  post_event:
+    # VIA API
+    handler: post_event.handler
+    environment:
+      #---Dynamo Tables--
+      tableClassroom: ${self:provider.environment.DYNAMO_CLASSROOMS_TABLE}
+      tableEvents: ${self:provider.environment.DYNAMO_EVENTS_TABLE}
+      #----S3 Buckets------
+      originalBucket: ${self:provider.environment.BUCKET_NAME}
+      resizedBucket: ${self:provider.environment.BUCKET_NAME}-resized
+      photo_event_name: ${self:provider.environment.PHOTO_EVENT_NAME}
+      #-----AWS Rekognition----#
+      maxLabel: ${self:provider.environment.REK_MAX_LABEL}
+
+    events:
+      - http:
+          path: ${self:provider.environment.PATH_BASE}/events
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  get_events:
+    # VIA API
+    handler: get_events.handler
+    environment:
+      #---Dynamo Tables--
+      tableEvents: ${self:provider.environment.DYNAMO_EVENTS_TABLE}
+    events:
+      - http:
+          # Get events with or without queries title, date. place or classroom_invited
+          # PE: /evets?username='halloween'
+          path: ${self:provider.environment.PATH_BASE}/events
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  get_event_with_path_parameters:
+    # VIA API
+    handler: get_events.handler_with_path_parameters
+    environment:
+      #---Dynamo Tables--
+      tableEvents: ${self:provider.environment.DYNAMO_EVENTS_TABLE}
+    events:
+      # Using the resource /events/fecha/halloween
+      - http:
+          path: ${self:provider.environment.PATH_BASE}/events/{date}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+      - http:
+          path: ${self:provider.environment.PATH_BASE}/events/{date}/{title}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  put_event_with_path_parameters:
+    # VIA API
+    handler: put_event.handler_with_path_parameters
+    environment:
+      #---Dynamo Tables--
+      tableEvents: ${self:provider.environment.DYNAMO_EVENTS_TABLE}
+      tableClassroom: ${self:provider.environment.DYNAMO_CLASSROOMS_TABLE}
+    events:
+      # Using the resource /events/fecha/halloween
+      - http:
+          path: ${self:provider.environment.PATH_BASE}/events/{date}/{title}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  #------------------------------MULTIMEDIA-----------------------
+  post_multimedia:
+    # VIA API
+    handler: post_multimedia.handler
+    environment:
+      #---Dynamo Tables--
+      tableUsersLogged: ${self:provider.environment.DYNAMO_USERSLOGGED_TABLE}
+      tableClassroom: ${self:provider.environment.DYNAMO_CLASSROOMS_TABLE}
+      tableUsers: ${self:provider.environment.DYNAMO_USER_TABLE}
+      tableEvents: ${self:provider.environment.DYNAMO_EVENTS_TABLE}
+      tableMultimedia: ${self:provider.environment.DYNAMO_MULTIMEDIA_TABLE}
+      #----S3 Buckets------
+      originalBucket: ${self:provider.environment.BUCKET_NAME}
+      resizedBucket: ${self:provider.environment.BUCKET_NAME}-resized
+      #-----AWS Rekognition----#
+      maxLabel: ${self:provider.environment.REK_MAX_LABEL}
+    events:
+      - http:
+          path: ${self:provider.environment.PATH_BASE}/multimedia
+          method: post
+          cors: true
+          authorizer: aws_iam
+  get_multimedia:
+    # VIA API
+    handler: get_multimedia.handler
+    environment:
+      #---Dynamo Tables--
+      tableMultimedia: ${self:provider.environment.DYNAMO_MULTIMEDIA_TABLE}
+    events:
+      - http:
+          path: ${self:provider.environment.PATH_BASE}/multimedia
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  #---------------------------- Users ------------------------
+  get_myprofile:
+    # VIA API
+    handler: get_my_profile.handler
+    environment:
+      #---Dynamo Tables--
+      tableUsersLogged: ${self:provider.environment.DYNAMO_USERSLOGGED_TABLE}
+      tableUsers: ${self:provider.environment.DYNAMO_USER_TABLE}
+    events:
+      - http:
+          path: ${self:provider.environment.PATH_BASE}/profile
+          method: post
+          cors: true
+  get_users:
+    # VIA API
+    handler: get_users.handler
+    environment:
+      #---Dynamo Tables--
+      tableUsers: ${self:provider.environment.DYNAMO_USER_TABLE}
+    events:
+      - http:
+          # Get users with or without queries username, email, classroom, phone, address, role
+          # PE: /users?role='parent'
+          path: ${self:provider.environment.PATH_BASE}/users/
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  get_user_with_path_parameters:
+    # VIA API
+    handler: get_users.handler_with_path_parameters
+    environment:
+      #---Dynamo Tables--
+      tableUsers: ${self:provider.environment.DYNAMO_USER_TABLE}
+    events:
+      - http:
+          # Using the resource /users/pepitoperez
+          path: ${self:provider.environment.PATH_BASE}/users/{username}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+
+  post_users:
+    # VIA API
+    handler: post_users.handler
+    environment:
+      #----AUTH0 URL-------
+      urlSessionOauth: ${self:provider.environment.AUTH0_URL_SESSION_0AUTH}
+      urlSessionDelegation: ${self:provider.environment.AUTH0_URL_SESSION_DELEGATION}
+      urlSignUp: ${self:provider.environment.AUTH0_URL_SIGNUP}
+
+      #---AUTH0 DB---------
+      clientIdTeacher: ${self:provider.environment.AUTH0_CLIENT_ID_TEACHER}
+      connectionTeacher: ${self:provider.environment.AUTH0_DB_TEACHER}
+      clientIdParent: ${self:provider.environment.AUTH0_CLIENT_ID_PARENT}
+      connectionParent: ${self:provider.environment.AUTH0_DB_PARENT}
+      #---Dynamo Tables--
+      tableClassroom: ${self:provider.environment.DYNAMO_CLASSROOMS_TABLE}
+      tableUsers: ${self:provider.environment.DYNAMO_USER_TABLE}
+      #----S3 Buckets------
+      originalBucket: ${self:provider.environment.BUCKET_NAME}
+      resizedBucket: ${self:provider.environment.BUCKET_NAME}-resized
+
+      photo_profile_name: ${self:provider.environment.PHOTO_PROFILE_NAME}
+    events:
+      - http:
+          path: ${self:provider.environment.PATH_BASE}/users
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  #----------------------------BY TRIGGERS------------------------
+  reduce:
+    handler: reduce.handler
+#    events:
+#      - s3:
+#          bucket: originalbucket
+#          event: s3:ObjectCreated:*
+  sendnotification:
+    handler: SendNotification.handler
+    environment:
+      #---Dynamo Tables--
+      tableClassroom: ${self:provider.environment.DYNAMO_CLASSROOMS_TABLE}
+
+
+
+#---------------------------------------------- RESOURCES-----------------------------------------------------
+resources:
+  Resources:
+  #------------------------S3 Resources ------------------------------
+    S3BucketOriginalbucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.BUCKET_NAME}
+    S3BucketResizedbucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.BUCKET_NAME}-resized
+  #------------------------ Resources ------------------------------
+    UserTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: Username
+            AttributeType: S
+
+        KeySchema:
+          -
+            AttributeName: Username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMO_USER_TABLE}
+
+    UsersLoggedTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: Username
+            AttributeType: S
+
+        KeySchema:
+          -
+            AttributeName: Username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMO_USERSLOGGED_TABLE}
+
+    ClassroomsTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: Class
+            AttributeType: S
+          -
+            AttributeName: Level
+            AttributeType: S
+
+        KeySchema:
+          -
+            AttributeName: Class
+            KeyType: HASH
+          -
+            AttributeName: Level
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMO_CLASSROOMS_TABLE}
+
+    MultimediaTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: Picture Key
+            AttributeType: S
+
+        KeySchema:
+          -
+            AttributeName: Picture Key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMO_MULTIMEDIA_TABLE}
+    EventsTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: Title
+            AttributeType: S
+          -
+            AttributeName: Date
+            AttributeType: S
+
+        KeySchema:
+          -
+            AttributeName: Title
+            KeyType: HASH
+          -
+            AttributeName: Date
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMO_EVENTS_TABLE}

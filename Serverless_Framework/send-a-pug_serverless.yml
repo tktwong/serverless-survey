@@ -1,0 +1,178 @@
+service: jerk-service # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+plugins:
+  modules:
+    - serverless-cf-vars
+    - serverless-appsync-plugin
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${opt:region, "us-west-2"}
+  stage: ${opt:stage, "dev"}
+  environment:
+    TWITCH_CLIENT_ID: l9ry5f7b21xi9lsmjh21nef9issxce
+    USER_POOL_ID: { Ref: CognitoUserPoolUsers }
+    USER_POOL_CLIENT_ID: { Ref: WebUserPoolClient }
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "cognito-idp:AdminCreateUser"
+        - "cognito-idp:AdminInitiateAuth"
+        - "cognito-idp:AdminRespondToAuthChallenge"
+        - "cognito-idp:AdminGetUser"
+        - "cognito-idp:AdminConfirmSignUp"
+        - "cognito-idp:AdminUpdateUserAttributes"
+      Resource: { Fn::GetAtt: [CognitoUserPoolUsers, Arn] }
+    - Effect: "Allow"
+      Action:
+        - "kinesis:PutRecord"
+      Resource: { Fn::GetAtt: [KinesisStream, Arn] }
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource:
+        - "arn:aws:logs:#{AWS::Region}:#{AWS::AccountId}:*"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:BatchGetItem
+      Resource: { Fn::GetAtt: [LeadersTable, Arn] }
+custom:
+  api: ${self:provider.stage}-jerk
+
+  appSync:
+    name: ${self:custom.api}
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      defaultAction: ALLOW
+      userPoolId: { Ref: CognitoUserPoolUsers }
+    schema: ../shared/schema.graphql
+    logConfig:
+      loggingRoleArn: { Fn::GetAtt: [AppSyncLoggingServiceRole, Arn] }
+      level: ALL
+    mappingTemplates:
+      - dataSource: createJerk
+        type: Mutation
+        field: createJerk
+        request: "jerks-request-mapping-template.vtl"
+        response: "jerks-response-mapping-template.vtl"
+      - dataSource: Leaders
+        type: Query
+        field: listLeaders
+        request: "leaderboard-request-mapping-template.vtl"
+        response: "leaderboard-response-mapping-template.vtl"
+    dataSources:
+      - type: AWS_LAMBDA
+        name: createJerk
+        config:
+          lambdaFunctionArn: { Fn::GetAtt: ["CreateJerkLambdaFunction", Arn] }
+      - type: AMAZON_DYNAMODB
+        name: Leaders
+        description: "Leaders table"
+        config:
+          tableName: { Ref: LeadersTable }
+
+resources:
+  Resources:
+    AppSyncLoggingServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.api}-AppSyncLoggingServiceRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: "appsync.amazonaws.com"
+              Action: "sts:AssumeRole"
+        Policies:
+          - PolicyName: CloudWatchLogsAccess
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Action:
+                    - "logs:CreateLogGroup"
+                    - "logs:CreateLogStream"
+                    - "logs:PutLogEvents"
+                  Effect: Allow
+                  Resource:
+                    - "arn:aws:logs:#{AWS::Region}:#{AWS::AccountId}:*"
+
+    CognitoUserPoolUsers:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:custom.api}
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: true
+        AliasAttributes:
+          - preferred_username
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 6
+            RequireLowercase: false
+            RequireUppercase: false
+            RequireNumbers: false
+            RequireSymbols: false
+        MfaConfiguration: OFF
+
+    WebUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:custom.api}-web
+        ExplicitAuthFlows:
+          - ADMIN_NO_SRP_AUTH
+        GenerateSecret: false
+        UserPoolId: { Ref: CognitoUserPoolUsers }
+
+    KinesisStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${self:custom.api}-stream
+        ShardCount: 1
+
+    LeadersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.api}-leaders
+        AttributeDefinitions:
+          - AttributeName: streamer_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: streamer_id
+            KeyType: HASH
+
+        BillingMode: PAY_PER_REQUEST
+
+functions:
+  hello:
+    handler: handler.hello
+    environment:
+      JERK_TWITCH_SECRET: ${ssm:jerkTwitchSecret}
+    events:
+      - http:
+          path: users/twitch-auth
+          method: post
+          cors: true
+
+  createJerk:
+    handler: createJerk.handler
+    environment:
+      JERK_STREAM: { Ref: KinesisStream }
+
+  aggregateJerk:
+    handler: aggregateJerk.handler
+    environment:
+      LEADERS_TABLE: { Ref: LeadersTable }

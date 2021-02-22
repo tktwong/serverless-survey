@@ -1,0 +1,143 @@
+service: api-payments
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin
+  - serverless-domain-manager
+  - serverless-prune-plugin
+
+custom:
+  domains:
+    default: ${self:service}.${opt:stage, 'sandpit'}.cloud.spacenow.com
+    prod: ${self:service}.spacenow.com
+  subnet:
+    sandpit:
+      privateA: subnet-0c75bbd1ea60481d4
+      privateB: subnet-070ac699acd775765
+      privateC: subnet-0eca793083726120c
+    prod:
+      privateA: subnet-04d5af2458ebdabbf
+      privateB: subnet-010ee1d571a9ca82c
+      privateC: subnet-069abf1da82eb3acc
+  securityGroup:
+    sandpit: sg-0dbf2b9d996f4c91e
+    prod: sg-00b4a2172f7e29276
+  customDomain:
+    domainName: ${self:custom.domains.${opt:stage, 'sandpit'}, self:custom.domains.default}
+    basePath: ""
+    stage: ${opt:stage, 'sandpit'}
+    certificateArn: ${ssm:/${opt:stageCert, 'SANDPIT'}/ACM_CERTIFICATE}
+    createRoute53Record: true
+    endpointType: "regional"
+  prune:
+    automatic: true
+    number: 5
+
+dotenv:
+  path: ./.env
+  basePath: ./
+  include:
+    - DATABASE_SCHEMA
+    - DATABASE_HOST
+    - DATABASE_USERNAME
+    - DATABASE_PASSWORD
+    - REDIS_HOST
+    - STRIPE_SECRET_KEY
+    - API_BOOKING
+    - EMAILS_API
+    - NEW_LISTING_PROCESS_HOST
+    - S3_BUCKET
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  timeout: 20
+  versionFunctions: false
+  stage: ${opt:stage, 'sandpit'}
+  region: ap-southeast-2
+  vpc:
+    securityGroupIds:
+      - ${self:custom.securityGroup.${opt:stage, 'sandpit'}}
+    subnetIds:
+      - ${self:custom.subnet.${opt:stage, 'sandpit'}.privateA}
+      - ${self:custom.subnet.${opt:stage, 'sandpit'}.privateB}
+      - ${self:custom.subnet.${opt:stage, 'sandpit'}.privateC}
+  environment:
+    DATABASE_SCHEMA: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/DATABASE_SCHEMA~true}
+    DATABASE_HOST: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/DATABASE_HOST~true}
+    DATABASE_USERNAME: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/DATABASE_USER~true}
+    DATABASE_PASSWORD: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/DATABASE_PASSWORD~true}
+    REDIS_HOST: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/REDIS_HOST~true}
+    STRIPE_SECRET_KEY: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/STRIPE_SECRET_KEY~true}
+    API_BOOKING: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/API_BOOKING~true}
+    EMAILS_API: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/EMAILS_API~true}
+    NEW_LISTING_PROCESS_HOST: ${ssm:/${opt:stageCert, 'SANDPIT'}/SPACENOW/NEW_LISTING_PROCESS_HOST~true}
+
+functions:
+  getPaymentAccountByUserId:
+    handler: src/functions/getPaymentAccountByUserId.main
+    memorySize: 1024
+    events:
+      - http:
+          path: payments/{userId}/account
+          method: get
+          cors: true
+  createPaymentAccountByUserId:
+    handler: src/functions/createPaymentAccountByUserId.main
+    memorySize: 1024
+    events:
+      - http:
+          path: payments/{userId}/account
+          method: post
+          cors: true
+  deletePaymentAccountByUserId:
+    handler: src/functions/deletePaymentAccountByUserId.main
+    memorySize: 1024
+    events:
+      - http:
+          path: payments/{userId}/account
+          method: delete
+          cors: true
+  getPaymentCardByUserId:
+    handler: src/functions/getPaymentCardByUserId.main
+    memorySize: 1024
+    events:
+      - http:
+          path: payments/{userId}/card
+          method: get
+          cors: true
+  createPaymentCardByUserId:
+    handler: src/functions/createPaymentCardByUserId.main
+    memorySize: 1024
+    events:
+      - http:
+          path: payments/{userId}/card
+          method: post
+          cors: true
+  deletePaymentCardByUserId:
+    handler: src/functions/deletePaymentCardByUserId.main
+    memorySize: 1024
+    events:
+      - http:
+          path: payments/{userId}/card/{cardId}
+          method: delete
+          cors: true
+  updateDefaultPaymentCard:
+    handler: src/functions/updateDefaultPaymentCard.main
+    memorySize: 1024
+    events:
+      - http:
+          path: payments/{userId}/card/{cardId}/default
+          method: put
+          cors: true
+  createPayment:
+    handler: src/functions/createPayment.main
+    memorySize: 2048
+    events:
+      - http:
+          path: payments/{userId}/create
+          method: post
+          cors: true
+
+resources:
+  - ${file(src/resources/api-gateway-errors.yml)}

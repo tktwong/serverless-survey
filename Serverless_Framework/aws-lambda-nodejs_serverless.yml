@@ -1,0 +1,98 @@
+service: aws-lambda-nodejs
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  timeout: 30
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:DeleteLogGroup
+        - logs:GetLogGroupFields
+        - logs:*
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:logs:::'
+            - '/*'
+            - Ref: ServerlessDeploymentBucket
+    - Effect: Allow
+      Action:
+        - s3:CreateBucket
+        - s3:DeleteBucket
+        - s3:Get*
+        - s3:List*
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - '/*'
+            - Ref: ServerlessDeploymentBucket
+    - Effect: Allow
+      Action:
+        - cloudformation:Describe*
+        - cloudformation:List*
+        - cloudformation:Get*
+        - cloudformation:CreateStack
+        - cloudformation:UpdateStack
+        - cloudformation:DeleteStack
+        - cloudformation:ValidateTemplate
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:cloudformation:::'
+            - '/*'
+            - Ref: ServerlessDeploymentBucket
+
+functions:
+  populate:
+    handler: user/populate.populate
+    events:
+      - http:
+          path: populate
+          method: post
+          cors: true
+
+  list:
+    handler: user/list.list
+    events:
+      - http:
+          path: list
+          method: get
+          cors: true
+
+  query:
+    handler: user/query.query
+    events:
+      - http:
+          path: query
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: 'id'
+            AttributeType: 'S'
+
+        KeySchema:
+          -
+            AttributeName: 'id'
+            KeyType: 'HASH'
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

@@ -1,0 +1,61 @@
+service: my-service
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-central-1
+
+plugins:
+  - serverless-bundle
+  - serverless-offline
+
+package:
+  individually: true
+  excludeDevDependencies: true
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  bundle:
+    packager: yarn
+    tsConfig: '../../tsconfig.json'
+
+functions:
+  myLambda:
+    handler: lambda/my_lambda/index.handler
+    timeout: 30
+    memorySize: 128
+    role: lambdaRole
+    events:
+      - http:
+          path: send
+          method: POST
+          private: true
+
+resources:
+  Resources:
+    lambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:logs"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "log-group:/aws/lambda/*:*:*"
+            PolicyName: log

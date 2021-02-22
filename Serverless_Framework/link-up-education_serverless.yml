@@ -1,0 +1,141 @@
+# NOTE: update this with your service name
+service: lab-partner-app
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: ca-central-1
+
+  environment:
+    userTable: process.env.userTable
+    classTable: process.env.classTable
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource: "arn:aws:dynamodb:ca-central-1:*:*"
+
+functions:
+  createUser:
+    handler: 'src/handlers/users.main'
+    events:
+      - http:
+          path: create-user
+          method: post
+          cors: true
+
+  createClass: 
+    handler: 'src/handlers/classes.create'
+    events:
+      - http:
+          path: create-class
+          method: post
+          cors: true
+          # authorizer: aws_iam
+
+  getAllClasses:
+    handler: 'src/handlers/classes.get_all'
+    events:
+      - http:
+          path: classes
+          method: get
+          cors: true
+          # authorizer: aws_iam
+
+  getAllFaculties:
+    handler: 'src/handlers/classes.get_all_faculties'
+    events:
+      - http:
+          path: classes/get-faculties
+          method: get
+          cors: true
+          # authorizer: aws_iam
+          
+  getClassesFaculty:
+    handler: 'src/handlers/classes.get_faculty'
+    events:
+      - http:
+          path: classes/faculty/{id}
+          method: get
+          cors: true
+          # authorizer: aws_iam
+          
+  getClassesID:
+    handler: 'src/handlers/classes.get_id'
+    events:
+      - http:
+          path: classes/{id}
+          method: get
+          cors: true
+          # authorizer: aws_iam
+
+  createPost:
+    handler: 'src/handlers/classes.create_post'
+    events:
+      - http:
+          path: classes/{id}
+          method: put
+          cors: true
+          # authorizer: aws_iam
+      
+resources:
+  Resources:
+    usersTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: "userId"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "userId"
+          KeyType: "HASH"
+        BillingMode: PAY_PER_REQUEST
+        TableName: linkup-users
+    classesTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: "classId"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "classId"
+          KeyType: "HASH"
+        BillingMode: PAY_PER_REQUEST
+        TableName: linkup-classes
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+    GatewayResponseDefault5XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_5XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'

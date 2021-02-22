@@ -1,0 +1,125 @@
+service: FeedSNSTuto
+provider:
+  name: aws
+  stage: ${opt:stage}
+  region: ${opt:region}
+  runtime: nodejs12.x
+  profile: ${opt:iamProfile}
+  environment:
+    FeedSNSTopicARN:
+      Ref: FeedSNSTopic
+    FeedSNSDLQArn:
+      Fn::GetAtt: 
+      - FeedSNSDLQ
+      - "Arn"    
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - logs:CreateLogGroup
+      Resource: 'arn:aws:logs:*:*:*'   
+
+functions:
+  sendSNSFeed:
+    handler: sendSNSFeed/src/handler.sendSNSMFeed
+    layers: 
+     - ${opt:commonLibArn}
+    package:
+      include:
+       - sendSNSFeed/**     
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - sns:Publish
+      Resource:
+        Ref: FeedSNSTopic
+    events:
+     - http:
+        path: /sendSNSFeed
+        method: POST
+        cors: true
+        authorizer:
+         arn: ${opt:userPoolArn}
+
+  subscribeSNSFeed:
+    handler: subscribeSNSFeed/src/handler.subscribeSNSFeed
+    layers: 
+      - ${opt:commonLibArn}
+    package:
+      include:
+       - subscribeSNSFeed/**         
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - sns:Subscribe
+      Resource:
+        Ref: FeedSNSTopic     
+    events:
+     - http:
+        path: /subscribe
+        method: PUT
+        cors: true
+        authorizer:
+         arn: ${opt:userPoolArn}     
+
+  unSubscribeSNSFeed:
+      handler: unSubscribeSNSFeed/src/handler.unSubscribeSNSFeed
+      layers: 
+        - ${opt:commonLibArn}
+      package:
+        include:
+        - unSubscribeSNSFeed/**        
+      iamRoleStatementsInherit: true
+      iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+        - SNS:UnSubscribe
+        - SNS:ListSubscriptionsByTopic 
+        Resource:
+          Ref: FeedSNSTopic     
+      events:
+      - http:
+          path: /unSubscribe
+          method: DELETE
+          cors: true
+          authorizer:
+            arn: ${opt:userPoolArn}
+
+  lambdaSnsSubscriber:
+      handler: lambdaSnsSubscriber/src/handler.lambdaSnsSubscriber
+      layers: 
+        - ${opt:commonLibArn}
+      package:
+        include:
+        - lambdaSnsSubscriber/**            
+      events:
+        - sns:
+            arn: 
+              Ref: FeedSNSTopic
+            topicName: SNSFeed-${opt:stage}
+            redrivePolicy:
+              deadLetterTargetRef: FeedSNSDLQ
+
+package:
+  individually: true
+  exclude:
+    - '*/**'
+
+resources:
+  Resources:
+    FeedSNSTopic:
+      Type: AWS::SNS::Topic
+      Properties: 
+        DisplayName: SNS for feed sent by user
+        TopicName: SNSFeed-${opt:stage}
+    FeedSNSDLQ:
+          Type: AWS::SQS::Queue
+          Properties:
+            QueueName: SNSFeedDLQ-${opt:stage}
+    
+
+plugins:
+  - serverless-iam-roles-per-function
+  
+    

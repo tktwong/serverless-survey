@@ -1,0 +1,214 @@
+service:
+  name: sls-blog-app
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-plugin-tracing
+provider:
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-central-1'}
+
+  environment:
+    BLOG_TABLE: blog-${self:provider.stage}
+    BLOG_CREATEDAT_INDEX: blog-created-at-index-${self:provider.stage}
+    BLOG_S3_BUCKET: sls-blog-laurent-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+    JSON_WEBKEY_SET_ENDPOINT: https://dev-bo9vxw93.eu.auth0.com/.well-known/jwks.json
+
+iamRoleStatements:
+  - Effect: "Allow" # xray permissions (required)
+    Action:
+      - "xray:PutTraceSegments"
+      - "xray:PutTelemetryRecords"
+    Resource:
+      - "*"
+
+functions:
+
+  # Authorizer
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  # Get All Blogs
+  GetAllBlogs:
+    handler: src/lambda/http/getAllBlogs.handler
+    events:
+      - http:
+          method: get
+          path: blogs
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: 
+          arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BLOG_TABLE}/index/${self:provider.environment.BLOG_CREATEDAT_INDEX}
+
+  # Get Blog
+  GetBlog:
+    handler: src/lambda/http/getBlog.handler
+    events:
+      - http:
+          method: get
+          path: blogs/{blogId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: 
+          arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BLOG_TABLE}
+
+  # Create
+  CreateBlog:
+    handler: src/lambda/http/createBlog.handler
+    events:
+      - http:
+          method: post
+          path: blogs
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          request:
+            schema:
+              application/json: ${file(models/create-blog-request.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: 
+          arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BLOG_TABLE}
+
+  # Update
+  UpdateBlog:
+    handler: src/lambda/http/updateBlog.handler
+    events:
+      - http:
+          method: patch
+          path: blogs/{blogId}
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          request:
+            schema:
+              application/json: ${file(models/update-blog-request.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: 
+          arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BLOG_TABLE}
+
+
+  # Delete
+  DeleteBlog:
+    handler: src/lambda/http/deleteBlog.handler
+    events:
+      - http:
+          method: delete
+          path: blogs/{blogId}
+          authorizer: Auth
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:DeleteItem
+        Resource: 
+          arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.BLOG_TABLE}
+
+  # Gen Upload Url
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: blogs/{blogId}/attachment
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: 
+          arn:aws:s3:::${self:provider.environment.BLOG_S3_BUCKET}/*
+
+resources:
+  Resources:
+    BlogDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: blogId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: blogId
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.BLOG_CREATEDAT_INDEX}
+            KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.BLOG_TABLE}
+
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.BLOG_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.BLOG_S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket
+        
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator 
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true 
+        ValidateRequestParameters: false

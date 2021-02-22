@@ -1,0 +1,60 @@
+service:
+  name: noticonn-api
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  defaultStage: dev
+  profiles:
+    dev: noticonn-dev
+    prd: noticonn
+  env:
+    dev: ${file(./serverless/env/dev.yml)}
+    prd: ${file(./serverless/env/prd.yml)}
+  functions:
+    save:
+      dev: ${file(./serverless/functions/save/dev.yml)}
+      prd: ${file(./serverless/functions/save/prd.yml)}
+  secret:
+    slack: ${file(./serverless/secret/slack.yml)}
+    map: ${file(./serverless/secret/map.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ap-northeast-1
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  timeout: 60
+  environment:
+    BUCKET: ${self:custom.env.${self:provider.stage}.BUCKET}
+    EVENT_FILE: ${self:custom.env.${self:provider.stage}.EVENT_FILE}
+    SINCE_ID_FILE: ${self:custom.env.${self:provider.stage}.SINCE_ID_FILE}
+    ENV: ${self:custom.env.${self:provider.stage}.ENV}
+    HOOKS_URL: ${self:custom.secret.slack.HOOKS_URL}
+    MAP_API_KEY: ${self:custom.secret.map.MAP_API_KEY}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::${self:custom.env.${self:provider.stage}.BUCKET}/*" # add
+
+functions:
+  getEvents:
+    handler: src/handler/event.getEvents
+    package:
+      include:
+        - src/**
+    events:
+      - http:
+          method: get
+          path: events
+    timeout: 60
+  save:
+    ${self:custom.functions.save.${self:provider.stage}}

@@ -1,0 +1,67 @@
+# Welcome to Serverless!
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+
+service: promesometro-ws
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-2
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:PutItem"
+        - "dynamodb:GetItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:Scan"
+        - "dynamodb:GetShardIterator"
+        - "dynamodb:DescribeStream"
+        - "dynamodb:ListStreams"
+        - "dynamodb:GetRecords"
+      Resource:
+        - Fn::GetAtt: [WsConnectionsTable, Arn]
+    - Effect: "Allow"
+      Action:
+        - "execute-api:ManageConnections"
+      Resource:
+        - "arn:aws:execute-api:*:*:**/@connections/*"
+
+functions:
+  connectionHandler:
+    handler: handler.connectionHandler
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+  defaultHandler:
+    handler: handler.defaultHandler
+    events:
+      - websocket:
+          route: $default
+  sendMessageHandler:
+    handler: handler.sendMessageHandler
+    events:
+      - websocket:
+          route: sendMessage
+  updateTableHandler:
+    handler: handler.updateTableHandler
+    events:
+      - stream: arn:aws:dynamodb:us-east-2:163232894117:table/promesometro-tweets/stream/2019-05-18T23:28:58.424
+
+resources:
+  Resources:
+    WsConnectionsTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "connectionId"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "connectionId"
+            KeyType: "HASH"
+        BillingMode: PAY_PER_REQUEST
+        TableName: websocketConnections

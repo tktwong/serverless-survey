@@ -1,0 +1,66 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: mudgateway-admin # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  runtime: nodejs8.10
+  environment:
+    TABLE_PREFIX: mudgateway-api-${self:provider.stage}-
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:PutItem
+        - dynamodb:Scan
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_PREFIX}*"
+    - Effect: Allow
+      Action:
+        - ec2:RunInstances
+      Resource: "arn:aws:ec2:*:*:*"
+
+custom:
+  prod_siteName: admin.mudgateway.com
+  dev_siteName: admin-dev.mudgateway.com
+  siteName: ${self:custom.${self:provider.stage}_siteName}
+  customDomain:
+    domainName: ${self:custom.siteName}
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  prod:
+      schedule: cron(30 10 * * ? *)
+  dev:
+      schedule:
+
+functions:
+  #spawn:
+    #handler: handler.spawn
+    #events:
+    #  - schedule: ${self:custom.${self:provider.stage}.schedule}
+        
+  app:
+    handler: index.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+plugins:
+  - serverless-domain-manager

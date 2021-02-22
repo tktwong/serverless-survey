@@ -1,0 +1,75 @@
+service: comments-service
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${opt:stage, 'dev'}
+  region: ap-southeast-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+      Resource: "arn:aws:s3:::${self:custom.inbox}/*"
+
+custom:
+  webpackIncludeModules: true
+  inbox: ${self:provider.stage}-rps-inbox
+  output:
+    file: .serverless/output.json
+
+functions:
+  getComment:
+    handler: src/handler.getComment
+    events:
+      - http:
+          path: comments/{id}
+          method: get
+    environment:
+      ENDPOINT: https://jsonplaceholder.typicode.com/comments/
+      INBOX: ${self:custom.inbox}
+      PREFIX: comments
+      LOCALPATH: /tmp
+  commentParser:
+    handler: src/handler.parseComment
+ 
+resources:
+  Resources:
+    S3BucketInbox:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.inbox}
+        LifecycleConfiguration:
+          Rules:
+            - ExpirationInDays: 3
+              Status: Enabled
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: "s3:ObjectCreated:*"
+              Function:
+                "Fn::GetAtt": [ CommentParserLambdaFunction, Arn ]
+              Filter:
+                S3Key:
+                  Rules:
+                    -
+                      Name: suffix
+                      Value: .json
+                    -
+                      Name: prefix
+                      Value: comments/
+
+    CommentParserLambdaPermissionInboxS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: 
+          "Fn::GetAtt": [ CommentParserLambdaFunction, Arn ]
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount: 
+          Ref: AWS::AccountId
+        SourceArn: arn:aws:s3:::${self:custom.inbox}
+            
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-stack-output

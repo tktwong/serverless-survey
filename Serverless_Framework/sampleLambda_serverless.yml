@@ -1,0 +1,71 @@
+service: samplelambda
+frameworkVersion: "2"
+
+custom:
+  stage: dev
+  region: eu-west-1
+  s3Bucket: sample-lambda-sqs
+  thundra_apiKey: ${ssm:/aws/reference/secretsmanager/defaultThundraApiKey~true}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+      Resource:
+        Fn::GetAtt:
+          - lambdaPayload
+          - Arn
+    - Effect: "Allow"
+      Action:
+        - "s3:Put*"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - "Ref": "lambdaBucket"
+            - "/*"
+functions:
+  sqsWrite:
+    handler: api/sqsWrite.push
+    memorySize: 128
+    description: Send the payload to the SQS Queue
+    environment:
+      SQS_URL:
+        Ref: lambdaPayload
+      thundra_apiKey: ${self:custom.thundra_apiKey.THUNDRA_APIKEY}
+    events:
+      - http:
+          path: /sqs
+          method: post
+  s3Upload:
+    handler: api/s3Upload.push
+    memorySize: 128
+    description: Upload the message to S3
+    environment:
+      S3_BUCKET:
+        Ref: lambdaBucket
+      thundra_apiKey: ${self:custom.thundra_apiKey.THUNDRA_APIKEY}
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - lambdaPayload
+              - Arn
+          batchSize: 1
+resources:
+  Resources:
+    lambdaPayload:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: lambdaPayload
+    lambdaBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: BucketOwnerFullControl
+        BucketName: ${self:custom.s3Bucket}-${self:service}

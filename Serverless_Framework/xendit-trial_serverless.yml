@@ -1,0 +1,122 @@
+service: xendit-trial
+
+plugins:
+  - serverless-plugin-typescript
+
+custom:
+  myStage: ${opt:stage, self:provider.stage}
+  myEnvironment:
+    REGIONENV:
+      prod: "ap-southeast-2"
+      dev: "us-east-1"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    REGIONENV: ${self:custom.myEnvironment.REGIONENV.${self:custom.myStage}}
+    STAGEENV: ${self:custom.myStage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - lambda:InvokeFunction 
+      Resource: "*"
+
+functions:
+  create-notification-type:
+    handler: src/controller/notificationType.createNotificationType
+    description: Create notification types.
+    memorySize: 128
+    events:
+      - http:
+          path: notifications-types
+          method: post
+  get-notification-type:
+    handler: src/controller/notificationType.getNotificationTypes
+    description: get notification types.
+    memorySize: 128
+    events:
+      - http:
+          path: notifications-types
+          method: get
+  create-webhook:
+    handler: src/controller/webhook.createWebhook
+    description: Create webhook.
+    memorySize: 128
+    events:
+      - http:
+          path: webhook
+          method: post
+  get-user-webhook:
+    handler: src/controller/webhook.getUserWebhook
+    description: Get user webhook.
+    memorySize: 128
+    events:
+      - http:
+          path: webhook
+          method: get
+          request:
+            parameters:
+              querystrings:
+                user_id: true
+  user-test-webhook:
+    handler: src/controller/webhook.userTestWebhook
+    description: Get user webhook.
+    memorySize: 128
+    events:
+      - http:
+          path: webhook/test
+          method: post
+  webhook-caller:
+    handler: src/controller/webhook.webhookCaller
+    description: Get user webhook.
+    memorySize: 128
+
+resources: # CloudFormation template syntax from here on.
+  Resources:
+    notificationsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: notification-table
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: gsi-pk1
+            AttributeType: S
+          - AttributeName: gsi-sk1
+            AttributeType: S
+          - AttributeName: gsi-pk2
+            AttributeType: S
+          - AttributeName: gsi-sk2
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: gsi1
+            KeySchema:
+              - AttributeName: gsi-pk1
+                KeyType: HASH
+              - AttributeName: gsi-sk1
+                KeyType: RANGE
+            Projection:
+              ProjectionType: "ALL"
+          - IndexName: gsi2
+            KeySchema:
+              - AttributeName: gsi-pk2
+                KeyType: HASH
+              - AttributeName: gsi-sk2
+                KeyType: RANGE
+            Projection:
+              ProjectionType: "ALL"
+        BillingMode: PAY_PER_REQUEST
+        

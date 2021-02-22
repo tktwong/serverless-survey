@@ -1,0 +1,109 @@
+
+
+service: api-image-mgr
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  lambdaHashingVersion: 20201221
+  stage: dev
+  region: us-east-1
+  memorySize: 128
+
+plugins:
+  - serverless-webpack
+  - serverless-stack-output
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+custom: # Add custom section and include webpack configuration
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    includeModules: false
+  output:
+    handler: scripts/output.handler # Same syntax as you already know
+    file: scripts/stack.json # toml, yaml, yml, and json format is available
+  stage: ${self:provider.stage}
+  ImageBucket:
+    name: Image-bucket-ecs-${self:custom.stage}
+  ImageUserPool:
+    name: ecs_image_user_pool-${self:custom.stage}
+  ImageUserPoolClient:
+    name: ecs_image_pool_client-${self:custom.stage}
+  ImageIdentityPool:
+    name: ecs_image_identity_pool-${self:custom.stage}
+  ImageAuthRole: 
+    name: UserImageAuthRole-${self:custom.stage}
+  ImageAuthorizedPolicy:
+    name: "UserImageAuthorizedPolicy-${self:custom.stage}"
+  ImageUnauthRole:
+    name: "UserImageUnauthRole-${self:custom.stage}"
+  ImageUnauthorizedPolicy:
+    name: "UserImageUnauthorizedPolicy-${self:custom.stage}"
+
+functions:
+  hello:
+    handler: handler.hello
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+    events:
+      - http:
+          path: /hello
+          method: get
+                
+resources:
+  Resources:
+    ImageBucket: ${file(resources/s3/UserImageBucket.yml):ImageBucket}
+    ImageBucketPolicy: ${file(resources/s3/UserImageBucketPolicy.yml):ImageBucketPolicy}
+    UserImageTable: ${file(resources/dynamodb/UserImageTable.yml):UserImageTable}
+    UserImageUserPool: ${file(resources/cognito/UserImageCognito.yml):UserImageUserPool}
+    UserImageUserPoolClient: ${file(resources/cognito/UserImageCognito.yml):UserImageUserPoolClient}
+    UserImageIdentityPool: ${file(resources/cognito/UserImageCognito.yml):UserImageIdentityPool}
+    UserImageIdentityPoolRoles: ${file(resources/cognito/UserImageCognito.yml):UserImageIdentityPoolRoles}
+    UserImageAuthRole: ${file(resources/cognito/UserImageCognito.yml):UserImageAuthRole}
+    UserImageUnauthRole: ${file(resources/cognito/UserImageCognito.yml):UserImageUnauthRole}
+  
+  Outputs:
+    ImageBucket:
+      Value: 
+        Ref: ImageBucket
+    UserImageUserPool:
+      Value: 
+        Ref: UserImageUserPool
+    AppClientId:
+      Value:
+        Ref: UserImageUserPoolClient

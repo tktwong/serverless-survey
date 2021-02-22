@@ -1,0 +1,82 @@
+service: Push
+
+
+provider:
+  name: aws
+  region: us-east-2
+  stage: DEV
+  runtime: nodejs10.x
+  role: arn:aws:iam::556332110707:role/LambdaBasicPrivileges
+  environment: ${self:custom.environments.${opt:stage, 'DEV'}}
+  deploymentBucket:
+    tags:
+      saas: ${self:custom.saasName}
+      stage: ${opt:stage, 'DEV'}
+      scope: global
+      type: push
+
+custom:
+  saasName: 'Push'
+  fcmServerKey: ${ssm:iqqa-push-fcm-serverKey~true}
+  accessKeyId: ${ssm:concise-accessKeyId~true}
+  secretAccessKey: ${ssm:concise-secretAccessKey~true}
+  region: ${ssm:concise-region~true}
+  pathToHandler: "compiled/src"
+  pathToJSFile: "src"
+  apiGatewayTags:
+    saas: ${self:custom.saasName}
+    stage: ${opt:stage, 'DEV'}
+    scope: global
+    type: push
+  environments:
+    DEV:
+      saasName: ${self:custom.saasName}
+      stage: 'DEV'
+      fcmServerKey: ${self:custom.fcmServerKey}
+      accessKeyId: ${self:custom.accessKeyId}
+      secretAccessKey: ${self:custom.secretAccessKey}
+      region: ${self:custom.region}
+    PROD:
+      saasName: ${self:custom.saasName}
+      stage: 'PROD'
+      fcmServerKey: ${self:custom.fcmServerKey}
+      accessKeyId: ${self:custom.accessKeyId}
+      secretAccessKey: ${self:custom.secretAccessKey}
+      region: ${self:custom.region}
+
+
+
+plugins:
+  - serverless-plugin-include-dependencies
+  - serverless-tag-api-gateway
+
+package:
+  individually: true
+  exclude:
+    - "*.*"
+    - "src/**"
+    - "compiled/**"
+    - "correctModuleNames.js"
+  include:
+    - "*.js"
+
+
+
+functions:
+
+  send:
+    handler: ${self:custom.pathToHandler}/send.handler
+    package:
+      include:
+      - "${self:custom.pathToJSFile}/send.js"
+    events:
+      - http:
+          path: send
+          method: post
+          cors: true
+    timeout: 30 # optional, in seconds, default is 6, if attached to API Gateway limited to 30
+    tags:
+      saas: ${self:custom.saasName}
+      stage: ${opt:stage, 'DEV'}
+      scope: global
+      type: push

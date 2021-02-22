@@ -1,0 +1,83 @@
+service: meetup-aws
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${self:custom.user}
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - s3:DeleteObject
+        - s3:GetObject
+        - s3:PutObject
+        - s3:GetBucketNotification
+        - s3:PutBucketNotification
+        - lambda:InvokeFunction
+      Resource:
+        - arn:aws:s3:::meetup-bucket-${self:custom.user}.MeetupBucket/*
+
+custom:
+  user: ${env:USER, 'levi9'}
+
+
+functions:
+  # lambda with api as trigger
+  api-triggered-lambda:
+    handler: dist/lambdas/api-triggered-lambda.HelloYou
+    events:
+      - http:
+          path: HelloYou
+          method: post
+    description: Lambda triggered by api gateway
+  # lambda with s3 as trigger
+  s3-triggered-lambda:
+    handler: dist/lambdas/s3-triggered-lambda.HelloYou
+    events:
+      - existingS3: 
+         bucket: MeetupBucket
+         events:
+           - s3:ObjectCreated:*
+         rules:
+           #- prefix: upload/  use if u want folder in bucket
+           - suffix: .jpg
+    description: Lambda triggered by placing file into S3
+  # lambda with SQS as trigger
+  sqs-triggered-lambda:
+    handler: dist/lambdas/sqs-triggered-lambda.HelloYou
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - MeetupQueue
+              - Arn
+    description: Lambda triggered by SQS message
+  # lambda without trigger
+  just-lambda:
+    handler: dist/lambdas/just-lambda.HelloYou
+    description: Lambda without trigger
+  # lambda with input
+  with-input-lambda:
+    handler: dist/lambdas/with-input-lambda.HelloYou
+    descripton: Lambda taht requires input
+
+resources:
+  Resources:
+    MeetupBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: meetup-bucket-${self:custom.user}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+    MeetupQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: meetup-queue-${self:custom.user}
+
+# this is dummy app do not expect miracles 
+#stepFunctions:
+  #stateMachines:

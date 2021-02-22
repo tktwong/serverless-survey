@@ -1,0 +1,720 @@
+service: netvote-api
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  appClientId: 6d5bgvo3j82eli47c36c00sreb
+  userPoolId: us-east-1_XGFVRW86R
+  adminUserPoolId: us-east-1_vLfOuHEEO
+  environment:
+    stage: ${self:provider.stage}
+
+functions:
+  adminAuthorizer:
+    role: adminAuthorizerRole
+    handler: authorizer/admin-authorizer.authorize
+    environment:
+      region: ${self:provider.region}
+      appClientId: ${self:provider.appClientId}
+      userPoolId: ${self:provider.userPoolId}
+
+  adminCheckAuthIds:
+    handler: admin/auth-id-check.check
+    role: adminApiRole
+    timeout: 30
+    events:
+      - http:
+          path: admin/election/{id}/key/check
+          method: post
+          private: true
+          cors: true
+          authorizer: adminAuthorizer
+
+  adminCreateVoterJwtToken:
+    handler: vote/create-token.createAsAdmin
+    role: adminApiRole
+    events:
+      - http:
+          path: admin/election/{id}/voter/auth/jwt
+          method: post
+          private: true
+          cors: true
+          authorizer: adminAuthorizer
+
+  createElection:
+    handler: admin/election-create.create
+    role: adminApiRole
+    events:
+      - http:
+          path: admin/election
+          method: post
+          cors: true
+          private: true
+          authorizer: adminAuthorizer
+
+  getElectionList:
+    handler: admin/election-list.get
+    role: adminApiRole
+    events:
+      - http:
+          path: admin/election
+          method: get
+          cors: true
+          private: true
+          authorizer: adminAuthorizer
+
+  setElectionStatus:
+    handler: admin/election-set-status.setStatus
+    role: adminApiRole
+    events:
+      - http:
+          path: admin/election/{id}/status
+          method: post
+          cors: true
+          private: true
+          authorizer: adminAuthorizer
+
+  getVoteTransactions:
+    handler: admin/election-votes.getVotes
+    role: adminApiRole
+    events:
+      - http:
+          path: admin/election/{id}/votes
+          method: get
+          cors: true
+          private: true
+          authorizer: adminAuthorizer
+
+  setElectionPublicJwt:
+    handler: admin/election-set-jwt.set
+    role: adminApiRole
+    events:
+      - http:
+          path: admin/election/{id}/jwt
+          method: post
+          cors: true
+          private: true
+          authorizer: adminAuthorizer
+
+  addVoterKeys:
+    handler: admin/auth-keys.add
+    role: adminApiRole
+    timeout: 30
+    events:
+      - http:
+          path: admin/election/{id}/keys
+          method: post
+          cors: true
+          private: true
+          authorizer: adminAuthorizer
+
+  addVoterEmails:
+    handler: admin/auth-emails.add
+    role: adminApiRole
+    events:
+      - http:
+          path: admin/election/{id}/emails
+          method: post
+          cors: true
+          private: true
+          authorizer: adminAuthorizer
+
+  jobLookup:
+    handler: admin/job-lookup.lookup
+    role: adminApiRole
+    events:
+      - http:
+          path: admin/job/{jobId}
+          method: get
+          cors: true
+          private: true
+          authorizer: adminAuthorizer
+
+  getElectionStats:
+    handler: public/get-election.stats
+    role: publicApiRole
+    events:
+      - http:
+          path: public/election/{id}/stats
+          method: get
+          private: true
+          cors: true
+
+  getElection:
+    handler: public/get-election.get
+    role: publicApiRole
+    events:
+      - http:
+          path: public/election/{id}
+          method: get
+          private: true
+          cors: true
+
+  verifyVoterEmail:
+    handler: email/auth-email.verifyEmail
+    role: voteAuthApiRole
+    events:
+      - http:
+          path: voter/election/{id}/email/verification
+          method: post
+          private: true
+          cors: true
+
+  confirmVoterEmail:
+    handler: email/auth-email.confirmEmail
+    role: voteAuthApiRole
+    events:
+      - http:
+          path: voter/election/{id}/email/confirmation
+          method: get
+
+  checkVoter:
+    handler: vote/check-vote.check
+    role: voteAuthApiRole
+    events:
+      - http:
+          path: voter/election/{id}/voter/check
+          method: post
+          private: true
+          cors: true
+  
+  createVoterJwtToken:
+    handler: vote/create-token.create
+    role: voteAuthApiRole
+    events:
+      - http:
+          path: voter/election/{id}/auth/{format}
+          method: post
+          private: true
+          cors: true
+
+  castVote:
+    handler: vote/cast-vote.cast
+    role: castVoteRole
+    events:
+      - http:
+          path: voter/election/{id}/vote
+          method: post
+          private: true
+          cors: true
+
+  voteJobLookup:
+    handler: vote/job-lookup.lookup
+    role: voteJobLookupRole
+    events:
+      - http:
+          path: public/job/{id}
+          method: get
+          private: true
+          cors: true
+
+  publicTally:
+    handler: public/tally-election.tally
+    role: tallyElectionRole
+    events:
+      - http:
+          path: public/election/{id}/results
+          method: get
+          private: true
+          cors: true
+
+
+  ipfsSave:
+    handler: ipfs/ipfs-api.save
+    role: ipfsWriterRole
+    timeout: 30
+    events:
+      - http:
+          path: ipfs
+          method: post
+          private: true
+          cors: true
+
+  ipfsGet:
+    handler: ipfs/ipfs-api.get
+    role: ipfsWriterRole
+    timeout: 30
+    events:
+      - http:
+          path: ipfs/{hash}
+          method: get
+          private: true
+          cors: true
+
+resources:
+  Resources:
+    adminApiRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /api/admin/
+        RoleName: AdminApiRole_${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: adminApiPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                  - Effect: Allow 
+                    Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    Resource: 
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                  - Effect: "Allow"
+                    Action:
+                      - "s3:PutObject"
+                    Resource:
+                      Fn::Join:
+                        - ""
+                        - - "arn:aws:s3:::"
+                          - "Ref" : "ServerlessDeploymentBucket"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:PutItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/nvAuditLog"                          
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:PutItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/voterKeys"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:PutItem
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/asyncJobs"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/tenants"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:UpdateItem
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/elections"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:Query
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/votes"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/authIds"
+                  - Effect: Allow
+                    Action:
+                      - lambda:InvokeFunction
+                    Resource: "arn:aws:lambda:us-east-1:891335278704:function:election-*"
+                  - Effect: Deny
+                    Action:
+                      - lambda:InvokeFunction
+                    Resource: "arn:aws:lambda:us-east-1:891335278704:function:election-cast-vote"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:Query
+                    Resource: "arn:aws:dynamodb:${self:provider.region}:891335278704:table/elections/index/*"
+                  - Effect: Allow
+                    Action:
+                      - kms:Decrypt
+                    Resource: "arn:aws:kms:us-east-1:891335278704:key/994f296e-ce2c-4f2b-8cef-48d16644af09"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/electionKeys"
+
+    publicApiRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /api/public/
+        RoleName: PublicApiRole_${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: publicApiPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                  - Effect: Allow 
+                    Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    Resource: 
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                  - Effect: "Allow"
+                    Action:
+                      - "s3:PutObject"
+                    Resource:
+                      Fn::Join:
+                        - ""
+                        - - "arn:aws:s3:::"
+                          - "Ref" : "ServerlessDeploymentBucket"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:Query
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/votes"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/elections"
+
+    voteAuthApiRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /api/vote/auth/
+        RoleName: VoteAuthApiRole_${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: voteAuthApiPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                  - Effect: Allow 
+                    Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    Resource: 
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                  - Effect: "Allow"
+                    Action:
+                      - "s3:PutObject"
+                    Resource:
+                      Fn::Join:
+                        - ""
+                        - - "arn:aws:s3:::"
+                          - "Ref" : "ServerlessDeploymentBucket"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:Query
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/votes"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/elections"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/electionKeys"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/voterKeys"
+                  - Effect: Allow
+                    Action:
+                      - kms:Decrypt
+                    Resource: "arn:aws:kms:us-east-1:891335278704:key/994f296e-ce2c-4f2b-8cef-48d16644af09"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:PutItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/authIds"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:PutItem
+                      - dynamodb:GetItem
+                      - dynamodb:UpdateItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/voterEmailAuthLinks"
+                  - Effect: Allow
+                    Action:
+                      - ses:SendEmail
+                    Resource: "arn:aws:ses:us-east-1:891335278704:identity/*"
+                  - Effect: Allow
+                    Action:
+                      - "s3:PutObject"
+                      - "s3:GetObject"
+                    Resource: "arn:aws:s3:::netvote-ipfs/*"   
+
+    voteJobLookupRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /api/vote/auth/
+        RoleName: VoteJobLookupRole_${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: voteJobLookupPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                  - Effect: Allow 
+                    Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    Resource: 
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                  - Effect: "Allow"
+                    Action:
+                      - "s3:PutObject"
+                    Resource:
+                      Fn::Join:
+                        - ""
+                        - - "arn:aws:s3:::"
+                          - "Ref" : "ServerlessDeploymentBucket"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/asyncJobs"
+
+    castVoteRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /api/vote/cast/
+        RoleName: CastVoteRole_${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: castVotePolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                  - Effect: Allow 
+                    Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    Resource: 
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                  - Effect: "Allow"
+                    Action:
+                      - "s3:PutObject"
+                    Resource:
+                      Fn::Join:
+                        - ""
+                        - - "arn:aws:s3:::"
+                          - "Ref" : "ServerlessDeploymentBucket"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/elections"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/electionKeys"
+                  - Effect: Allow
+                    Action:
+                      - kms:Decrypt
+                    Resource: "arn:aws:kms:us-east-1:891335278704:key/994f296e-ce2c-4f2b-8cef-48d16644af09"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:PutItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/asyncJobs"
+                  - Effect: Allow
+                    Action:
+                      - lambda:InvokeFunction
+                    Resource: "arn:aws:lambda:us-east-1:891335278704:function:election-cast-vote"
+                  - Effect: Allow
+                    Action:
+                      - "s3:PutObject"
+                      - "s3:GetObject"
+                    Resource: "arn:aws:s3:::netvote-ipfs/*"     
+
+    tallyElectionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /api/vote/cast/
+        RoleName: TallyElectionRole_${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: tallyElectionPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                  - Effect: Allow 
+                    Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    Resource: 
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                  - Effect: "Allow"
+                    Action:
+                      - "s3:PutObject"
+                    Resource:
+                      Fn::Join:
+                        - ""
+                        - - "arn:aws:s3:::"
+                          - "Ref" : "ServerlessDeploymentBucket"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/elections"
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:PutItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/asyncJobs"
+                  - Effect: Allow
+                    Action:
+                      - lambda:InvokeFunction
+                    Resource: "arn:aws:lambda:us-east-1:891335278704:function:election-tally"
+
+    adminAuthorizerRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /api/vote/cast/
+        RoleName: adminAuthorizerPolicyRole_${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: adminAuthorizerPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                  - Effect: Allow 
+                    Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    Resource: 
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                  - Effect: "Allow"
+                    Action:
+                      - "s3:PutObject"
+                    Resource:
+                      Fn::Join:
+                        - ""
+                        - - "arn:aws:s3:::"
+                          - "Ref" : "ServerlessDeploymentBucket"
+                  - Effect: Allow
+                    Action:
+                      - cognito-idp:AdminInitiateAuth
+                    Resource: "arn:aws:cognito-idp:us-east-1:891335278704:userpool/us-east-1_XGFVRW86R"     
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                    Resource: "arn:aws:dynamodb:us-east-1:891335278704:table/tenants"
+                    
+    ipfsWriterRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /api/ipfs/save/
+        RoleName: ipfsWriterRole_${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: ipfsWriterPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                  - Effect: Allow 
+                    Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    Resource: 
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                  - Effect: "Allow"
+                    Action:
+                      - "s3:PutObject"
+                    Resource:
+                      Fn::Join:
+                        - ""
+                        - - "arn:aws:s3:::"
+                          - "Ref" : "ServerlessDeploymentBucket"
+                  - Effect: Allow
+                    Action:
+                      - "s3:PutObject"
+                      - "s3:GetObject"
+                    Resource: "arn:aws:s3:::netvote-ipfs/*"     
+                    

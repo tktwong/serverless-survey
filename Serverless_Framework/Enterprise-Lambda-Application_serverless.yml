@@ -1,0 +1,93 @@
+frameworkVersion: ^2.21.1
+
+service: surfbank-api-deposito
+
+custom:
+  webpack:
+    config: ./webpack-config.js
+    series: true
+
+plugins:
+  #- '@hewmen/serverless-plugin-typescript'
+  - serverless-plugin-typescript
+  - serverless-plugin-optimize  
+  - serverless-offline
+  - serverless-plugin-webpack
+
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs12.x
+  stage: ${opt:stage,'dev'}
+  vpc:
+    securityGroupIds: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):SECURITY_GROUP_IDS}
+    subnetIds: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):SUBNET_IDS}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+        - sqs:GetQueueUrl
+      Resource: 
+        - Fn::GetAtt: [filaErros, Arn]
+
+  environment:
+    SURFBANK_DB_HOST: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):DB_HOST} 
+    SURFBANK_DB_PORTA: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):DB_PORTA}
+    SURFBANK_DB_USUARIO: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):DB_USUARIO}
+    SURFBANK_DB_SENHA: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):DB_SENHA} 
+    SURFBANK_DB_BANCO: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):DB_BANCO} 
+    SURFBANK_API_SPEC: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):API_SPEC} 
+    SURFBANK_SQS_AWS_ACCOUNT_ID: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):SQS_AWS_ACCOUNT_ID} 
+    SURFBANK_SQS_AWS_REGION: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):SQS_AWS_REGION} 
+    SURFBANK_SQS_AWS_QUEUE_ERROR: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):STAGE_QUEUE}_${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):SQS_AWS_QUEUE_ERROR} 
+
+functions:
+  integracao-api-spec:
+    handler: src/main.handler
+    memorySize: 1024    
+    events:
+      - http:
+          method: post
+          path: /api/v1/integracao-api-spec
+          cors: true
+          request: 
+              schema:
+                application/json: ${file(json-schema/autenticacao-api-spec-schema.json)}
+  
+  cliente_salvar:
+    handler: src/main.handler
+    memorySize: 1024
+    events:
+      - http:
+          method: post
+          path: /api/v1/cliente
+          cors: true
+          request: 
+              schema:
+                application/json: ${file(json-schema/cliente-schema.json)}
+  
+  cliente-obter-todos:
+    handler: src/main.handler
+    memorySize: 1024
+    events:
+      - http:
+          method: get
+          path: /api/v1/cliente
+          cors: true
+  
+  cliente-obter-por-id:
+    handler: src/main.handler
+    events:
+      - http:
+          method: get
+          path: /api/v1/cliente/{any+}              
+          cors: true
+
+          
+resources:
+  Resources:
+    filaErros:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):STAGE_QUEUE}_${file(./serverless-${opt:stage, self:provider.stage, 'local'}.json):SQS_AWS_QUEUE_ERROR}
