@@ -1,0 +1,144 @@
+service: s3uploader
+
+plugins: 
+  - serverless-s3-sync  
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-stack-output
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-1
+
+  environment:
+    S3_WEBSITE: ${self:service}-${opt:stage, self:provider.stage}-website
+    WEBSITE_URL: http://${self:provider.environment.S3_WEBSITE}.s3-website-eu-west-1.amazonaws.com
+    S3_IMAGE_BUCKET: ${self:service}-${opt:stage, self:provider.stage}-image-bucket
+    USER_POOL: ${self:service}-${opt:stage, self:provider.stage}-user-pool
+    USER_POOL_CLIENT: ${self:service}-${opt:stage, self:provider.stage}-user-pool
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+
+functions:
+  uploadlink:
+    handler: lambda/uploadLink.uploadLinkHandler
+    iamRoleStatements:
+      - Effect: "Allow"        
+        Action:
+        - s3:PutObject   
+        Resource: arn:aws:s3:::${self:provider.environment.S3_IMAGE_BUCKET}/*
+    events:
+      - http:
+          path: uploadlink
+          method: POST
+          cors:
+            origin: ${self:provider.environment.WEBSITE_URL}
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: true
+
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer          
+
+resources:
+  Resources:
+    NewResource:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_IMAGE_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [PUT]
+              AllowedOrigins: ['${self:provider.environment.WEBSITE_URL}']
+              MaxAge: 3600
+    ApiGatewayAuthorizer: 
+      Type: AWS::ApiGateway::Authorizer
+      Properties: 
+        Name: CognitoUserPool
+        Type: COGNITO_USER_POOLS
+        IdentitySource: method.request.header.Authorization
+        RestApiId: 
+          Ref: ApiGatewayRestApi
+        ProviderARNs: 
+          - Fn::GetAtt:
+              - CognitoUserPool
+              - Arn
+    CognitoUserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName:  ${self:provider.environment.USER_POOL_CLIENT}
+        GenerateSecret: False
+        UserPoolId:
+          Ref: CognitoUserPool     
+        ExplicitAuthFlows:
+          - ALLOW_CUSTOM_AUTH
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH          
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool              
+      Properties:
+        UserPoolName: ${self:provider.environment.USER_POOL}
+        UsernameAttributes:
+          - email        
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 6
+            RequireLowercase: False
+            RequireNumbers: False
+            RequireSymbols: False
+            RequireUppercase: False
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:provider.environment.S3_WEBSITE}
+        WebsiteConfiguration:
+          IndexDocument: index.html            
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "StaticSite"
+                    },
+                    "/*"
+                  ]
+                ]          
+
+  Outputs:
+    UserPoolClientId:
+      Value:
+        Ref: CognitoUserPoolClient
+      Export:
+        Name: ${self:service}-${opt:stage, self:provider.stage}-UserPoolClientId
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js 
+    includeModules: true
+  output:
+    file: ./frontend/env_variables.json    
+  s3Sync:
+    - bucketName: ${self:provider.environment.S3_WEBSITE}
+      localDir: frontend

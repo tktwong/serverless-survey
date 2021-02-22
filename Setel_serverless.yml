@@ -1,0 +1,75 @@
+service: paymentSvc
+
+frameworkVersion: ">=1.21.0 <2.0.0"
+
+package:
+  exclude:
+    - .git/**
+    - .gitignore
+    - tests/**
+    - coverage/**
+    - .DS_Store
+    - .eslintrc.json
+    - package-lock.json
+    - package.json
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${opt:region, "ap-southeast-1"}
+  stage: ${opt:stage, "dev"}
+  environment:
+    VERSION: 1.0.0 # update version on every release
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    STAGE: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:listTables
+      Resource:
+        - arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:custom.ddbOrderTable}
+        - arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:custom.ddbOrderTable}/*
+        - arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:custom.ddbPaymentTable}
+        - arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:custom.ddbPaymentTable}/*
+    - Effect: Allow
+      Action:
+        - lambda:*
+      Resource:
+        - "arn:aws:lambda:${self:provider.region}:${self:custom.accountId}:function:*"
+
+custom:
+  username: ${opt:username, ""}
+  account:
+    dev: ${opt:devAccount, ""}
+
+  accountId: ${self:custom.account.${opt:stage, self:provider.stage}}
+  
+  # Name alias
+  ddbOrderTable: ${self:provider.stage}-OrderTable
+  ddbPaymentTable: ${self:provider.stage}-PaymentTable
+
+functions:
+  #-------------------------------------------------------------------------------------------------------------------------------
+  # BEGIN: FUNCTIONS
+  #-------------------------------------------------------------------------------------------------------------------------------
+  processPayment:
+    handler: api/payment.processPayment
+    environment:
+      STAGE: ${self:provider.stage}
+      DYNAMODB_PAYMENT_TABLE: ${self:custom.ddbPaymentTable}
+      ORDER_UPDATE_ORDER_STATUS: orderSvc-${self:provider.stage}-updateOrderStatus
+    memorySize: 128
+    timeout: 60
+    tags:
+      payment: processPayment
+
+#-------------------------------------------------------------------------------------------------------------------------------
+# END: FUNCTIONS
+#-------------------------------------------------------------------------------------------------------------------------------
+

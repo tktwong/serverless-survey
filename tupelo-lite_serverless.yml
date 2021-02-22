@@ -1,0 +1,179 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: simple-chain
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+frameworkVersion: '>=1.28.0 <2.0.0'
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  tableName: ${self:custom.stage}-blocks
+  identityProviderName: ${self:custom.stage}IdentityProvider
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: ${opt:stage, 'dev'}
+  iamManagedPolicies:
+    - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    - arn:aws:iam::aws:policy/AWSIoTDataAccess
+    - arn:aws:iam::aws:policy/AmazonCognitoDeveloperAuthenticatedIdentities
+  # the variable syntax below allows using the AWS::AccountId etc in the file see: https://github.com/serverless/serverless/issues/3184
+  variableSyntax: "\\${(?!AWS::)([ :a-zA-Z0-9._,\\-\\/\\(\\)]+?)}" 
+  iamRoleStatements:
+    - Effect: Allow
+      Resource: "*"
+      Action:
+        - iot:AttachPolicy
+        - iot:DescribeEndpoint
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ BlocksTable, Arn ]
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+functions:
+  graphql:
+    handler: bin/handler
+    events:
+      - http:
+          path: graphql
+          method: get
+          cors: true
+      - http:
+          path: graphql
+          method: post
+          cors: true
+    environment:
+      TABLE_NAME: ${self:custom.tableName}
+      IDENTITY_POOL: !Ref CognitoIdentityPool
+      STAGE: ${self:custom.stage}
+      IOT_POLICY_NAME: !Ref IOTReadPolicy
+      IDENTITY_PROVIDER_NAME: ${self:custom.identityProviderName}
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    CognitoIdentityPool:
+      Type: AWS::Cognito::IdentityPool
+      Properties:
+        # Generate a name based on the stage
+        IdentityPoolName: ${self:custom.stage}IdentityPool
+        # Don't allow unathenticated users
+        AllowUnauthenticatedIdentities: false
+        DeveloperProviderName: ${self:custom.identityProviderName}
+
+    CognitoIdentityPoolRoles:
+      Type: AWS::Cognito::IdentityPoolRoleAttachment
+      Properties:
+        IdentityPoolId:
+          Ref: CognitoIdentityPool
+        Roles:
+          authenticated:
+            Fn::GetAtt: [MQRole, Arn]
+
+    IOTReadPolicy:
+      Type: "AWS::IoT::Policy"
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Resource: 
+                !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:*'
+              Action: 
+                - "iot:Connect"
+            - Effect: "Allow"
+              Resource: 
+                !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/public/*'
+              Action: 
+                - "iot:Receive"
+            - Effect: "Allow"
+              Resource: 
+                !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/public/*'
+              Action: 
+                - "iot:Subscribe"
+            - Effect: "Allow"
+              Resource: 
+                !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/public/userToUser/*'
+              Action: 
+                - "iot:Publish"
+
+    MQRole:
+      Type: AWS::IAM::Role
+      Properties: 
+        Description: "Identified users of tupelo-lite can assume this role to use MQTT"
+        AssumeRolePolicyDocument: 
+          Version: '2012-10-17'
+          Statement:
+            - Effect: 'Allow'
+              Principal:
+                Federated: 'cognito-identity.amazonaws.com'
+              Action:
+                - 'sts:AssumeRoleWithWebIdentity'
+              # Condition:
+              #   StringEquals:
+              #     'cognito-identity.amazonaws.com:aud':
+              #       Ref: CognitoIdentityPool
+              #   'ForAnyValue:StringLike':
+              #     'cognito-identity.amazonaws.com:amr': authenticated
+        Policies: 
+          - PolicyName: "ReadWriteMessageQueue"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Resource: 
+                    - "*"
+                  Action:
+                    - "iot:Connect"
+                    - "iot:Publish"
+                    - "iot:Subscribe"
+                    - "iot:Receive"
+
+    BlocksTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: k
+            AttributeType: S
+        KeySchema:
+          - AttributeName: k
+            KeyType: HASH
+        TimeToLiveSpecification:
+          AttributeName: "expires"
+          Enabled: true
+        # Set the capacity to auto-scale
+        BillingMode: PAY_PER_REQUEST

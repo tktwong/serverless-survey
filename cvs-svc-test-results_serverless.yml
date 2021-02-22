@@ -1,0 +1,127 @@
+service: cvs-svc-test-results
+
+openapi: 3.0.0
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  tracing: true # enable tracing
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-plugin-tracing
+  - serverless-plugin-typescript
+
+custom:
+  serverless-offline:
+    port: 3006
+  dynamodb:
+    start:
+      port: 8004
+      inMemory: true
+      migrate: false
+      seed: false
+      noStart: true
+    seed:
+      test-results:
+        sources:
+          - table: cvs-local-test-results
+            sources: [./tests/resources/test-results.json]
+    stages:
+      - dev
+      - test
+
+functions:
+  getTestResults:
+    handler: src/handler.handler
+    events:
+      - http:
+          path: test-results
+          method: post
+      - http:
+          path: test-results/{systemNumber}
+          method: put
+          request:
+            parameters:
+              paths:
+                systemNumber: true
+      - http:
+          path: test-results/{systemNumber}
+          method: get
+          request:
+            parameters:
+              paths:
+                systemNumber: true
+              query:
+                status: false
+                fromDateTime: false
+                toDateTime: false
+  getTestResultsByTesterStaffId:
+    handler: src/functions/getTestResultsByTesterStaffId.getTestResultsByTesterStaffId
+    events:
+      - http:
+          path: test-results/getTestResultsByTesterStaffId
+          method: get
+
+
+resources:
+  Resources:
+    Users:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: cvs-local-test-results
+        AttributeDefinitions:
+          - AttributeName: vin
+            AttributeType: S
+          - AttributeName: testResultId
+            AttributeType: S
+          - AttributeName: testerStaffId
+            AttributeType: S
+          - AttributeName: systemNumber
+            AttributeType: S
+        KeySchema:
+          - AttributeName: vin
+            KeyType: HASH
+          - AttributeName: testResultId
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: TesterStaffIdIndex
+            KeySchema:
+              - AttributeName: testerStaffId
+                KeyType: HASH
+            Projection:
+              NonKeyAttributes:
+                - testStartTimestamp
+                - testEndTimestamp
+                - testTypes
+                - vrm
+                - numberOfSeats
+                - testStationPNumber
+                - vehicleType
+                - vin
+                - preparerId
+                - testStatus
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: '1'
+              WriteCapacityUnits: '1'
+          - IndexName: SysNumIndex
+            KeySchema:
+              - AttributeName: systemNumber
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: '1'
+              WriteCapacityUnits: '1'
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

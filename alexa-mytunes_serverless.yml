@@ -1,0 +1,133 @@
+service: my-tunes
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-west-2
+  environment:
+    AUTH0_CLIENT_ID: ${file(./secrets.json):AUTH0_CLIENT_ID}
+    AUTH0_CLIENT_CERT: ${file(./secrets.json):AUTH0_CLIENT_CERT}
+    AUTH0_CLIENT_AUDIENCE: ${file(./secrets.json):AUTH0_CLIENT_AUDIENCE}
+    DYNAMODB_TABLE: ${file(./secrets.json):DYNAMODB_TABLE}
+    USERS_TABLE: ${file(./secrets.json):USERS_TABLE}
+    UPLOAD_BUCKET: ${file(./secrets.json):UPLOAD_BUCKET}
+    ACCESS_KEY: ${file(./secrets.json):ACCESS_KEY}
+    SECRET_ACCESS_KEY: ${file(./secrets.json):SECRET_ACCESS_KEY}
+    UPLOAD_URI: ${file(./secrets.json):UPLOAD_URI}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - s3:List*
+        - iam:List*
+        - sns:List*
+      Resource: "*"
+
+functions:
+  auth:
+    handler: lambda/auth.auth
+    cors: true
+  tracklist:
+    handler: lambda/tracklist.tracklist
+    events:
+      - http:
+          path: tracklist
+          method: post
+          authorizer: auth
+          cors: true
+  metadb:
+    handler: lambda/metadb.metadb
+    events:
+      - http:
+          path: metadb
+          method: get
+          authorizer: auth
+          cors: true
+  signedurl:
+    handler: lambda/signedurl.signedurl
+    events:
+      - http:
+          path: signedurl
+          method: get
+          authorizer:
+            name: auth
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+          cors: true
+
+resources:
+  Resources:
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    TracksDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+    UsersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.USERS_TABLE}
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.UPLOAD_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedMethods:
+                - PUT
+              MaxAge: 3000
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"

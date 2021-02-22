@@ -1,0 +1,112 @@
+service: stepfunctionhello
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'} # Set the default stage used. Default is dev
+  region: us-east-1
+  tracing: true
+
+
+#Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - s3:ListBucket
+      Resource: "*"
+
+  environment:
+    REGION: ${self:provider.region}
+    STAGE: ${self:provider.stage}
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-pseudo-parameters
+  - serverless-iam-roles-per-function
+  - serverless-step-functions
+
+custom:
+  webpack:
+    packager: 'yarn'   
+    # includeModules:
+    #   forceInclude:
+    #     - axios
+    #   forceExclude:
+    #     - aws-sdk
+
+functions:
+  getInputs:
+    handler: handler.getInputs
+    memorySize: 128
+    iamRoleStatementsInherit: true
+    events:
+      - http:
+          path: getInputs/{greetings}
+          method: GET
+
+  hello:
+    handler: handler.hello
+    memorySize: 128
+    iamRoleStatementsInherit: true
+    events:
+      - http:
+          path: hi
+          method: GET
+
+  byebye:
+    handler: handler.byebye
+    memorySize: 128
+    iamRoleStatementsInherit: true
+    events:
+      - http:
+          path: bye
+          method: GET        
+
+  noInputs:
+    handler: handler.noInputs
+    memorySize: 128
+    iamRoleStatementsInherit: true
+    events:
+      - http:
+          path: noInputs
+          method: GET           
+
+stepFunctions:
+  stateMachines:
+    sendMessageFunction:
+      events:
+        - http:
+            path: getInputs/{greetings}
+            method: GET 
+      definition:
+        Comment: "Starting to learn StepFunctions"
+        StartAt: ChoiceState
+        States:
+          # FirstState:
+          #   Type: Task
+          #   Resource: !GetAtt [getInputs, Arn]
+          #   Next: ChoiceState
+          ChoiceState:
+            Type: Choice
+            Choices:
+              - Variable: "$.foo"
+                StringEquals: "hi"
+                Next: "SayHi"
+              - Variable: "$.foo"
+                StringEquals: "bye"
+                Next: "SayBye"
+            Default: DefaultState
+          SayHi:
+            Type: Task
+            Resource: !GetAtt [hello, Arn]
+            End: true
+          SayBye:
+            Type: Task
+            Resource: !GetAtt [byebye, Arn]
+            End: true  
+          DefaultState:
+            Type: Fail
+            Cause: "No Matches!"
+
+

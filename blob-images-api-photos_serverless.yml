@@ -1,0 +1,125 @@
+# NOTE: update this with your service name
+service: blob-images-api-photos
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+  - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: eu-central-1
+  tags:
+    APP: clubalmanac
+
+  environment:
+    photoTable: ${file(./serverlessDomainConfig.js):photoTable.${self:provider.stage}}
+    photoBucket: ${file(./serverlessDomainConfig.js):photoBucket.${self:provider.stage}}
+    coverIndex: cover-idx
+    photoIndex: SK-PK-idx
+    emailIndex: email-idx
+    cognitoIndex: cog-idx
+    dateIndex: date-idx
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+      Resource: "arn:aws:dynamodb:eu-central-1:*:*"
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+        - ses:SendRawEmail
+        - ses:SendTemplatedEmail
+        - ses:SendBulkTemplatedEmail
+      Resource: "arn:aws:ses:eu-central-1:*:*"
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:DeleteObject
+      Resource: "arn:aws:s3:::*"
+
+functions:
+  createPhoto:
+    handler: handlersPhoto/createPhoto.main
+    events:
+      - s3:
+          bucket: ${file(./serverlessDomainConfig.js):photoBucket.${self:provider.stage}}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: protected/
+          existing: true
+  getPhoto:
+    handler: handlersPhoto/getPhoto.main
+    events:
+      - http:
+          path: /{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  listPhotos:
+    handler: handlersPhoto/listPhotos.main
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true
+          authorizer: aws_iam
+  deletePhoto:
+    handler: handlersPhoto/deletePhoto.main
+    events:
+      - http:
+          path: /{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+  listPublications:
+    handler: handlersPhoto/listPhotoPublications.main
+    events:
+      - http:
+          path: /{id}/publications
+          method: get
+          cors: true
+          authorizer: aws_iam
+  getPhotoRating:
+    handler: handlersPhotoRating/getRating.main
+    events:
+      - http:
+          path: /{id}/rating
+          method: get
+          cors: true
+          authorizer: aws_iam
+  updatePhotoRating:
+    handler: handlersPhotoRating/updateRating.main
+    events:
+      - http:
+          path: /{id}/rating
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+custom:
+  customDomain:
+    domainName: ${file(./serverlessDomainConfig.js):domain.${self:provider.stage}}
+    basePath: 'photos'
+    stage: ${self:provider.stage}
+    createRoute53Record: false
+
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}

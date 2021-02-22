@@ -1,0 +1,57 @@
+service: feedback-survey-export
+
+plugins:
+  - serverless-apigw-binary
+  - serverless-domain-manager
+
+custom:
+  surveyTableName: 'feedback_survey-${self:provider.stage}'
+  questionTableName: 'feedback_question-${self:provider.stage}'
+  answerTypeTableName: 'feedback_answer-type-${self:provider.stage}'
+
+  customDomain:
+    domainName: ${opt:domain}
+    basePath: 'export'
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+  apigwBinary:
+    types:
+      - '*/*'
+
+provider:
+  name: aws
+  runtime: java8
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.SURVEY_TABLE_NAME}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.QUESTION_TABLE_NAME}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.ANSWER_TYPE_TABLE_NAME}"
+  environment:
+    SURVEY_TABLE_NAME: ${self:custom.surveyTableName}
+    QUESTION_TABLE_NAME: ${self:custom.questionTableName}
+    ANSWER_TYPE_TABLE_NAME: ${self:custom.answerTypeTableName}
+
+package:
+  artifact: ../target/feedback-survey-1.jar
+
+functions:
+  exportSurvey:
+    handler: com.buildit.survey.ExportSurveysHandler
+    timeout: 30
+    events:
+      - http:
+          path: /exportSurveys
+          method: get
+          cors: true

@@ -1,0 +1,95 @@
+service: training-pipeline-ai
+
+plugins:
+  - serverless-iam-roles-per-function
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${opt:region, 'us-west-2'}
+  stage: ${opt:stage, 'dev'}
+
+package:
+  include:
+    - ./**/*
+  exclude:
+    - .serverless
+    - serverless.yml
+    - node_modules/**
+
+custom:
+  config: 
+    buckets:
+      protobuf:
+        name: ${opt:training-bucket, 'CHANGE ME'}
+        arn: arn:aws:s3:::${self:custom.config.buckets.protobuf.name}
+      models:
+        name: ${opt:model-bucket, 'CHANGE ME'}
+        arn: arn:s3:::${self:custom.config.buckets.models.name}
+    images:
+      training: 
+        us-west-2: 174872318107.dkr.ecr.us-west-2.amazonaws.com/randomcutforest:latest
+
+functions:
+  trainAI:
+    handler: train.startJob
+    events:
+      - s3: ${self:custom.config.buckets.protobuf.name}
+    environment:
+      aiModelBucket: ${self:custom.config.buckets.models.name}
+      trainingRole:
+        Fn::GetAtt:
+          - aiTrainingRole
+          - Arn
+      trainingImage: ${self:custom.config.training.${self:provider.region}}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - sagemaker:CreateTrainingJob
+          - iam:PassRole
+        Resource:
+          - arn:aws:sagemaker:*:*:training-job
+          - arn:aws:sagemaker:*:*:training-job/*
+          - Fn::GetAtt:
+              - aiTrainingRole
+              - Arn
+
+resources:
+  Resources:
+    aiTrainingRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: sagemaker.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: ApiGatewayLogsPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement: 
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:DescribeLogGroups
+                    - logs:DescribeLogStreams
+                    - logs:PutLogEvents
+                  Resource: '*'
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:List*
+                  Resource:
+                    - ${self:custom.config.buckets.protobuf.arn}
+                    - ${self:custom.config.buckets.protobuf.arn}/*
+                - Effect: Allow
+                  Action:
+                    - s3:Put*
+                    - s3:ListBucket
+                  Resource:
+                    - ${self:custom.config.buckets.models.arn}
+                    - ${self:custom.config.buckets.models.arn}/*

@@ -1,0 +1,72 @@
+service: sls-circleci
+
+plugins:
+  - serverless-stack-output
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  output:
+    # Save endpoint URLs to stack.json inside frontend source directory
+    file: ../frontend/src/stack.json
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  # Add necessary permissions to perform operations on our DynamoDB table
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [PomodorosTable, Arn]
+
+functions:
+  getPomodoros:
+    handler: handler.getPomodoros
+    environment:
+      DYNAMODB_TABLE: pomodoros-${self:custom.stage}
+    events:
+      - http:
+          path: /
+          method: GET
+          cors: true
+  postPomodoro:
+    handler: handler.postPomodoro
+    environment:
+      DYNAMODB_TABLE: pomodoros-${self:custom.stage}
+    events:
+      - http:
+          path: /add
+          method: POST
+          cors: true
+
+resources:
+  Resources:
+    # DynamoDB Table for pomodoro entries
+    PomodorosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: pomodoros-${self:custom.stage}
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2
+    FrontendBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: sls-circleci-test-${self:custom.stage}
+        WebsiteConfiguration:
+          IndexDocument: index.html

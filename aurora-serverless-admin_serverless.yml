@@ -1,0 +1,112 @@
+service: aurora-serverless-admin
+
+provider:
+  name: aws
+  runtime: dotnetcore2.1
+  stage: dev # should go as opt param
+  region: eu-west-1 # should go as opt param
+  timeout: 30
+  vpc:
+    securityGroupIds:
+      - !Ref DbClusterSg
+    subnetIds: !Ref SubnetIds
+
+custom:
+  vpcId: ${opt:opt-vpc-id}
+  subnetIds: ${opt:opt-subnet-ids}
+  dbPort: ${opt:opt-db-port, '3306'}
+  dbUser: ${opt:opt-db-user}
+  dbPwd: ${opt:opt-db-pwd}
+  dbName: ${opt:opt-db-name}
+
+package:
+  artifact: backend/bin/release/netcoreapp2.1/deploy-package.zip
+
+functions:
+  ExecuteReader:
+    handler: AuroraAdminLambda::AuroraAdmin.Function::ExecuteReaderHandler
+    events:
+     - http:
+        path: execute-reader
+        method: POST
+        integration: lambda
+        request: ${file(request-template.yml)}
+        response: ${file(execute-reader-response.yml)}
+        cors: true
+
+  ExecuteNonQuery:
+    handler: AuroraAdminLambda::AuroraAdmin.Function::ExecuteNonQueryHandler
+    events:
+     - http:
+        path: execute-non-query
+        method: POST
+        integration: lambda
+        request: ${file(request-template.yml)}
+        response: ${file(execute-non-query-response.yml)}
+        cors: true
+
+# CloudFormation resources
+resources:
+  Parameters:
+    SubnetIds: 
+      Type: CommaDelimitedList
+      Default: ${self:custom.subnetIds}
+
+  Resources:
+    DbClusterSg:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Allow MySQL port to client host
+        VpcId: ${self:custom.vpcId}
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: ${self:custom.dbPort}
+            ToPort: ${self:custom.dbPort}
+            CidrIp: 0.0.0.0/0
+
+    DbSubnetGroup: 
+      Type: "AWS::RDS::DBSubnetGroup"
+      Properties: 
+        DBSubnetGroupDescription: "private subnets"
+        SubnetIds: !Ref SubnetIds
+
+    AuroraMysqlCluster:
+      Type: AWS::RDS::DBCluster
+      Properties:
+        DatabaseName: ${self:custom.dbName}
+        DBClusterParameterGroupName: default.aurora5.6
+        DBSubnetGroupName: !Ref DbSubnetGroup
+        Engine: aurora
+        EngineMode: serverless
+        MasterUsername: ${self:custom.dbUser}
+        MasterUserPassword: ${self:custom.dbPwd}
+        ScalingConfiguration:
+          AutoPause: true
+          MinCapacity: 2
+          MaxCapacity: 4
+          SecondsUntilAutoPause: 1800
+        VpcSecurityGroupIds:
+          - !Ref DbClusterSg
+
+    WebBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: error.html
+
+  Outputs:
+    S3BucketName:
+      Description: S3 bucket website name
+      Value: !Ref WebBucket
+
+    WebsiteURL:
+      Description: S3 bucket website HTTP endpoint
+      Value: !GetAtt WebBucket.WebsiteURL
+
+  #   DbClusterEndpointAddress:
+  #     Value: !GetAtt AuroraMysqlCluster.Endpoint.Address
+  #   DbClusterEndpointPort:
+  #     Value: !GetAtt AuroraMysqlCluster.Endpoint.Port
+
+

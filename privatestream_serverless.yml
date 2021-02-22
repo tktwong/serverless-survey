@@ -1,0 +1,148 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: privatestream-backend
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-central-1
+  provider:
+  environment:
+    CONFIG_PERSONS_TABLE: ${self:custom.tableNames.persons}
+    CONFIG_DYNAMODB_ENDPOINT: ${self:custom.endpoints.dynamodb-url}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:listBucket
+        - s3:putObjectObject
+        - s3:getObject
+        - s3:deleteObject
+        - s3:copyObject
+        - s3:getObjectTagging
+        - s3:putObjectTagging
+      Resource: "arn:aws:s3:::audio-storage"
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:deleteItem
+        - dynamodb:getItem
+        - dynamodb:putItem
+        - dynamodb:query
+        - dynamodb:scan
+        - dynamodb:updateItem
+
+      Resource: "arn:aws:dynamodb:::table/privatestream-users"
+    - Effect: Allow
+      Action:
+        - dynamodb:deleteItem
+        - dynamodb:getItem
+        - dynamodb:putItem
+        - dynamodb:query
+        - dynamodb:scan
+        - dynamodb:updateItem
+
+      Resource: "arn:aws:dynamodb:::table/privatestream-users"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-s3-local
+  - serverless-dynamodb-local
+  - serverless-offline
+custom:
+  serverless-offline:
+    httpPort: 4000
+    lambdaPort: 4001
+  s3:
+    host: localhost
+    port: 8001
+    directory: tmp # this directory must be already created.
+  dynamodb:
+    stages:
+      - test
+      - dev
+    start:
+      port: 8000
+      migrate: true
+  tableNames:
+    persons: privatestream-users
+  endpoints:
+    "dynamodb-url": "http://localhost:8000"
+
+functions:
+  hello:
+    private: false
+    handler: handlers/handler.hello
+    events:
+      - http:
+          path: hello
+          method: get
+          cors: true
+  health:
+    private: false
+    handler: handlers/healthcheck.handler
+    events:
+      - http:
+          path: health
+          method: get
+          cors: true
+  signup:
+    private: false
+    handler: handlers/signup.handler
+    events:
+      - http:
+          path: signup
+          method: post
+          cors: true
+  login:
+    private: false
+    handler: handlers/login.handler
+    events:
+      - http:
+          path: login
+          method: post
+          cors: true
+resources:
+  Resources:
+    #audioStorage:
+    #  Type: AWS::S3::Bucket
+    #  Properties:
+    #    BucketName: audio-storage
+    userTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: privatestream-users
+        AttributeDefinitions:
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

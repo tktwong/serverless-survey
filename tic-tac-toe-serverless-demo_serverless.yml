@@ -1,0 +1,91 @@
+service: tic-tac-toe-serverless-demo
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: local
+  region: ${file(./env.yml):${opt:stage, self:provider.stage}.AWS_REGION_CODE}
+  environment: ${file(./env.yml):${opt:stage, self:provider.stage}}
+
+package:
+  exclude:
+    - .git
+
+functions:
+
+  create-game:
+    handler: src/functions/create-game.handler
+    events:
+      - http:
+          path: /games
+          cors: true
+          method: post
+          integration: lambda
+
+  get-game:
+    handler: src/functions/get-game.handler
+    events:
+      - http:
+          path: /games/{gameId}
+          cors: true
+          method: get
+          integration: lambda
+
+  list-games:
+    handler: src/functions/list-games.handler
+    events:
+      - http:
+          path: /games
+          cors: true
+          method: get
+          integration: lambda
+
+  play:
+    handler: src/functions/play.handler
+    events:
+      - http:
+          path: /games/{gameId}
+          cors: true
+          method: post
+          integration: lambda
+
+resources:
+  Resources:
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: games
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: DynamoDbTable
+      Properties:
+        PolicyName: lambda-dynamodb
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:Scan
+              Resource: arn:aws:dynamodb:*:*:table/games
+        Roles:
+          - Ref: IamRoleLambdaExecution
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    start:
+      migrate: true

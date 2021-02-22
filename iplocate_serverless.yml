@@ -1,0 +1,36 @@
+service: iplocate
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  vpc:
+    securityGroupIds:
+      - ${ssm:/iplocate/security_group_id}
+    subnetIds:
+      - ${ssm:/iplocate/subnet_id}
+  apiGateway:
+    shouldStartNameWithService: true
+  environment:
+    GEOIP_DATABASE_PATH: /mnt/geoip-data/GeoLite2-City.mmdb
+    FRONTEND_DOMAIN: https://iplocate.xyz
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+functions:
+  api:
+    handler: ./src/lambda.handler
+    events:
+      - http:
+          path: /{any+}
+          method: ANY
+          cors: true
+    fileSystemConfig:
+      localMountPath: /mnt/geoip-data
+      arn: ${ssm:/iplocate/fs_access_point}
+
+plugins:
+  - serverless-webpack
+  - serverless-offline

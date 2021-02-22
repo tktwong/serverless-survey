@@ -1,0 +1,66 @@
+service: forex
+
+frameworkVersion: "<=1.6.1"
+
+custom:
+  namespace: ${self:service}-${self:custom.stage}
+  stage: ${opt:stage, self:provider.stage}
+  
+provider:
+  name: aws
+  runtime: nodejs4.3
+  stage: dev
+  region: us-east-1
+  environment:
+    CLIENT_ID: '166009032929.166637821027'
+    CLIENT_SECRET: 08851f03185595e016e127846129affc
+    VERIFICATION_TOKEN: RpW8ocF4XFWUeVdWYWxlzYt7
+    INSTALL_SUCCESS_URL: http://maverickslackbot.s3-website-us-east-1.amazonaws.com/index.html
+    INSTALL_ERROR_URL: http://maverickslackbot.s3-website-us-east-1.amazonaws.com/error.html
+    NAMESPACE: ${self:custom.namespace}
+    TEAMS_TABLE: ${self:custom.namespace}-teams
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.TEAMS_TABLE}
+    - Effect: Allow
+      Action:
+        - lambda:invokeFunction
+      Resource:
+        - arn:aws:lambda:*:*:function:${self:custom.namespace}-actions
+
+		
+functions:
+  actions:
+    handler: actions.handler
+  events:
+    handler: events.handler
+    events:
+      - http:
+          path: events
+          method: post
+  install:
+    handler: install.handler
+    events:
+      - http:
+          path: install
+          method: get
+
+resources:
+  Resources:
+    TeamsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TEAMS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: team_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: team_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5		  

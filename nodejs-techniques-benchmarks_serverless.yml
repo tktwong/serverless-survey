@@ -1,0 +1,82 @@
+# serverless.yml
+# https://github.com/serverless/serverless/blob/master/docs/providers/aws/guide/serverless.yml.md
+service: nojsBenchmarks
+
+plugins:
+  # - serverless-aws-alias
+  # https://serverless.com/plugins/serverless-plugin-aws-alerts/
+  # - serverless-plugin-aws-alerts
+
+provider:
+  name: aws
+  account: ${opt:account, '002584813484'}
+  stage: ${opt:stage, 'experiments'}
+  region: ${opt:region, 'us-west-2'}
+  runtime: nodejs12.x
+  logRetentionInDays: 7
+  # reservedConcurrency: 1
+  timeout: 900 # in seconds
+  versionFunctions: true # default is false
+  retain: true
+  memorySize: 128
+  deploymentBucket: em-serverless-apps-${self:provider.region}-${self:provider.account}
+  # role: arn:aws:iam::${self:provider.account}:role/YOUR_ROLE_NAME # Overwrite the default IAM role which is used for all functions
+  # vpc:
+  #   subnetIds:
+  #     - subnet-bd4b0e5f
+  #     - subnet-05127fea
+  #     - subnet-9267f9a8
+  #   securityGroupIds:
+  #     - sg-35b5c9e0
+  #     - sg-bd532b82
+  tags: # Tags that will be added to each of the deployed resources
+    Team: your-team-name # exaples: [datacore, data-analytics, air-sem, front-end, qa, etc..]
+    # if your project contains multiple applications it will be placed in many 
+    Project: your-project-name 
+    Application: ${self:service}
+    Environment: ${self:provider.stage}
+    Tenants: all 
+    # In most cases it will be your own team but in some cases you could be developing
+    # a solution for another team then that team's name should be placed here
+    BilledTeam: the-team-responsible-for-the-cost
+  aliasStage:
+    loggingLevel: "ERROR"
+    dataTraceEnabled: true
+
+package:
+  individually: true
+  exclude:
+    - "*"
+    - ".*"
+    - ".*/**"
+    - archives/**
+    - coverage/**
+    - temp/**
+    - test/**
+    - node_modules/.bin/**
+    - node_modules/*/README.md
+    - node_modules/*/readme.md
+    - node_modules/*/LICENSE
+    - node_modules/*/.travis.yml
+    - node_modules/*/.editorconfig
+    - node_modules/*/docs/**
+    - node_modules/*/example/**
+    - node_modules/*/test/**
+  include:
+    - package.json
+    - lib/
+
+functions:
+  lambda:
+    handler: index.handler
+    retain: true
+    description: your function description here
+    # environment: ${ssm:/aws/reference/secretsmanager/lambda/${self:service}-${self:provider.stage}-apiApp~true, self:custom.environment.${self:provider.stage}}
+    environment: ${file(./dotenv-loader.js)}
+    reservedConcurrency: 6 # optional, reserved concurrency limit for this function. By default, AWS uses account concurrency limit
+    package:
+      include:
+        - index.js
+    layers:
+      - ${cf:node-everymundo-packages-layer.LibLambdaLayerQualifiedArn}
+      - ${cf:node-microtime-layer.LibLambdaLayerQualifiedArn}

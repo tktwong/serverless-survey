@@ -1,0 +1,43 @@
+service: cat-api
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev${env:USER, env:USERNAME}
+  region: eu-west-2
+  environment:
+    STAGE: ${self:custom.stage}
+    DEBUG_LOGGING_IS_ENABLED: ${self:custom.variables.debugLoggingIsEnabled}
+
+plugins:
+  - serverless-pseudo-parameters
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  defaultVariables: dev-user
+  variables: ${file(./variables.yml):${opt:stage, self:custom.defaultVariables}}
+
+functions:
+  # Responses are not cached
+  list-all-cats:
+    handler: rest_api/cats/get/handler.handle
+    role: listCatsRole
+    events:
+      - http:
+          path: /cats
+          method: get
+     
+  # Responses are cached based the 'pawId' path parameter and the 'Accept-Language' header
+  get-cat-by-paw-id:
+    handler: rest_api/cat/get/handler.handle
+    role: getCatRole
+    events:
+      - http:
+          path: /cats/{pawId}
+          method: get
+    
+resources:
+  Resources:
+    listCatsRole: ${file(security/roles/listCatsRole.yml)}
+    getCatRole: ${file(security/roles/getCatRole.yml)}

@@ -1,0 +1,55 @@
+service:
+  name: probe
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: ap-northeast-2
+  environment: # process.env에 추가될 환경 변수
+    NODE_ENV: ${env:NODE_ENV, production}
+    STAGE: ${opt:stage, self:provider.stage}  
+  iamRoleStatements: # Lambda가 dynamodb에 접속할 수 있는 IAM Role 생성
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - !GetAtt consultation.Arn # consultation는 테이블 리소스 이름
+        - !Join [ '/',[!GetAtt consultation.Arn,index/*]]
+        - !GetAtt memo.Arn
+        - !Join [ '/',[!GetAtt memo.Arn,index/*]]
+        - !GetAtt enrollment.Arn
+        - !Join [ '/',[!GetAtt enrollment.Arn,index/*]]
+        - !GetAtt payment.Arn
+        - !Join [ '/',[!GetAtt payment.Arn,index/*]]
+        - !GetAtt application.Arn
+        - !Join [ '/',[!GetAtt application.Arn,index/*]]
+
+custom:
+  stage: ${opt:stage, self:provider.stage}  
+  webpack: # serverless-webpack 관련 설정
+    webpackConfig: 'webpack.config.js'
+    includeModules: true # apollo-server-lambda와 같이 외부 모듈이 반드시 필요한 경우 설정
+    packager: 'npm' # yarn을 사용한다면 yarn으로 설정
+
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table-consultation.yml)}
+  - ${file(resources/dynamodb-table-memo.yml)}
+  - ${file(resources/dynamodb-table-enrollment.yml)}
+  - ${file(resources/dynamodb-table-payment.yml)}
+  - ${file(resources/dynamodb-table-application.yml)}
+
+functions:
+  # Lambda
+  - ${file(resources/lambda-handler.yml)}
+  

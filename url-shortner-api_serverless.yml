@@ -1,0 +1,347 @@
+service: url-shortener-api
+app: url-shortener
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: "1"
+
+package:
+  excludeDevDependencies: true
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ap-south-1
+  memorySize: 128
+  timeout: 25
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+functions:
+  generate-url:
+    handler: functions/generate-short-url.handler
+    name: ${self:provider.stage}-generate-short-url
+    role: GenerateShortUrlLambdaRole
+    events:
+      - http:
+          method: post
+          path: shortUrls
+          cors: true
+    environment:
+      URL_TABLE: !Ref URLTable
+  get-urls:
+    handler: functions/get-urls.handler
+    name: ${self:provider.stage}-get-urls
+    role: GetUrlsLambdaRole
+    events:
+      - http:
+          method: get
+          path: shortUrls
+          cors: true
+    environment:
+      URL_TABLE: !Ref URLTable
+  update-url:
+    handler: functions/update-short-url.handler
+    name: ${self:provider.stage}-update-short-url
+    role: UpdateUrlLambdaRole
+    events:
+      - http:
+          method: put
+          path: shortUrls
+          cors: true
+    environment:
+      URL_TABLE: !Ref URLTable
+
+resources:
+  Resources:
+    GenerateShortUrlLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:provider.stage}-lambda-generate-short-url-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:provider.stage}-lambda-generate-short-url_cloudwatch_policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:logs"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "log-group:/aws/lambda/${self:provider.stage}-generate-short-url:*"
+          - PolicyName: ${self:provider.stage}-lambda-generate-short-url_dynamodb_policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:dynamodb"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "table/${self:provider.stage}-urls"
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Query
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:dynamodb"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "table/${self:provider.stage}-urls/index/*"
+    GetUrlsLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:provider.stage}-lambda-get-urls-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:provider.stage}-lambda-get-urls_cloudwatch_policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:logs"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "log-group:/aws/lambda/${self:provider.stage}-get-urls:*"
+          - PolicyName: ${self:provider.stage}-lambda-get-urls_dynamodb_policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Scan
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:dynamodb"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "table/${self:provider.stage}-urls"
+    UpdateUrlLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:provider.stage}-lambda-update-url-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:provider.stage}-lambda-update-url_cloudwatch_policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:logs"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "log-group:/aws/lambda/${self:provider.stage}-update-url:*"
+          - PolicyName: ${self:provider.stage}-lambda-update-url_dynamodb_policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:UpdateItem
+                    - dynamodb:Query
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:dynamodb"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "table/${self:provider.stage}-urls"
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Query
+                  Resource:
+                    - "Fn::Join":
+                        - ":"
+                        - - "arn:aws:dynamodb"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "table/${self:provider.stage}-urls/index/*"
+    URLTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.stage}-urls
+        AttributeDefinitions:
+          - AttributeName: urlId
+            AttributeType: S
+          - AttributeName: fullUrl
+            AttributeType: S
+          - AttributeName: shortUrl
+            AttributeType: S
+        KeySchema:
+          - AttributeName: urlId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: UrlByShortId
+            KeySchema:
+              - AttributeName: shortUrl
+                KeyType: HASH
+            Projection:
+              ProjectionType: "ALL"
+            ProvisionedThroughput:
+              ReadCapacityUnits: 2
+              WriteCapacityUnits: 1
+          - IndexName: UrlByFullUrl
+            KeySchema:
+              - AttributeName: fullUrl
+                KeyType: HASH
+            Projection:
+              ProjectionType: "ALL"
+            ProvisionedThroughput:
+              ReadCapacityUnits: 2
+              WriteCapacityUnits: 1
+    DeploymentBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      Properties:
+        BucketName: url-shortener-ui-${self:provider.stage}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+              AllowedOrigins:
+                - "*"
+              MaxAge: 3000
+              AllowedHeaders:
+                - "Authorization"
+                - "Content-Length"
+    CloudFrontOriginAccessId:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: "CloudFront Origin-Access-Identity Config"
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          Comment: "url-shortener distribution"
+          CustomErrorResponses:
+            - ErrorCode: 400
+              ErrorCachingMinTTL: 300
+              ResponseCode: 200
+              ResponsePagePath: "/"
+            - ErrorCode: 403
+              ErrorCachingMinTTL: 300
+              ResponseCode: 200
+              ResponsePagePath: "/"
+            - ErrorCode: 404
+              ErrorCachingMinTTL: 300
+              ResponseCode: 200
+              ResponsePagePath: "/"
+          DefaultCacheBehavior:
+            ForwardedValues:
+              QueryString: false
+            TargetOriginId: "origin1"
+            ViewerProtocolPolicy: "redirect-to-https"
+            AllowedMethods:
+              - "GET"
+              - "HEAD"
+            CachedMethods:
+              - "GET"
+              - "HEAD"
+            Compress: true
+            DefaultTTL: 86400
+            MaxTTL: 31536000
+            MinTTL: 60
+          DefaultRootObject: "index.html"
+          HttpVersion: "http2"
+          IPV6Enabled: true
+          Origins:
+            - DomainName:
+                Fn::GetAtt:
+                  - DeploymentBucket
+                  - RegionalDomainName
+              ConnectionAttempts: 3
+              ConnectionTimeout: 10
+              Id: "origin1"
+              S3OriginConfig:
+                OriginAccessIdentity:
+                  Fn::Join:
+                    - ""
+                    - - "origin-access-identity/cloudfront/"
+                      - Ref: CloudFrontOriginAccessId
+          PriceClass: "PriceClass_100"
+    BucketAccessPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref DeploymentBucket
+        PolicyDocument:
+          Statement:
+            Action:
+              - "s3:GetObject*"
+              - "s3:GetBucket*"
+              - "s3:List*"
+            Effect: Allow
+            Principal:
+              CanonicalUser:
+                Fn::GetAtt:
+                  - CloudFrontOriginAccessId
+                  - S3CanonicalUserId
+            Resource:
+              - Fn::GetAtt:
+                  - DeploymentBucket
+                  - Arn
+              - Fn::Join:
+                  - ""
+                  - - Fn::GetAtt:
+                        - DeploymentBucket
+                        - Arn
+                    - "/*"

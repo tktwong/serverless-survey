@@ -1,0 +1,167 @@
+service: smartGardenApi
+
+plugins:
+  - serverless-webpack
+  - serverless-domain-manager
+  - serverless-prune-plugin
+  # - serverless-step-functions
+  - serverless-iam-roles-per-function
+  # - serverless-plugin-split-stacks
+  - serverless-pseudo-parameters
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  memorySize:
+    dev: 128
+  host:
+    dev: smartgardens.tech
+  webpack:
+      webpackConfig: './webpack.config.js'
+      includeModules: true
+  customDomain:
+    domainName: api.smartgardens.tech
+    createRoute53Record: true
+    certificateName: '*.smartgardens.tech'
+  prune:
+    automatic: true
+    number: 20
+  baseFunctionName: arn:aws:lambda:us-east-1:514777035509:function:${self:service}-
+  # splitStacks:
+  #   perFunction: false
+  #   perType: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  profile: smartGarden
+  memorySize: ${self:custom.memorySize.${self:custom.stage}}
+  versionFunctions: false
+  environment:
+    serviceName: ${self:service}
+    region: ${self:provider.region}
+    stage: ${self:custom.stage}
+    host: ${self:custom.host.${self:custom.stage}}
+    baseFunctionName: ${self:custom.baseFunctionName}
+    dynamodbMeasureTable: ${self:service}-measures
+    dynamodbGardenerTable: ${self:service}-garderners
+    dynamodbDeviceTable: ${self:service}-devices
+    dynamodbGardenTable: ${self:service}-gardens
+    dynamodbPlantTable: ${self:service}-plants
+    # gardenerIdentityPoolName: GardenerIdentityPool
+    # gardenerUserPoolName: GardenerUserPool
+    # gardenerUserPoolId: ${cf:${self:service}-${self:custom.stage}.gardenerUserPoolId}
+
+package:
+  individually: true
+  exclude:
+    - .serverless/**
+    - .git/**
+    - node_modules/**
+
+functions:
+  DeviceTopicListener:
+    handler: src/functions/devices.deviceTopicListener
+    iamRoleStatementsName: ${self:service}-DevTopList-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:*
+        Resource: '*'
+
+  NewDevice:
+    handler: src/functions/devices.newDevice
+    events:
+      - http:
+          path: devices
+          method: post
+          cors: true
+    iamRoleStatementsName: ${self:service}-NewDevice-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:*
+        Resource: '*'
+
+  GetPlant:
+    handler: src/functions/plants.getPlant
+    events:
+      - http:
+          path: plants/{plantId}
+          method: get
+          cors: true
+    iamRoleStatementsName: ${self:service}-Get-Plant-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:*
+        Resource: '*'
+
+  ListPlants:
+    handler: src/functions/plants.listPlants
+    events:
+      - http:
+          path: plants
+          method: get
+          cors: true
+    iamRoleStatementsName: ${self:service}-List-Plant-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:*
+        Resource: '*'
+
+  NewPlant:
+    handler: src/functions/plants.newPlant
+    events:
+      - http:
+          path: plants
+          method: post
+          cors: true
+    iamRoleStatementsName: ${self:service}-NewPlant-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:*
+        Resource: '*'
+
+  NewGardener:
+    handler: src/functions/gardeners.newGardener
+    events:
+      - http:
+          path: gardeners
+          method: post
+          cors: true
+    iamRoleStatementsName: ${self:service}-NewGardener-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:*
+        Resource: '*'
+      - Effect: Allow
+        Action: cognito-idp:AdminCreateUser
+        Resource: arn:aws:cognito-idp:*
+
+  NewGarden:
+    handler: src/functions/gardens.newGarden
+    events:
+      - http:
+          path: gardens
+          method: post
+          cors: true
+    iamRoleStatementsName: ${self:service}-NewGarden-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:*
+        Resource: '*'
+
+resources:
+  # DYNAMO MEASURES TABLE
+  - ${file(resources/dynamoMeasureTable.yml)}
+  # DYNAMO GARDERNES TABLE
+  - ${file(resources/dynamoGardenerTable.yml)}
+  # DYNAMO GARDENS TABLE
+  - ${file(resources/dynamoGardenTable.yml)}
+  # DYNAMO GARDENERS DEVICES TABLE
+  - ${file(resources/dynamoDeviceTable.yml)}
+  # DYNAMO PLANTS TABLE
+  - ${file(resources/dynamoPlantTable.yml)}
+  # COGNITO GARDENERS USER POOL
+  # - ${file(resources/gardenerCognitoUserPool.yml)}
+  # COGNITO IDENTITY POOLS
+  # - ${file(resources/gardenerCognitoIdentityPool.yml)}

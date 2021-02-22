@@ -1,0 +1,63 @@
+service: dynamo-wrapper
+
+frameworkVersion: '>=1.21.0 <2.0.0'
+
+plugins:
+  - serverless-dynamodb-local
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ap-southeast-2
+  memorySize: 512 # Overwrite the default memory size. Default is 1024
+  versionFunctions: false # Optional function versioning
+  timeout: 30
+  stage: ${env:NODE_CONFIG_ENV, 'dev'}
+  environment:
+    NODE_CONFIG_ENV: ${self:provider.stage}
+  stackTags:
+    creator: paul li
+    owner: paul li
+    deployment: ${self:provider.stage}
+    service: ${self:service}
+    updatedBy: ${env:USER}
+
+custom:
+  dynamodb:
+    start:
+      port: 8001
+      inMemory: true
+      migrate: true
+
+resources:
+  Resources:
+    dynamoTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: productId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: state
+            AttributeType: S
+        KeySchema:
+          - AttributeName: productId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: '1'
+          WriteCapacityUnits: '1'
+
+        GlobalSecondaryIndexes:
+          - IndexName: userId
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: state
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: '1'
+              WriteCapacityUnits: '1'

@@ -1,0 +1,124 @@
+service: taco-gallery
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: us-east-1
+  stage: dev
+  environment:
+    CUSTOMER_INFO: "customer-info-new"
+    IS_OFFLINE: ${opt:is-offline}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CUSTOMER_INFO}"
+
+    - Effect: "Allow"
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource: "arn:aws:lambda:us-east-1:*:*"
+
+functions:
+  addCustomerInfo:
+    name: ${opt:stage}-addCustomerInfo
+    handler: customerInfoCRUD/addCustomerInfo.addCustomerInfo
+    events:
+      - http: 
+          path: addCustomerInfo
+          method: PUT 
+          cors: true
+          # integration: lambda
+          # authorizer: 
+          #   name: authorizer
+          #   arn: arn:aws:cognito-idp:us-east-1:047841562770:userpool/us-east-1_yCqvXvqtp
+          #   claims: 
+          #     - email
+
+  getCustomerInfo:
+    name: ${opt:stage}-getCustomerInfo
+    handler: customerInfoCRUD/getCustomerInfo.getCustomerInfo
+    events:
+      - http: 
+          path: getCustomerInfo/{email}
+          method: GET
+          cors: true
+          # integration: lambda
+          # authorizer: 
+          #   name: authorizer
+          #   arn: arn:aws:cognito-idp:us-east-1:047841562770:userpool/us-east-1_yCqvXvqtp
+          #   claims: 
+          #   - email
+
+  getCustList:
+    name: ${opt:stage}-getCustList
+    handler: customer/getCust.getCust
+    events:
+      - http: 
+          path: getCustList
+          method: GET
+          cors: true
+          # integration: lambda
+          # authorizer: 
+          #   name: authorizer
+          #   arn: arn:aws:cognito-idp:us-east-1:047841562770:userpool/us-east-1_yCqvXvqtp
+          #   claims: 
+          #   - email
+
+resources:
+  Resources:
+    customerInfoNew:
+        Type: AWS::DynamoDB::Table
+        DeletionPolicy: Retain
+        Properties:
+          TableName: customer-info-new
+          AttributeDefinitions:
+            - AttributeName: email
+              AttributeType: S
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+
+    TacosDB:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: email
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: TacoGallery
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  webpackIncludeModules:
+    packagePath: './package.json'
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+  serverless-offline:
+    babelOptions:
+      presets: ["es2015", "stage-2"]

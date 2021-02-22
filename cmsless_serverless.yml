@@ -1,0 +1,74 @@
+service: seams
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-southeast-2
+  deploymentBucket:
+    name: serverless-ap-southeast-2-336870424643
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DeleteItem
+        - dynamodb:GetItem
+        - dynamodb:Scan
+        - dynamodb:PutItem
+      Resource:
+        Fn::GetAtt:
+          - ConnectionsTable
+          - Arn
+  environment:
+    STAGE: ${self:custom.stage}
+    APIG_ENDPOINT:
+      Fn::Join:
+      - ''
+      - - Ref: WebsocketsApi
+        - .execute-api.
+        - Ref: AWS::Region
+        - '.amazonaws.com/'
+        - ${self:custom.stage}
+    CONNECTIONS_TABLE:
+      Ref: ConnectionsTable
+
+custom:
+  stage: ${opt:stage, 'dev'}
+
+functions:
+  web:
+    handler: web.handler
+    events:
+      - http:
+          path: '{proxy+}'
+          method: GET
+          contentHandling: CONVERT_TO_BINARY
+  websocket:
+    handler: websocket.handler
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $default
+      - websocket:
+          route: $disconnect
+plugins:
+  - serverless-offline
+  - serverless-layers
+
+resources:
+  Resources:
+    ConnectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "socket_connections"
+        AttributeDefinitions:
+          - AttributeName: connectionId
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+        KeySchema:
+          - AttributeName: connectionId
+            KeyType: HASH
+        SSESpecification:
+          SSEEnabled: true
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true

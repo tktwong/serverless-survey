@@ -1,0 +1,103 @@
+# org: replicadse
+# app: aws-movies
+service: aws-movies
+
+plugins:
+  - serverless-localstack
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  deploymentBucket:
+    maxPreviousDeploymentArtifacts: 3
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - Effect: 'Allow'
+      Resource: "*"
+
+package:
+  individually: true
+
+custom:
+  localstack:
+    region: ${self:provider.region}
+    stages:
+      - dev
+    autostart: false
+    docker:
+      sudo: false
+
+functions:
+  lambda-get:
+    handler: lambda-get
+    runtime: provided
+    environment:
+      svc_stage: ${self:provider.stage}
+    package:
+      artifact: ./target/lambda-movies-get.zip
+    events:
+    - http:
+        path: movies
+        method: get
+
+  lambda-list:
+    handler: lambda-list
+    runtime: provided
+    environment:
+      svc_stage: ${self:provider.stage}
+    package:
+      artifact: ./target/lambda-movies-list.zip
+    events:
+    - http:
+        path: movies
+        method: get
+
+  lambda-put:
+    handler: lambda-put
+    runtime: provided
+    environment:
+      svc_stage: ${self:provider.stage}
+    package:
+      artifact: ./target/lambda-movies-put.zip
+    events:
+    - http:
+        path: movies
+        method: put
+
+  lambda-delete:
+    handler: lambda-delete
+    runtime: provided
+    environment:
+      svc_stage: ${self:provider.stage}
+    package:
+      artifact: ./target/lambda-movies-delete.zip
+    events:
+    - http:
+        path: movies
+        method: delete
+
+resources:
+  Resources:
+    moviestable:
+      Type: 'AWS::DynamoDB::Table'
+      # DeletionPolicy: Retain
+      Properties:
+        TableName: moviestable
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "KEYS_ONLY"

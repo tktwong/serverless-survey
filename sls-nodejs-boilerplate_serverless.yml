@@ -1,0 +1,121 @@
+service: exporo-sls-nodejs
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-central-1
+  logs:
+    restApi: true
+  vpc:
+    securityGroupIds:
+    - Fn::GetAtt: ServerlessVPC.DefaultSecurityGroup
+    subnetIds:
+    - Ref: ServerlessSubnetA
+    - Ref: ServerlessSubnetB
+    - Ref: ServerlessSubnetC
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+    - sqs:SendMessage
+    - sqs:ReceiveMessage
+    Resource: !GetAtt SQSQueue.Arn
+  - Effect: Allow
+    Action:
+    - dynamodb:DescribeTable
+    - dynamodb:Query
+    - dynamodb:Scan
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    - dynamodb:DeleteItem
+    Resource:
+    - "Fn::GetAtt": [ DynamoDB, Arn ]
+  - Effect: Allow
+    Action:
+    - s3:*
+    Resource:
+    - !Join
+      - ''
+      - - "Fn::GetAtt": [ S3Bucket, Arn ]
+        - '/*'
+  - Effect: Allow
+    Action: 'secretsmanager:GetSecretValue'
+    Resource: !Ref DBSecret
+  environment:
+    APP_KEY: !Sub '{{resolve:secretsmanager:${self:custom.UUID}-APP_KEY}}'
+    DB_HOST:
+      Fn::GetAtt: [AuroraRDSCluster, Endpoint.Address]
+    DB_PASSWORD: !Sub '{{resolve:secretsmanager:${self:custom.UUID}-DB_PASSWORD}}'
+    DYNAMODB_CACHE_TABLE: !Ref DynamoDB
+    AWS_BUCKET: !Ref S3Bucket
+    SQS: !Ref SQSQueue
+    ASSET_URL: !Join ['', ['https://', !GetAtt [S3PublicAssetsBucket, DomainName]]]
+
+custom:
+  OFFICE_IP: 0.0.0.0/0
+  VPC_CIDR: 10
+  UUID: ${self:service.name}-${opt:stage, self:provider.stage}
+  REGION: ${opt:region, self:provider.region}
+  STAGE: ${opt:stage, self:provider.stage}
+
+  AURORA:
+    MIN_CAPACITY: 4
+    MAX_CAPACITY: 32
+    AUTO_PAUSE_SECONDS: 600
+    DELETE_PROTECTION: ${self:custom.AURORA.SWITCH.${opt:stage, self:provider.stage}.DELETE_PROTECTION , '${self:custom.AURORA.SWITCH.default.DELETE_PROTECTION}'}
+    AUTO_PAUSE: ${self:custom.AURORA.SWITCH.${opt:stage, self:provider.stage}.AUTO_PAUSE , '${self:custom.AURORA.SWITCH.default.AUTO_PAUSE}'}
+    SWITCH:
+      production:
+        AUTO_PAUSE: false
+        DELETE_PROTECTION: true
+      default:
+        AUTO_PAUSE: 'true'
+        DELETE_PROTECTION: 'false'
+
+  serverless-offline:
+    host: 0.0.0.0
+
+functions:
+  userRestEndpoint:
+    handler: application/domain/users/controllers/userController.restHandler
+    events:
+    - http:
+        path: /users/{proxy+}
+        method: ANY
+    - http:
+        path: /users
+        method: ANY
+
+  queueListener:
+    handler: framework/queue/sqsTriggerHandler.handler
+    timeout: 120
+    events:
+    - sqs:
+        arn: !GetAtt SQSQueue.Arn
+
+  smokeTestCommand:
+    handler: application/command/smokeTestCommand.handler
+    timeout: 120
+
+  migrateCommand:
+    handler: application/command/migrateCommand.handler
+    timeout: 120
+
+package:
+  include:
+  - 'tests/**'
+  - 'framework/**'
+  - 'application/**'
+  exclude:
+  - '.git/**'
+  - 'data/**'
+
+plugins:
+- serverless-plugin-typescript
+- serverless-pseudo-parameters
+- serverless-offline
+- deploy-chain
+
+#AWS Resources
+resources:
+  - ${file(cloudformation.yml)}

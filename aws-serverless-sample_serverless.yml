@@ -1,0 +1,126 @@
+service: sls-sample
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${env:ENV}
+  region: ${env:AWS_DEFAULT_REGION}
+  versionFunctions: false
+
+plugins:
+  - serverless-appsync-plugin
+
+custom:
+  appSync:
+    name: sls-sample-${env:ENV}
+    authenticationType: API_KEY
+    additionalAuthenticationProviders:
+      - authenticationType: OPENID_CONNECT
+        openIdConnectConfig:
+          issuer: !Join
+            - ''
+            - - https://cognito-idp.ap-northeast-1.amazonaws.com/
+              - !Ref UserPool
+    mappingTemplates:
+      - type: MessageKeyValue
+        field: message
+        dataSource: DynamoDB
+      - type: Query
+        field: readMessage
+        dataSource: DynamoDB
+      - type: Query
+        field: listMessage
+        dataSource: DynamoDB
+      - type: Mutation
+        field: createMessage
+        dataSource: DynamoDB
+      - type: Mutation
+        field: deleteMessage
+        dataSource: DynamoDB
+    schema: schema.graphql
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: DynamoDB
+        config:
+          tableName: sls-sample-${env:ENV}
+          iamRoleStatements:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource:
+                - arn:aws:dynamodb:${self:provider.region}:*:table/sls-sample-${env:ENV}
+                - arn:aws:dynamodb:${self:provider.region}:*:table/sls-sample-${env:ENV}/*
+    substitutions:
+      DynamoDB: sls-sample-${env:ENV}
+
+resources:
+  Resources:
+    UserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        UserPoolName: sls-sample-${env:ENV}
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: false
+        AliasAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+        EmailConfiguration:
+          EmailSendingAccount: COGNITO_DEFAULT
+        MfaConfiguration: 'OFF'
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireNumbers: true
+            RequireSymbols: true
+            RequireUppercase: true
+        Schema:
+          - AttributeDataType: "String"
+            DeveloperOnlyAttribute: false
+            Mutable: true
+            Name: "email"
+            Required: true
+
+    UserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: sls-sample-client-${env:ENV}
+        ExplicitAuthFlows:
+          - ADMIN_NO_SRP_AUTH
+        GenerateSecret: false
+        RefreshTokenValidity: 7
+        UserPoolId:
+          Ref: UserPool
+
+    DynamoDB:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: sls-sample-${env:ENV}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: key
+            AttributeType: S
+          - AttributeName: value
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: key
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: key-value-index
+            KeySchema:
+              - AttributeName: key
+                KeyType: HASH
+              - AttributeName: value
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

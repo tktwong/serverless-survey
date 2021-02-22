@@ -1,0 +1,70 @@
+service: pr-merger
+
+provider:
+  name: aws
+  runtime: python3.6
+  region: us-west-2
+  stage: development
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+      - dynamodb:DeleteItem
+    Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  pr-merger:
+    handler: index.main
+    name: ${self:provider.stage}-pr-merger
+    timeout: 10
+    environment:
+      GITHUB_TOKEN: ${env:GITHUB_TOKEN}
+      CHECKS: ${env:CHECKS}
+      APPROVALS_REQUIRED: ${env:APPROVALS_REQUIRED}
+      MERGE_LABEL: ${env:MERGE_LABEL}
+    events:
+      - http:
+          path: pr-merger/webhook
+          method: post
+          integration: lambda
+
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        GlobalSecondaryIndexes:
+          -
+            IndexName: pr_number
+            KeySchema:
+              -
+                AttributeName: sha
+                KeyType: HASH
+              -
+                AttributeName: pr_number
+                KeyType: RANGE
+            Projection:
+              ProjectionType: KEYS_ONLY
+            ProvisionedThroughput:
+              ReadCapacityUnits: 2
+              WriteCapacityUnits: 2
+
+        AttributeDefinitions:
+          -
+            AttributeName: sha
+            AttributeType: S
+          -
+            AttributeName: pr_number
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: sha
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 3
+          WriteCapacityUnits: 3
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

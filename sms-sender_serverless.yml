@@ -1,0 +1,140 @@
+service: sms-sender
+
+plugins:
+  - aws-amplify-serverless-plugin
+  - serverless-dynamodb-local
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  profile: ${opt:profile}
+  stage: ${opt:stage, 'dev'}
+  region: eu-central-1
+  environment:
+    CONTACTS_TABLE: ${self:custom.prefix}-contacts
+    MESSAGES_TABLE: ${self:custom.prefix}-messages
+    CONTACT_ID_INDEX: ContactIdIndex
+    LOG_LEVEL: debug
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ ContactsTable, Arn ]
+        - "Fn::GetAtt": [ MessagesTable, Arn ]
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MESSAGES_TABLE}/index/${self:provider.environment.CONTACT_ID_INDEX}
+    - Effect: Deny
+      Action:
+        - sns:Publish
+      Resource: arn:aws:sns:*:*:*
+    - Effect: Allow
+      Action: 
+        - sns:Publish
+      Resource: "*"         
+
+custom:
+  prefix: ${self:provider.stage}-${self:service}
+  amplify:
+    - filename: ../frontend/src/aws-exports.js
+      type: javascript
+      appClient: WebCognitoUserPoolClient
+      s3bucket: disabled
+  serverless-offline:
+    host: 0.0.0.0
+    httpPort: 4000
+    noAuth: true
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 4566
+      host: localstack
+      migrate: true
+      seed: true
+      noStart: true
+    seed:
+      domain:
+        sources:
+          - table: ${self:provider.environment.CONTACTS_TABLE}
+            sources: [./seeds/contacts.json]
+
+functions:
+  GetContact:
+    handler: src/lambda/http/contacts/get-contact.handler
+    events:
+      - http: 
+          path: contacts/{contactId}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  GetContacts:
+    handler: src/lambda/http/contacts/get-contacts.handler
+    events:
+      - http: 
+          path: contacts
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  CreateContact:
+    handler: src/lambda/http/contacts/create-contact.handler
+    events:
+      - http: 
+          path: contacts
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  UpdateContact:
+    handler: src/lambda/http/contacts/update-contact.handler
+    events:
+      - http: 
+          path: contacts/{contactId}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  DeleteContact:
+    handler: src/lambda/http/contacts/delete-contact.handler
+    events:
+      - http: 
+          path: contacts/{contactId}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  GetMessages:
+    handler: src/lambda/http/messages/get-messages.handler
+    events:
+      - http: 
+          path: messages
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  CreateMessage:
+    handler: src/lambda/http/messages/create-message.handler
+    events:
+      - http: 
+          path: messages
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+resources:
+  - ${file(resources/api-gateway-errors.yml)}
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}
+    

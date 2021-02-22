@@ -1,0 +1,104 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: komodo-bi-dashboard
+# app and org for use with dashboard.serverless.com
+app: komodo-bi-dashboard
+org: ianoutterside
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+
+# you can overwrite defaults here
+#  stage: dev
+  region: eu-west-1
+  profile: serverless-komodo-bi-dashboard
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.METRICS_TABLE}"
+
+# you can define service wide environment variables here
+  environment:
+    METRICS_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  metrics-list:
+    handler: src/routes/metrics.list
+    events:
+     - http:
+         path: metrics
+         method: get
+
+  metrics-create:
+    handler: src/routes/metrics.create
+    events:
+     - http:
+         path: metrics
+         method: post
+  
+  metrics-set:
+    handler: src/routes/metrics.set
+    events:
+     - http:
+         path: metrics/{id}
+         method: put
+
+plugins:
+  - serverless-webpack
+
+custom:
+  webpack:
+    includeModules: true
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    MetricsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.METRICS_TABLE}

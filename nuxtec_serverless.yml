@@ -1,0 +1,55 @@
+service: nuxt-on-lambda
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-northeast-1
+  stage: ${self:custom.STAGE}
+
+plugins:
+  - serverless-apigw-binary
+  - serverless-plugin-warmup
+
+custom:
+  STAGE: ${file(./config/env.yml):STAGE}
+  NODE_ENV: ${file(./config/env.yml):NODE_ENV}
+  CF_URL: ${file(./config/env.yml):CF_URL}
+  apigwBinary:
+    types:
+      - '*/*'
+
+package:
+  excludeDevDependencies: true
+  exclude:
+    - client
+    - package.json
+    - package-lock.json
+    - .gitignore
+    - Procfile
+    - .editorconfig
+    - jsconfig.json
+    - node_modules/.bin/**
+    - node_modules/.cache/**
+    - rest.http
+    - static
+
+functions:
+  render:
+    handler: server/handler.render
+    timeout: 15
+    environment:
+      BASE_URL: ${self:custom.BASE_URL}
+      NODE_ENV: ${self:custom.NODE_ENV}
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors:
+            origin: ${self:custom.CF_URL}
+            allowCredentials: true
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors:
+            origin: ${self:custom.CF_URL}
+            allowCredentials: true

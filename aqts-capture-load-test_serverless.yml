@@ -1,0 +1,346 @@
+service: aqts-capture-load-test
+
+provider:
+  name: aws
+  region: ${opt:region, 'us-west-2'}
+  stage: ${opt:stage, 'TEST'}
+  runtime: python3.8
+  memorySize: 128
+  timeout: 90
+  logRetentionInDays: 90
+  deploymentBucket:
+    name: iow-cloud-applications
+  stackTags:
+    "wma:applicationId": "Aquarius TS Capture Load Test"
+    "wma:contact": "Kenneth Kehl kkehl@contractor.usgs.gov"
+    "wma:environment": ${self:provider.stage}
+    "wma:taggingVersion": 0.0.1
+    "wma:costCenter": TBD
+    "wma:organization": IOW
+    "wma:role": etl
+    "wma:system": NWIS
+    "wma:subSystem": NWISWeb-Capture
+    commitIdentifier: ${git:sha1}
+
+custom:
+  prune:
+    automatic: true
+    number: 3
+  exportGitVariables: false
+  accountNumber: ${ssm:/iow/aws/accountNumber}
+  vpc:
+    securityGroupIds: ${ssm:/iow/retriever-capture/${self:provider.stage}/securityGroupIds~split}
+    subnetIds: ${ssm:/iow/aws/vpc/${self:provider.stage}/subnetIds~split}
+
+functions:
+  restoreDbCluster:
+    handler: src.handler.restore_db_cluster
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  modifyDbCluster:
+    handler: src.handler.modify_db_cluster
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  createDbInstance:
+    handler: src.handler.create_db_instance
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  deleteDbInstance:
+    handler: src.handler.delete_db_instance
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  deleteDbCluster:
+    handler: src.handler.delete_db_cluster
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  falsifySecrets:
+    handler: src.handler.falsify_secrets
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  restoreSecrets:
+    handler: src.handler.restore_secrets
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  enableTrigger:
+    handler: src.handler.enable_trigger
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  disableTrigger:
+    handler: src.handler.disable_trigger_if_real_db_is_off
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  addNotificationToTestBucket:
+    handler: src.handler.add_notification_to_test_bucket
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  removeNotificationFromTestBucket:
+    handler: src.handler.remove_notification_from_test_bucket
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  runIntegrationTests:
+    handler: src.handler.run_integration_tests
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  waitForTestToFinish:
+    handler: src.handler.wait_for_test_to_finish
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  preTest:
+    handler: src.handler.pre_test
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  copyS3:
+    handler: src.handler.copy_s3
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+  modifySchemaOwnerPassword:
+    handler: src.handler.modify_schema_owner_password
+    role: arn:aws:iam::${self:custom.accountNumber}:role/csr-Lambda-Role
+    environment:
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      LOG_LEVEL: INFO
+      MAX_RETRIES: 6
+    vpc: ${self:custom.vpc}
+
+
+#resources:
+#  Resources:
+#    ReferenceFileBucket:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: iow-retriever-capture-reference
+#    S3BucketLoadTest:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: iow-retriever-capture-load
+#        AccessControl: Private
+#        LifecycleConfiguration:
+#          Rules:
+#            - ExpirationInDays: 4
+#              Status: Enabled
+
+
+stepFunctions:
+  stateMachines:
+    aqtsLoadTest:
+      loggingConfig:
+        level: ALL
+        includeExecutionData: true
+        destinations:
+          - arn:aws:logs:${self:provider.region}:#{AWS::AccountId}:log-group:step-functions-test:*
+      role: arn:aws:iam::${self:custom.accountNumber}:role/step-functions-service-access
+      name: aqts-capture-load-test-${self:provider.stage}
+      definition:
+        Comment: "AQTS Load Test"
+        StartAt: FalsifySecrets
+        States:
+          FalsifySecrets:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [falsifySecrets, Arn]
+            Next: RestoreDbCluster
+          RestoreDbCluster:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [restoreDbCluster, Arn]
+            Next: ModifyDbCluster
+          ModifyDbCluster:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [modifyDbCluster, Arn]
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 600
+                MaxAttempts: 20
+                BackoffRate: 1
+            Next: CreateDbInstance
+          CreateDbInstance:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [createDbInstance, Arn]
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 600
+                MaxAttempts: 20
+                BackoffRate: 1
+            Next: ModifySchemaOwnerPassword
+          ModifySchemaOwnerPassword:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [modifySchemaOwnerPassword, Arn]
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 600
+                MaxAttempts: 20
+                BackoffRate: 1
+            Next: AddNotificationToTestBucket
+          AddNotificationToTestBucket:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [addNotificationToTestBucket, Arn]
+            Next: EnableTrigger
+          EnableTrigger:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [ enableTrigger, Arn ]
+            Next: PreTest
+          PreTest:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [preTest, Arn]
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 120
+                MaxAttempts: 10
+                BackoffRate: 1
+            Next: CopyS3
+          CopyS3:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [copyS3, Arn]
+            Next: WaitForTestToFinish
+          WaitForTestToFinish:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [waitForTestToFinish, Arn]
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 300
+                MaxAttempts: 50
+                BackoffRate: 1
+            Next: WaitForAlarmsToUpdate
+          WaitForAlarmsToUpdate:
+            Type: Wait
+            Seconds: 300
+            Next: RunIntegrationTests
+          RunIntegrationTests:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [runIntegrationTests, Arn]
+            Next: DeleteDbInstance
+          DeleteDbInstance:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [ deleteDbInstance, Arn ]
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 600
+                MaxAttempts: 20
+                BackoffRate: 1
+            Next: DeleteDbCluster
+          DeleteDbCluster:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [deleteDbCluster, Arn]
+            Next: RemoveNotificationFromTestBucket
+          RemoveNotificationFromTestBucket:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [removeNotificationFromTestBucket, Arn]
+            Next: RestoreSecrets
+          RestoreSecrets:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [restoreSecrets, Arn]
+            Next: DisableTrigger
+          DisableTrigger:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [disableTrigger, Arn]
+            End: true
+
+plugins:
+  - serverless-plugin-git-variables
+  - serverless-step-functions
+  - serverless-python-requirements
+  - serverless-pseudo-parameters
+  - serverless-prune-plugin
+
+package:
+  exclude:
+    - node_modules/**
+    - Dockerfile
+    - .dockerignore
+    - Jenkinsfile
+    - package.json
+    - package-lock.json

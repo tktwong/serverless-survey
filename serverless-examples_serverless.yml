@@ -1,0 +1,147 @@
+service: vpc-lambda
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-northeast-1
+
+functions:
+  hello:
+    handler: handler.hello
+    vpc:
+      securityGroupIds:
+        - !Ref SampleSecurityGroup
+      subnetIds:
+        - !Ref SamplePrivateSubnet
+    events:
+      - http:
+          integration: lambda-proxy
+          path: helloworld
+          method: POST
+
+resources:
+  Resources:
+    # VPCの作成
+    SampleVPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: 10.0.0.0/16
+        Tags:
+          - Key: Name
+            Value: SampleVPC
+
+    # インターネットゲートウェイの作成
+    SampleInternetGateway:
+      Type: AWS::EC2::InternetGateway
+      Properties:
+        Tags:
+          - Key: Name
+            Value: SampleInternetGateway
+
+    # インターネットゲートウェイをVPCにアタッチ
+    VPCGatewayAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        VpcId: !Ref SampleVPC
+        InternetGatewayId: !Ref SampleInternetGateway
+
+    # パブリックサブネットの作成
+    SamplePublicSubnet:
+      DependsOn: SampleVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref SampleVPC
+        CidrBlock: 10.0.1.0/24
+        Tags:
+          - Key: Name
+            Value: SamplePublicSubnet
+
+    # パブリックサブネット用のルートテーブルの作成
+    SamplePublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref SampleVPC
+        Tags:
+          - Key: Name
+            Value: SamplePublicRouteTable
+
+    # パブリックサブネット用ルートテーブルにルートを追加
+    # デフォルトゲートウエイをインターネットゲートウェイに設定する
+    SamplePublicRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId: !Ref SamplePublicRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId: !Ref SampleInternetGateway
+
+    # パブリックサブネットとルートテーブルを関連付ける
+    SubnetRouteTableAssociationPublicSubnet:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref SamplePublicSubnet
+        RouteTableId: !Ref SamplePublicRouteTable
+
+    # EIPの作成
+    SampleElasticIp:
+      Type: AWS::EC2::EIP
+      Properties:
+        Domain: vpc
+
+    # NATゲートウェイの作成
+    # パブリックサブネットに設置する
+    SampleNatGateway:
+      DependsOn: SampleElasticIp
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId: !GetAtt SampleElasticIp.AllocationId
+        SubnetId: !Ref SamplePublicSubnet
+        Tags:
+          - Key: Name
+            Value: SampleNatGateway
+
+    # プライベートサブネットの作成
+    SamplePrivateSubnet:
+      DependsOn: SampleVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref SampleVPC
+        CidrBlock: 10.0.2.0/24
+        Tags:
+          - Key: Name
+            Value: SamplePrivateSubnet
+
+    # プライベートサブネット用のルートテーブルの作成
+    SamplePrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref SampleVPC
+        Tags:
+          - Key: Name
+            Value: SamplePrivateRouteTable
+
+    # プライベートサブネット用ルートテーブルにルートを追加
+    # 送信先: 0.0.0.0/0
+    # ターゲット: SampleNatGateway
+    # デフォルトゲートウエイをNATに設定する
+    # プライベートサブネットからの通信はNATを通すことでlambdaのIPアドレスを固定できる
+    SamplePrivateRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId: !Ref SamplePrivateRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        NatGatewayId: !Ref SampleNatGateway
+
+    # プライベートサブネットとルートテーブルを関連付ける
+    SubnetRouteTableAssociationPrivateSubnet:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref SamplePrivateSubnet
+        RouteTableId: !Ref SamplePrivateRouteTable
+
+    # セキュリティグループの作成
+    SampleSecurityGroup:
+      DependsOn: SampleVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SecurityGroup for Sample Functions
+        VpcId: !Ref SampleVPC

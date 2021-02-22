@@ -1,0 +1,93 @@
+---
+service: sls-ws-example
+
+package:
+  exclude:
+    - __tests__
+    - coverage
+    - tags
+    - tags.*
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+
+  websocketsApiName: sls_ws_example-${self:provider.stage}
+  websocketsApiRouteSelectionExpression: $request.body.action
+
+  logs:
+    websocket: true
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - 'Fn::GetAtt':
+          - ConnectionTable
+          - Arn
+
+  environment:
+    CONNECTION_TABLE: ConnectionTable-${self:provider.stage}
+
+resources:
+  Resources:
+    ConnectionTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ConnectionTable-${self:provider.stage}
+
+        AttributeDefinitions:
+          - AttributeName: connectionId
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: connectionId
+            KeyType: HASH
+
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+functions:
+  connect:
+    handler: src/handlers/connect.handler
+    events:
+      - websocket:
+          route: $connect
+          cors: true
+
+  disconnect:
+    handler: src/handlers/disconnect.handler
+    events:
+      - websocket:
+          route: $disconnect
+          cors: true
+
+  default:
+    handler: src/handlers/default.handler
+    events:
+      - websocket:
+          route: $default
+          cors: true
+
+  message:
+    handler: src/handlers/message.handler
+    events:
+      - websocket:
+          route: message
+          cors: true
+
+  getUserInfo:
+    handler: src/handlers/getUserInfo.handler
+    events:
+      - websocket:
+          route: getUserInfo
+          cors: true

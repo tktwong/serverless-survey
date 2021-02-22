@@ -1,0 +1,336 @@
+service: workshop-${self:custom.name}
+
+custom:
+  name: ProductionReadyServerless
+  email: christophergradwohl@gmail.com
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    # To make the HTTP request, we need to know the root URL for the deploy API and put it
+    # somewhere so in our tests the viaHttp() method can know where to make a request.
+    # Luckily, we already capture and load environment variables using the serverless-export-env plugin and the
+    # dotEnv npm module with the .env file
+    # This adds a rootUrl environment variable to ALL the functions in this project. This environment variable would be picked
+    # up and loaded into our tests by the when() module in the test directory.
+    rootUrl:
+      Fn::Join:
+        - ""
+        - - https://
+          - !Ref ApiGatewayRestApi
+          - .execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}
+    # To load the parameters from SSM, we need to know the service and stage names at runtime, so we add them as env vars here.
+    serviceName: ${self:service}
+    stage: ${self:provider.stage}
+
+  # By default, one IAM Role is shared by all of the Lambda functions in your service.
+  # To add specific rights to this service-wide Role, define statements in provider.iamRoleStatements which will be merged into the generated policy.
+  # Our Lambda functions assume this IAM role during execution !
+  # iamRoleStatements:
+  #   # ***
+  #   # * This adds the dynamodb:scan permission to the Lambda execution role.
+  #   # ***
+  #   - Effect: Allow
+  #     Action: dynamodb:scan
+  #     Resource: !GetAtt RestaurantsTable.Arn
+  #     #  ***
+  #     #  * Adds'execute-api:Invoke' to the IAM execution role, using serverless-pseudo-parameters
+  #     # ***
+  #   - Effect: Allow
+  #     Action: execute-api:Invoke
+  #     # the request arn to /restaurants much match this template in order to get access.
+  #     # here we are giving access to our other lambdas, via the default role to be able to invoke this resource
+  #     # basically all this says is that our other AWS resources can invoke this api endpoint
+  #     Resource: arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:#{ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
+  #   # adds the ssm permissions to the service wide IAM Role, with this in place any of our lambdas can fetch from these ssm parameter stores
+  #   - Effect: Allow
+  #     Action: ssm:GetParameters*
+  #     Resource:
+  #       - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
+  #       - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
+  #       - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/secretString
+  #   # here we are adding the permission to the lambda execution role to allow decrypting kms keys useing the ssm value as a resource
+  #   - Effect: Allow
+  #     Action: kms:Decrypt
+  #     # This special syntax ${ssm:...} is how we can reference parameters in SSM directly in our serverless.yml. It's useful for referencing things like this, but again, since the SSM parameter values are fetched at deployment time and baked into the generated CloudFormation template, you shouldn't load any secrets this way.
+  #     Resource: ${ssm:/dev/kmsArn}
+  #   - Effect: Allow
+  #     Action: events:PutEvents
+  #     # Notice that we're using "*" here as Resource. EventBridge doesn't support more granular permissions for PutEvents actions.
+  #     # The "*" means that anyone with this IAM permission would be able to publish events to ANY event bus in your AWS account, including the default event bus.
+  #     # ideally we would be able to provide this IAM execution role with access ONLY to our custom event bus
+  #     Resource: "*"
+  #     # here we aare provisioning this service to be able to publish SNS events
+  #   - Effect: Allow
+  #     Action: sns:Publish
+  #     Resource: !Ref RestaurantNotificationTopic
+
+functions:
+  get-index:
+    handler: functions/get-index.handler
+    events:
+      - http:
+          path: /
+          method: get
+    environment:
+      restaurants_api:
+        Fn::Join:
+        - ''
+        - - "https://"
+          - !Ref ApiGatewayRestApi
+          - ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}/restaurants"
+      orders_api:
+        Fn::Join:
+          - ""
+          - - https://
+            - !Ref ApiGatewayRestApi
+            - .execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}/orders
+      # this is the user pool itself, A user pool is a user directory in Amazon Cognito. With a user pool, your users can sign in to your web or mobile app through Amazon Cognito.
+      cognito_user_pool_id: !Ref CognitoUserPool
+      # you need an app client ID and an optional client secret. It is your responsibility to secure any app client IDs or secrets so that only authorized client apps can call these
+      # unauthenticated APIs. You can create multiple apps for a user pool, and generally an app corresponds to the platform of an app.
+      cognito_client_id: !Ref WebCognitoUserPoolClient
+      #  we add cognito_server_client_id for testing purposes.
+      #  The ALLOW_ADMIN_USER_PASSWORD_AUTH auth flow allows us to call the Cognito admin endpoints to register users and sign in as them.
+      cognito_server_client_id: !Ref ServerCognitoUserPoolClient
+    iamRoleStatements:
+      - Effect: Allow
+        Action: execute-api:Invoke
+        Resource: arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:#{ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
+  get-restaurants:
+    handler: functions/get-restaurants.handler
+    events:
+      - http:
+          path: /restaurants
+          method: get
+          # now this function requires an IAM Role, which for this exmple will live in the INVOKE EXECUTION IAM ROLE that we defined in the iamRoleStatements under the execute-api:Invoke Action
+          # If you want to require that the caller submit the IAM user's access keys in order to be authenticated to invoke your Lambda Function, set the authorizer to aws_iam
+          authorizer: aws_iam
+    environment:
+      restaurants_table: !Ref RestaurantsTable
+    iamRoleStatementsName: get-restuarants-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:scan
+        Resource: !GetAtt RestaurantsTable.Arn
+      - Effect: Allow
+        Action: ssm:GetParameters*
+        Resource: arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
+  search-restaurants:
+    handler: functions/search-restaurants.handler
+    events:
+      - http:
+          path: /restaurants/search
+          method: post
+          # Here we are saying that /restaurants/search needs to be authed by a Cognito Authroizer function, which is a managed service by AWS.
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: CognitoAuthorizer
+    environment:
+      restaurants_table: !Ref RestaurantsTable
+    iamRoleStatementsName: search-restuarants-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:scan
+        Resource: !GetAtt RestaurantsTable.Arn
+      - Effect: Allow
+        Action: ssm:GetParameters*
+        Resource:
+          - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
+          - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/secretString
+      - Effect: Allow
+        Action: kms:Decrypt
+        Resource: ${ssm:/dev/kmsArn}
+  place-order:
+    handler: functions/place-order.handler
+    events:
+      - http:
+          path: /orders
+          method: post
+          # This function also uses the same Cognito User Tool for authorization, as it'll be called directly by the client app.
+          # remember that an authorizer returns a policy with a list of resources that are available for this user to use.
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref CognitoAuthorizer
+    environment:
+      bus_name: !Ref EventBus
+    iamRoleStatements:
+      - Effect: Allow
+        Action: events:PutEvents
+        Resource: "*"
+  notify-restaurant:
+    handler: functions/notify-restaurant.handler
+    events:
+      # https://www.serverless.com/framework/docs/providers/aws/events/event-bridge/#using-a-different-event-bus
+      # WHY NOT LET THE SEVERLESS FRAMEWORK CREATE THE EVENT BUS FOR US?
+      # The reason is that you generally wouldn't have a separate event bus per microservice.
+      # The power of EventBridge is that it gives you very fine-grained filtering capabilities
+      # and you can subscribe to events based on its content such as the type of the event (usually in the detail-type attribute).
+
+      # Therefore you typically would have a centralized event bus for the whole organization, and different services
+      # would be publishing and subscribing to the same event bus. This event bus would be provisioned by other projects
+      # that manage these shared resources (as discussed before). Which is why it's far more likely that your EventBridge
+      # functions would need to subscribe to an existing event bus by ARN. So we are providing the ARN string below :)
+      - eventBridge:
+          # we aren't using !GetAtt EventBus.Arn in the event source definition, it's because the Serverless framework only accepts a string here
+          eventBus: arn:aws:events:#{AWS::Region}:#{AWS::AccountId}:event-bus/order_events_${self:provider.stage}
+          pattern:
+            source:
+              - big-mouth
+            detail-type:
+              - order_placed # execute notify-restuarant on the order_placed event, i think this is content filtering ?
+    environment:
+      bus_name: !Ref EventBus
+      restaurant_notification_topic: !Ref RestaurantNotificationTopic
+    iamRoleStatementsName: notify-restuarant-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action: events:PutEvents
+        Resource: "*"
+      - Effect: Allow
+        Action: sns:Publish
+        Resource: !Ref RestaurantNotificationTopic
+# CloudFormation
+resources:
+  # CloudFormation Resources
+  Resources:
+    RestaurantsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+    # As an alternative to using IAM roles and policies or Lambda authorizers (formerly known as custom authorizers), 
+    # you can use an Amazon Cognito user pool to control who can access your API in Amazon API Gateway.To use an Amazon
+    # Cognito user pool with your API, you must first create an authorizer of the COGNITO_USER_POOLS type and then configure
+    # an API method to use that authorizer. After the API is deployed, the client must first sign the user in to the user
+    # pool, obtain an identity or access token for the user, and then call the API method with one of the tokens, which
+    # are typically set to the request's Authorization header. The API call succeeds only if the required token is supplied
+    # and the supplied token is valid, otherwise, the client isn't authorized to make the call because the client did not
+    # have credentials that could be authorized.
+    CognitoAuthorizer:
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        AuthorizerResultTtlInSeconds: 300
+        IdentitySource: method.request.header.Authorization
+        Name: Cognito
+        RestApiId: !Ref ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - !GetAtt CognitoUserPool.Arn
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        AliasAttributes:
+          - email
+        UsernameConfiguration:
+          CaseSensitive: false
+        AutoVerifiedAttributes:
+          - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireNumbers: true
+            RequireUppercase: true
+            RequireSymbols: true
+        Schema:
+          - AttributeDataType: String
+            Mutable: true
+            Name: given_name
+            Required: true
+            StringAttributeConstraints:
+              MinLength: "1"
+          - AttributeDataType: String
+            Mutable: true
+            Name: family_name
+            Required: true
+            StringAttributeConstraints:
+              MinLength: "1"
+          - AttributeDataType: String
+            Mutable: true
+            Name: email
+            Required: true
+            StringAttributeConstraints:
+              MinLength: "1"
+    WebCognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: web
+        UserPoolId: !Ref CognitoUserPool
+        ExplicitAuthFlows:
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        PreventUserExistenceErrors: ENABLED
+    ServerCognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: server
+        UserPoolId: !Ref CognitoUserPool
+        ExplicitAuthFlows:
+          # The ALLOW_ADMIN_USER_PASSWORD_AUTH auth flow allows us to call the Cognito admin endpoints to register users and sign in as them.
+          - ALLOW_ADMIN_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        PreventUserExistenceErrors: ENABLED
+    # Here we publicize the service's root URL and operation constraints to SSM Parameter Store for other services to consume
+    # Now other services that want to use your service can find out the service URL by referencing this SSM parameter.
+    ServiceUrlParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Type: String
+        Name: /${self:service}/${self:provider.stage}/serviceUrl
+        Value:
+          Fn::Join:
+            - ""
+            - - https://
+              - !Ref ApiGatewayRestApi
+              - .execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}
+    # This will provision an EventBridge bus called order_events_dev.
+    EventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: order_events_${self:provider.stage}
+    RestaurantNotificationTopic:
+      Type: AWS::SNS::Topic
+  
+  Outputs:
+    # CloudFormation Outputs - This adds the resoursces to the cloudformation stack output!
+    # The optional Outputs section declares output values that you can import into
+    # other stacks (to create cross-stack references), return in response (to describe stack calls),
+    # or view on the AWS CloudFormation console. For example, you can output the S3 bucket
+    # name in a stack to make the bucket easier to find.
+    RestaurantsTableName:
+      Value: !Ref RestaurantsTable
+
+    CognitoUserPoolId:
+      Value: !Ref CognitoUserPool
+
+    CognitoUserPoolArn:
+      Value: !GetAtt CognitoUserPool.Arn
+
+    CognitoUserPoolWebClientId:
+      Value: !Ref WebCognitoUserPoolClient
+
+    CognitoUserPoolServerClientId:
+      Value: !Ref ServerCognitoUserPoolClient
+
+    EventBusName:
+      Value: !Ref EventBus
+    
+    RestaurantNotificationTopicName:
+      Value: !GetAtt RestaurantNotificationTopic.TopicName
+
+    RestaurantNotificationTopicArn:
+      Value: !Ref RestaurantNotificationTopic
+
+# Serverless Framework Plugins
+plugins:
+  - serverless-export-env
+  - serverless-pseudo-parameters
+  - serverless-iam-roles-per-function

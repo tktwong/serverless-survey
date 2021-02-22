@@ -1,0 +1,77 @@
+service:
+  name: lyrebird-api
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: 
+       - dynamodb:Scan
+       - dynamodb:PutItem
+       - dynamodb:GetItem
+       - dynamodb:UpdateItem
+       - dynamodb:BatchGetItem
+      #  - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:table/lyrebird-tasks"
+    - Effect: "Allow"
+      Action: 
+       - s3:PutObject
+       - s3:PutObjectTagging
+       - s3:GetObject
+       - s3:GetObjectTagging
+       - s3:PutBucketNotification
+      Resource: "arn:aws:s3:::lyrebird-sounds/*"
+custom:
+  webpack:
+    webpackConfig: 'webpack.config.js'   # Name of webpack configuration file
+    includeModules: false   # Node modules configuration for packaging
+    packager: 'yarn'   # Packager that will be used to package your external modules
+
+package:
+  include:
+    - src/**/*.js
+  exclude:
+    - src/__snapshots__/**
+    - src/**/*.test.js
+    - .git/**
+
+functions:
+  upload:
+    handler: src/api.startModel
+    events:
+      - http:
+          path: /upload
+          method: get
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+  status:
+    handler: src/api.status
+    events:
+      - http:
+          path: /status
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+  postprocess:
+    handler: src/s3triggers.postprocess
+    events:
+      - s3:
+          bucket: lyrebird-sounds
+          event: s3:ObjectCreated:*

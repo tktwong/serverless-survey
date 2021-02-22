@@ -1,0 +1,288 @@
+# For full config options, check the docs:
+#    docs.serverless.com
+
+
+service: mestrado # NOTE: update this with your service name
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-s3-remover
+
+custom:
+  dlqtopic: "${self:service}-${opt:stage, self:provider.stage}-failed"
+  inputtopic: "${self:service}-${opt:stage, self:provider.stage}-input"
+  sourceBucket: "${self:service}-${opt:stage, self:provider.stage}-phyml"
+
+  runner: "aP6"
+  batch:
+    cluster-cpus: 36
+  lambda:
+    power: 1536
+    timeout: 60
+
+
+provider:
+  name: aws
+#  stage: dev
+  region: us-east-2
+  runtime: python3.6
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject*
+        - s3:GetObject*
+      Resource: "arn:aws:s3:::${self:custom.sourceBucket}/*"
+    - Effect: Allow
+      Action:
+        - batch:ListJobs
+        - batch:SubmitJob
+        - batch:DescribeComputeEnvironments
+        - batch:UpdateComputeEnvironment
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/*"
+
+package:
+  individually: true
+  exclude:
+    - "*/**"
+    - "!src/aws.py"
+    - "!*/__init__.py"
+
+functions:
+
+  modeltest:
+    memorySize: "${self:custom.lambda.power}"
+    timeout: "${self:custom.lambda.timeout}"
+    handler: src/modeltest.execute
+    onError: "arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:${self:custom.dlqtopic}"
+    events:
+      - sns: ${self:custom.inputtopic}
+    tags:
+      Runner: ${self:custom.runner}
+    package:
+      include:
+        - "lib/phyml"
+        - src/modeltest.py
+
+  forwarder:
+    memorySize: 128
+    timeout: 5
+    reservedConcurrency: 1
+    handler: src/forwarder.execute
+    events:
+      - sns: ${self:custom.dlqtopic}
+    environment:
+      BATCH_JOBDEF:
+        Ref: BatchJobDef
+      BATCH_JOBQUEUE:
+        Ref: BatchJobQueue
+      BATCH_COMPUTE:
+        Ref: SpotComputeEnvironment
+      MODELTEST_DLQTOPIC: ${self:custom.dlqtopic}
+    tags:
+      Runner: ${self:custom.runner}
+    package:
+      include:
+        - src/forwarder.py
+
+        
+
+resources:  # CloudFormation template syntax
+  Resources:
+    # Lambda Functions:
+    #   explicit dependencies to avoid errors during stack creation
+    ModeltestLambdaFunction:
+      DependsOn: 
+        # - ModeltestLogGroup
+        # - IamRoleLambdaExecution
+        - SNSTopicMestradodevfailed
+        # - InputBucket
+    # ForwarderLambdaFunction:
+      # DependsOn:
+        # - ForwarderLogGroup
+        # - IamRoleLambdaExecution
+        # - BatchJobDef
+    # S3 Resources
+    # InputBucket:
+    #   Type: AWS::S3::Bucket
+    #   Properties:
+    #     BucketName: "${self:custom.sourceBucket}"
+    # AWS Batch Resources
+    BatchServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service: batch.amazonaws.com
+            Action: sts:AssumeRole
+        ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole
+    ECSTaskRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service: "ecs-tasks.amazonaws.com"
+            Action: "sts:AssumeRole"
+        ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+    ECSTaskPolicy:
+      Type: AWS::IAM::Policy
+      Properties: 
+        PolicyName: "s3-access"
+        PolicyDocument: 
+          Version: "2012-10-17"
+          Statement: 
+            - Effect: "Allow"
+              Action: 
+                - "s3:GetObject*"
+                - "s3:PutObject*"
+              Resource: "arn:aws:s3:::${self:custom.sourceBucket}/*"
+        Roles: 
+          - Ref: "ECSTaskRole"
+    DynamoInlinePolicy:
+      Type: AWS::IAM::Policy
+      Properties: 
+        PolicyName: "dynamo-access"
+        PolicyDocument: 
+          Version: "2012-10-17"
+          Statement: 
+            - Effect: "Allow"
+              Action: 
+                - "dynamodb:DeleteItem"
+              Resource: "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/*"
+        Roles: 
+          - Ref: "ECSTaskRole"
+    IamInstanceProfile:
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        Roles:
+        - Ref: EcsInstanceRole
+    EcsInstanceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2008-10-17'
+          Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+        ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+    SpotIamFleetRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: spotfleet.amazonaws.com
+            Action: sts:AssumeRole
+        ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2SpotFleetRole
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2SpotFleetTaggingRole
+    BatchJobDef:
+      Type: AWS::Batch::JobDefinition
+      Properties:
+        Type: container
+        Parameters:
+          path: "bucket://path/to/file.phy"
+          cmd : "PhyML commandline args"
+          jmodeltestrunid: "jModelTest run id"
+          sourcerequestid: "None"
+        RetryStrategy:
+          Attempts: 2
+        ContainerProperties:
+          Image: mateusaubin/modeltest-lambda
+          Vcpus: 1
+          Memory: 512
+          Command:
+          - Ref::path
+          - Ref::cmd
+          - Ref::jmodeltestrunid
+          - Ref::sourcerequestid
+          JobRoleArn: 
+            Ref: ECSTaskRole
+          Environment:
+              # https://boto3.amazonaws.com/v1/documentation/api/latest/guide/configuration.html#environment-variable-configuration
+            - Name: AWS_DEFAULT_REGION
+              Value: "${self:provider.region}"
+      # DependsOn:
+        # - BatchJobQueue
+    BatchJobQueue:
+      Type: AWS::Batch::JobQueue
+      Properties:
+        Priority: 50
+        ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: SpotComputeEnvironment
+    SpotComputeEnvironment:
+      Type: AWS::Batch::ComputeEnvironment
+      Properties:
+        Type: MANAGED
+        ServiceRole:
+          Ref: BatchServiceRole
+        ComputeResources:
+          Type: SPOT
+          BidPercentage: 50
+          ImageId: ami-0307f7ccf6ea35750 # https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-optimized_AMI.html
+          MinvCpus: 0
+          DesiredvCpus: 0
+          MaxvCpus: ${self:custom.batch.cluster-cpus}
+          InstanceTypes:
+            - c5
+            - c5d
+            - c5n
+          Tags:
+            Name: ${self:service}-${opt:stage, self:provider.stage}-batch-spot
+            Runner: ${self:custom.runner}
+          Subnets:
+            - subnet-63c53f2f
+            - subnet-05bc996d
+            - subnet-292fbc53
+          SecurityGroupIds:
+            - sg-79aa1014
+          InstanceRole:
+            Ref: IamInstanceProfile
+          SpotIamFleetRole:
+            Ref: SpotIamFleetRole
+
+
+# The "Outputs" that your AWS CloudFormation Stack should produce.  This allows references between services.
+  Outputs:
+    inputbucket:
+      Value: ${self:custom.sourceBucket}
+    runner:
+      Value: ${self:custom.runner}
+    batchclustercpus:
+      Value: ${self:custom.batch.cluster-cpus}
+    lambdapower:
+      Value: ${self:custom.lambda.power}
+    lambdatimeout:
+      Value: ${self:custom.lambda.timeout}
+    inputtopic:
+      Value: "arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:${self:custom.inputtopic}"
+    batchcomputeenv:
+      Value:
+        "Ref": SpotComputeEnvironment
+    batchjobqueue:
+      Value:
+        "Ref": BatchJobQueue
+    batchjobdefinition:
+      Value:
+        "Ref": BatchJobDef

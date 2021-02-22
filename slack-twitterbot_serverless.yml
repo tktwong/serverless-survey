@@ -1,0 +1,52 @@
+service: twitterbot
+provider:
+  name: aws
+  runtime: python3.7
+  region: us-east-1
+  environment:
+    BOT_TOKEN: ${ssm:bot_token}
+    TWITTER_CONSUMER_KEY: ${ssm:twitter_consumer_api_key}
+    TWITTER_CONSUMER_SECRET: ${ssm:twitter_consumer_api_secret_key}
+    TWITTER_ACCESS_TOKEN: ${ssm:twitter_access_token}
+    TWITTER_ACCESS_SECRET_TOKEN: ${ssm:twitter_access_secret_token}
+    TWEET_TRACKING_TABLE: tweet_tracking_table
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TWEET_TRACKING_TABLE}"
+functions:
+  tweetbot:
+    handler: twitterbot/main.receive
+    events:
+      - schedule: rate(5 minutes)
+# serverless.yml
+plugins:
+  - serverless-python-requirements
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+resources:
+  Resources:
+    TweetTrackerDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: timestamp
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.TWEET_TRACKING_TABLE}

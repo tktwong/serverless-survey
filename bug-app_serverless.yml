@@ -1,0 +1,326 @@
+service: bug-app
+
+custom:
+  BUG_APP_PROJECT_TABLE: bug-app-project
+  BUG_APP_BUG_TABLE: bug-app-bug
+  RUST_LOG: debug
+
+provider:
+  name: aws
+  runtime: rust
+  environment: ${self:custom}
+
+plugins:
+  - serverless-rust
+  - serverless-iam-roles-per-function
+
+package:
+  individually: true
+
+functions:
+  get_projects:
+    handler: get_projects
+    events:
+      - http:
+          path: /projects
+          method: get
+          cors: true
+          integration: lambda
+          request:
+            passThrough: NEVER
+            template:
+              application/json: ""
+              application/x-www-form-urlencoded: ""
+          response:
+            headers:
+              Content-Type: integration.response.header.Content-Type
+              Access-Control-Allow-Origin: "'*'"
+            template: $input.json('$')
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:Scan
+        Resource:
+          Fn::GetAtt:
+            - ProjectTable
+            - Arn
+
+  create_project:
+    handler: create_project
+    events:
+      - http:
+          path: /projects
+          method: post
+          cors: true
+          integration: lambda
+          request:
+            passThrough: WHEN_NO_TEMPLATES
+            template:
+              application/json: $input.json('$')
+              application/x-www-form-urlencoded: ""
+          response:
+            passThrough: WHEN_NO_TEMPLATES
+            headers:
+              Content-Type: integration.response.header.Content-Type
+            template: $input.json('$')
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource:
+          Fn::GetAtt:
+            - ProjectTable
+            - Arn
+
+  get_project:
+    handler: get_project
+    events:
+      - http:
+          path: /projects/{projectId}
+          method: get
+          cors: true
+          integration: lambda
+          request:
+            passThrough: WHEN_NO_TEMPLATES
+            template:
+              application/json: ${file(body_mapping_templates/project-id-path-to-body.vtl)}
+              application/x-www-form-urlencoded: ""
+          response:
+            passThrough: WHEN_NO_TEMPLATES
+            headers:
+              Content-Type: integration.response.header.Content-Type
+            template: $input.json('$')
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:GetItem
+        Resource:
+          Fn::GetAtt:
+            - ProjectTable
+            - Arn
+
+  update_project:
+    handler: update_project
+    events:
+      - http:
+          path: /projects/{projectId}
+          method: put
+          cors: true
+          integration: lambda
+          request:
+            passThrough: WHEN_NO_TEMPLATES
+            template:
+              application/json: ${file(body_mapping_templates/update_project.vtl)}
+              application/x-www-form-urlencoded: ""
+          response:
+            passThrough: WHEN_NO_TEMPLATES
+            headers:
+              Content-Type: integration.response.header.Content-Type
+            template: $input.json('$')
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:UpdateItem
+        Resource:
+          Fn::GetAtt:
+            - ProjectTable
+            - Arn
+
+  delete_project:
+    handler: delete_project
+    events:
+      - http:
+          path: /projects/{projectId}
+          method: delete
+          cors: true
+          integration: lambda
+          request:
+            passThrough: WHEN_NO_TEMPLATES
+            template:
+              application/json: ${file(body_mapping_templates/project-id-path-to-body.vtl)}
+              application/x-www-form-urlencoded: ""
+          response:
+            passThrough: WHEN_NO_TEMPLATES
+            headers:
+              Content-Type: integration.response.header.Content-Type
+            template: ""
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:DeleteItem
+        Resource:
+          Fn::GetAtt:
+            - ProjectTable
+            - Arn
+
+  get_bugs:
+    handler: get_bugs
+    events:
+      - http:
+          path: /projects/{projectId}/bugs
+          method: get
+          cors: true
+          integration: lambda
+          request:
+            passThrough: WHEN_NO_TEMPLATES
+            template:
+              application/json: ${file(body_mapping_templates/project-id-path-to-body.vtl)}
+              application/x-www-form-urlencoded: ""
+          response:
+            passThrough: WHEN_NO_TEMPLATES
+            headers:
+              Content-Type: integration.response.header.Content-Type
+            template: $input.json('$')
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:Query
+        Resource:
+          Fn::GetAtt:
+            - BugTable
+            - Arn
+
+  get_bug:
+    handler: get_bug
+    events:
+      - http:
+          path: /projects/{projectId}/{bugId}
+          method: get
+          cors: true
+          integration: lambda
+          request:
+            passThrough: WHEN_NO_TEMPLATES
+            template:
+              application/json: ${file(body_mapping_templates/project-and-bug-ids-to-body.vtl)}
+              application/x-www-form-urlencoded: ""
+          response:
+            passThrough: WHEN_NO_TEMPLATES
+            headers:
+              Content-Type: integration.response.header.Content-Type
+            template: $input.json('$')
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:GetItem
+        Resource:
+          Fn::GetAtt:
+            - BugTable
+            - Arn
+
+  create_bug:
+    handler: create_bug
+    events:
+      - http:
+          path: /projects/{projectId}/create-bug
+          method: post
+          cors: true
+          integration: lambda
+          request:
+            passThrough: WHEN_NO_TEMPLATES
+            template:
+              application/json: ${file(body_mapping_templates/create_bug.vtl)}
+              application/x-www-form-urlencoded: ""
+          response:
+            passThrough: WHEN_NO_TEMPLATES
+            headers:
+              Content-Type: integration.response.header.Content-Type
+            template: $input.json('$')
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource:
+          Fn::GetAtt:
+            - BugTable
+            - Arn
+
+  update_bug:
+    handler: update_bug
+    events:
+      - http:
+          path: /projects/{projectId}/{bugId}
+          method: put
+          cors: true
+          integration: lambda
+          request:
+            passThrough: WHEN_NO_TEMPLATES
+            template:
+              application/json: ${file(body_mapping_templates/update_bug.vtl)}
+              application/x-www-form-urlencoded: ""
+          response:
+            passThrough: WHEN_NO_TEMPLATES
+            headers:
+              Content-Type: integration.response.header.Content-Type
+            template: ""
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:PutItem
+        Resource:
+          Fn::GetAtt:
+            - BugTable
+            - Arn
+
+  delete_bug:
+    handler: delete_bug
+    events:
+      - http:
+          path: /projects/{projectId}/{bugId}
+          method: delete
+          cors: true
+          integration: lambda
+          request:
+            passThrough: WHEN_NO_TEMPLATES
+            template:
+              application/json: ${file(body_mapping_templates/project-and-bug-ids-to-body.vtl)}
+              application/x-www-form-urlencoded: ""
+          response:
+            passThrough: WHEN_NO_TEMPLATES
+            headers:
+              Content-Type: integration.response.header.Content-Type
+            template: ""
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:DeleteItem
+        Resource:
+          Fn::GetAtt:
+            - BugTable
+            - Arn
+
+resources:
+  Resources:
+    ProjectTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:custom.BUG_APP_PROJECT_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    BugTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:custom.BUG_APP_BUG_TABLE}
+        AttributeDefinitions:
+          - AttributeName: projectId
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: projectId
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

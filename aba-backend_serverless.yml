@@ -1,0 +1,97 @@
+service:
+  name: sls-template
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+  globalTables:
+    regions: # list of regions in which you want to set up global tables
+      - us-east-2 # Ohio (default region to date for stack)
+      - ap-southeast-2 # Sydney (lower latency for Australia)
+    createStack: false
+  prune: # automatically prune old lambda versions
+    automatic: true
+    number: 3
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-iam-roles-per-function
+  - serverless-create-global-dynamodb-table
+  - serverless-prune-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  frameworkVersion: ‘1.64.1’
+  stage: ${opt:stage, 'local'}
+  region: ${opt:region, 'us-east-2'}
+  apiGateway:
+    minimumCompressionSize: 1024
+  environment:
+    DEBUG: '*'
+    NODE_ENV: ${self:provider.stage}
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+  tracing:
+    lambda: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: '*'
+
+functions:
+  reinsuranceRateCreate:
+      handler: src/client/client.handlers.create
+      environment:
+        TableName: !Ref DBTable
+      events:
+        - http:
+            method: post
+            path: client
+            integration: lambda
+            cors: true          
+            #authorizer: aws_iam
+            request:
+              passThrough: WHEN_NO_TEMPLATES
+              template:
+                application/json: >
+                  {                                          
+                    "rbtId": "$input.params('rbtId')",
+                    "value": {
+                      "clientNumber": "$input.params('clientNumber')",
+                      "lastName": "$input.params('lastName')",
+                      "firstName": "$input.params('firstName')",
+                      "dob": "$input.params('dob')",
+                      "medicaidId": "$input.params('medicaidId')",
+                    },                          
+                  }
+  clientList:
+    handler: src/client/client.handlers.list
+    environment:
+      TableName: !Ref DBTable
+      PAGE: 50
+    events:
+      - http:
+          method: get         
+          path: client
+          integration: lambda
+          parameters:
+            querystrings:    
+              - marker: false
+          cors: true
+          request:
+            passThrough: WHEN_NO_TEMPLATES
+            template:
+              application/json: >
+                {                                          
+                  "marker": "$input.params('marker')"                         
+                }
+resources:
+  ${file(resources.yml)} 
+                
+

@@ -1,0 +1,214 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: ASA # NOTE: update this with your service name
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  cfLogs: true
+
+# you can overwrite defaults here
+  stage: ${env:SLS_USER}
+  region: ${env:SLS_REGION}
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:*
+
+# you can add packaging information here
+package:
+  include:
+    - core
+    - functions
+    - node_modules
+    - config.json
+  exclude:
+    - bench
+    - docs
+    - test
+    - asa-wit-app.zip
+#  artifact: my-service-code.zip
+
+functions:
+  facebookLambda:
+    handler: functions/fb-endpoint.facebookLambda
+    timeout: 20
+    events:
+      - http:
+          path: fb-webhook
+          method: get
+          integration: lambda
+      - http:
+          path: fb-webhook
+          method: post
+          integration: lambda
+  cartRedirect:
+    handler: functions/cart-redirect.cartRedirect
+    timeout: 3
+    events:
+      - http:
+          path: cart-redirect
+          method: get
+          integration: lambda
+  suggestionScheduler:
+    handler: functions/suggestion-scheduler.scheduler
+    timeout: 100
+    events:
+      - schedule: cron(0 * * * ? *)
+      - enabled: false
+  suggestionEvent:
+    handler: functions/suggestion-event.suggestionEvent
+    timeout: 100
+    events:
+      - http:
+          path: suggestion-event
+          method: post
+          integration: lambda
+  reminderScheduler:
+    handler: functions/reminder-scheduler.scheduler
+    timeout: 100
+    events:
+      - schedule: cron(* * * * ? *)
+      - enabled: true
+  reminderEvent:
+    handler: functions/reminder-event.reminderEvent
+    timeout: 100
+    events:
+      - http:
+          path: reminder-event
+          method: post
+          integration: lambda
+#    you can add any of the following events
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    SessionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ASA-${opt:stage}-Sessions
+        AttributeDefinitions:
+          - AttributeName: uid
+            AttributeType: S
+          - AttributeName: sessionId
+            AttributeType: N
+        KeySchema:
+          - AttributeName: uid
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: sessionId-index
+            KeySchema:
+              - AttributeName: sessionId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    SeachQueriesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ASA-${opt:stage}-SearchQueries
+        AttributeDefinitions:
+          - AttributeName: uid
+            AttributeType: S
+          - AttributeName: date
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uid
+            KeyType: HASH
+          - AttributeName: date
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    PurchasedItemsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+         TableName: ASA-${opt:stage}-PurchasedItems
+         AttributeDefinitions:
+           - AttributeName: uid
+             AttributeType: S
+           - AttributeName: date
+             AttributeType: S
+         KeySchema:
+           - AttributeName: uid
+             KeyType: HASH
+           - AttributeName: date
+             KeyType: RANGE
+         ProvisionedThroughput:
+           ReadCapacityUnits: 1
+           WriteCapacityUnits: 1
+    UserProfilesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ASA-${opt:stage}-UserProfiles
+        AttributeDefinitions:
+          - AttributeName: uid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    SubscriptionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ASA-${opt:stage}-Subscriptions
+        AttributeDefinitions:
+          - AttributeName: date
+            AttributeType: S
+          - AttributeName: uid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: date
+            KeyType: HASH
+          - AttributeName: uid
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    RemindersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ASA-${opt:stage}-Reminders
+        AttributeDefinitions:
+          - AttributeName: date
+            AttributeType: N
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: date
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+          

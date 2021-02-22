@@ -1,0 +1,53 @@
+service: tutorial-serverless-pipeline
+custom:
+  config: ${file(${opt:stage, 'sandbox'}.config.yml)}
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${self:custom.config.stage}
+  region: ${opt:region, 'us-east-1'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:ListBucket"
+      Resource: "*"
+  environment:
+    BUCKET_NAME: my-dummy-bucket-${self:provider.stage}
+
+functions:
+  tutorial-sp-create-file:
+    name: tutorial-sp-create-file-${self:provider.stage}
+    handler: handler.create
+    environment:
+      MY_BUCKET:
+        Ref: S3BucketRandom
+    events:
+      - http:
+          path: create
+          method: post
+          cors: true
+
+  tutorial-sp-list-bucket:
+    name: tutorial-sp-list-bucket-${self:provider.stage}
+    handler: handler.list
+    environment:
+      MY_BUCKET:
+        Ref: S3BucketRandom
+    events:
+      - http:
+          path: list
+          method: get
+          cors: true
+
+resources:
+ Resources:
+   S3BucketRandom:
+     Type: AWS::S3::Bucket
+     Properties:
+       BucketName: ${self:provider.environment.BUCKET_NAME}
+ Outputs:
+    S3BucketRandomName:
+      Description: "Created bucket name"
+      Value:
+        Ref: S3BucketRandom

@@ -1,0 +1,109 @@
+service: millie-exams-api
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  tracing: true
+  stage: ${opt:stage}
+  environment:
+    NODE_ENV: production
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource:
+      - Fn::Join:
+        - ':'
+        - - arn:aws:lambda
+          - Ref: AWS::Region
+          - Ref: AWS::AccountId
+          - function:${self:service}-${opt:stage, self:provider.stage}-*
+    - Effect: "Allow" # xray permissions (required)
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+    - Effect: 'Allow'
+      Action: 
+        - 's3:PutObject'
+        - 's3:PutObjectAcl'
+      Resource:
+        - 'arn:aws:s3:::${self:service}-${opt:stage}-media'
+        - 'arn:aws:s3:::${self:service}-${opt:stage}-media/*'
+
+package:
+  exclude:
+    - .git/**
+    - src/**
+  excludeDevDependencies: true
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-plugin-tracing
+  - serverless-plugin-warmup
+  - serverless-plugin-scripts
+
+custom:
+  warmup:
+    enabled: true
+    prewarm: true
+    events:
+      - schedule: rate(3 minutes)
+    concurrency: 5
+  scripts:
+    hooks:
+      'deploy:finalize': yarn migrate:up
+  buckets:
+    MEDIA_BUCKET_NAME: ${self:service}-${opt:stage}-media
+
+functions:
+  server:
+    handler: dist/index.handler
+    events:
+      - http: ANY /
+      - http: 'ANY /{proxy+}'
+    timeout: 30
+
+resources:
+  Resources:
+    MediaBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.MEDIA_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - HEAD
+                - PUT
+                - POST
+                - DELETE
+              MaxAge: 3000
+              ExposedHeaders:
+                - x-amz-server-side-encryption
+                - x-amz-request-id
+                - x-amz-id-2
+    MediaBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: MediaBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement: [
+            {
+              Action: ['s3:GetObject'],
+              Effect: 'Allow',
+              Resource: {
+                Fn::Join: ['', ['arn:aws:s3:::', { Ref: 'MediaBucket' }, '/*']],
+              },
+              Principal: '*'
+            },
+          ]

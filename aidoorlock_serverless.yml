@@ -1,0 +1,156 @@
+# Copyright 2017 Amazon.com, Inc. and its affiliates. All Rights Reserved.
+#
+# Licensed under the Amazon Software License (the "License").
+# You may not use this file except in compliance with the License.
+# A copy of the License is located at
+#
+#   http://aws.amazon.com/asl/
+#
+# or in the "license" file accompanying this file. This file is distributed
+# on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied. See the License for the specific language governing
+# permissions and limitations under the License.
+
+service: aidoorlock
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: python2.7
+
+# you can overwrite defaults here
+  stage: dev
+  region: ${file(.build/cloud_config.yml):hostRegion}
+
+# IAM role for all Lambda functions in this service
+  iamRoleStatements:
+    $ref: ./iamRoleStatements.json
+
+functions:
+  verifyFace:
+    handler: lambda/verifyFace.lambda_handler
+    name: aidoorlock-verifyFace
+    environment:
+      GUEST_INFO_TABLE_NAME: ${file(.build/cloud_config.yml):guestInfoTableName}
+    events:
+      - s3:
+          bucket: ${file(.build/cloud_config.yml):bucketForImages}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: image
+  smsDeliveryHandler:
+    handler: lambda/smsDeliveryHandler.lambda_handler
+    name: aidoorlock-smsDeliveryHandler
+    environment:
+      GUEST_INFO_TABLE_NAME: ${file(.build/cloud_config.yml):guestInfoTableName}
+    events:
+      # - cloudwatchLog: 'DirectPublishToPhoneNumber'
+      # - cloudwatchLog: 'DirectPublishToPhoneNumber/Failure'
+      - cloudwatchLog: 'sns/${file(.build/cloud_config.yml):hostRegion}/${file(.build/cloud_config.yml):accountId}/DirectPublishToPhoneNumber'
+      - cloudwatchLog: 'sns/${file(.build/cloud_config.yml):hostRegion}/${file(.build/cloud_config.yml):accountId}/DirectPublishToPhoneNumber/Failure'
+
+
+resources:
+  Resources:
+    AIDoorLockGuests:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(.build/cloud_config.yml):guestInfoTableName}
+        AttributeDefinitions:
+          - AttributeName: GuestId
+            AttributeType: N
+        KeySchema:
+          - AttributeName: GuestId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    LambdaInvokePermission:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        FunctionName: "aidoorlock-smsDeliveryHandler"
+        Action: "lambda:InvokeFunction"
+        Principal: "logs.${file(.build/cloud_config.yml):hostRegion}.amazonaws.com"
+        SourceAccount:
+          Ref: "AWS::AccountId"
+      DependsOn: SmsDeliveryHandlerLambdaFunction
+    AIDoorLockLogGroup:
+      Type: "AWS::Logs::LogGroup"
+      Properties:
+        LogGroupName: 'sns/${file(.build/cloud_config.yml):hostRegion}/${file(.build/cloud_config.yml):accountId}/DirectPublishToPhoneNumber'
+        RetentionInDays: 14
+    AIDoorLockFailureLogGroup:
+      Type: "AWS::Logs::LogGroup"
+      Properties:
+        LogGroupName: 'sns/${file(.build/cloud_config.yml):hostRegion}/${file(.build/cloud_config.yml):accountId}/DirectPublishToPhoneNumber/Failure'
+        RetentionInDays: 14
+    AIDoorLockThing:
+      Type: "AWS::IoT::Thing"
+      Properties:
+        ThingName: "${file(.build/cloud_config.yml):thingName}"
+    AIDoorLockThingPolicy:
+      Type: "AWS::IoT::Policy"
+      Properties:
+        PolicyName: "${file(.build/cloud_config.yml):thingName}_Policy"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Action:
+                -
+                  "iot:*"
+              Resource:
+                -
+                  "*"
+    AIDoorBellThing:
+      Type: "AWS::IoT::Thing"
+      Properties:
+        ThingName: "${file(.build/cloud_config.yml):doorbellThingName}"
+    AIDoorBellThingPolicy:
+      Type: "AWS::IoT::Policy"
+      Properties:
+        PolicyName: "${file(.build/cloud_config.yml):doorbellThingName}_Policy"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Action:
+                -
+                  "iot:*"
+              Resource:
+                -
+                  "*"
+    AIDoorLockSNSSuccessFeedback:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "AIDoorLockSNSSuccessFeedback"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "sns.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          -
+            PolicyName: "AIDoorLockSNSSuccessFeedbackInlinePolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action:
+                    - "logs:CreateLogGroup"
+                    - "logs:CreateLogStream"
+                    - "logs:PutLogEvents"
+                    - "logs:PutMetricFilter"
+                    - "logs:PutRetentionPolicy"
+                  Resource: "*"

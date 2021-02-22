@@ -1,0 +1,76 @@
+
+service: notifhome-serverless
+
+plugins:
+  - serverless-pseudo-parameters
+
+custom:
+  myNotifhome: ${file(my-notifhome.yml)}
+  queueName: NotifhomeQueue
+  policyVersion: "2012-10-17"
+  topic: notifhome
+
+provider:
+  name: aws
+  runtime: ruby2.5
+  stage: dev
+  region: ${self:custom.myNotifhome.aws.region}
+
+  # Permission needed for the lambda functions
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "iot:DescribeEndpoint"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "iot:Publish" # Note: I don't need iot:Connect!
+      Resource: "arn:aws:iot:${self:provider.region}:#{AWS::AccountId}:topic/notifhome"
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+        - "sqs:GetQueueUrl"
+        - "sqs:ReceiveMessage"
+        - "sqs:DeleteMessage"
+        - "sqs:GetQueueAttributes"
+      Resource:
+        Fn::GetAtt: [ myqueue, Arn ]
+
+package:
+  exclude:
+    - aws/**
+    - board/**
+    - client/**
+    - test/**
+    - .gitignore
+    - notifhome-architecture.png
+    - README.md
+    - my-notifhome.*
+
+functions:
+  notificationsCreate:
+    handler: functions/notifications.create
+    environment:
+      SQS_URL:
+        Ref: myqueue
+    events:
+      - http:
+          path: notifications
+          method: post
+          authorizer: aws_iam
+
+  devicePublish:
+    handler: functions/device/notifications.publish
+    environment:
+      TOPIC: ${self:custom.topic}
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [ myqueue, Arn ]
+
+# CloudFormation resource templates
+resources:
+  - ${file(resources/queue-resources.yml)}
+  - ${file(resources/users-resources.yml)}
+  - ${file(resources/board-resources.yml)}
+

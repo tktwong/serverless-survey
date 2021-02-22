@@ -1,0 +1,56 @@
+service: private-link
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment: ${file(./env.yml)}
+  region: eu-west-1
+  deploymentBucket:
+    name: ${self:provider.environment.DEPLOYMENT_BUCKET}
+  vpcEndpointIds:
+    - vpce-015c7513a8a9b2200
+  vpc:
+    securityGroupIds:
+      - ${self:provider.environment.SECURITY_GROUP}
+    subnetIds:
+      - ${self:provider.environment.SUBNET_1}
+      - ${self:provider.environment.SUBNET_2}
+
+functions:
+  database:
+    handler: ./src/handler/Router.databaseRoute
+    events:
+      - http:
+          path: /database
+          method: get
+          cors: true
+
+  request:
+    handler: ./src/handler/Router.requestRoute
+    events:
+      - http:
+          path: /request
+          method: get
+          cors: true
+
+  s3:
+    handler: ./src/handler/Router.s3Route
+    events:
+      - http:
+          path: /s3
+          method: get
+          cors: true
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-plugin-split-stacks
+  - serverless-layers
+
+custom:
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    includeModules: false
+    packager: 'yarn'
+    excludeFiles: src/**/*.spec.ts
+  serverless-layers:
+    dependenciesPath: ./package.json

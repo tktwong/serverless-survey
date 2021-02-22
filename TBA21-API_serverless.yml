@@ -1,0 +1,1080 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: tba21
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-dotenv-plugin
+  - serverless-offline
+  - serverless-plugin-split-stacks
+  - serverless-api-gateway-caching-split-stack
+  - serverless-plugin-tracing
+
+custom:
+  # Enable API GW caching with some global options set
+  apiGatewayCaching:
+    enabled: true # enabled but still needs to be turned on for each function
+    ttlInSeconds: ${env:CACHE_TTL, 600}
+    dataEncrypted: true
+    clusterSize: ${env:CACHE_SIZE, '237'}
+
+  # Avoid hitting the CF Resource limit by splitting them up.
+  splitStacks:
+    perFunction: true
+    perType: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${env:STAGE, 'prod'}
+  region: ${env:REGION, 'eu-central-1'}
+  memorySize: 2048 # optional, in MB, default is 1024
+  timeout: 29 # seconds, maximum allowed for API GW integration
+  versionFunctions: false
+  environment:
+    # AWS
+    USER_POOL_ID: ${env:USER_POOL_ID}
+    # S3
+    S3_BUCKET: ${env:S3_BUCKET}
+
+
+    # Database
+    UPLOADS_TABLE: ${env:UPLOADS_TABLE}
+    TYPES_TABLE: ${env:TYPES_TABLE}
+    ITEMS_TABLE: ${env:ITEMS_TABLE}
+    COLLECTIONS_TABLE: ${env:COLLECTIONS_TABLE}
+    COLLECTIONS_ITEMS_TABLE: ${env:COLLECTIONS_ITEMS_TABLE}
+    COLLECTION_COLLECTIONS_TABLE: ${env:COLLECTION_COLLECTIONS_TABLE}
+    CONCEPT_TAGS_TABLE: ${env:CONCEPT_TAGS_TABLE}
+    KEYWORD_TAGS_TABLE: ${env:KEYWORD_TAGS_TABLE}
+    SHORT_PATHS_TABLE: ${env:SHORT_PATHS_TABLE}
+    PROFILES_TABLE: ${env:PROFILES_TABLE}
+    ANNOUNCEMENTS_TABLE: ${env:ANNOUNCEMENTS_TABLE}
+
+    PGUSER: ${env:PGUSER}
+    PGPASSWORD: ${env:PGPASSWORD}
+    PGHOST: ${env:PGHOST}
+    PGPORT: ${env:PGPORT, "5432"}
+    PGDATABASE: ${env:PGDATABASE}
+    PGSSL: ${env:PGSSL}
+
+    QLDB_API_KEY: ${env:QLDB_API_KEY}
+    QLDB_API_URL: ${env:QLDB_API_URL}
+
+    # Mailchimp
+    MC_DC: ${env:MC_DC}
+    MC_APIKEY: ${env:MC_APIKEY}
+    MC_AUDIENCE_ID: ${env:MC_AUDIENCE_ID}
+
+    # SNS
+    THUMBNAIL_SNS: ${env:THUMBNAIL_SNS}
+    VIDEO_BUCKET: ${env:VIDEO_BUCKET}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - ${env:S3_BUCKET}
+            - '/*'
+    - Effect: "Allow" # xray permissions (required)
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "cloudfront:CreateInvalidation" 
+      Resource:
+        - "*"
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource:
+        - Fn::Join:
+          - ':'
+          - - arn:aws:lambda
+            - Ref: AWS::Region
+            - Ref: AWS::AccountId
+            - function:${self:service}-${opt:stage, self:provider.stage}-*
+    - Effect: 'Allow'
+      Action:
+        - 'SNS:Publish'
+      Resource:
+        - Fn::Join:
+          - ':'
+          - - arn:aws:sns
+            - Ref: AWS::Region
+            - Ref: AWS::AccountId
+            - thumbnail
+    - Effect: Allow
+      Action:
+        - cognito-idp:*
+      Resource:
+        - 'Fn::Join':
+            - ':'
+            -
+              - 'arn:aws:cognito-idp'
+              - Ref: 'AWS::Region'
+              - Ref: 'AWS::AccountId'
+              - 'userpool/eu-central-1_bnvWk6I6I'
+    - Effect: Allow
+      Action:
+        - cognito-idp:*
+      Resource:
+        - 'Fn::Join':
+            - ':'
+            -
+              - 'arn:aws:cognito-idp'
+              - Ref: 'AWS::Region'
+              - Ref: 'AWS::AccountId'
+              - 'userpool/eu-central-1_MClQ7jNon'
+
+resources:
+  Resources:
+    TBA21Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: tba21Role-${opt:stage, self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: tba21Policy-${opt:stage, self:provider.stage}
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow # note that these rights are given in the default policy and are required if you want logs out of your lambda(s)
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                        - ':'
+                        -
+                          - 'arn:aws:logs'
+                          - Ref: 'AWS::Region'
+                          - Ref: 'AWS::AccountId'
+                          - 'log-group:/aws/lambda/*:*:*'
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                  Resource:
+                    - 'arn:aws:s3:::tba21-content*/*'
+                    - 'arn:aws:s3:::demo*.oceanarchive.io/*'
+                - Effect: Allow
+                  Action:
+                    - cognito-idp:*
+                  Resource:
+                    - 'Fn::Join':
+                        - ':'
+                        -
+                          - 'arn:aws:cognito-idp'
+                          - Ref: 'AWS::Region'
+                          - Ref: 'AWS::AccountId'
+                          - 'userpool/eu-central-1_bnvWk6I6I'
+                - Effect: Allow
+                  Action:
+                    - cognito-idp:*
+                  Resource:
+                    - 'Fn::Join':
+                        - ':'
+                        -
+                          - 'arn:aws:cognito-idp'
+                          - Ref: 'AWS::Region'
+                          - Ref: 'AWS::AccountId'
+                          - 'userpool/eu-central-1_MClQ7jNon'
+
+functions:
+## Items
+  getItems:
+    handler: src/items/items.get
+    description: Returns items from the database.
+    events:
+      - http:
+          path: items/get
+          method: get
+          cors: true
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.limit
+              - name: request.querystring.offset
+              - name: request.querystring.uuid
+
+  getItem:
+    handler: src/items/items.getItem
+    description: Returns items s3 key or id from the database.
+    events:
+      - http:
+          path: items/getItem
+          method: get
+          cors: true
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.s3Key
+              - name: request.querystring.id
+
+#  getItemsByTag:
+#    handler: src/items/items.getByTag
+#    description: Returns items by tag from the database.
+#    events:
+#      - http:
+#          path: items/getByTag
+#          method: get
+#          cors: true
+#          authorizer: aws_iam
+#          caching:
+#            enabled: true
+#            cacheKeyParameters:
+#              - name: request.querystring.tag
+#
+#  getItemsByType:
+#    handler: src/items/items.getByType
+#    description: Returns items by type from the database.
+#    events:
+#      - http:
+#          path: items/getByType
+#          method: get
+#          cors: true
+#          authorizer: aws_iam
+#          caching:
+#            enabled: true
+#            cacheKeyParameters:
+#              - name: request.querystring.type
+#
+#  getItemsByPerson:
+#    handler: src/items/items.getByPerson
+#    description: Returns items by person from the database.
+#    events:
+#      - http:
+#          path: items/getByPerson
+#          method: get
+#          cors: true
+#          authorizer: aws_iam
+#          caching:
+#            enabled: true
+#            cacheKeyParameters:
+#              - name: request.querystring.person
+
+#  changeItemStatus:
+#    handler: src/items/items.changeStatus
+#    description: Change the status of an item
+#    events:
+#      - http:
+#          path: items/changeStatus
+#          method: get
+#          cors: true
+#          authorizer: aws_iam
+#          caching:
+#            enabled: true
+#            cacheKeyParameters:
+#              - name: request.querystring.id
+#              - name: request.querystring.status
+
+  getItemsRekognitionTags:
+    handler: src/items/items.getRekognitionTags
+    description: Get the Rekognition Tags from an item.
+    events:
+      - http:
+          path: items/getRekognitionTags
+          method: get
+          cors: true
+
+### Collections
+#  getGetCollectionsByTag:
+#    handler: src/collections/collections.getByTag
+#    description: Returns collections by tag from the database.
+#    events:
+#      - http:
+#          path: collections/getByTag
+#          method: get
+#          cors: true
+#          authorizer: aws_iam
+#          caching:
+#            enabled: true
+#            cacheKeyParameters:
+#              - name: request.querystring.tag
+
+  getCollectionById:
+    handler: src/collections/collections.getById
+    description: Returns collections id from the database.
+    events:
+      - http:
+          path: collections/getById
+          method: get
+          cors: true
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.id
+
+#  getCollectionsByPerson:
+#    handler: src/collections/collections.getByPerson
+#    description: Returns collection by person from the database.
+#    events:
+#      - http:
+#          path: collections/getByPerson
+#          method: get
+#          cors: true
+#          authorizer: aws_iam
+#          caching:
+#            enabled: true
+#            cacheKeyParameters:
+#              - name: request.querystring.person
+
+#  changeCollectionStatus:
+#    handler: src/collections/collections.changeStatus
+#    description: Change the status of a collection
+#    events:
+#      - http:
+#          path: collections/changeStatus
+#          method: get
+#          cors: true
+#          authorizer: aws_iam
+#          caching:
+#            enabled: true
+#            cacheKeyParameters:
+#              - name: request.querystring.id
+#              - name: request.querystring.status
+
+  deleteItem:
+    handler: src/admin/items/delete.deleteItem
+    description: Deletes an item
+    events:
+      - http:
+          path: admin/items
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  deleteItemsFromCollection:
+    handler: src/items/items.deleteItemsFromCollection
+    description: Deletes items from a collection
+    events:
+      - http:
+          path: items/deleteItemsFromCollection
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  getItemsInCollection:
+    handler: src/collections/collections.getItemsInCollection
+    description: Returns the items in a collection
+    events:
+      - http:
+          path: collections/getItemsInCollection
+          method: get
+          cors: true
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.id
+              - name: request.querystring.limit
+              - name: request.querystring.offset
+
+  getCollectionsInCollection:
+    handler: src/collections/collections.getCollectionsInCollection
+    description: Returns the collections in a collection
+    events:
+      - http:
+          path: collections/getCollectionsInCollection
+          method: get
+          cors: true
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.id
+              - name: request.querystring.limit
+              - name: request.querystring.offset
+
+  getCollectionsByItem:
+    handler: src/collections/collections.getCollectionsByItem
+    description: Returns the collections an item is in
+    events:
+      - http:
+          path: collections/getCollectionsByItem
+          method: get
+          cors: true
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.limit
+              - name: request.querystring.offset
+              - name: request.querystring.s3Key
+
+  ###### TAG FUNCTIONS ######
+  getTags:
+    handler: src/tags/tags.get
+    description: Get tags with pagination or search tags.
+    events:
+      - http:
+          path: tags
+          method: get
+          cors: true
+          caching:
+            enabled: true
+            cacheKeyParameters:
+              - name: request.querystring.type
+              - name: request.querystring.limit
+              - name: request.querystring.offset
+              - name: request.querystring.query
+
+  insertTags:
+    handler: src/admin/tags/tags.insert
+    description: Insert a single tag or multiple tags
+    events:
+      - http:
+          path: contributor/tags
+          method: PUT
+          cors: true
+          authorizer: aws_iam
+
+  updateTag:
+    handler: src/admin/tags/tags.update
+    description: Updates a tag
+    events:
+      - http:
+          path: admin/tags
+          method: PATCH
+          cors: true
+          authorizer: aws_iam
+
+  removeTag:
+    handler: src/admin/tags/tags.remove
+    description: Removes a tag
+    events:
+      - http:
+          path: admin/tags
+          method: DELETE
+          cors: true
+          authorizer: aws_iam
+
+
+  ### MAP
+  mapInBounds:
+    handler: src/map/map.post
+    description: Get the items or collections within the specified bounds
+    events:
+      - http:
+          path: map
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  ### Short Paths
+  getShortPath:
+    handler: src/shortPaths/shortPaths.get
+    description:
+    events:
+      - http:
+          path: shortpaths
+          method: get
+          cors: true
+          caching:
+            enabled: true
+            cacheKeyParameters:
+              - name: request.querystring.table
+              - name: request.querystring.short_path
+              - name: request.querystring.id
+
+  insertShortPath:
+    handler: src/admin/shortPaths/shortPaths.insert
+    description:
+    events:
+      - http:
+          path: admin/shortpaths
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  ### Profiles
+  getProfile:
+    handler: src/profiles/profiles.get
+    description: Get a profile
+    events:
+      - http:
+          path: profiles
+          method: get
+          cors: true
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.id
+              - name: request.querystring.uuid
+
+  getCurrentProfile:
+    handler: src/profiles/profiles.getCurrent
+    description: Get current user profile
+    events:
+      - http:
+          path: currentUserProfile
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  InsertProfile:
+    handler: src/profiles/profiles.insert
+    description: Insert a profile
+    events:
+      - http:
+          path: profiles
+          method: put
+          cors: true
+
+  updateProfile:
+    handler: src/profiles/profiles.update
+    description: Update a profile
+    events:
+      - http:
+          path: profiles
+          method: patch
+          cors: true
+          authorizer: aws_iam
+
+
+  deleteProfile:
+    handler: src/profiles/profiles.deleteProfile
+    description: Delete a users own profile
+    events:
+      - http:
+          path: profiles
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  homepage:
+    handler: src/pages/homepage.get
+    description:
+    events:
+      - http:
+          path: pages/homepage
+          method: get
+          cors: true
+          caching:
+            enabled: false
+
+  search:
+    handler: src/pages/search.get
+    description:
+    events:
+      - http:
+          path: pages/search
+          method: get
+          cors: true
+
+  searchPost:
+    handler: src/pages/search.post
+    description:
+    events:
+      - http:
+          path: pages/search
+          method: post
+          cors: true
+
+
+  ### Announcements
+  getAnnouncement:
+    handler: src/announcements/announcements.get
+    description: Get an announcements
+    events:
+      - http:
+          path: announcements
+          method: get
+          cors: true
+          caching:
+            enabled: true
+            cacheKeyParameters:
+              - name: request.querystring.id
+              - name: request.querystring.limit
+              - name: request.querystring.offset
+
+  ###### ADMIN FUNCTIONS ######
+
+  ### Announcements
+
+  adminGetAnnouncements:
+    handler: src/admin/announcements/announcements.get
+    description: Get an announcements
+    events:
+      - http:
+          path: admin/announcements
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  adminUpdateAnnouncement:
+    handler: src/admin/announcements/announcements.update
+    description: Update an announcement
+    events:
+      - http:
+          path: admin/announcements
+          method: patch
+          cors: true
+          authorizer: aws_iam
+
+  adminInsertAnnouncement:
+    handler: src/admin/announcements/announcements.insert
+    description: Insert an announcements
+    events:
+      - http:
+          path: admin/announcements
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  adminDeleteAnnouncement:
+    handler: src/admin/announcements/announcements.deleteAnnouncement
+    description: Removes an announcements
+    events:
+      - http:
+          path: admin/announcements
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+
+  ### Profiles
+  contributorGetProfile:
+    handler: src/admin/profiles/profiles.get
+    description: Get a profile
+    events:
+      - http:
+          path: contributor/profiles
+          method: get
+          cors: true
+          authorizer: aws_iam
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.id
+              - name: request.querystring.uuid
+              - name: request.querystring.fullname
+              - name: request.querystring.public
+  adminGetProfile:
+    handler: src/admin/profiles/profiles.get
+    description: Get a profile
+    events:
+      - http:
+          path: admin/profiles
+          method: get
+          cors: true
+          authorizer: aws_iam
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.id
+              - name: request.querystring.uuid
+              - name: request.querystring.fullname
+              - name: request.querystring.public
+
+  adminInsertProfile:
+    handler: src/admin/profiles/profiles.insert
+    description: Insert a profile
+    events:
+      - http:
+          path: admin/profiles
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  adminUpdateProfile:
+    handler: src/admin/profiles/profiles.update
+    description: Update a profile
+    events:
+      - http:
+          path: admin/profiles
+          method: patch
+          cors: true
+          authorizer: aws_iam
+
+  #### Collections
+  adminGetCollections:
+    handler: src/admin/collections/collections.get
+    description: Returns a collection by ID or all collections owned by X from the database.
+    events:
+      - http:
+          path: admin/collections/get
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  contributorGetCollections:
+    handler: src/admin/collections/collections.get
+    description: Returns a collection by ID or all collections owned by X from the database.
+    events:
+      - http:
+          path: contributor/collections/get
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  getCollections:
+    handler: src/collections/collections.get
+    description: Returns a list of collections with an option to supply the contributor uuid
+    events:
+      - http:
+          path: collections
+          method: get
+          cors: true
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.limit
+              - name: request.querystring.offset
+              - name: request.querystring.uuid
+
+  adminGetCollectionById:
+    handler: src/admin/collections/collections.getById
+    description: Returns collections id from the database.
+    events:
+      - http:
+          path: admin/collections/getById
+          method: get
+          cors: true
+          authorizer: aws_iam
+          caching:
+            enabled: false
+            cacheKeyParameters:
+              - name: request.querystring.id
+
+  adminGetItemsInCollection:
+    handler: src/admin/collections/collections.getItemsInCollection
+    description: Returns the items in a collection
+    events:
+      - http:
+          path: admin/collections/getItemsInCollection
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+#  adminGetCollectionsByTag:
+#    handler: src/admin/collections/collections.getByTag
+#    description: Returns collections by tag from the database.
+#    events:
+#      - http:
+#          path: admin/collections/getByTag
+#          method: get
+#          cors: true
+#          authorizer: aws_iam
+#          caching:
+#            enabled: true
+#            cacheKeyParameters:
+#              - name: request.querystring.tag
+#
+  adminGetCollectionsByPerson:
+    handler: src/admin/collections/collections.getByPerson
+    description: Returns collection by person from the database.
+    events:
+      - http:
+          path: admin/collections/getByPerson
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  adminDeleteCollection:
+    handler: src/admin/collections/delete.deleteById
+    description: Removes a collection and it's collection_items entry from the database
+    events:
+      - http:
+          path: admin/collections
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  adminUpdateCollection:
+    handler: src/admin/collections/update.updateById
+    description: Admin udpates a collection in the database
+    events:
+      - http:
+          path: admin/collections/update
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  adminCreateCollection:
+    handler: src/admin/collections/insert.createCollection
+    description: Creates a collection
+    events:
+      - http:
+          path: admin/collections/create
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+#### Items
+  adminGetItems:
+    handler: src/admin/items/items.get
+    description: Returns items from the database.
+    events:
+      - http:
+          path: admin/items
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  adminGetItem:
+    handler: src/admin/items/items.getItem
+    description: Returns a single item by s3 key or id from the database.
+    events:
+      - http:
+          path: admin/items/getItem
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  adminGetItemNoCache:
+    handler: src/admin/items/items.getItem
+    description: Returns a single item by s3 key or id from the database and doesn't cache the results.
+    events:
+      - http:
+          path: admin/items/getItemNC
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+#  adminGetItemsByTag:
+#    handler: src/admin/items/items.getByTag
+#    description: Returns items by tag from the database.
+#    events:
+#      - http:
+#          path: admin/items/getByTag
+#          method: get
+#          cors: true
+#          authorizer: aws_iam
+#          caching:
+#            enabled: true
+#            cacheKeyParameters:
+#              - name: request.querystring.tag
+#
+#  adminGetItemsByType:
+#    handler: src/admin/items/items.getByType
+#    description: Returns items by type from the database.
+#    events:
+#      - http:
+#          path: admin/items/getByType
+#          method: get
+#          cors: true
+#          authorizer: aws_iam
+#          caching:
+#            enabled: true
+#            cacheKeyParameters:
+#              - name: request.querystring.type
+#
+  adminItemsByPerson:
+    handler: src/admin/items/items.getAllMine
+    description: Returns items by person from the database.
+    events:
+      - http:
+          path: admin/items/getByPerson
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  adminUpdateItem:
+    handler: src/admin/items/update.updateByS3key
+    description: Admin updates an item
+    events:
+      - http:
+          path: admin/items/update
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+# MAILCHIMP
+  mailchimpGetSegments:
+    handler: src/mailchimp/mailchimp.getSegments
+    description: Get all subscriber tags
+    events:
+      - http:
+          path: mailchimp/getSegments
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  mailchimpGetSubscriberTags:
+    handler: src/mailchimp/mailchimp.getSubscriberTags
+    description: Get subscriber tags via their hashed email
+    events:
+      - http:
+          path: mailchimp/getSubscriberTags
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  mailchimpPostSubscriberAddTag:
+    handler: src/mailchimp/mailchimp.postSubscriberAddTag
+    description: Adds a tag to a subscriber
+    events:
+      - http:
+          path: mailchimp/postSubscriberAddTag
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  mailchimpDeleteSubscriberRemoveTag:
+    handler: src/mailchimp/mailchimp.deleteSubscriberRemoveTag
+    description: Removes a tag from a subscriber
+    events:
+      - http:
+          path: mailchimp/deleteSubscriberRemoveTag
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  mailchimpPostSubscribeUser:
+    handler: src/mailchimp/mailchimp.postSubscribeUser
+    description: Sets the users status to subscribed
+    events:
+      - http:
+          path: mailchimp/postSubscribeUser
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  # Contributor routes
+  contributorUpdateCollection:
+    handler: src/collections/collections.updateById
+    description: Contributor updates a collection in the database
+    events:
+      - http:
+          path: contributor/collections/update
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  contributorCreateCollection:
+    handler: src/admin/collections/insert.createCollection # NOTE the same admin handler..
+    description: Contributor creates a collection
+    events:
+      - http:
+          path: contributor/collections/create # ..but different path
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  contributorDeleteCollection:
+    handler: src/admin/collections/delete.deleteById
+    description: Removes a collection and it's collection_items entry from the database
+    events:
+      - http:
+          path: contributor/collections
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  contributorUpdateItem:
+    handler: src/admin/items/update.updateByS3key # NOTE the same admin handler..
+    description: Contributor creates a collection
+    events:
+      - http:
+          path: contributor/items/update # ..but different path
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  contributorDeleteItem:
+    handler: src/admin/items/delete.deleteItem # NOTE the same admin handler..
+    description: Contributor deletes an item
+    events:
+      - http:
+          path: contributor/items # ..but different path
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  contributorGetCollectionsByPerson:
+    handler: src/admin/collections/collections.getByPerson
+    description: Returns collection by person from the database.
+    events:
+      - http:
+          path: contributor/collections/getByPerson
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  contributorItemsByPerson:
+    handler: src/admin/items/items.getAllMine
+    description: Returns items by person from the database.
+    events:
+      - http:
+          path: contributor/items/getByPerson
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  contributorGetAnnouncement:
+    handler: src/admin/announcements/announcements.get
+    description: Get an announcement
+    events:
+      - http:
+          path: contributor/announcements
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  contributorUpdateAnnouncement:
+    handler: src/admin/announcements/announcements.update
+    description: Update an announcement
+    events:
+      - http:
+          path: contributor/announcements
+          method: patch
+          cors: true
+          authorizer: aws_iam
+
+  contributorInsertAnnouncement:
+    handler: src/admin/announcements/announcements.insert
+    description: Insert an announcements
+    events:
+      - http:
+          path: contributor/announcements
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  contributorDeleteAnnouncement:
+    handler: src/admin/announcements/announcements.deleteAnnouncement
+    description: Removes an announcements
+    events:
+      - http:
+          path: contributor/announcements
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+  ContributorGetItem:
+    handler: src/admin/items/items.getItem
+    description: Returns items s3 key or id from the database.
+    events:
+      - http:
+          path: contributor/items/getItem
+          method: get
+          cors: true
+          authorizer: aws_iam

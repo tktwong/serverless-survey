@@ -1,0 +1,114 @@
+service: yo-movie-fe
+
+frameworkVersion: ">=1.35.0 <2.0.0"
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-webpack
+  - serverless-offline
+  - serverless-plugin-scripts
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  scripts:
+    hooks:
+      'package:initialize':
+        yarn rimraf dist && API_KEY=${env:LOCAL_API_KEY, ssm:/${self:custom.stage}/yo-movie/tmdb/apiKey} API_BASE_URL=${env:LOCAL_API_BASE_URL, ssm:/${self:custom.stage}/yo-movie/tmdb/apiBaseUrl} TMDB_CONFIG_URL=${env:LOCAL_CONFIG_URL, ssm:/${self:custom.stage}/yo-movie/tmdb/configUrl} yarn webpack --config webpack.client.js
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+
+  environment:
+    STAGE: ${self:custom.stage}
+    API_KEY: ${env:LOCAL_API_KEY, ssm:/${self:custom.stage}/yo-movie/tmdb/apiKey}
+    API_BASE_URL: ${env:LOCAL_API_BASE_URL, ssm:/${self:custom.stage}/yo-movie/tmdb/apiBaseUrl}
+    TMDB_CONFIG_URL: ${env:LOCAL_CONFIG_URL, ssm:/${self:custom.stage}/yo-movie/tmdb/configUrl}
+
+  apiGateway:
+    restApiId:
+      Ref: YoApiGateway
+    restApiRootResourceId:
+      Fn::GetAtt:
+      - YoApiGateway
+      - RootResourceId
+
+functions:
+  hello:
+    handler: handler.handler
+    events:
+      - http:
+          path: /
+          method: any
+      - http:
+          path: /{proxy+}
+          method: any
+
+resources:
+  Resources:
+    YoApiGateway:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: YoApiGateway
+
+    YoCloudFront:
+      DependsOn: YoApiGateway
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          PriceClass: PriceClass_100
+          IPV6Enabled: 'true'
+          HttpVersion: http2
+          Enabled: 'true'
+          Origins:
+          - DomainName:
+              Fn::Join: [
+                '',
+                [ Ref: YoApiGateway, '.execute-api.${self:custom.region}.amazonaws.com' ]
+              ]
+            OriginPath: '/${self:custom.stage}'
+            Id: ${self:custom.stage}-YoCloudFrontOriginId
+            CustomOriginConfig:
+              OriginSSLProtocols: [ 'TLSv1', 'TLSv1.1', 'TLSv1.2' ]
+              OriginProtocolPolicy: 'https-only'
+          DefaultCacheBehavior:
+            ForwardedValues:
+              QueryString: 'true'
+            TargetOriginId: ${self:custom.stage}-YoCloudFrontOriginId
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: 'true'
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: 'true'
+
+  Outputs:
+    YoApiGatewayRestApiId:
+      Value:
+        Ref: YoApiGateway
+      Export:
+        Name: ${self:custom.stage}-YoMovieApiGatewayRestApiId
+
+    YoApiGatewayRestApiRootResourceId:
+      Value:
+        Fn::GetAtt:
+        - YoApiGateway
+        - RootResourceId
+      Export:
+        Name: ${self:custom.stage}-YoMovieApiGatewayRestApiRootResourceId
+
+    YoCloudFront:
+      Value:
+        Fn::GetAtt: [YoCloudFront, DomainName]
+      Export:
+        Name: ${self:custom.stage}-YoMovieCloudFront
+
+    YoCloudFrontDistribiutionId:
+      Value:
+        Ref: YoCloudFront
+      Export:
+        Name: ${self:custom.stage}-YoCloudFrontDistribiutionId

@@ -1,0 +1,86 @@
+# NOTE: update this with your service name
+service: gains-log-api
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-pseudo-parameters
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: prod
+  region: eu-west-2
+  # To load environment variables externally
+  # rename env.example to env.yml and uncomment
+  # the following line. Also, make sure to not
+  # commit your env.yml.
+  #
+  #environment: ${file(env.yml):${self:provider.stage}}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: '#{exerciseRoutinesDynamoDbTable.Arn}'
+
+functions:
+  createRoutine:
+    handler: src/routines/createRoutine.main
+    events:
+      - http:
+          path: routines
+          method: post
+          cors: true
+          authorizer: aws_iam
+  getRoutine:
+    handler: src/routines/getRoutine.main
+    events:
+      - http:
+          path: routines/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  listRoutines:
+    handler: src/routines/listRoutines.main
+    events:
+      - http:
+          path: routines
+          method: get
+          cors: true
+          authorizer: aws_iam
+  updateRoutine:
+    handler: src/routines/updateRoutine.main
+    events:
+      - http:
+          path: routines/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  deleteRoutine:
+    handler: src/routines/deleteRoutine.main
+    events:
+      - http:
+          path: routines/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+resources:
+  - ${file(src/resources/apiGatewayErrors.yml)}
+  - ${file(src/resources/dynamodb.yml)}
+  - ${file(src/resources/cognitoUserPool.yml)}
+  - ${file(src/resources/cognitoIdentityPool.yml)}

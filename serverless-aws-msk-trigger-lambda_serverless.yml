@@ -1,0 +1,317 @@
+service: ${env:API_NAME}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: ${env:VERSION}
+  deploymentBucket: ${env:DEPLOYMENT_BUCKET}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - cloudwatch:*
+        - logs:*
+        - xray:*
+        - kafka:*
+        - ec2:*
+        - sqs:SendMessage
+      Resource: "*"
+  vpc:
+    securityGroupIds:
+      - ${env:VPC_SECURITY_GROUP}
+    subnetIds:
+      - ${env:VPC_SUBNET_PUBLIC_1}
+      - ${env:VPC_SUBNET_PUBLIC_2}
+  environment:
+    NODE_ENV                : ${env:NODE_ENV}
+    LOG_INFO_ENABLE         : ${env:LOG_INFO_ENABLE}
+    LOG_ERROR_ENABLE        : ${env:LOG_ERROR_ENABLE}
+    LOG_WARN_ENABLE         : ${env:LOG_WARN_ENABLE}
+
+plugins:
+  - serverless-offline
+  - serverless-api-gateway-xray
+
+custom:
+  apiGatewayXray: true
+  serverless-offline:
+    apiKey: local
+    port: 3000
+
+functions:
+
+### Producer
+  producer:
+    name: ${self:service}_produce-topics_${self:provider.stage}
+    handler: src/controllers/topics/_handler.produceTopicsRoute
+    description: Function to register an producer on kafka-msk
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: produce/topics
+          method: POST
+          cors: true
+          private: false
+
+  producerWithTransaction:
+    name: ${self:service}_produce-topics_transac_${self:provider.stage}
+    handler: src/controllers/topics/_handler.produceTopicsTransactionRoute
+    description: Function to register a producer with transaction on kafka-msk
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: produce/topics/transaction
+          method: POST
+          cors: true
+          private: false
+
+  consumer:
+    name: ${self:service}_consume-topics_${self:provider.stage}
+    handler: src/controllers/topics/_handler.consumeTopicsRoute
+    description: Function to consume the producer users on kafka-msk
+    events:
+      - msk:
+          arn: arn:aws:kafka:us-east-1:${env:AWS_ACCOUNT_ID}:cluster/${env:CLUSTER_MSK_NAME}/${env:CLUSTER_MSK_ID}
+          topic: ${env.TOPIC_MSK}
+
+  consumerTrigger:
+    name: ${self:service}_consume-topics-trigger_${self:provider.stage}
+    handler: src/controllers/topics/_handler.consumeTopicsTriggerRoute
+    description: Function to consume the producer users by trigger on kafka-msk
+    events:
+      - msk:
+          arn: arn:aws:kafka:us-east-1:${env:AWS_ACCOUNT_ID}:cluster/${env:CLUSTER_MSK_NAME}/${env:CLUSTER_MSK_ID}
+          topic: ${env.TOPIC_MSK_2}
+  
+  root:
+    name: ${self:service}_root_${self:provider.stage}
+    handler: src/controllers/_handler.root
+    description: Function root path
+    timeout: 2
+    memorySize: 128
+    events:
+      - http:
+          path: /
+          method: GET
+          cors: true
+          private: true
+  
+  testEventBridge:
+    name: ${self:service}_event-bridge_${self:provider.stage}
+    handler: src/controllers/_handler.eventBridgeRoute
+    description: Function to register a producer with transaction on kafka-msk
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: eventbridge
+          method: PUT
+          cors: true
+          private: false
+
+resources:
+### Resources
+  Resources:
+ 
+  ### API Gateway
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: ${env:API_NAME}-${self:provider.stage}
+
+  ### Gateway Response
+    GatewayResponseDefault400:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: DEFAULT_4XX
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-4XX_generic\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseDefault500:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: DEFAULT_5XX
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-5XX_generic\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseAccessDeied:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: ACCESS_DENIED
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-403_access-denied\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseApiConfigurationError:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: API_CONFIGURATION_ERROR
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-500_api-configuration-error\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseBadRequestBody:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: BAD_REQUEST_BODY
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-400_bad-request-body\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseBadRequestParameters:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: BAD_REQUEST_PARAMETERS
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-400_bad-request-parameters\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseIntegrationFailure:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: INTEGRATION_FAILURE
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-504_integration-failure\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseIntegrationTimeout:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: INTEGRATION_TIMEOUT
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-504_integration-timeout\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseInvalidApiKey:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: INVALID_API_KEY
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-403_invalid-api-key\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseInvalidSignature:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: INVALID_SIGNATURE
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-403_invalid-signature\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseRequestTooLarge:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: REQUEST_TOO_LARGE
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-413_request-too-large\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseResourceNotFound:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: RESOURCE_NOT_FOUND
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-404_resource-not-found\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseThrottled:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: THROTTLED
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-429_throttled\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+    GatewayResponseUnauthorizedMediType:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: UNSUPPORTED_MEDIA_TYPE
+        ResponseTemplates:
+          application/json: "{\"error\":{\"code\":\"kafka-msk-415_unsupported-media-type\",\"message\":$context.error.messageString},\"requestId\":\"$context.requestId\"}"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+### Outputs
+  Outputs:
+    ApiGatewayRestApiId:
+      Value:
+        Ref: ApiGatewayRestApi
+      Export:
+        Name: ${env:API_NAME}-${self:provider.stage}-restApiId
+
+    ApiGatewayRestApiRootResourceId:
+      Value:
+        Fn::GetAtt:
+          - ApiGatewayRestApi
+          - RootResourceId
+      Export:
+        Name: ${env:API_NAME}-${self:provider.stage}-rootResourceId
+
+package:
+ excludeDevDependencies: true
+ exclude:
+   - .vscode/**
+   - .git/**
+   - .gitignore
+
+
+

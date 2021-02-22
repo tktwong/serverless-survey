@@ -1,0 +1,197 @@
+---
+service: ${ opt:name }-clean-cdk
+frameworkVersion: ">=1.81.0"
+enableLocalInstallationFallback: true
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${ opt:stage, staging }
+  region: ${ opt:region, eu-west-1 }
+  timeout: 10
+  memorySize: 128
+  logRetentionInDays: 14
+  versionFunctions: false
+
+custom:
+  base_name: ${ self:service }-${ self:provider.stage }
+  service_base_name: ${ self:custom.base_name }-
+  stacks_name_start_patterns: ${ opt:stack-prefixes }
+  log_groups_name_pattern: ${ opt:log-group-prefix }
+  cfn_status_wait_time_in_seconds: 60
+  schedule_trigger_cron_expression: 0 19 ? * MON-FRI *
+  pythonRequirements:
+    pythonBin: /usr/bin/python3
+    dockerizePip: non-linux
+    layer:
+      name: ${ self:custom.base_name }
+      description: Python requirements lambda layer
+      compatibleRuntimes:
+        - python3.8
+      licenseInfo: GPLv3
+      allowedAccounts:
+        - '*'
+
+package:
+  individually: true
+  include:
+    - src/helper/boto.py
+  exclude:
+    - "**/*"
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-python-requirements
+  - serverless-iam-roles-per-function
+  - serverless-step-functions
+
+functions:
+  CleanUpLogGroups:
+    handler: src/handler/cleanup_log_groups.handler
+    environment:
+      log_groups_name_pattern: ${ self:custom.log_groups_name_pattern }
+    package:
+      include:
+        - src/controller/cleanup_log_groups.py
+        - src/handler/cleanup_log_groups.py
+        - src/model/cloudwatch.py
+        - src/service/cloudwatch.py
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    iamRoleStatementsName: ${ self:custom.service_base_name }CleanUpLogGroups
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - logs:DescribeLogGroups
+          - logs:DeleteLogGroup
+        Resource: '*'
+
+  GetCFNStacks:
+    handler: src/handler/get_cfn_stacks.handler
+    environment:
+      stacks_name_start_patterns: ${ self:custom.stacks_name_start_patterns }
+      self_stack_name: ${ self:custom.base_name }
+    package:
+      include:
+        - src/controller/cleanup_stacks.py
+        - src/handler/get_cfn_stacks.py
+        - src/model/cloudformation.py
+        - src/service/cloudformation.py
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    iamRoleStatementsName: ${ self:custom.service_base_name }GetCFNStacks
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - cloudformation:DescribeStacks
+          - cloudformation:DescribeStackResource
+          - cloudformation:DescribeStackResources
+        Resource: '*'
+  DeleteCFNStack:
+    handler: src/handler/delete_cfn_stack.handler
+    package:
+      include:
+        - src/controller/cleanup_stacks.py
+        - src/handler/delete_cfn_stack.py
+        - src/model/cloudformation.py
+        - src/service/cloudformation.py
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    # WARNING: this role it's extremely powerful as we prior don't know which resources must be deleted in
+    # the CFN delete action, but it's STRONGLY recommended to tight this role as much as possible
+    iamRoleStatementsName: ${ self:custom.service_base_name }DeleteCFNStack
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - '*'
+        Resource: '*'
+  GetCFNStackStatus:
+    handler: src/handler/get_cfn_status.handler
+    package:
+      include:
+        - src/controller/cleanup_stacks.py
+        - src/handler/get_cfn_status.py
+        - src/model/cloudformation.py
+        - src/service/cloudformation.py
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    iamRoleStatementsName: ${ self:custom.service_base_name }GetCFNStackStatus
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - cloudformation:DescribeStacks
+        Resource: '*'
+
+stepFunctions:
+  stateMachines:
+    CleanUpDevCDK:
+      name: ${ self:custom.service_base_name }StateMachine
+      role: !GetAtt StateMachineExecutionRole.Arn
+      # type: EXPRESS
+      definition:
+        Comment: "State machine that cleanups CDK developer resources in a scheduled basis"
+        StartAt: CleanUpLogGroups
+        States:
+          CleanUpLogGroups:
+            Type: Task
+            Resource: !GetAtt CleanUpLogGroups.Arn
+            ResultPath: "$"
+            Next: GetCFNStacks
+          GetCFNStacks:
+            Type: Task
+            Resource: !GetAtt GetCFNStacks.Arn
+            ResultPath: "$"
+            Next: hasMorePendingStacks?
+          hasMorePendingStacks?:
+            Type: Choice
+            Choices:
+              - Variable: "$.stacks_count"
+                NumericGreaterThan: 0
+                Next: DeleteCFNStack
+            Default: done
+          DeleteCFNStack:
+            Type: Task
+            Resource: !GetAtt DeleteCFNStack.Arn
+            ResultPath: "$"
+            Next: waitForStatusCheck
+          waitForStatusCheck:
+            Type: Wait
+            Seconds: ${ self:custom.cfn_status_wait_time_in_seconds }
+            Next: GetCFNStackStatus
+          GetCFNStackStatus:
+            Type: Task
+            Resource: !GetAtt GetCFNStackStatus.Arn
+            ResultPath: "$"
+            Next: isAlreadyDeleted?
+          isAlreadyDeleted?:
+            Type: Choice
+            Choices:
+              - Variable: "$.status"
+                StringEquals: DELETE_COMPLETE
+                Next: hasMorePendingStacks?
+              - Variable: "$.status"
+                StringEquals: DELETE_IN_PROGRESS
+                Next: waitForStatusCheck
+            Default: invalidCFNStatus
+          invalidCFNStatus:
+            Type: Fail
+            Cause: Invalid CloudFormation stack state
+          done:
+            Type: Pass
+            End: true
+      events:
+        - schedule:
+            name: ${ self:custom.service_base_name }
+            rate: cron(${ self:custom.schedule_trigger_cron_expression })
+            enabled: true
+            role: !GetAtt ScheduledEventRuleRole.Arn
+      loggingConfig:
+        level: ERROR
+        includeExecutionData: true
+        destinations:
+          - !GetAtt StateMachineLogGroup.Arn
+
+resources:
+  - ${ file( resources/infrastructure/state-machine-role.yml ) }
+  - ${ file( resources/infrastructure/state-machine-log-group.yml ) }
+  - ${ file( resources/infrastructure/cwevent-rule-role.yml ) }

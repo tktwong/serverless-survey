@@ -1,0 +1,62 @@
+service: bazos-watcher
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${env:STAGE}
+  region: ${env:REGION}
+  versionFunctions: false
+  memorySize: 256
+  timeout: 10
+  environment:
+    TABLE_BAZOS:
+      Ref: DynamoDBTable
+    SES_EMAIL: ${env:SES_EMAIL}
+    RECEIVER_EMAIL: ${env:RECEIVER_EMAIL}
+    QUERY: ${env:QUERY}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - Fn::Join: ['', ['arn:aws:dynamodb:${self:provider.region}:', Ref: AWS::AccountId, ':table/', Ref: DynamoDBTable]]
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+      Condition:
+        StringEquals:
+          ses:FromAddress: ${env:SES_EMAIL}
+      Resource:
+        '*'
+
+functions:
+  parser:
+    handler: functions/parser/index.handler
+    events:
+      - schedule:
+          rate: cron(0/30 8-23 * * ? *)
+          enabled: true
+
+package:
+  exclude:
+    - ./**
+  include:
+    - functions/**
+plugins:
+  - serverless-plugin-include-dependencies
+
+resources:
+  Resources:
+    DynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-bazos
+        AttributeDefinitions:
+          - AttributeName: link
+            AttributeType: S
+        KeySchema:
+          - AttributeName: link
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

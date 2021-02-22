@@ -1,0 +1,70 @@
+service: pupscrape
+frameworkVersion: "2"
+
+org: shawnpetros
+app: pupscrape
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    TWILIO_ACCOUNT_SID: ${param:twilio_account_sid}
+    TWILIO_AUTH_TOKEN: ${param:twilio_auth_token}
+    TWILIO_DEST_NUMS: ${param:twilio_dest_nums}
+    TWILIO_SRC_NUM: ${param:twilio_src_num}
+    DYNAMO_TABLE_NAME: ${param:dynamo_table_name}
+    RESCUE_URL: ${param:rescue_url}
+    THIRD_PARTY_URL: ${param:third_party_url}
+functions:
+  writePets:
+    handler: handler.writePets
+    events:
+      - schedule: cron(15 13 * * ? *) # every day at 13:15:00UTC (8:15am CDT)
+      - http:
+          path: parse
+          method: get
+          cors: true
+  getPets:
+    handler: handler.getPets
+    events:
+      - http:
+          path: pets
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    jrpupsnstuffdogs:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: jrpupsnstuffdogs
+        AttributeDefinitions:
+          - AttributeName: dogId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: dogId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: jrpupsnstuffdogs
+      Properties:
+        PolicyName: lambda-dynamodb
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:DescribeTable
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource: arn:aws:dynamodb:*:*:table/jrpupsnstuffdogs
+        Roles:
+          - Ref: IamRoleLambdaExecution

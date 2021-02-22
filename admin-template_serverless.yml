@@ -1,0 +1,67 @@
+service: template-web-react
+
+package:
+  exclude:
+    - ./**
+    - '!node_modules/**'
+    - node_modules/**
+    - .next/static/**
+  include:
+    - .next/server/**
+    - .next/serverless/**
+    - .next/BUILD_ID
+    - .next/build-manifest.json
+    - .next/react-loadable-manifest.json
+    - .next/records.json
+    - lambda.js
+    - routes.js
+    - .env.dev
+    - .env.prod
+    - .env.staging
+    - .build.config.json
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-s3-sync
+  - serverless-layers
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${env:AWS_REGION, 'us-east-1'}
+  stage: ${self:custom.stage}
+  apiGateway:
+    restApiId: ${env:APIGW_REST_API_ID}
+    restApiRootResourceId: ${env:APIGW_ROOT_RESOURCE_ID}
+  tags:
+    project: template-web-react
+    stage: ${self:custom.stage}
+  deploymentBucket:
+    name: ${env:DEPLOYMENT_BUCKET_NAME}
+
+functions:
+  webApp:
+    handler: lambda.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+          contentHandling: CONVERT_TO_BINARY
+      - http:
+          path: /{any+}
+          method: ANY
+          contentHandling: CONVERT_TO_BINARY
+
+custom:
+  stage: ${opt:stage, 'dev'}
+  s3Sync:
+    - bucketName: ${env:STATIC_ASSETS_BUCKET_NAME}
+      bucketPrefix: static/${env:STAGE, 'dev'}/javascript/${file(./.build.config.json):buildId}/_next/static
+      localDir: .next/static
+      deleteRemoved: false
+    - bucketName: ${env:STATIC_ASSETS_BUCKET_NAME}
+      bucketPrefix: static/${env:STAGE, 'dev'}/assets
+      localDir: public
+  serverless-layers:
+    packageManager: yarn
+    customInstallationCommand: yarn install --production

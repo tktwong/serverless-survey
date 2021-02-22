@@ -1,0 +1,48 @@
+service: Wiederkehrer
+
+provider:
+  name: aws
+  runtime: python3.6
+  environment:
+    TELEGRAM_TOKEN: ${ssm:wiederkehrer-telegram-key}
+    DYNAMODB_TABLE: "wiederkehrer"
+    SNS_SEND_REMINDER: ${ssm:wiederkehrer-send-reminder}
+    SNS_SET_REMINDER: ${ssm:wiederkehrer-set-reminder}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource: "arn:aws:sns:us-east-1:528227264112:wiederkehrer-remind"
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource: "arn:aws:sns:us-east-1:528227264112:wiederkehrer-set"
+
+functions:
+  getReminders:
+    handler: handler.getReminders
+  sendReminder:
+    handler: handler.sendReminder
+    events:
+        - sns: wiederkehrer-remind
+  setReminder:
+    handler: handler.setReminder
+    events:
+        - sns: wiederkehrer-set
+  telegramController:
+    handler: handler.telegramController
+    events:
+      - http:
+          path: telegramWebhook
+          method: post
+          cors: true

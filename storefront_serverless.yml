@@ -1,0 +1,156 @@
+service: simple-sell
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ap-southeast-2
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - "ssm:GetParameter"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource:
+        - "Fn::GetAtt": [ shopConfigTable, Arn ]
+        - "Fn::GetAtt": [ orderTable, Arn ]
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+      Resource: "*"
+
+  environment:
+    SHOP_CONFIG_TABLE: shop-config-${self:provider.stage} # TODO: grab this from where it's declared
+    ORDER_TABLE: order-${self:provider.stage} # TODO: grab this from where it's declared
+    GOOGLE_API_KEY: ${ssm:/api/${self:provider.stage}/google-api-key~true} # TODO: remove this, just use service account
+    GOOGLE_SERVICE_ACCOUNT_EMAIL: ${ssm:/api/${self:provider.stage}/google-service-account-email~true}
+    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: ${ssm:/api/${self:provider.stage}/google-service-account-private-key~true}
+    WEBSITE_BASE_URL: ${cf.us-east-1:simple-sell-ui.WebsiteURL}
+    ORDER_CREATED_SES_TEMPLATE: orderCreated_${self:provider.stage}
+
+package:
+  exclude:
+    - ui/**
+    - src/**
+    - cloudformation/**
+    - Makefile
+    - scripts/**
+  include:
+    - dist/**
+    - package.json
+    - package-lock.json
+
+functions:
+  getShop:
+    handler: dist/handler.getShop
+    events:
+      - http:
+          path: shop/{shopId}
+          method: GET
+          cors: true
+
+  checkout:
+    handler: dist/handler.checkout
+    events:
+      - http:
+          path: shop/{shopId}/checkout
+          method: post
+          cors: true
+
+  getOrder:
+    handler: dist/handler.getOrder
+    events:
+      - http:
+          path: shop/{shopId}/order/{orderId}
+          method: get
+          cors: true
+
+  cancelOrder:
+    handler: dist/handler.cancelOrder
+    events:
+      - http:
+          path: shop/{shopId}/order/{orderId}/cancel
+          method: post
+          cors: true
+
+  stripeWebhook:
+    handler: dist/handler.stripeWebhook
+    events:
+      - http:
+          path: shop/{shopId}/order/webhook
+          method: post
+
+resources:
+  Resources:
+    shopConfigTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: shop-config-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    orderTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: order-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+          - AttributeName: "shopId"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        GlobalSecondaryIndexes:
+          - IndexName: shopId
+            KeySchema:
+              - AttributeName: shopId
+                KeyType: HASH
+              - AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+              
+  Outputs:
+    TableName:
+      Value:
+        Ref: shopConfigTable
+      Description: Shop configuration table
+
+plugins:
+  - serverless-domain-manager
+  - serverless-prune-plugin
+  - serverless-offline
+
+custom:
+  prune:
+    automatic: true
+    number: 3
+    includeLayers: true
+  customDomain:
+    domainName: ${self:provider.stage}.storefront.nz
+    certificateName: "*.storefront.nz"
+    createRoute53Record: true
+    stage: ${self:provider.stage}
+    endpointType: 'regional'

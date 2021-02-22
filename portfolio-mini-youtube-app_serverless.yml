@@ -1,0 +1,240 @@
+service:
+  name: portfolio-mini-youtube-app
+
+plugins:
+  - serverless-webpack
+  - serverless-aws-documentation
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+
+custom:
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Movie API
+        description: Movie List Serverless API
+    models:
+      - name: CreateMovieRequest
+        contentType: application/json
+        schema: ${file(src/lambda/requests/create-movie-request.json)}
+      - name: UpdateMovieRequest
+        contentType: application/json
+        schema: ${file(src/lambda/requests/update-movie-request.json)}
+
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+
+
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-southeast-2'}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+
+  environment:
+    MOVIE_TABLE: Movie-${self:provider.stage}
+    INDEX_USER_ID: IndexUserId
+    MOVIES_S3_BUCKET: portfolio-todo-movies-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+
+resources:
+  Resources:
+    MovieTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.INDEX_USER_ID}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.MOVIE_TABLE}
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    MoviesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.MOVIES_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.MOVIES_S3_BUCKET}/*'
+        Bucket: !Ref MoviesBucket
+
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  CreateMovie:
+    handler: src/lambda/api/createMovie.handler
+    tracing: PassThrough
+    events:
+      - http:
+          method: post
+          path: movies
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: create movie record
+            description: create movie record
+            requestModels:
+              'application/json': CreateMovieRequest
+    iamRoleStatementsName: portfolio-mini-youtube-app-${self:provider.stage}-createMovie
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}/index/${self:provider.environment.INDEX_USER_ID}
+
+  GetMovies:
+    handler: src/lambda/api/getMovies.handler
+    tracing: PassThrough
+    events:
+      - http:
+          method: get
+          path: movies
+          cors: true
+    iamRoleStatementsName: portfolio-mini-youtube-app-${self:provider.stage}-getMovies
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}/index/${self:provider.environment.INDEX_USER_ID}
+      - Effect: Allow
+        Action:
+          - dynamodb:Scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}
+
+  UpdateMovie:
+    handler: src/lambda/api/updateMovie.handler
+    tracing: PassThrough
+    events:
+      - http:
+          method: patch
+          path: movies/{movieId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a movie
+            description: Update a movie
+            requestModels:
+              'application/json': UpdateMovieRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}/index/${self:provider.environment.INDEX_USER_ID}
+
+  GenerateUploadUrl:
+    handler: src/lambda/api/generateMovieUploadUrl.handler
+    tracing: PassThrough
+    events:
+      - http:
+          method: post
+          path: movies/{movieId}/attachment
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsName: portfolio-mini-youtube-app-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}/index/${self:provider.environment.INDEX_USER_ID}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.MOVIES_S3_BUCKET}/*
+
+  DeleteMovie:
+    handler: src/lambda/api/deleteMovie.handler
+    tracing: PassThrough
+    events:
+      - http:
+          method: delete
+          path: movies/{movieId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIE_TABLE}/index/${self:provider.environment.INDEX_USER_ID}

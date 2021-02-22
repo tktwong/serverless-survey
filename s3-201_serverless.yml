@@ -1,0 +1,50 @@
+service: s3-image-transformation-csv
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  environment: ${file(./config/dev.yml):environment}
+  role: ${file(./config/dev.yml):aws.role}
+  iamRoleStatements: # IAM role statements so that services can be accessed in the AWS account
+  - Effect: 'Allow'
+    Action:
+      - "s3:PutBucketNotification"
+    Resource:
+      Fn::Join:
+        - ''
+        - - 'arn:aws:s3:::${self:provider.environment.S3Bucket}'
+  # vpc: ${file(./config/dev.yml):aws.vpc}
+
+# you can add packaging information here
+package:
+  exclude:
+    - .git/*
+    - .npmignore
+    - .gitignore 
+    - s3-image-transformation-csv.zip
+
+custom:
+  optimize:
+    debug: false
+    minify: false
+    plugins: ['syntax-async-functions', 'transform-async-to-generator']
+    presets: []
+    extensions: ['.js', '.json']
+
+
+plugins:
+ - serverless-plugin-optimize
+ - serverless-plugin-existing-s3
+
+functions:
+  myFunc:
+    handler: index.handler
+    timeout: 120
+    events: 
+      - existingS3: 
+          bucket: ${self:provider.environment.S3Bucket}
+          events:
+            - ${self:provider.environment.S3Event1}
+          rules: 
+            - prefix: ${self:provider.environment.S3PrefixRules}
+            - suffix: ${self:provider.environment.S3SuffixRules}

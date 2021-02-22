@@ -1,0 +1,89 @@
+service: sls-s3-thumbnails
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  custom:
+    bucketName: s3-thumbnails-${self:provider.stage}
+    topicName: notify
+    email: ${opt:email}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ] }
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:DeleteObject"
+      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } , "/*"] ] }
+
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:GetObject"
+      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "S3BucketThumbnails" } , "/*"] ] }
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "S3BucketThumbnails" } , "/*"] ] }
+
+    - Effect: "Allow"
+      Action:
+        - "sns:Publish"
+      Resource:
+        Ref: AlarmTopic
+
+  environment:
+    PREFIX: thumbnail_
+    TOPIC_ARN:
+      Ref: AlarmTopic
+
+functions:
+  s3_generate_thumbnails:
+    handler: handler.s3_generate_thumbnails
+    events:
+      - s3:
+          bucket: ${self:provider.custom.bucketName}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .png
+          existing: true
+
+resources:
+  Resources:
+    S3BucketThumbnails:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.custom.bucketName}
+    AlarmTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: 'S3 Thumbnails Generator Serverless Alerts'
+        TopicName: ${self:provider.custom.topicName}
+        Subscription:
+          - Endpoint: ${self:provider.custom.email}
+            Protocol: "email"
+  Outputs:
+    S3BucketThumbnailsARN:
+       Description: "S3 Thumbnails Bucket ARN"
+       Value:
+          Fn::GetAtt S3BucketThumbnails
+    SnsTopicArn:
+      Description: "ARN for the SNS Alarm Topic"
+      Value:
+        Ref: AlarmTopic
+
+plugins:
+  - serverless-python-requirements
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    slim: False
+
+package:
+  include:
+    - handler.py
+  exclude:
+    - ./**

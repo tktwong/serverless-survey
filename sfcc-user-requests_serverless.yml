@@ -1,0 +1,214 @@
+service: sfcc-user-requests
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  dynamodb: #for local db only
+    start:
+      port: 8000
+      migrate: true #creates table fresh with each run
+      inMemory: true
+    onStart: true
+  assets: #for S3 bucket deployments
+    auto: true
+    targets:
+    - bucket: 
+        Ref: WebAppBucket
+      files:
+      - source: ./src/webapp/
+        globs: '*'
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: prod
+  apiKeys:
+  - sfcc-csr-apikey
+  environment:
+    REQUESTS_TABLE: ${self:service}-${self.opt, self:provider.stage}-rqsts
+    WEBAPP_BUCKET:
+      Ref: WebAppBucket
+    S3_UPLOAD_BUCKET:
+      Ref: UploadsBucket
+    API_INVOKE_URL: { "Fn::Join" : ["", [" https://", { "Ref" : "ApiGatewayRestApi" }, ".execute-api.${self:custom.region}.amazonaws.com/${self:custom.stage}" ] ]  }
+    SRC_EMAIL: hbcdigitalinfrastructuresupport@hbc.com
+    DEST_EMAIL: hbc-sfcc-csr-requests@hbc.com
+    SES_REGION: ${self:provider.region}
+  stackTags: # Tags to comply with Cloud Engineering requirements
+    owner: jeffrey.woleslagle@hbc.com
+    environment: production
+    projectname: SFCC Production Support
+    application: SFCC
+    exposure: private
+    portfolio: Non-portfolio
+    compliance: non-sensitive
+    projectcode: CR-XXXXX
+    banner: ent
+  iamRoleStatements:
+  - Effect: Allow
+    Action: 
+      - dynamodb:Query
+      - dynamodb:Scan
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+      - dynamodb:UpdateItem
+      - dynamodb:DeleteItem
+    Resource: '*'
+    # Fn::GetAtt: [ RqstsDynamoDBTable, Arn ]
+  - Effect: Allow
+    Action:
+      - s3:PutObject
+      - s3:PutObjectAcl
+      - s3:GetObject
+      - s3:DeleteObject
+    Resource: 
+      Fn::GetAtt: [ UploadsBucket, Arn ]
+  - Effect: Allow
+    Action:
+      - s3:ListBucket
+    Resource:       
+      Fn::GetAtt: [ UploadsBucket, Arn ]
+  - Effect: Allow
+    Action:
+      - ses:SendEmail
+      - ses:SendRawEmail
+    # This may need to be changed if not using HBC-infrastructure
+    Resource: "arn:aws:ses:us-east-1:636338013835:identity/	
+hbcdigitalinfrastructuresupport@hbc.com"
+plugins:
+  - serverless-offline
+  - serverless-dynamodb-local
+  - serverless-s3-deploy
+functions:
+  healthcheck:
+    handler: src/rqsts/healthcheck.handler
+    events:
+      - http:
+          method: GET
+          path: /rqsts/ping
+          private: true
+  listRqsts:
+    handler: src/rqsts/list.handler
+    events:
+      - http:
+          method: GET
+          path: /rqsts
+          private: true
+  listAddAllRqsts:
+    handler: src/rqsts/listStatusAddAll.handler
+    events:
+      - http:
+          method: GET
+          path: /rqsts/list/add_all
+          private: true
+  listAddInstRqsts:
+    handler: src/rqsts/listStatusAddInst.handler
+    events:
+      - http:
+          method: GET
+          path: /rqsts/list/add_inst
+          private: true
+  listDeleteRqsts:
+    handler: src/rqsts/listStatusDelete.handler
+    events:
+      - http:
+          method: GET
+          path: /rqsts/list/del_all
+          private: true
+  listRqstsByUpdated:
+    handler: src/rqsts/listByUpdated.handler
+    events:
+      - http:
+          method: GET
+          path: /rqsts/list/updated
+          private: true
+  listRqstsByCreated:
+    handler: src/rqsts/listByCreated.handler
+    events:
+      - http:
+          method: GET
+          path: /rqsts/list/created
+          private: true
+  listTimeoutRqsts:
+    handler: src/rqsts/listStatusTimeout.handler
+    events:
+      - http:
+          method: GET
+          path: /rqsts/list/timeout
+          private: true
+  listStaleRqsts:
+    handler: src/rqsts/listStatusStale.handler
+    events:
+      - http:
+          method: GET
+          path: /rqsts/list/stale
+          private: true
+  createRqsts:
+    handler: src/rqsts/create.handler
+    events:
+      - http:
+          method: POST
+          path: /rqsts
+          private: true
+  getRqsts:
+    handler: src/rqsts/findone.handler
+    events:
+      - http:
+          method: GET
+          path: /rqsts/{id}
+          private: true
+          request:
+            parameters:
+              id: true
+  deleteRqst:
+    handler: src/rqsts/delete.handler
+    events:
+      - http:
+          method: DELETE
+          path: /rqsts/{id}
+          private: true
+          request:
+            parameters:
+              id: true
+  updateRqst:
+    handler: src/rqsts/update.handler
+    events:
+      - http:
+          method: PUT
+          path: /rqsts/{id}
+          private: true
+          request:
+            parameters:
+              id: true
+  sendSignedUrl:
+    handler: src/send/send.handler
+    events:
+      - http:
+          method: POST
+          path: /send
+  sendHealthcheck:
+    handler: src/send/sendHealthcheck.handler
+    events:
+      - http:
+          method: GET
+          path: /send
+          private: true
+  validateAndPush:
+    handler: src/push/push.handler
+    events:
+      - http:
+          method: POST
+          path: /push
+          private: true
+      # This should kick off the lambda when an object is created - didn't have time to test.
+      # - s3:
+      #   bucket: 
+      #     Ref: UploadsBucket
+      #   event: s3:ObjectCreated:*
+      #   rules:
+      #   - prefix: upload/
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb.yml)}
+  # S3
+  - ${file(resources/uploads-s3.yml)}
+  - ${file(resources/webapp-s3.yml)}

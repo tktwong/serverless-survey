@@ -1,0 +1,93 @@
+service: __PACKAGE_NAME__-users-api
+
+plugins:
+  - serverless-bundle
+  - serverless-offline
+
+custom: ${file(../../serverless.common.yml):custom}
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: __AWS_REGION__
+  tracing:
+    lambda: true
+
+  apiGateway:
+    restApiId:
+      'Fn::ImportValue': ${self:custom.stage}-ApiGatewayRestApiId
+    restApiRootResourceId:
+      'Fn::ImportValue': ${self:custom.stage}-ApiGatewayRestApiRootResourceId
+
+  environment:
+    stage: ${self:custom.stage}
+    resourcesStage: ${self:custom.resourcesStage}
+
+  iamRoleStatements:
+    - ${file(../../serverless.common.yml):lambdaPolicyXRay}
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - 'Fn::ImportValue': ${self:custom.resourcesStage}-UsersTableArn
+    - Effect: 'Allow'
+      Action:
+        - cognito-idp:AdminDisableUser
+      Resource:
+        - 'Fn::ImportValue': CognitoUserPoolArn-${self:custom.resourcesStage}
+functions:
+  signup:
+    handler: signup.main
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.resourcesStage}-user-pool
+          trigger: PostConfirmation
+          existing: true
+  customMessage:
+    handler: custom-message.main
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.resourcesStage}-user-pool
+          trigger: CustomMessage
+          existing: true
+  signin:
+    handler: signin.main
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.resourcesStage}-user-pool
+          trigger: PostAuthentication
+          existing: true
+  get:
+    handler: get.main
+    events:
+      - http:
+          path: users/me
+          method: get
+          cors: true
+          authorizer: aws_iam
+  update:
+    handler: update.main
+    events:
+      - http:
+          path: users/me
+          method: put
+          cors: true
+          authorizer: aws_iam
+  destroy:
+    handler: destroy.main
+    events:
+      - http:
+          path: users/me
+          method: delete
+          cors: true
+          authorizer: aws_iam

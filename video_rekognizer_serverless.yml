@@ -1,0 +1,142 @@
+
+
+service: rekognizer # NOTE: update this with your service name
+
+provider:
+  name: aws
+  runtime: python3.6
+  profile: ${file(../config.${self:provider.stage}.json):rekognizer.profile}
+  stage: "dev"
+  region: ${file(../config.${self:provider.stage}.json):rekognizer.region}
+
+  iamRoleStatements:
+  - Effect: "Allow"
+    Action:
+    - "rekognition:*"  # allow lambda function to use all rekognition methods
+    Resource: "*"      # on any resource in aws (in this case S3 - need to fine tune this)
+  - Effect: "Allow"
+    Action:
+    - "s3:GetObject"  # allow lambda function the ability to get any s3 object
+    Resource:         # on the bucket dynamically defined below
+    - Fn::Join:  # join arn with /*
+      - ''
+      - - ${self:custom.videosBucketArn}
+        - '/*'  # needed to give lambda access to the objects inside bucket
+  - Effect: "Allow"  # IAM statement that will grant permission to lambda to be able to access the
+                     # RekognitionSNSPublishRole Role and give it to the Rekognition service to use
+                     # our lambda function need permission to actually get the role and pass it on to Rekognition
+    Action:
+      - iam:GetRole
+      - iam:PassRole
+    Resource:
+      Fn::GetAtt:
+        - RekognitionSNSPublishRole
+        - Arn  # getting the ARN attribute of the CloudFormation resource (RekognitionSNSPublishRole) defined below
+
+  # IAM permission to allow our function to write to the VideosTable
+  - Effect: "Allow"
+    Action:
+      - "dynamodb:PutItem"
+    Resource:
+      Fn::GetAtt:
+        - VideosTable  # specify VideosTable defined in resources(CloudFormation template) below
+        - Arn
+
+
+  environment:  # Lambda Environment Variables
+
+    DYNAMODB_TABLE_NAME: ${self:custom.videosTableName}
+    REKOGNITION_SNS_TOPIC_ARN: ${self:custom.rekognitionSNSTopicArn}
+    # This role is created down below in the resources section
+    REKOGNITION_ROLE_ARN:
+      Fn::GetAtt:
+      - RekognitionSNSPublishRole
+      - Arn
+
+
+custom:  # defining custom variables to be used in other sections of this file
+
+  # define the dynamodb table name. The actual table is created in the resources section
+  videosTableName: ${file(../config.${self:provider.stage}.json):rekognizer.videos_table}
+
+  rekognitionSNSTopicArn:
+    Fn::Join:
+    - ':' # delimiter that joins the list of strings (below) together with
+    - - arn
+      - aws
+      - sns
+      - Ref: AWS::Region  # sns topics are specific to a region
+      - Ref: AWS::AccountId # sns topics are specific to an account
+      - handleLabelDetectionTopic  # name of topic that Rekognition service will subscribe to
+
+  videosBucketArn:
+    Fn::Join:  # use join function (a function defined by CloudFormation) - takes two arguments
+    - ':'  # delimiter that joins the list of strings (below) together with
+    - - arn
+      - aws
+      - s3
+      - ''  # space
+      - ''  # space
+      - ${file(../config.${self:provider.stage}.json):rekognizer.videos_bucket}  # bucketname
+
+
+functions:
+  # main video processing function
+  startProcessingVideo:
+    handler: handler.start_processing_video
+    # connect events to our function
+    events:  # event/s that will trigger this function
+      - s3:  # when a file is uploaded to the S3 bucket defined config file
+          bucket: ${file(../config.${self:provider.stage}.json):rekognizer.videos_bucket}  # serverless will create this bucket for us
+          event: s3:ObjectCreated:*  # this is the event trigger, this is watching for all s3 object creation events
+          rules:  # rules/scope for our event trigger
+            - suffix: .mp4  # only trigger the handler when the uploaded file's extension is .mp4
+  handleLabelDetection:
+    handler: handler.handle_label_detection
+    events:  # event/s that will trigger this function
+    - sns: handleLabelDetectionTopic  # function triggered when a message is published to this SNS topic
+                                      # serverless will create this topic if it doesn't already exist
+
+# Serverless let's us create custom resources by defining them as a CloudFormation template in the resources section
+# Here we create things like IAM roles that will be used by
+resources:
+  Resources:
+
+    # DynamoDB Related
+    VideosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:  # define attributes of dynamo db table
+        - AttributeName: videoName  # this is the name of the Item to create
+          AttributeType: S  # the value of videoName will be a string
+        KeySchema:
+        - AttributeName: videoName  # defining the primary/unique key to use (Partition Key)
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.videosTableName}  # use custom variable defined above
+
+    # SNS Related
+    RekognitionSNSPublishRole:  # name of the role the Rekognition service will assume
+      Type: AWS::IAM::Role
+      # the rest of this is just raw CloudFormation template code
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - rekognition.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:  # what permissions the role will assign to the Rekognition service when assumed
+          - PolicyName: RekognitionSNSPublishPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - sns:Publish
+                  Resource: ${self:custom.rekognitionSNSTopicArn}

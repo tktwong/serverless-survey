@@ -1,0 +1,294 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: lockdown-for-aws
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  region: us-west-2
+  profile: se-prod
+  memorySize: 512 # Default memory size for all functions unless overridden below.
+  timeout: 10 # Default timeout for all functions.
+  tracing:
+    lambda: true # this will enable x ray tracing across all functions.
+  versionFunctions: false
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - xray:PutTelemetryRecords
+        - xray:PutTraceSegments
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - iam:simulatePrincipalPolicy
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - sns:Publish
+      Resource:
+        - ${self:custom.snsRemediationNotificationARN}
+
+  stackTags:
+    DeployedWith: "Serverless Framework"
+    DeployedBy: "Craig Simon"
+
+  environment:
+    MINIMUM_THREAT_SCORE_FOR_REMEDIATION: ${self:custom.minimum_threat_score_for_remediation}
+    MINIMUM_CERTAINTY_SCORE_FOR_REMEDIATION: ${self:custom.minimum_certainty_score_for_remediation}
+    REMEDIATION_TYPE: ${self:custom.remediation_type}
+    DEPLOYMENT_STAGE: ${self:custom.stage}
+    STOP_LAMBDA_NAME: ${self:custom.baseName}--stopLambda--${self:custom.stage}
+    TERMINATE_LAMBDA_NAME: ${self:custom.baseName}--terminateLambda--${self:custom.stage}
+    ISOLATE_LAMBDA_NAME: ${self:custom.baseName}--isoalteLambda--${self:custom.stage}
+    NOTIFICATION_ARN: ${self:custom.snsRemediationNotificationARN}
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.py
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.py
+#    - exclude-me-dir/**
+
+functions:
+  queueWriter:
+    handler: queueWriter.main.main
+    name: ${self:custom.baseName}--queueWriter--${self:custom.stage}
+    description: queueWriter receives ASFF formatted findings, verifies the validity of the event, then adds it to the eventQueue SQS Queue.
+    memorySize: 256
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - sqs:*
+        Resource: # The resource ALWAYS needs to point to an ARN.  Hence the GetAtt call below.
+          Fn::GetAtt:
+            - eventSQSQueue
+            - Arn
+
+      - Effect: "Allow"
+        Action:
+          - sqs:*
+        Resource:
+          Fn::GetAtt:
+            - eventSQSDlq
+            - Arn
+
+  routerLambda:
+    handler: routerLambda.main.main
+    name: ${self:custom.baseName}--routerLambda--${self:custom.stage}
+    description: routerLambda take messages off of the eventQueue, evaluates the event, and if the host requires remediation, it will send the event to the proper lambda to perform the remediation.
+    memorySize: 128
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - lambda:InvokeFunction
+        Resource: "*"
+
+      - Effect: "Allow"
+        Action:
+          - sqs:*
+        Resource: # The resource ALWAYS needs to point to an ARN.  Hence the GetAtt call below.
+          Fn::GetAtt:
+            - eventSQSQueue
+            - Arn
+
+      - Effect: "Allow"
+        Action:
+          - sqs:*
+        Resource:
+          Fn::GetAtt:
+            - eventSQSDlq
+            - Arn
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - eventSQSQueue
+              - Arn
+
+  stopLambda:
+    handler: stopLambda.main.main
+    name: ${self:custom.baseName}--stopLambda--${self:custom.stage}
+    description: stopLambda is called by routerLambda to manage all instance stop operations.
+    memorySize: 128
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - ec2:CreateSnapshot
+          - ec2:CreateTags
+          - ec2:DescribeInstances
+          - ec2:DescribeTags
+          - ec2:StopInstances
+
+        Resource: "*"
+
+  terminateLambda:
+    handler: terminateLambda.main.main
+    name: ${self:custom.baseName}--terminateLambda--${self:custom.stage}
+    description: terminateLambda is called by routerLambda to manage all instance termination operations.
+    memorySize: 128
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - ec2:CreateSnapshot
+          - ec2:CreateTags
+          - ec2:DescribeInstances
+          - ec2:DescribeTags
+          - ec2:TerminateInstances
+
+        Resource: "*"
+
+  isolateLambda:
+    handler: isolateLambda.main.main
+    name: ${self:custom.baseName}--isoalteLambda--${self:custom.stage}
+    description: isolateLambda is called by routerLambda to manage all security group modification operations.
+    memorySize: 128
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - ec2:CreateSnapshot
+          - ec2:CreateTags
+          - ec2:DescribeInstances
+          - ec2:DescribeSecurityGroups
+          - ec2:DescribeTags
+          - ec2:AuthorizeSecurityGroupEgress # For EC2-VPC Only
+          - ec2:RevokeSecurityGroupEgress # For EC2-VPC Only
+        Resource: "*"
+
+resources:
+  Resources:
+    eventSQSDlq:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: Lockdown_eventSQSdlqQueue
+        MessageRetentionPeriod: 1209600 # this is 14 days.
+
+    eventSQSQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: Lockdown_eventSQSQueue
+        DelaySeconds: 0 # no delay before items are available in the queue.
+        MessageRetentionPeriod: 1209600 # this is 14 days.
+        RedrivePolicy:
+          deadLetterTargetArn:
+            "Fn::GetAtt":
+              - eventSQSDlq
+              - Arn
+          maxReceiveCount: 10
+
+  Outputs:
+    eventSQSArn:
+      Description: The ARN of the eventSQSQueue.
+      Value:
+        "Fn::GetAtt": [eventSQSQueue, Arn]
+
+    eventSQSSlqQueue:
+      Description: The ARN of the DLQ for the eventSQSQueue.
+      Value:
+        "Fn::GetAtt": [eventSQSDlq, Arn]
+        # Tags:
+        #   -
+        #     Key: 'Name'
+        #     Value: 'Craigs Queue'
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"
+
+package:
+  exclude:
+    - "node_modules/**"
+    - "package-lock.json"
+    - "package.json"
+
+plugins:
+  - serverless-python-requirements
+  - serverless-pseudo-parameters
+  - serverless-iam-roles-per-function
+  - serverless-prune-plugin
+  - serverless-cloudformation-parameters
+custom:
+  # warmup:
+  #   enabled: true  # Whether to warm up functions or not.
+  #   folderName: '_warmup'  # Name of the folder for the generated warmup Lambda
+  #   cleanFolder: true  # Deletes the generated warmup lambda
+  #   prewarm: true
+  #   events:
+  #     - schedule: rate(5 minutes)
+
+  pythonRequirements:
+    dockerizePip: true
+    zip: true
+
+  parameters:
+    baseName:
+      Default: lockdown-for-aws
+      Type: String
+      Description: All created objects will be prepended with the baseName.
+
+  # Start customization here
+  baseName: Lockdown-for-AWS
+  stage: ${opt:stage, self:provider.stage}
+  minimum_threat_score_for_remediation: 50
+  minimum_certainty_score_for_remediation: 50
+  remediation_type: stop # choices are stop, terminate, isolate
+  securityHubCustomActionARN: arn:aws:securityhub:us-west-2:602592549188:action/custom/CognitoDetectEvent
+  snsRemediationNotificationARN: arn:aws:sns:us-west-2:602592549188:Vectra_cloud_operations
+  # End customization here.

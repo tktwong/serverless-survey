@@ -1,0 +1,106 @@
+service: aggregator-menu
+
+frameworkVersion: "=1.63.0"
+
+package:
+  individually: true
+  excludeDevDependencies: true
+
+plugins:
+  - serverless-prune-plugin
+  - serverless-api-stage
+  - serverless-plugin-aws-alerts
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+  - serverless-plugin-optimize
+
+custom:
+  stageSettings:
+    MethodSettings:
+      ThrottlingBurstLimit: 1000
+      ThrottlingRateLimit: 500
+  prune:
+    automatic: true
+    number: 25
+  optimize:
+    debug: true
+    minify: false
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  sqsAggregatorMenuProcess: aggregator-menu-process-${opt:stage, self:provider.stage}
+  sqsAggregatorMenuProcessDLQ: aggregator-menu-process-dlq-${opt:stage, self:provider.stage}
+  menuItemsBucketName: aggregator-menu-items-${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage}
+  region: eu-west-1
+  timeout: 30
+  environment: ${file(env.yml)}            
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - states:*
+        - s3:*
+        - cloudwatch:PutMetricData
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource:
+        - 'Fn::GetAtt':
+            - MenuItemBucket
+            - Arn
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+      Resource:
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:provider.environment.MENUDEFINITION_TABLE}
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+        - sqs:ReceiveMessage
+        - sqs:DeleteMessage
+        - sqs:GetQueueAttributes
+      Resource:
+        - 'Fn::GetAtt':
+            - AggregatorMenuProcessQueue
+            - Arn
+
+functions:
+  menu-steps-starter:
+    handler: src/sls-menu-steps-starter/handler.handler
+    description: starter lambda to menu process step function
+    events:
+      - http:
+          path: menu
+          method: POST
+#      - sqs:
+#          arn:
+#            Fn::GetAtt:
+#              - AggregatorMenuProcessQueue
+#              - Arn
+  fetch-menu-details:
+    handler: src/sls-fetch-menu-details/handler.handler
+    description: fetch processed menu with categories
+  generate-menu-items:
+    handler: src/sls-generate-menu-items/handler.handler
+    description: generate menu items
+  generate-aggregator-menu:
+    handler: src/sls-generate-aggregator-menu/handler.handler
+    description: generate aggregator menu, validate it and upload on aggregator
+
+stepFunctions: ${file(src/stepfunctions/stepfunctions.yml)}
+resources: ${file(serverless-resources.yml)}

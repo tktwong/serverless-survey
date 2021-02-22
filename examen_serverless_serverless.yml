@@ -1,0 +1,77 @@
+
+
+service: examen
+
+custom:
+  regionAbrev: UE1
+  TABLENAME: 'personajes-${self:provider.stage}'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        #- ses:SendEmail
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        #- sqs:SendMessage
+        - lambda:InvokeFunction
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+        - ec2:CreateNetworkInterface
+        - ec2:DescribeNetworkInterfaces
+        - ec2:DeleteNetworkInterface
+      Resource: '*'
+  environment:
+    PERSONAJES_TABLE: ${self:custom.TABLENAME}
+
+
+functions:
+  saveInformacion:
+    handler: src/saveData.saveInformacion
+    description: Aqui esta  la  inserccion.
+    environment:
+      PERSONAS_TABLE: ${self:service}-${opt:stage, self:provider.stage}-PERSONAS
+      SWAPI_API: https://swapi.py4e.com/api/people
+    events:
+      - http:
+          path: guardar-personaje
+          method: post
+  getInformacion:
+    handler: src/getData.getInformacion
+    description: Aqui esta  la  inserccion.
+    environment:
+      PERSONAS_TABLE: ${self:service}-${opt:stage, self:provider.stage}-PERSONAS
+      SWAPI_API: https://swapi.py4e.com/api/people
+    events:
+      - http:
+          path: get-personaje
+          method: get
+
+
+
+
+
+
+resources: # CloudFormation template syntax from here on.
+  Resources:
+    personajestTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.TABLENAME}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+

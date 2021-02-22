@@ -1,0 +1,194 @@
+service: chicovidchat
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: ${opt:stage, 'dev'}
+  region: us-east-2
+  environment:
+    AIRTABLE_KEY: ${ssm:/${self:provider.stage}/${self:service}/airtable/key~true}
+    AIRTABLE_BASE: ${ssm:/${self:provider.stage}/${self:service}/airtable/base~true}
+    AIRTABLE_TABLE: ${ssm:/${self:provider.stage}/${self:service}/airtable/table~true}
+    AIRTABLE_VIEW: ${ssm:/${self:provider.stage}/${self:service}/airtable/view~true}
+    RDS_DB_NAME: ${ssm:/${self:provider.stage}/${self:service}/db/name~true}
+    RDS_USERNAME: ${ssm:/${self:provider.stage}/${self:service}/db/user~true}
+    RDS_PASSWORD: ${ssm:/${self:provider.stage}/${self:service}/db/password~true}
+    SNS_EMAIL: ${ssm:/${self:provider.stage}/${self:service}/sns/email~true}
+    TWILIO_FROM: ${ssm:/${self:provider.stage}/${self:service}/twilio/from~true}
+    TWILIO_ACCOUNT_SID: ${ssm:/${self:provider.stage}/${self:service}/twilio/account-sid~true}
+    TWILIO_AUTH_TOKEN: ${ssm:/${self:provider.stage}/${self:service}/twilio/auth-token~true}
+    SPOKE_ENDPOINT: ${ssm:/${self:provider.stage}/${self:service}/spoke/endpoint~true}
+    S3_BUCKET: ${env:S3_BUCKET}
+  tags:
+    project: ${self:service}
+    environment: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "s3:*"
+      Resource:
+        - "arn:aws:s3:::${env:S3_BUCKET}"
+        - "arn:aws:s3:::${env:S3_BUCKET}/*"
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource:
+        - Ref: SNSTopic
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+    - ./i18n/**
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-plugin-aws-alerts
+  - serverless-prune-plugin
+
+custom:
+  topicName: ${self:service}-${self:provider.stage}-events
+  AURORA:
+    DB_NAME: ${ssm:/${self:provider.stage}/${self:service}/db/name~true}
+    USERNAME: ${ssm:/${self:provider.stage}/${self:service}/db/user~true}
+    PASSWORD: ${ssm:/${self:provider.stage}/${self:service}/db/password~true}
+    HOST: ${ssm:/${self:provider.stage}/${self:service}/db/host~true}
+    PORT: ${ssm:/${self:provider.stage}/${self:service}/db/port~true}
+  vpc:
+    securityGroupIds:
+      - ${ssm:/${self:provider.stage}/${self:service}/vpc/security-group/id~true}
+    subnetIds:
+      - ${ssm:/${self:provider.stage}/${self:service}/vpc/subnet/a~true}
+      - ${ssm:/${self:provider.stage}/${self:service}/vpc/subnet/b~true}
+  alerts:
+    stages:
+      - prod
+    alarms:
+      - functionErrors
+    topics:
+      alarm:
+        topic: ${self:service}-${self:provider.stage}-alerts-alarm
+        notifications:
+          - protocol: email
+            endpoint: ${ssm:/${self:provider.stage}/${self:service}/sns/email~true}
+  prune:
+    automatic: true
+    number: 3
+
+functions:
+  migrate:
+    handler: bin/migrate
+    timeout: 120
+    environment:
+      RDS_HOST: ${self:custom.AURORA.HOST}
+      RDS_PORT: ${self:custom.AURORA.PORT}
+    alarms:
+      - functionErrors
+    vpc: ${self:custom.vpc}
+  load_airtable:
+    handler: bin/load_airtable
+    timeout: 300
+    alarms:
+      - functionErrors
+    events:
+      - schedule: rate(30 minutes)
+  handle_twilio:
+    handler: bin/handle_twilio
+    timeout: 30
+    alarms:
+      - functionErrors
+    environment:
+      SNS_TOPIC_ARN:
+        Ref: SNSTopic
+      GW_ENDPOINT:
+        Fn::Join:
+          - ""
+          - - "https://"
+            - Ref: "ApiGatewayRestApi"
+            - ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}"
+    events:
+      - http:
+          path: api/twilio
+          method: post
+  send_twilio_sms:
+    handler: bin/send_twilio_sms
+    timeout: 120
+    environment:
+      SNS_TOPIC_ARN:
+        Ref: SNSTopic
+    alarms:
+      - functionErrors
+    events:
+      - sns:
+          arn:
+            Ref: SNSTopic
+          topicName: ${self:custom.topicName}
+          filterPolicy:
+            feed:
+              - send_twilio_sms
+  handle_message:
+    handler: bin/handle_message
+    timeout: 120
+    environment:
+      RDS_HOST: ${self:custom.AURORA.HOST}
+      RDS_PORT: ${self:custom.AURORA.PORT}
+      SNS_TOPIC_ARN:
+        Ref: SNSTopic
+    alarms:
+      - functionErrors
+    vpc: ${self:custom.vpc}
+    events:
+      - sns:
+          arn:
+            Ref: SNSTopic
+          topicName: ${self:custom.topicName}
+          filterPolicy:
+            feed:
+              - handle_received_message
+              - handle_sent_message
+  cleanup_inactive:
+    handler: bin/cleanup_inactive
+    timeout: 300
+    environment:
+      RDS_HOST: ${self:custom.AURORA.HOST}
+      RDS_PORT: ${self:custom.AURORA.PORT}
+    alarms:
+      - functionErrors
+    vpc: ${self:custom.vpc}
+    events:
+      - schedule: rate(12 hours)
+  spoke_proxy:
+    handler: bin/spoke_proxy
+    timeout: 30
+    alarms:
+      - functionErrors
+    vpc: ${self:custom.vpc}
+    environment:
+      RDS_HOST: ${self:custom.AURORA.HOST}
+      RDS_PORT: ${self:custom.AURORA.PORT}
+      SNS_TOPIC_ARN:
+        Ref: SNSTopic
+      GW_ENDPOINT:
+        Fn::Join:
+          - ""
+          - - "https://"
+            - Ref: "ApiGatewayRestApi"
+            - ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}"
+    events:
+      - http:
+          path: api/spoke
+          method: post
+
+resources:
+  Resources:
+    SNSTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${self:provider.stage}-events
+        DisplayName: ChiCOVIDChatEvents
+        Tags:
+          - Key: project
+            Value: ${self:service}
+          - Key: environment
+            Value: ${self:provider.stage}

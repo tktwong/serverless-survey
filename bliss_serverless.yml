@@ -1,0 +1,92 @@
+service:
+  name: ctpl
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ap-southeast-2
+  memorySize: 1024
+  timeout: 10
+  stackName: bliss-${env:COMPANY_NAME}-ctpl
+  apiName: CTPL
+  deploymentBucket:
+    name: ${env:STACK_BUCKET}
+  environment:
+    APPLICATION: ctpl
+    ALLOWED_ORIGIN: ${env:CTPL_ORIGIN}
+    COMPANY_NAME: ${env:COMPANY_NAME}
+  vpc:
+    securityGroupIds:
+      - ${cf:bliss-${env:COMPANY_NAME}-vpc.LambdaSecurityGroup}
+    subnetIds:
+      - ${cf:bliss-${env:COMPANY_NAME}-vpc.PrivateSubnet1}
+      - ${cf:bliss-${env:COMPANY_NAME}-vpc.PrivateSubnet2}
+      - ${cf:bliss-${env:COMPANY_NAME}-vpc.PrivateSubnet3}
+
+package:
+  individually: true
+  exclude:
+    - "./**"
+
+functions:
+  create-ctpl-payment-request:
+    name: create-ctpl-payment-request
+    handler: create-ctpl-payment-request/index.handler
+    description: "[CTPL] returns base 64 encoded string to be used for POST redirect in paynamics"
+    role: ${cf:bliss-${env:COMPANY_NAME}-iam-stack.LambdaBasicExecutionRole}
+    events:
+      - http:
+          path: create-payment-request
+          method: get
+          integration: lambda-proxy
+          cors: true
+    environment:
+      CANCEL_URL: ${env:DOMAIN}/ctpl/cancel-transaction
+      DESCRIPTOR_NOTE: ${env:DESCRIPTOR_NOTE}
+      IP: ${env:IP}
+      ITEM_NAME: ${env:CTPL_ITEM_NAME}
+      MERCHANT_ID: ${env:MERCHANT_ID}
+      MERCHANT_KEY: ${env:MERCHANT_KEY}
+      MERCHANT_LOGO_URL: ${env:LOGO_URL}
+      MTAC_URL: ${env:MTAC_URL}
+      NOTIFICATION_URL: ${env:DOMAIN}/ctpl/receive-notification
+      RESPONSE_URL: ${env:DOMAIN}/ctpl/response-redirect
+    package:
+      include:
+        - create-ctpl-payment-request/**
+    layers:
+      - ${cf:${env:COMPANY_NAME}-bliss-layers.EProductsUtilsARN}
+
+  get-ctpl-faq:
+    name: get-ctpl-faq
+    handler: get-ctpl-faq/index.handler
+    description: "[CTPL] retrieves the FAQ list"
+    role: ${cf:bliss-${env:COMPANY_NAME}-iam-stack.LambdaVPCAndParamStoreAccessRole}
+    events:
+      - http:
+          path: faq
+          method: get
+          integration: lambda-proxy
+          cors: true
+    package:
+      include:
+        - get-ctpl-faq/**
+    layers:
+      - ${cf:${env:COMPANY_NAME}-bliss-layers.EProductsCommonARN}
+
+  get-policy-and-mv-type:
+    name: get-policy-and-mv-type
+    handler: get-policy-and-mv-type/index.handler
+    description: "[CTPL] retrieval of policy and MV type for policy details screen"
+    role: ${cf:bliss-${env:COMPANY_NAME}-iam-stack.LambdaVPCAndParamStoreAccessRole}
+    events:
+      - http:
+          path: policy-details/get-policy-and-mv-type
+          method: get
+          integration: lambda-proxy
+          cors: true
+    package:
+      include:
+        - get-policy-and-mv-type/**
+    layers:
+      - ${cf:${env:COMPANY_NAME}-bliss-layers.EProductsCommonARN}

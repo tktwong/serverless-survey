@@ -1,0 +1,114 @@
+service: server
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: default
+  apiKeys:
+        - free:
+              - MyAPIfree
+        - paid:
+              - MyAPIpaid
+  usagePlan:
+      - free:
+            quota:
+                limit: 10
+                period: MONTH
+            throttle:
+                burstLimit: 2
+                rateLimit: 1
+      - paid:
+            quota:
+                period: MONTH
+                limit: 1000
+            throttle:
+                burstLimit: 20
+                rateLimit: 10
+  environment:
+    tableName: ${self:custom.tableName}
+    bucketName: ${self:custom.s3UploadBucket}
+  iamRoleStatements:
+        - Effect: Allow
+          Action:
+              - dynamodb:*
+              - s3:*
+          Resource: '*'
+
+plugins:
+    - serverless-s3-sync
+custom:
+  tableName: point
+  bucketName: demobitch
+  s3UploadBucket: uploadbitch
+  s3Sync:
+      - bucketName: demobitch
+        localDir: UploadData
+
+functions:
+  getUser:
+      handler: lambdas/endpoints/getUser.handler
+      events:
+          - http:
+                path: get-user/{ID}
+                method: GET
+                cors: true
+                private: true
+  getPlayerScore:
+        handler: lambdas/endpoints/getPlayerScore.handler
+        events:
+            - http:
+                  path: get-player-score/{ID}
+                  method: GET
+                  cors: true
+                  private: true
+  createPlayerScore:
+        handler: lambdas/endpoints/createPlayerScore.handler
+        events:
+            - http:
+                  path: create-player-score/{ID}
+                  method: POST
+                  cors: true
+  createFile:
+        handler: lambdas/endpoints/createFile.handler
+        events:
+            - http:
+                  path: create-file/{fileName}
+                  method: POST
+                  cors: true
+                  private: true
+  getFile:
+        handler: lambdas/endpoints/getFile.handler
+        events:
+            - http:
+                  path: get-file/{fileName}
+                  method: GET
+                  cors: true
+resources:
+  Resources:
+      DemoBucketUpload:
+          Type: AWS::S3::Bucket
+          Properties:
+              BucketName: ${self:custom.bucketName}
+      s3UploadBucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:custom.s3UploadBucket}
+
+      MyDynamoDbTable:
+          Type: AWS::DynamoDB::Table
+          Properties:
+              TableName: ${self:custom.tableName}
+              AttributeDefinitions:
+                  - AttributeName: ID
+                    AttributeType: S
+              KeySchema:
+                  - AttributeName: ID
+                    KeyType: HASH
+              BillingMode: PAY_PER_REQUEST

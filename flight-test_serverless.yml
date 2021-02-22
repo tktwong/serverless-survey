@@ -1,0 +1,48 @@
+service: flight-lambda
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  timeout: 20
+  region: ${opt:region, "eu-central-1"}
+  stage: ${opt:stage, "local"}
+  environment: ${file(./sls/${opt:stage, self:provider.stage}.yml):environment}
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+
+package:
+  individually: false
+  excludeDevDependencies: true
+  include:
+  - src/**/!(*.spec).js
+  - mock/**/*
+  exclude:
+  - src/**/*.ts
+
+functions:
+  getFlights:
+    handler: src/flights/handler.getFlights
+    description: Return booking by it is id
+    events:
+    - http:
+        path: ${self:provider.environment.API_VERSION}/flights
+        method: get
+  up:
+    handler: src/migrations/handler.up
+    timeout: 30
+    environment:
+      DATABASE_URL: '${self:provider.environment.DATABASE_URL}'
+    warmup:
+      enabled: false
+
+  down:
+    handler: src/migrations/handler.down
+    timeout: 30
+    environment:
+      DATABASE_URL: '${self:provider.environment.DATABASE_URL}'
+    warmup:
+      enabled: false
+
+Resources: ${file(./sls/${opt:stage, self:provider.stage}.yml):Resources}

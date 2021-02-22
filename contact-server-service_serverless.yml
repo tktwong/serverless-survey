@@ -1,0 +1,78 @@
+service: Contact
+
+
+provider:
+  name: aws
+  region: us-east-2
+  stage: DEV
+  runtime: nodejs10.x
+  role: arn:aws:iam::556332110707:role/LambdaBasicPrivileges
+  environment: ${self:custom.environments.${opt:stage, 'DEV'}}
+  deploymentBucket:
+    tags:
+      saas: ${self:custom.saasName}
+      stage: ${opt:stage, 'DEV'}
+      scope: global
+      type: contact
+
+
+custom:
+  saasName: 'Contact'
+  pathToHandler: "compiled/src"
+  pathToJSFile: "src"
+  accessKeyId: ${ssm:concise-accessKeyId~true}
+  secretAccessKey: ${ssm:concise-secretAccessKey~true}
+  region: ${ssm:concise-region~true}
+  apiGatewayTags:
+    saas: ${self:custom.saasName}
+    stage: ${opt:stage, 'DEV'}
+    scope: global
+    type: contact
+  environments:
+    DEV:
+      saasName: ${self:custom.saasName}
+      stage: 'DEV'
+      accessKeyId: ${self:custom.accessKeyId}
+      secretAccessKey: ${self:custom.secretAccessKey}
+      region: ${self:custom.region}
+    PROD:
+      saasName: ${self:custom.saasName}
+      stage: 'PROD'
+      accessKeyId: ${self:custom.accessKeyId}
+      secretAccessKey: ${self:custom.secretAccessKey}
+      region: ${self:custom.region}
+
+
+plugins:
+  - serverless-plugin-include-dependencies
+  - serverless-tag-api-gateway
+
+
+package:
+  individually: true
+  exclude:
+    - "*.*"
+    - "src/**"
+    - "compiled/**"
+    - "correctModuleNames.js"
+  include:
+    - "*.js"
+
+
+functions:
+
+  sendMessage:
+    handler: ${self:custom.pathToHandler}/sendMessage.handler
+    package:
+      include:
+      - "${self:custom.pathToJSFile}/sendMessage.js"
+    events:
+      - http:
+          path: sendMessage
+          method: post
+          cors: true
+    tags:
+      saas: ${self:custom.saasName}
+      stage: ${opt:stage, 'DEV'}
+      scope: global
+      type: contact

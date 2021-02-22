@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Alexa integration that uses CloudWatch subscription to remove dashbot
+  integration off the critical path.
+Mappings:
+  LambdaEnvironmentVariables:
+    development:
+      DEBUG: '*'
+    production:
+      DEBUG: ''
+    staging:
+      DEBUG: '*'
+    testing:
+      DEBUG: '*'
+Outputs:
+  Lambda:
+    Description: Alexa integration that uses CloudWatch subscription to remove dashbot
+      integration off the critical path.
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}:lambda
+    Value:
+      Ref: Lambda
+Parameters:
+  DashbotApiKey:
+    Description: API Key from Dashbot
+    Type: String
+  ExistingResourcesStack:
+    Description: the name of the existing resources stack
+    Type: String
+  LogFilter:
+    Default: ''
+    Description: string to match on log to filter on stream
+    Type: String
+  LogGroup:
+    Description: name of log group to apply filter on
+    Type: String
+  NodeEnvironment:
+    Description: the node environment, basically for distinguishing errors by environmet
+      in airbrake
+    Type: String
+Resources:
+  CustomLogGroup:
+    Properties:
+      LogGroupName:
+        Ref: LogGroup
+    Type: AWS::Logs::LogGroup
+  Lambda:
+    Properties:
+      CodeUri: s3://lambda-builds-us-east-1-003538726548/lambda-alexa-log-integration/5b15e2aab4b5425e938094b5434acb01
+      Description: Alexa integration that uses CloudWatch subscription to remove dashbot
+        integration off the critical path.
+      Environment:
+        Variables:
+          DASHBOT_API_KEY:
+            Ref: DashbotApiKey
+          DEBUG:
+            Fn::FindInMap:
+            - LambdaEnvironmentVariables
+            - Ref: NodeEnvironment
+            - DEBUG
+          NODE_ENV:
+            Ref: NodeEnvironment
+      Events:
+        LogSubscription:
+          Properties:
+            FilterPattern:
+              Ref: LogFilter
+            LogGroupName:
+              Ref: CustomLogGroup
+          Type: CloudWatchLogs
+      Handler: src/index.handler
+      MemorySize: 128
+      Role:
+        Fn::GetAtt:
+        - LambdaRole
+        - Arn
+      Runtime: nodejs8.10
+      Timeout: 30
+    Type: AWS::Serverless::Function
+  LambdaRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+    Type: AWS::IAM::Role
+Transform: AWS::Serverless-2016-10-31

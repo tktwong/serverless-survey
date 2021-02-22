@@ -1,0 +1,187 @@
+service: acm-mmm
+
+provider:
+  name: aws
+  stage: ${opt:stage,'dev'}
+  region: us-east-1
+
+  environment:
+    EXECUTION_STAGE: ${self:provider.stage}
+    AWS_DEPLOYMENT_REGION: ${self:provider.region}
+    MONGODB_URI: ${file(./serverless-config/secrets.json):${self:provider.stage}.MONGODB_URI}
+    TOPICS_KEY: ${file(./serverless-config/secrets.json):${self:provider.stage}.TOPICS_KEY}
+    MAIL_HOST: ${file(./serverless-config/secrets.json):${self:provider.stage}.MAIL_HOST}
+    MAIL_PORT: ${file(./serverless-config/secrets.json):${self:provider.stage}.MAIL_PORT}
+    MAIL_USERNAME: ${file(./serverless-config/secrets.json):${self:provider.stage}.MAIL_USERNAME}
+    MAIL_PASSWORD: ${file(./serverless-config/secrets.json):${self:provider.stage}.MAIL_PASSWORD}
+
+
+package:
+  individually: true
+  exclude:
+   - ./**/*.md
+   - .eslintrc.js
+   - .prettierrc.js
+   - .gitignore
+
+
+functions:
+  create-event:
+    handler: src/routes/events/create.default
+    runtime: nodejs12.x
+
+    events:
+      - http:
+          path: /events
+          method: post
+          cors: true
+
+  get-events:
+    handler: src/routes/events/get.default
+    runtime: nodejs12.x
+
+    events:
+      - http:
+          path: /events
+          method: get
+          cors: true
+
+  update-event:
+    handler: src/routes/events/update.default
+    runtime: nodejs12.x
+
+    events:
+      - http:
+          path: /events/{_id}
+          method: patch
+          cors: true
+
+  delete-event:
+    handler: src/routes/events/delete.default
+    runtime: nodejs12.x
+
+    events:
+      - http:
+          path: /events/{_id}
+          method: delete
+          cors: true
+
+  create-topic:
+    handler: src/routes/topics/create.default
+    runtime: nodejs12.x
+
+    events:
+      - http:
+          path: /topics
+          method: post
+          cors: true
+
+  get-topics:
+    handler: src/routes/topics/get.default
+    runtime: nodejs12.x
+
+    events:
+      - http:
+          path: /topics
+          method: get
+          cors: true
+
+  # update-topic:
+  #   handler: src/routes/topics/update.default
+
+  #   events:
+  #     - http:
+  #         path: /topics/{id}
+  #         method: patch
+  #         cors: true
+
+  # delete-topic:
+  #   handler: src/routes/topics/delete.default
+
+  #   events:
+  #     - http:
+  #         path: /topics/{id}
+  #         method: delete
+  #         cors: true
+  
+  get-orgs:
+    handler: src/routes/orgs/get.default
+    runtime: nodejs12.x
+
+    events:
+      - http:
+          path: /orgs
+          method: get
+          cors: true
+
+  authorize-user:
+    handler: src/routes/authorization/authorize.default
+    runtime: nodejs12.x
+
+    events:
+      - http:
+          path: /orgs/authorize
+          method: post
+          cors: true
+
+  revoke-user:
+    handler: src/routes/authorization/revoke.default
+    runtime: nodejs12.x
+
+    events:
+      - http:
+          path: /orgs/revoke
+          method: post
+          cors: true
+
+  service-update-member:
+    handler: src/routes/topics-service/updatemember.default
+    runtime: nodejs12.x
+
+    events:
+      - http:
+          path: /service/updatemember
+          method: post
+          cors: true
+
+  send-mailing:
+    handler: src/mailing/route.default
+    runtime: nodejs12.x
+    timeout: 30
+
+    events:
+      - http:
+          path: /test/mail
+          method: post
+          cors: true
+      - schedule: cron(0 15 ? * MON,THU *)
+
+  parse-resume:
+    handler: src/routes/resume/parse_resume.handler
+    runtime: python3.6
+    timeout: 45
+
+    events:
+      - http:
+          path: /resume
+          method: post
+          cors: true
+
+custom:
+  stages:
+    - dev
+    # - v1.0
+
+  serverless-offline:
+    prefix: ${self:provider.stage}
+    port: 3000
+    stage: ${self:provider.stage}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+plugins:
+  - serverless-stage-manager
+  - serverless-webpack
+  - serverless-offline
+  - serverless-python-requirements

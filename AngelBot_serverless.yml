@@ -1,0 +1,103 @@
+service: angelbot
+
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle
+  - serverless-offline
+  - serverless-dynamodb-local
+  - serverless-dotenv-plugin
+  - serverless-pseudo-parameters
+  - serverless-offline-sns
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${self:custom.region}
+  environment:
+    DYNAMODB_TABLENAME: ${self:custom.tableName}
+    TOPIC_ARN: ${self:custom.snsTopicArn.${self:provider.stage}}
+    DYNAMODB_URI: ${self:custom.dynamo_uri}
+    REGION: ${self:custom.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: ${self:custom.dynamo_uri}
+    - Effect: Allow
+      Action:
+        - sns:Publish
+        - sns:CreateTopic
+      Resource: ${self:custom.snsTopicArn.${self:provider.stage}}
+
+functions:
+  angelbot:
+    handler: src/angelbot/index.handler
+    events:
+      - sns:
+          arn: ${self:custom.snsTopicArn.${self:provider.stage}}
+          topicName: "sns-publish"
+  dealer-write:
+    handler: src/dealer-write/index.handler
+    events:
+      - http: POST /api/v1/changelog_write
+      - http: POST /api/v1/init
+  dealer-read:
+    handler: src/dealer-read/index.handler
+    events:
+      - http: POST /api/v1/changelog
+
+resources:
+  Resources:
+    ChangelogTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: "Read changelog request topic"
+        TopicName: "sns-publish"
+    AngelbotTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+          - AttributeName: version
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+          - AttributeName: version
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
+
+custom:
+  stages:
+    - dev
+    - staging
+    - prod
+  serverless-offline-sns:
+    port: 4004
+    debug: false
+  tableName: AngelbotTable
+  region: us-east-1
+  accountId: !Ref AWS::AccountId
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+  dynamo_uri:
+    - { "Fn::GetAtt": ["AngelbotTable", "Arn"] }
+  topicName: sns-publish
+  bundle:
+    sourcemaps: false
+    caching: false
+    linting: false
+  snsTopicArn:
+    local: "arn:aws:sns:${self:provider.region}:123456789012:sns-publish"
+    dev: "arn:aws:sns:${self:provider.region}:#{AWS::AccountId}:sns-publish"

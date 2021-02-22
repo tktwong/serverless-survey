@@ -1,0 +1,69 @@
+service: asap
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  environment:
+    DYNAMODB_TABLE: resy-venues
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}'
+  memorySize: 1536
+  timeout: 180
+
+functions:
+  reserve:
+    handler: src/handler.reserve
+    events:
+      - http:
+          path: reserve
+          method: post
+
+  # cron_reservations:
+  #   handler: src/handler.cron_reservations
+  #   events:
+  #     - schedule: rate(1 minute)
+  find_venues:
+    handler: src/handler.find_venues
+
+  fetch_venues:
+    handler: src/handler.fetch_venues
+    events:
+      - http:
+          path: fetch-venues
+          method: get
+          cors: true
+
+# package:
+#   artifact: ./package.zip
+package:
+  exclude:
+    - chrome/**
+    - node_modules/**
+    - package.zip
+    - .serverless/**
+    - client/**
+
+plugins:
+  # - serverless-hooks-plugin
+  - serverless-plugin-include-dependencies
+  - serverless-offline-scheduler
+  - serverless-offline
+
+# custom:
+#   hooks:
+#     package:initialize:
+#       - yarn run package

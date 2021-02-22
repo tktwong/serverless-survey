@@ -1,0 +1,110 @@
+service: ephemeris
+
+plugins:
+  - serverless-python-requirements
+  - serverless-pseudo-parameters
+  - serverless-wsgi
+
+custom:
+  stackName: ${self:service}-${self:provider.stage}
+  xray: 'Active'  # AWS Xray tracing of requests, queries
+  db:
+    dbname: "ephemeris"
+    minCapacity: 2
+    maxCapacity: 4
+    secondsUntilAutoPause: 43200  # if not stage=='prod'
+  layers:
+    psycopg: "arn:aws:lambda:${self:provider.region}:898466741470:layer:psycopg2-py37:1"
+    default:
+      - ${self:custom.layers.psycopg}
+  secrets:
+    prefix: "${self:service}/${self:provider.stage}"
+    rds: "${self:custom.secrets.prefix}/rds/credentials"
+  vpc:
+    securityGroupIds:
+      - "Fn::GetAtt": ServerlessSecurityGroup.GroupId
+    subnetIds:
+      - Ref: ServerlessSubnetA
+      - Ref: ServerlessSubnetB
+      - Ref: ServerlessSubnetC
+
+  # plugins:
+  wsgi:
+    app: app.app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: false
+    slim: true
+    useDownloadCache: true
+    useStaticCache: true
+    noDeploy:
+      - psycopg2  # provided by layer
+      - boto3
+      - botocore
+      - docutils
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+
+  # x-ray
+  tracing:
+    lambda: ${self:custom.xray}
+
+  vpc: ${self:custom.vpc}
+
+  environment:
+    SECRET_PREFIX: ${self:custom.secrets.prefix}
+    RDS_SECRETS_NAME: ${self:custom.secrets.rds}
+    LOAD_RDS_SECRETS: 'true'
+    STAGE: ${self:provider.stage}
+    XRAY: ${self:custom.xray}
+    # LOAD_APP_SECRETS: true  # enable to load user-defined secrets
+    # SQL_ECHO: true  # enable to print all SQL queries
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action: secretsmanager:GetSecretValue
+      Resource:
+        - "arn:aws:secretsmanager:#{AWS::Region}:#{AWS::AccountId}:secret:${self:custom.secrets.prefix}/*"
+        - "arn:aws:secretsmanager:#{AWS::Region}:#{AWS::AccountId}:secret:${self:custom.secrets.prefix}/dev-*"
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - ephemeris/instance.cfg
+    - instance.cfg
+    - doc/**
+    - '**/__pycache__/**'
+    - '**/__pycache__'
+    - ".#*"
+
+functions:
+  app:  # main flask entry point
+    handler: wsgi_handler.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+    memorySize: 512
+    layers: ${self:custom.layers.default}
+    vpc: ${self:custom.vpc}
+    timeout: 10
+
+  seed:
+    handler: ephemeris.commands.seed_handler
+    layers: ${self:custom.layers.default}
+    vpc: ${self:custom.vpc}
+    timeout: 120
+
+  initDb:
+    handler: ephemeris.commands.init_handler
+    layers: ${self:custom.layers.default}
+    vpc: ${self:custom.vpc}
+    timeout: 300
+
+resources:
+  - ${file(cloudformation/vpc.yml)}
+  - ${file(cloudformation/db/aurora-serverless.yml)}

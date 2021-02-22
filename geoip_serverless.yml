@@ -1,0 +1,125 @@
+# Welcome to Serverless!
+#
+
+service: geoip
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: us-west-2
+  stage: ${opt:stage, 'dev'}
+  tracing:
+    apiGateway: true
+    lambda: true
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+        - xray:GetSamplingRules
+        - xray:GetSamplingTargets
+        - xray:GetSamplingStatisticSummaries
+      Resource: '*'
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-python-requirements
+  - serverless-iam-roles-per-function
+
+functions:
+  lookup:
+    handler: lookup.find
+    events:
+      - http:
+          path: ip/{ip}
+          method: get
+      - http:
+          path: ip
+          method: get
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - 'dynamodb:DescribeTable'
+          - 'dynamodb:GetItem'
+          - 'dynamodb:BatchGetItem'
+          - 'dynamodb:Query'
+        Resource:
+          - arn:aws:dynamodb:us-west-2:#{AWS::AccountId}:table/geoip_city*
+  lookup_alb:
+    handler: lookup_alb.find
+    events:
+      - alb:
+          listenerArn: arn:aws:elasticloadbalancing:us-west-2:495224360068:listener/app/geoiplb/9d5151d3d4dfe7f6/f2c90efe2c70d73a
+          priority: 1
+          conditions:
+            path: /ip/*
+            method:
+              - GET
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - 'dynamodb:DescribeTable'
+          - 'dynamodb:GetItem'
+          - 'dynamodb:BatchGetItem'
+          - 'dynamodb:Query'
+        Resource:
+          - arn:aws:dynamodb:us-west-2:#{AWS::AccountId}:table/geoip_city*
+
+resources:
+  Resources:
+    geoipCityLocations:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: geoip_city_locations_${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: geoname_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: geoname_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1000
+    geoipCityNlocksIp4:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: geoip_city_blocks_ip4_${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: network
+            AttributeType: S
+        KeySchema:
+          - AttributeName: network
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1000
+    DaxIamRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service.name}dax
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - "dax.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          - PolicyName: "${self:service.name}-dax"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - dynamodb:Query
+                    - dynamodb:Scan
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:DescribeTable
+                  Resource:
+                    - arn:aws:dynamodb:us-west-2:#{AWS::AccountId}:table/geoip_city*

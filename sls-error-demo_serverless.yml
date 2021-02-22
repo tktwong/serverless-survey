@@ -1,0 +1,56 @@
+service: demo-app-03
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: ap-northeast-1
+
+  # 今回使った変数
+  environment:
+    MySQSName: yyyy-queue # Queue名を変数にする。なぜならARN作るときと、SQSリソース用意するときの２回使うから。ただそれだけ！
+    MyDynamoTable: yyyy-dynamo
+    accountID: ${opt:account_id, 000000000000} # アカウント番号は自分の入れてね！ # deploy.sh で自動取得するようにしてます。
+
+  # 共通ロール
+  iamRoleStatements:
+    # LamdaへDynamoのコントロール権限を付与
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: arn:aws:dynamodb:${self:provider.region}:${self:provider.environment.accountID}:table/${self:provider.environment.MyDynamoTable}
+
+# Lamdaの定義
+functions:
+  XXXXX:
+
+    memorySize: 128
+    handler: XXXXX.yyyyyy
+    events:
+      - sqs: arn:aws:sqs:${self:provider.region}:${self:provider.environment.accountID}:${self:provider.environment.MySQSName}
+
+# その他のリソース
+resources:
+  Resources:
+
+    # SQSキューを作成
+    yyyyyQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:provider.environment.MySQSName}
+
+    # DynamoDBを作成
+    yyyyDynamo:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: pk
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: pk
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.MyDynamoTable}

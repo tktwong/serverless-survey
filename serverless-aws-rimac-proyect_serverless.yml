@@ -1,0 +1,86 @@
+
+service: rimac-service-dsanchez
+
+custom:
+  settings:
+    CUSTOMERS_TABLE: 'customers'
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region : us-east-1
+  environment : ${self:custom.settings}
+  iamRoleStatements:
+    - Effect : Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.CUSTOMERS_TABLE}"
+
+
+functions:
+  starwars-people:
+    handler: src/components/starwars/personages/handler.personages
+    events:
+      - http:
+          path: /api/v1/starwars/personajes
+          method: get
+          cors: true
+          authorizer: aws_iam
+          integration: lambda
+          response:
+            headers:
+               Content-Type: "'application/json'"
+            template: ${file(./src/templates/mappings/allpersonages.txt)}
+      - http:
+          path: /api/v1/starwars/personajes/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+          integration: lambda
+          response:
+            headers:
+               Content-Type: "'application/json'"
+            template: ${file(./src/templates/mappings/personageById.txt)}
+  customer:
+    handler: src/components/customer/handler.customers
+    events :
+      - http:
+          path: /api/v1/customers
+          method : get
+          authorizer: aws_iam
+          cors: true
+      - http:
+          path: /api/v1/customers/{id}
+          method : get
+          authorizer: aws_iam
+          cors: true
+      - http:
+          path: /api/v1/customers
+          method: post
+          authorizer: aws_iam
+          request:
+            schema:
+              application/json: ${file(./src/templates/models/customer-request.json)}
+          cors: true
+resources:
+  Resources:
+    UsersDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.settings.CUSTOMERS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: customerId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: customerId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        
+

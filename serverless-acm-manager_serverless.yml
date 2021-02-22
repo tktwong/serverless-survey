@@ -1,0 +1,63 @@
+---
+service: certifier
+provider:
+  name: aws
+  runtime: python3.8
+  stage: default
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 's3:GetObject'
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - ${opt:certificates-bucket}
+            - '/*'
+    - Effect: 'Allow'
+      Action:
+        - 'acm:DeleteCertificate'
+        - 'acm:DescribeCertificate'
+        - 'acm:RemoveTagsFromCertificate'
+        - 'acm:AddTagsToCertificate'
+      Resource:
+        - Fn::Sub: 'arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/*'
+    - Effect: 'Allow'
+      Action:
+        - 'acm:RequestCertificate'
+        - 'acm:ListCertificates'
+        - 'acm:ListTagsForCertificate'
+      Resource: 
+        - '*'
+    - Effect: 'Allow'
+      Action:
+        - 'ssm:GetParameter'
+        - 'ssm:PutParameter'
+        - 'ssm:DeleteParameter'
+      Resource: 
+        - Fn::Sub: 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/certifier/*'
+
+functions:
+  manage-certificates:
+    handler: handlers.manage_certificates
+    timeout: 120
+    events:
+      - s3:
+          bucket: ${opt:certificates-bucket}
+          event: s3:ObjectCreated:*
+          existing: true
+      - s3:
+          bucket: ${opt:certificates-bucket}
+          event: s3:ObjectRemoved:*
+          existing: true
+
+  delete-certificates:
+    handler: handlers.delete_certificates
+    events:
+      - schedule: rate(${opt:schedule-rate, "1 day"})
+
+  transition-certificates:
+    handler: handlers.transition_certificates
+    events:
+      - schedule: rate(${opt:schedule-rate, "1 day"})
+

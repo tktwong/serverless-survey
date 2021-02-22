@@ -1,0 +1,125 @@
+service: bow-wow-backend
+
+package:
+  individually: true
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-bundle
+  - serverless-dotenv-plugin
+  - serverless-appsync-plugin
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ${env:AWS_REGION}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${env:AWS_REGION}:${env:AWS_ACCOUNT_ID}:table/*"
+
+custom:
+  accountId: ${env:AWS_ACCOUNT_ID}
+  appsync-offline:
+    port: 62222
+    dynamodb:
+      client:
+        endpoint: "http://localhost:8000"
+        region: localhost
+  appSync:
+    name: bow-wow-app
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    schema: schema.graphql
+    userPoolConfig:
+      awsRegion: ${env:AWS_REGION}
+      defaultAction: ALLOW
+      userPoolId: ${env:AWS_USER_POOL_ID}
+    mappingTemplates:
+      - dataSource: Users
+        type: Query
+        field: me
+        request: "me-request-mapping-template.vtl"
+        response: "me-response-mapping-template.vtl"
+      - dataSource: Users
+        type: Query
+        field: myPets
+        request: "myPets-request-mapping-template.vtl"
+        response: "myPets-response-mapping-template.vtl"
+      - dataSource: Users
+        type: Mutation
+        field: createUser
+        request: "createUser-request-mapping-template.vtl"
+        response: "createUser-response-mapping-template.vtl"
+      - dataSource: Users
+        type: Mutation
+        field: createPet
+        request: "createPet-request-mapping-template.vtl"
+        response: "createPet-response-mapping-template.vtl"
+      - dataSource: Posts
+        type: Mutation
+        field: createPost
+        request: "createPost-request-mapping-template.vtl"
+        response: "createPost-response-mapping-template.vtl"
+      - dataSource: Users
+        type: Mutation
+        field: createAlarm
+        request: "createAlarm-request-mapping-template.vtl"
+        response: "createAlarm-response-mapping-template.vtl"
+      - dataSource: Users
+        type: Mutation
+        field: closeUser
+        request: "closeUser-request-mapping-template.vtl"
+        response: "closeUser-response-mapping-template.vtl"
+      - dataSource: Users
+        type: Mutation
+        field: deletePet
+        request: "deletePet-request-mapping-template.vtl"
+        response: "deletePet-response-mapping-template.vtl"
+      - dataSource: Posts
+        type: Mutation
+        field: deletePost
+        request: "deletePost-request-mapping-template.vtl"
+        response: "deletePost-response-mapping-template.vtl"
+      - dataSource: Users
+        type: Mutation
+        field: deleteAlarm
+        request: "deleteAlarm-request-mapping-template.vtl"
+        response: "deleteAlarm-response-mapping-template.vtl"
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: Users
+        description: 'User Datas'
+        config:
+          tableName: User
+          serviceRoleArn: "arn:aws:dynamodb:${env:AWS_REGION}:${env:AWS_ACCOUNT_ID}:table/${env:USERS_TABLE}"
+      - type: AMAZON_DYNAMODB
+        name: Posts
+        description: 'Post Datas'
+        config:
+          tableName: Post
+          serviceRoleArn: "arn:aws:dynamodb:${env:AWS_REGION}:${env:AWS_ACCOUNT_ID}:table/${env:POSTS_TABLE}"
+      - type: AMAZON_DYNAMODB
+        name: Hospitals
+        description: 'Hospital Datas'
+        config:
+          tableName: Hospital
+          serviceRoleArn: "arn:aws:dynamodb:${env:AWS_REGION}:${env:AWS_ACCOUNT_ID}:table/${env:HOSPITALS_TABLE}"
+
+functions:
+  handler:
+    handler: handler.main
+    events:
+      - http:
+          path: graphql
+          method: get
+          cors: true
+          authorizer: aws_iam

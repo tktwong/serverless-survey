@@ -1,0 +1,107 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: pytestqueries # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+frameworkVersion: ">=1.28.0 <2.0.0"
+
+custom:
+  defaultRegion: us-east-1
+  defaultEnvironmentGroup: dev
+  region: ${env:AWS_DEFAULT_REGION, self:custom.defaultRegion}
+  stage: ${opt:stage, env:USER}
+  s3Bucket: ${env:S3_BUCKET}
+
+provider:
+  name: aws
+  runtime: go1.x
+  memorySize: 128
+  region: ${self:custom.region}
+  stage: ${self:custom.stage}
+  environment:
+    DYNAMO_AWS_REGION: "us-east-1"
+    DYNAMO_EVENTS_TABLE_NAME: "gh_hooks_events"
+    DYNAMO_PULL_REQ_TABLE_NAME: "gh_pull_requests"
+    GITHUB_APP_ID: ""
+    WEBHOOK_SECRET_KEY: "secret"
+    S3_AWS_REGION: "us-east-1"
+    S3_BUCKET: ""
+
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+
+functions:
+  github:
+    handler: bin/github
+    reservedConcurrency: ${env:GITHUB_WEBHOOK_MAX_CONCURRENCY}
+    events:
+      - http:
+          path: ${env:GITHUB_WEBHOOK_URL}
+          method: post
+
+  uploader:
+    handler: bin/uploader
+    reservedConcurrency: ${env:UPLOADER_MAX_CONCURRENCY}
+    events:
+      - http:
+          path: upload/
+          method: post
+
+  diff:
+    handler: bin/diff-uploader
+    reservedConcurrency: ${env:DIFF_MAX_CONCURRENCY}
+    events:
+      - http:
+          path: diff/
+          method: post
+
+resources:
+  Resources:
+    EventsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: HashSHA1
+            AttributeType: S
+        KeySchema:
+          - AttributeName: HashSHA1
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${env:DYNAMO_EVENTS_TABLE_NAME}
+
+    PullRequestDataDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: PullRequestID
+            AttributeType: N
+        KeySchema:
+          - AttributeName: PullRequestID
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${env:DYNAMO_PULL_REQ_TABLE_NAME}
+
+    S3BucketRapports:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3Bucket}

@@ -1,0 +1,787 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: vpc-training
+
+plugins:
+  - serverless-cloudformation-sub-variables
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  stage: ${opt:stage, env:SLS_STAGE, 'dev'}
+  profile: ${opt:aws-profile, env:AWS_PROFILE, env:AWS_DEFAULT_PROFILE, 'default'}
+  region: ${opt:region, 'us-east-2'}
+  stackTags:
+    x-service: ${self:service}
+    x-stack: ${self:service}-${self:provider.stage}
+
+custom:
+  vpc:
+    cidr: "10.1.0.0/16"
+    public:
+      subnet1: "10.1.0.0/20"
+      subnet2: "10.1.16.0/20"
+      subnet3: "10.1.32.0/20"
+
+resources:
+  Resources:
+    Vpc:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: "${self:custom.vpc.cidr}"
+        EnableDnsHostnames: true
+        EnableDnsSupport: true
+
+
+    InternetGateway:
+        Type: AWS::EC2::InternetGateway
+
+    InternetGatewayAttachment:
+        Type: AWS::EC2::VPCGatewayAttachment
+        Properties:
+            InternetGatewayId:
+              Ref: InternetGateway
+            VpcId:
+              Ref: Vpc
+
+    PublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+          VpcId:
+            Ref: Vpc
+
+    DefaultPublicRoute:
+        Type: AWS::EC2::Route
+        DependsOn: InternetGatewayAttachment
+        Properties:
+            RouteTableId:
+              Ref: PublicRouteTable
+            DestinationCidrBlock: 0.0.0.0/0
+            GatewayId:
+              Ref: InternetGateway
+
+    PublicSubnet1:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId:
+              Ref: Vpc
+            AvailabilityZone:
+              Fn::Select:
+                - 0
+                - Fn::GetAZs: ""
+            CidrBlock: "${self:custom.vpc.public.subnet1}"
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value:
+                    Fn::Sub:
+                      - "Public Subnet (AZ - #{AZ})"
+                      - AZ:
+                          Fn::Select:
+                            - 0
+                            - Fn::GetAZs: ""
+                - Key: AZ
+                  Value:
+                    Fn::Select:
+                      - 0
+                      - Fn::GetAZs: ""
+
+    PublicSubnet1SSMParam:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/${self:service}/${self:provider.stage}/PublicSubnet1Id"
+        Description: "Public Subnet 1 Id"
+        Type: "String"
+        Value:
+          Ref: PublicSubnet1
+
+    PublicSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId:
+              Ref: PublicRouteTable
+            SubnetId:
+              Ref: PublicSubnet1
+
+    PublicSubnet2:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId:
+              Ref: Vpc
+            AvailabilityZone:
+              Fn::Select:
+                - 1
+                - Fn::GetAZs: ""
+            CidrBlock: "${self:custom.vpc.public.subnet2}"
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value:
+                    Fn::Sub:
+                      - "Public Subnet (AZ - #{AZ})"
+                      - AZ:
+                          Fn::Select:
+                            - 1
+                            - Fn::GetAZs: ""
+                - Key: AZ
+                  Value:
+                    Fn::Select:
+                      - 1
+                      - Fn::GetAZs: ""
+
+    PublicSubnet2SSMParam:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/${self:service}/${self:provider.stage}/PublicSubnet2Id"
+        Description: "Public Subnet 2 Id"
+        Type: "String"
+        Value:
+          Ref: PublicSubnet2
+
+    PublicSubnet2RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId:
+              Ref: PublicRouteTable
+            SubnetId:
+              Ref: PublicSubnet2
+
+    PublicSubnet3:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId:
+              Ref: Vpc
+            AvailabilityZone:
+              Fn::Select:
+                - 2
+                - Fn::GetAZs: ""
+            CidrBlock: "${self:custom.vpc.public.subnet3}"
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value:
+                    Fn::Sub:
+                      - "Public Subnet (AZ - #{AZ})"
+                      - AZ:
+                          Fn::Select:
+                            - 2
+                            - Fn::GetAZs: ""
+                - Key: AZ
+                  Value:
+                    Fn::Select:
+                      - 2
+                      - Fn::GetAZs: ""
+
+    PublicSubnet3SSMParam:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/${self:service}/${self:provider.stage}/PublicSubnet3Id"
+        Description: "Public Subnet 3 Id"
+        Type: "String"
+        Value:
+          Ref: PublicSubnet3
+
+    PublicSubnet3RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId:
+              Ref: PublicRouteTable
+            SubnetId:
+              Ref: PublicSubnet3
+
+    SshSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SSH security group
+        VpcId:
+          Ref: Vpc
+        SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 127.0.0.1/32
+        SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+    WebEgressSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SSH security group
+        VpcId:
+          Ref: Vpc
+        SecurityGroupEgress:
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "tcp"
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "tcp"
+          FromPort: 9418
+          ToPort: 9418
+          CidrIp: 0.0.0.0/0
+
+    GithubSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: GitHub Security Group
+        VpcId:
+          Ref: Vpc
+        SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 192.30.252.0/22
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 185.199.108.0/22
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 140.82.112.0/20
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 13.229.188.59/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 13.250.177.223/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 18.194.104.89/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 18.195.85.27/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 35.159.8.160/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 52.74.223.119/32
+
+    NpmSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Allow NPMJS access
+        VpcId:
+          Ref: Vpc
+        SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.16.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.17.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.18.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.19.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.20.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.21.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.22.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.23.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.24.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.25.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.26.35/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 104.16.27.35/32
+
+    PypiSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Allow Pypi access
+        VpcId:
+          Ref: Vpc
+        SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 151.101.200.223/32
+        # pypi.org
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 151.101.0.223/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 151.101.64.223/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 151.101.128.223/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 151.101.192.223/32
+        # Pythonhosted
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 69.172.201.153/32
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 151.101.117.63/32
+
+    # First 2 rules are for STS in us-east-1
+    AwsApiSecurityGroup: {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "VpcId": {"Ref": "Vpc"},
+        "GroupDescription": "AWS API access",
+        "SecurityGroupEgress": [
+          {
+            "CidrIp": "54.239.21.217/32",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.46.134.192/32",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "54.239.29.25/32",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.95.0.0/20",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.144.196.192/26",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.94.248.160/28",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.95.29.0/26",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.219.96.0/20",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.94.4.0/24",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "13.58.0.0/15",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.95.24.0/22",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.15.0.0/16",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "54.239.0.224/28",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.219.80.0/20",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.220.0.0/14",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.191.0.0/16",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.14.0.0/16",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.216.0.0/14",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.92.76.0/22",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.95.28.0/24",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.95.16.0/21",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.188.0.0/16",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.94.199.0/24",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.224.0.0/14",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.95.251.0/24",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "3.16.0.0/14",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.219.96.0/20",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.219.80.0/20",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.92.76.0/22",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.94.248.160/28",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "13.58.0.0/15",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.15.0.0/16",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.220.0.0/14",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.191.0.0/16",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.14.0.0/16",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.216.0.0/14",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.188.0.0/16",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.224.0.0/14",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.95.251.0/24",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "3.16.0.0/14",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.15.127.128/26",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.216.170.128/25",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "13.59.250.0/26",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "52.15.247.208/29",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.188.9.0/27",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          },
+          {
+            "CidrIp": "18.188.9.32/27",
+            "FromPort": -1,
+            "ToPort": -1,
+            "IpProtocol": "-1"
+          }
+        ]
+      }
+    }
+
+    SshSecurityGroupSSMParam:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/${self:service}/${self:provider.stage}/SshSecurityGroupId"
+        Description: "SSH Security group Id"
+        Type: "String"
+        Value:
+          Ref: SshSecurityGroup
+
+    WebEgressSecurityGroupSSMParam:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/${self:service}/${self:provider.stage}/WebEgressSecurityGroupId"
+        Description: "Web Security group Id"
+        Type: "String"
+        Value:
+          Ref: WebEgressSecurityGroup
+
+    NpmSecurityGroupSSMParam:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/${self:service}/${self:provider.stage}/NpmSecurityGroupId"
+        Description: "NPM Security group Id"
+        Type: "String"
+        Value:
+          Ref: NpmSecurityGroup
+
+    GithubSecurityGroupSSMParam:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/${self:service}/${self:provider.stage}/GithubSecurityGroupId"
+        Description: "Github Security group Id"
+        Type: "String"
+        Value:
+          Ref: GithubSecurityGroup
+
+    PypiSecurityGroupSSMParam:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/${self:service}/${self:provider.stage}/PypiSecurityGroupId"
+        Description: "Pypi Security group Id"
+        Type: "String"
+        Value:
+          Ref: PypiSecurityGroup
+
+    AwsApiSecurityGroupSSMParam:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/${self:service}/${self:provider.stage}/AwsApiSecurityGroupId"
+        Description: "AWS API Security group Id"
+        Type: "String"
+        Value:
+          Ref: AwsApiSecurityGroup
+
+    DefaultSecurityGroupSSMParam:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: "/${self:service}/${self:provider.stage}/DefaultSecurityGroupId"
+        Description: "Default Security Group"
+        Type: "String"
+        Value:
+          Fn::GetAtt:
+            - Vpc
+            - DefaultSecurityGroup
+
+  Outputs:
+    DefaultSecurityGroupIdSSMParam:
+      Description: Default security group ID
+      Value:
+        Ref: DefaultSecurityGroupSSMParam
+      Export:
+        Name: "${self:service}-${self:provider.stage}-DefaultSecurityGroupIdSSMParam"
+
+    WebEgressSecurityGroupIdSSMParam:
+      Description: Web Egress security group ID
+      Value:
+        Ref: WebEgressSecurityGroupSSMParam
+      Export:
+        Name: "${self:service}-${self:provider.stage}-WebEgressSecurityGroupIdSSMParam"
+
+    SshSecurityGroupIdSSMParam:
+      Description: SSH security group ID
+      Value:
+        Ref: SshSecurityGroupSSMParam
+      Export:
+        Name: "${self:service}-${self:provider.stage}-SshSecurityGroupIdSSMParam"
+
+    GithubSecurityGroupIDSSMParam:
+      Description: SSH security group ID
+      Value:
+        Ref: GithubSecurityGroupSSMParam
+      Export:
+        Name: "${self:service}-${self:provider.stage}-GithubSecurityGroupIdSSMParam"
+
+    NpmSecurityGroupIdSSMParam:
+      Description: SSH security group ID
+      Value:
+        Ref: NpmSecurityGroupSSMParam
+      Export:
+        Name: "${self:service}-${self:provider.stage}-NpmSecurityGroupIdSSMParam"
+
+    AwsApiSecurityGroupIdSSMParam:
+      Description: AWS API security group ID
+      Value:
+        Ref: AwsApiSecurityGroupSSMParam
+      Export:
+        Name: "${self:service}-${self:provider.stage}-AwsApiSecurityGroupIdSSMParam"
+
+    PublicSubnet1IdSSMParam:
+      Description: Public subnet 1 ID
+      Value:
+        Ref: PublicSubnet1SSMParam
+      Export:
+        Name: "${self:service}-${self:provider.stage}-PublicSubnet1IdSSMParam"
+
+    PublicSubnet2IdSSMParam:
+      Description: Public subnet 2 ID
+      Value:
+        Ref: PublicSubnet2SSMParam
+      Export:
+        Name: "${self:service}-${self:provider.stage}-PublicSubnet2IdSSMParam"
+
+    PublicSubnet3IdSSMParam:
+      Description: Public subnet 3 ID
+      Value:
+        Ref: PublicSubnet1SSMParam
+      Export:
+        Name: "${self:service}-${self:provider.stage}-PublicSubnet3IdSSMParam"
+

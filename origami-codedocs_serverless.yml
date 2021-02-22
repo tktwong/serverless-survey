@@ -1,0 +1,146 @@
+service: origami-codedocs
+
+frameworkVersion: ">=1.26.1"
+
+provider:
+  name: aws
+  memorySize: 256
+  timeout: 30
+  stage: ${opt:stage, self:custom.defaultStage}
+  runtime: nodejs10.x
+  apiKeys:
+    - ${self:custom.secret.CODEDOCS_API_KEY_NAME}
+  deploymentBucket: ${self:service}-artefacts-${self:provider.stage}
+  region: ${opt:region, 'eu-west-1'}
+  role: arn:aws:iam::${self:custom.secret.AWS_ACCOUNT_ID}:role/ApplicationRoleFor_${self:service}
+  versionFunctions: false
+  stackTags:
+    systemCode: ${self:service}
+    teamDL: origami.support@ft.com
+    environment: ${self:custom.tags.${self:provider.stage}.environment}
+  environment:
+    AWS_ACCESS_ID: ${self:custom.secret.AWS_ACCESS_KEY_ID}
+    AWS_SECRET: ${self:custom.secret.AWS_SECRET_ACCESS_KEY}
+    AWS_DOCLET_BUCKET: ${self:custom.additionalStacks.permanent.Resources.S3DocletBucket.Properties.BucketName}
+    NODE_ENV: ${self:custom.secret.NODE_ENV}
+    REPO_DATA_API_KEY: ${self:custom.secret.REPO_DATA_API_KEY}
+    REPO_DATA_API_SECRET: ${self:custom.secret.REPO_DATA_API_SECRET}
+
+plugins:
+  - serverless-offline
+  - serverless-apigw-binary
+  - serverless-apigwy-binary
+  - serverless-plugin-additional-stacks
+  - serverless-create-deployment-bucket-plugin
+  - serverless-stack-output
+  - serverless-s3-remover
+  - serverless-sentry
+
+custom:
+  bucketName: ${self:service}-${self:provider.stage}-doclets
+  additionalStacks:
+    permanent:
+      Resources:
+        S3DocletBucketPolicy:
+          Type: "AWS::S3::BucketPolicy"
+          Properties:
+            Bucket:
+              Ref: "S3DocletBucket"
+            PolicyDocument:
+              Id: S3DocletBucketPolicy
+              Statement:
+                - Sid: AllowOnlyApplicationToPutObject
+                  Effect: Allow
+                  Principal:
+                    AWS:
+                      - ${self:provider.role}
+                  Action: s3:PutObject
+                  Resource:
+                    - arn:aws:s3:::${self:custom.additionalStacks.permanent.Resources.S3DocletBucket.Properties.BucketName}/*
+                - Sid: AllowOnlyApplicationToGetObject
+                  Effect: Allow
+                  Principal:
+                    AWS:
+                      - ${self:provider.role}
+                  Action: s3:PutObject
+                  Resource:
+                    - arn:aws:s3:::${self:custom.additionalStacks.permanent.Resources.S3DocletBucket.Properties.BucketName}/*
+        S3DocletBucket:
+          Type: "AWS::S3::Bucket"
+          Properties:
+            BucketName: ${self:custom.bucketName}
+  apigwBinary:
+    types:
+      - "*/*"
+  defaultStage: dev
+  tags:
+    dev:
+      environment: t
+    prod:
+      environment: p
+  secret: ${file(./env.js)}
+  serverless-offline:
+    dontPrintOutput: false
+  output:
+    file: ./.${self:provider.stage}-stack.yml
+  remover:
+    buckets:
+      - ${self:custom.bucketName}
+  sentry:
+    dsn: ${self:custom.secret.SENTRY_DSN}
+    organization: ${self:custom.secret.SENTRY_ORGANISATION}
+    project: ${self:custom.secret.SENTRY_PROJECT}
+    authToken: ${self:custom.secret.SENTRY_AUTH_TOKEN}
+
+package:
+  exclude:
+    - .github/**
+    - .serverless/**
+    - .sonarlint/**
+    - .terraform/**
+    - .vscode/**
+    - fastly/**
+    - node_modules/aws-sdk/**
+    - test/integration/**
+    - .editorconfig
+    - .eslintrc.js
+    - .gitignore
+    - .prettierrc
+    - README.md
+    - package-lock.json
+    - terraform.tfstate
+    - terraform.tfstate.backup
+
+functions:
+  jsdoc:
+    handler: functions/jsdoc.handler
+    events:
+      - http:
+          private: true
+          path: jsdoc/{componentId}
+          method: get
+          request:
+            parameters:
+              paths:
+                componentId: true
+  sassdoc:
+    handler: functions/sassdoc.handler
+    events:
+      - http:
+          private: true
+          path: sassdoc/{componentId}
+          method: get
+          request:
+            parameters:
+              paths:
+                componentId: true
+  health:
+    handler: functions/health.handler
+    memorySize: 128
+    events:
+      - http:
+          method: get
+          path: __health
+      - http:
+          method: get
+          path: __gtg

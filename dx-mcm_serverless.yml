@@ -1,0 +1,151 @@
+service:
+  name: osu-dx-mcm-${opt:stage, 'development'}${file(./src/serverless.js):developerSuffix}
+
+package:
+  individually: true
+  exclude:
+    - .git/**
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-s3-sync
+  - serverless-pseudo-parameters
+  - serverless-step-functions
+  - serverless-webpack
+  - serverless-plugin-stack-outputs
+
+custom: ${file(./serverless-custom.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'development'}
+  region: ${opt:region, 'us-west-2'}
+  stackName: ${self:service.name}
+  deploymentBucket:
+    name: osu-dx-mcm-deployments
+    blockPublicAccess: true
+  deploymentPrefix: ${self:service.name}
+  environment:
+    ENV: ${env:ENV}
+    SERVICE_NAME: ${self:service.name}
+  vpc:
+    securityGroupIds:
+      - !Ref LambdaSecurityGroup
+    subnetIds:
+      - !Ref PrivateSubnetA
+      - !Ref PrivateSubnetB
+      - !Ref PrivateSubnetC
+  apiKeys:
+    - value: ${env:AWS_APIGW_API_KEY}${file(./src/serverless.js):developerSuffix} # ensure a unique key when using a developer stack
+  tracing: ${file(./serverless.config.${opt:stage, 'development'}.yml):provider.tracing}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource:
+        - !GetAtt dataTransferBucket.Arn
+        - !Join ['', [!GetAtt dataTransferBucket.Arn, '/*']]
+    - Effect: Allow
+      Action:
+        - elasticache:*
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:BatchGetItem
+        - dynamodb:DeleteItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+      Resource:
+        - !Join [
+            ':',
+            [
+              'arn:aws:dynamodb',
+              !Ref AWS::Region,
+              !Ref AWS::AccountId,
+              'table/osu-dx-mcm-${opt:stage, "development"}-*',
+            ],
+          ]
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+        - sqs:GetQueueUrl
+        - sqs:DeleteMessage
+        - sqs:ReceiveMessage
+        - sqs:GetQueueAttributes
+      Resource:
+        - !GetAtt messagesSqsQueue.Arn
+        - !GetAtt messageErrorsSqsQueue.Arn
+        - !GetAtt userMessagesSqsQueue.Arn
+        - !GetAtt userMessageErrorsSqsQueue.Arn
+    - Effect: Allow
+      Action:
+        - logs:CreateLogDelivery
+        - logs:GetLogDelivery
+        - logs:UpdateLogDelivery
+        - logs:DeleteLogDelivery
+        - logs:ListLogDeliveries
+        - logs:PutResourcePolicy
+        - logs:DescribeResourcePolicies
+        - logs:DescribeLogGroups
+        - states:StartExecution
+      Resource:
+        - !Join [':', ['arn:aws:states', !Ref AWS::Region, !Ref AWS::AccountId, 'stateMachine:*']]
+
+  apiGateway:
+    apiKeySourceType: HEADER
+    description: OSU DX Multi-Channel Messaging API
+  apiName: ${self:service.name}
+  usagePlan: ${file(./serverless.config.${opt:stage, 'development'}.yml):provider.usagePlan}
+
+stepFunctions:
+  stateMachines:
+    messageStateMachine: ${file(./src/services/messages/serverless-state-machine.yml)}
+    userMessageStateMachine: ${file(./src/services/userMessages/serverless-state-machine.yml)}
+
+functions:
+  - ${file(./src/services/messages/serverless-functions.yml)}
+  - ${file(./src/services/userMessages/serverless-functions.yml)}
+
+resources:
+  Resources:
+    apiCloudFront: ${file(./serverless-resources.yml):apiCloudFront}
+    staticBucket: ${file(./serverless-resources.yml):staticBucket}
+    dataTransferBucket: ${file(./serverless-resources.yml):dataTransferBucket}
+    messagesSqsQueue: ${file(./src/services/messages/serverless-resources.yml):messagesSqsQueue}
+    messageErrorsSqsQueue: ${file(./src/services/messages/serverless-resources.yml):messageErrorsSqsQueue}
+    messageStateMachineLogGroup: ${file(./src/services/messages/serverless-resources.yml):messageStateMachineLogGroup}
+    userMessagesSqsQueue: ${file(./src/services/userMessages/serverless-resources.yml):userMessagesSqsQueue}
+    userMessageErrorsSqsQueue: ${file(./src/services/userMessages/serverless-resources.yml):userMessageErrorsSqsQueue}
+    userMessageStateMachineLogGroup: ${file(./src/services/userMessages/serverless-resources.yml):userMessageStateMachineLogGroup}
+    Vpc: ${file(./serverless-vpc-resources.yml):Vpc}
+    PrivateSubnetA: ${file(./serverless-vpc-resources.yml):PrivateSubnetA}
+    PrivateSubnetB: ${file(./serverless-vpc-resources.yml):PrivateSubnetB}
+    PrivateSubnetC: ${file(./serverless-vpc-resources.yml):PrivateSubnetC}
+    PublicSubnetD: ${file(./serverless-vpc-resources.yml):PublicSubnetD}
+    NatGateway: ${file(./serverless-vpc-resources.yml):NatGateway}
+    PrivateRouteTable: ${file(./serverless-vpc-resources.yml):PrivateRouteTable}
+    PrivateRoute: ${file(./serverless-vpc-resources.yml):PrivateRoute}
+    RedisSecurityGroup: ${file(./serverless-vpc-resources.yml):RedisSecurityGroup}
+    RedisCacheClusterSubnetGroup: ${file(./serverless-vpc-resources.yml):RedisCacheClusterSubnetGroup}
+    RedisCacheCluster: ${file(./serverless-vpc-resources.yml):RedisCacheCluster}
+    SubnetRouteTableAssociationPrivateA: ${file(./serverless-vpc-resources.yml):SubnetRouteTableAssociationPrivateA}
+    SubnetRouteTableAssociationPrivateB: ${file(./serverless-vpc-resources.yml):SubnetRouteTableAssociationPrivateB}
+    SubnetRouteTableAssociationPrivateC: ${file(./serverless-vpc-resources.yml):SubnetRouteTableAssociationPrivateC}
+    InternetGateway: ${file(./serverless-vpc-resources.yml):InternetGateway}
+    VPCGatewayAttachment: ${file(./serverless-vpc-resources.yml):VPCGatewayAttachment}
+    PublicRouteTable: ${file(./serverless-vpc-resources.yml):PublicRouteTable}
+    PublicRoute: ${file(./serverless-vpc-resources.yml):PublicRoute}
+    SubnetRouteTableAssociationPublicD: ${file(./serverless-vpc-resources.yml):SubnetRouteTableAssociationPublicD}
+    LambdaSecurityGroup: ${file(./serverless-vpc-resources.yml):LambdaSecurityGroup}
+
+  Outputs:
+    CloudFrontDistribution:
+      Description: URL to the API for testing or DNS CName
+      Value: !Join ['', ['https://', !GetAtt apiCloudFront.DomainName]]

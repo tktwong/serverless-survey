@@ -1,0 +1,202 @@
+service: serverless-rest-api-example
+frameworkVersion: ">=1.1.0 <2.0.0" 
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-plugin-offline-dynamodb-stream
+  - serverless-aws-documentation
+  - serverless-jest-plugin
+  - serverless-domain-manager
+  - serverless-offline
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  region: ${opt:region, 'us-east-1'}
+  environment:
+    CRM_TABLE: ${self:provider.stage}-${self:service}-crm-table
+    SERVICE_NAME: ${self:service}
+    AUTH0_CLIENT_ID: ${self:custom.domains.${self:custom.stage}}
+    AUTH0_CLIENT_PUBLIC_KEY: 'needpathtofilehere'
+    DYANMODB_LOCAL_HOST: ${file(./secrets.json):DYANMODB_LOCAL_HOST}
+    DYANMODB_LOCAL_PORT: ${file(./secrets.json):DYANMODB_LOCAL_PORT}
+  iamRoleStatements:
+    - Effect: Allow
+      Action: #Roles needed for Dynamo
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CRM_TABLE}"
+custom:  
+  defaultStage: dev
+  profiles:
+      prod: prodProfile #aws profile name for prod to use in config
+      staging: stagingProfile #aws profile name for staging to use in config
+      dev: devProfile #aws profile name for dev to use in config
+  stage: ${opt:stage, self:custom.defaultStage}
+  domains:
+    prod: ${file(./secrets.json):PROD_API_URL}
+    staging: ${file(./secrets.json):STAGING_API_URL}
+    dev: ${file(./secrets.json):DEV_API_URL}
+  customDomain:
+      basePath: ${file(./secrets.json):API_BASE_URL} 
+      domainName: ${self:custom.domains.${self:custom.stage}}
+      stage: "${self:custom.stage}"
+      createRoute53Record: true
+  webpack:
+      webpackConfig: 'webpack.config.js'   # Name of webpack configuration file
+      includeModules:   # Node modules configuration for packaging
+        forceExclude:
+          - aws-sdk
+      packager: 'npm'
+  dynamodb:  #for serverless offline only
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true #when you stop offline mode db goes away if true
+      migrate: true #will create the tables for you
+      #seed: true 
+      #convertEmptyValues: true
+      #noStart: true #only run if you are keeping local dynamo runningv
+  dynamodbStream: #for serverless offline only
+      host: localhost 
+      port: 8000
+      streams:
+        - table: ${self:provider.environment.CRM_TABLE}
+          functions:
+            - crmpublisher
+  jest:
+      # You can pass jest options here
+      # See details here: https://facebook.github.io/jest/docs/configuration.html
+      # For instance, uncomment next line to enable code coverage
+      collectCoverage: true 
+resources:
+  Resources:
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    CRMLEADTABLE: 
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: leadId
+            AttributeType: S 
+          -
+            AttributeName: createdAt
+            AttributeType: S
+          -
+            AttributeName: accountId
+            AttributeType: S 
+        KeySchema:
+          -
+            AttributeName: leadId
+            KeyType: HASH
+          -
+            AttributeName: createdAt
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: accountIdIndex
+            KeySchema:
+              - AttributeName: accountId
+                KeyType: HASH
+            Projection:
+              ProjectionType: KEYS_ONLY
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CRM_TABLE}
+        StreamSpecification:
+              StreamViewType: NEW_IMAGE
+package:
+  individually: true 
+functions:
+  authorizerFunc:
+    handler: src/ath/ath_handler.auth
+    events:
+      - http:
+          cors: true
+          path: ath
+          method: post
+  crmpublisher:
+    handler: src/crm_publisher.publish
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - CRMLEADTABLE
+              - StreamArn
+          batchSize: 1
+  createLead:
+    handler: src/crm_handler.createLead
+    events:
+      - http:
+          authorizer: authorizerFunc
+          path: registration
+          method: post
+          cors: true 
+  getByAccountId:
+    handler: src/crm_handler.getByAccountId
+    events:
+      - http:
+          authorizer: authorizerFunc
+          path: getByAccountId/{accountId}
+          method: get
+          cors: true
+  getByAccountIdAndDate:
+     handler: src/crm_handler.getByAccountIdAndDate
+     events:
+      - http:
+          authorizer: authorizerFunc
+          path: getByAccountIdAndDate/{accountId}/{date}
+          method: get
+          cors: true
+  getById:
+    handler: src/crm_handler.getById
+    events:
+      - http:
+          authorizer: authorizerFunc
+          path: getById/{leadId}
+          method: get
+          cors: true
+  getByIdAndDate:
+    handler: src/crm_handler.getByIdAndDate
+    events:
+      - http:
+          authorizer: authorizerFunc
+          path: getByIdAndDate/{leadId}/{date}
+          method: get
+          cors: true

@@ -1,0 +1,96 @@
+service: rohawolf-sls-ws
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, "dev"}
+  region: ${opt:region, "ap-northeast-2"}
+  stackName: ${self:service}-${self:provider.stage}
+  profile: sls-ws
+  websocketsApiName: ${self:service}-${self:provider.stage}
+  websocketsApiRouteSelectionExpression: $request.body.action
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "execute-api:ManageConnections"
+      Resource:
+        - "arn:aws:execute-api:*:*:**/@connections/*"
+
+    - Effect: Allow
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - Fn::GetAtt: [ApplicationDynamoDBTable, Arn]
+        - Fn::Join:
+          - '/'
+          - - Fn::GetAtt: [ApplicationDynamoDBTable, Arn]
+            - '*'
+  environment:
+    APPLICATION_TABLE:
+      Ref: ApplicationDynamoDBTable
+    API_REGION: "${self:provider.region}"
+  
+functions:
+  connectionHandler:
+    handler: handler.connectionHandler
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+
+  defaultHandler:
+    handler: handler.defaultHandler
+    events:
+      - websocket: $default
+
+  sendMessage:
+    handler: handler.sendMessage
+    events:
+      - websocket:
+          route: sendMessage
+
+  channelManager:
+    handler: handler.channelManager
+    events:
+      - websocket:
+          route: subscribeChannel
+      - websocket:
+          route: unsubscribeChannel
+
+  broadcast:
+    handler: handler.broadcast
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [ApplicationDynamoDBTable, StreamArn]
+
+resources:
+  Resources:
+    ApplicationDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: reverse
+            KeySchema:
+              - AttributeName: sk
+                KeyType: HASH
+              - AttributeName: pk
+                KeyType: RANGE
+            Projection:
+                ProjectionType: ALL

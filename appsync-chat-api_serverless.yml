@@ -1,0 +1,305 @@
+service: aws-appsync-chat
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  environment:
+    CHANNELS_TABLE: channels-${opt:stage, self:provider.stage}
+    MESSAGES_TABLE: messages-${opt:stage, self:provider.stage}
+    MEMBERSHIPS_TABLE: memberships-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - cognito-idp:GetUser
+        - cognito-idp:AdminGetUser
+      Resource: "arn:aws:cognito-idp:${opt:region, self:provider.region}:*:userpool/*"
+
+plugins:
+   - serverless-appsync-plugin
+
+functions:
+  graphql:
+    handler: handler.graphqlHandler
+    environment:
+      USER_POOL_ID: { Ref: UserPool }
+custom:
+  appSync:
+    name: appsync-chat
+    schema: schema.graphql
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      awsRegion: { Ref: AWS::Region }
+      defaultAction: ALLOW
+      userPoolId: { Ref: UserPool }
+    mappingTemplates:
+      - dataSource: Lambda_MeInfo
+        type: Query
+        field: me
+        request: "me-request.vtl"
+        response: "simple-response.vtl"
+      - dataSource: Lambda_MeInfo
+        type: Message
+        field: createdBy
+        request: "getUser-request.vtl"
+        response: "simple-response.vtl"
+      - dataSource: Memberships
+        type: Query
+        field: memberships
+        request: "memberships-request.vtl"
+        response: "memberships-response.vtl"        
+      - dataSource: Channels
+        type: Membership
+        field: channel
+        request: "getMembershipChannel-request.vtl"
+        response: "simple-response.vtl"
+      - dataSource: Channels
+        type: Query
+        field: channels
+        request: "channels-request.vtl"
+        response: "channels-response.vtl"
+      - dataSource: Messages
+        type: Query
+        field: messages
+        kind: PIPELINE
+        request: "messages-request.vtl"
+        response: "simple-response.vtl"
+        functions:
+          - getChannel
+          - getMessages
+      - dataSource: Channels
+        type: Mutation
+        field: createChannel
+        request: "createChannel-request.vtl"
+        response: "simple-response.vtl"
+      - dataSource: Channels
+        type: Mutation
+        field: joinChannel
+        kind: PIPELINE
+        request: "joinChannel-request.vtl"
+        response: "simple-response.vtl"
+        functions:
+          - getChannel
+          - createMembership
+      - dataSource: Messages
+        type: Mutation
+        field: sendMessage
+        kind: PIPELINE
+        request: "sendMessage-request.vtl"
+        response: "simple-response.vtl"
+        functions:
+          - getMembership
+          - createMessage
+    functionConfigurations:
+      - dataSource: Channels
+        name: getChannel
+        request: "getChannel-request.vtl"
+        response: "simple-response.vtl"
+      - dataSource: Messages
+        name: createMessage
+        request: "createMessage-request.vtl"
+        response: "simple-response.vtl"
+      - dataSource: Messages
+        name: getMessages
+        request: "getMessages-request.vtl"
+        response: "channels-response.vtl"
+      - dataSource: Memberships
+        name: getMembership
+        request: "getMembership-request.vtl"
+        response: "simple-response.vtl"
+      - dataSource: Memberships
+        name: createMembership
+        request: "createMembership-request.vtl"
+        response: "simple-response.vtl"
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: Channels
+        description: 'Channels table'
+        config:
+          tableName: { Ref: ChannelsDynamoDbTable }
+          serviceRoleArn: { Fn::GetAtt: [AppSyncDynamoDBServiceRole, Arn] }
+      - type: AMAZON_DYNAMODB
+        name: Messages
+        description: 'Messages table'
+        config:
+          tableName: { Ref: MessagesDynamoDbTable }
+          serviceRoleArn: { Fn::GetAtt: [AppSyncDynamoDBServiceRole, Arn] }  
+      - type: AMAZON_DYNAMODB
+        name: Memberships
+        description: 'Memberships table'
+        config:
+          tableName: { Ref: MembershipsDynamoDbTable }
+          serviceRoleArn: { Fn::GetAtt: [AppSyncDynamoDBServiceRole, Arn] }            
+      - type: AWS_LAMBDA
+        name: Lambda_MeInfo
+        description: 'Lambda DataSource'
+        config:
+          lambdaFunctionArn: { Fn::GetAtt: [GraphqlLambdaFunction, Arn] }
+          serviceRoleArn: { Fn::GetAtt: [AppSyncLambdaServiceRole, Arn] }                  
+
+resources:
+  Resources:
+    UserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: true
+        UserPoolName: chat-users-${self:provider.stage}
+        Schema:
+          - AttributeDataType: String
+            Mutable: true
+            Name: role
+          - AttributeDataType: String
+            Mutable: true
+            Name: firstName
+          - AttributeDataType: String
+            Mutable: true
+            Name: lastName                        
+    ChannelsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: uniqueName
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          -
+            IndexName: unique-name-index
+            KeySchema:
+              -
+                AttributeName: uniqueName
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1 
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CHANNELS_TABLE}
+    MessagesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: channelId
+            AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: channelId
+            KeyType: HASH
+          -
+            AttributeName: createdAt
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          -
+            IndexName: id-index
+            KeySchema:
+              -
+                AttributeName: id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1            
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.MESSAGES_TABLE}
+    MembershipsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: channelId
+            AttributeType: S
+          -
+            AttributeName: username
+            AttributeType: S            
+        KeySchema:
+          -
+            AttributeName: channelId
+            KeyType: HASH
+          - 
+            AttributeName: username
+            KeyType: RANGE       
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.MEMBERSHIPS_TABLE}        
+    AppSyncLambdaServiceRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "LambdaAppSyncRole"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          -
+            PolicyName: "LambdaAppSyncPolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action:
+                    - "lambda:invokeFunction"
+                  Resource:
+                    - "*"
+    AppSyncDynamoDBServiceRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "chat-service-role"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          -
+            PolicyName: "chat-service-policy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action:
+                    - "dynamodb:Query"
+                    - "dynamodb:BatchWriteItem"
+                    - "dynamodb:GetItem"
+                    - "dynamodb:DeleteItem"
+                    - "dynamodb:PutItem"
+                    - "dynamodb:Scan"
+                    - "dynamodb:UpdateItem"
+                  Resource:
+                    - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/*"
+                

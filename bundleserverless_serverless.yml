@@ -1,0 +1,103 @@
+service: "bundlebase"
+frameworkVersion: ">=1.1.0 <2.0.0"
+package:
+  exclude:
+    - json/**
+    - storage.json
+  individually: true
+plugins:
+  # - serverless-appsync-plugin
+  - serverless-webpack
+provider:
+  name: aws
+  apiKeys:
+    - downloaderKey
+    - uploaderKey
+  runtime: nodejs8.10
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        - { Fn::Join: ["", ["arn:aws:s3:::", { Ref: BundleBucket }]] }
+        - { Fn::Join: ["", ["arn:aws:s3:::", { Ref: BundleBucket }, "/*"]] }
+functions:
+  listBundles:
+    handler: handlers.listBundles
+    events:
+      - http:
+          path: list
+          method: post
+          cors: true
+    environment:
+      BundleBucket: { Ref: BundleBucket }
+      BundleTable:
+        Fn::GetAtt:
+          - "BundleTable"
+          - Arn
+  addBundle:
+    handler: handlers.addBundle
+    events:
+      - http:
+          path: add
+          method: post
+          cors: true
+    environment:
+      BundleBucket: "BundleBucket"
+
+      BundleTable:
+        Fn::GetAtt:
+          - "BundleTable"
+          - Arn
+  getBundle:
+    handler: handlers.getBundle
+    events:
+      - http:
+          path: bundle
+          method: post
+          cors: true
+    environment:
+      BundleBucket: "BundleBucket"
+      BundleTable:
+        Fn::GetAtt:
+          - "BundleTable"
+          - Arn
+resources:
+  Description: "Bundle Storage Manager"
+  Resources:
+    BundleTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions: #represents an attribute for describing the key schema
+          - AttributeName: id
+            AttributeType: S
+        StreamSpecification: #configure DDB to write to stream logs (if enabled)
+          StreamViewType: NEW_AND_OLD_IMAGES #determines what information is written to the stream for this table
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1 #One read capacity unit represents one strongly consistent read per second, or two eventually consistent reads per second, for an item up to 4 KB in size
+          WriteCapacityUnits: 1 #One write capacity unit represents one write per second for an item up to 1 KB in size
+        TableName: "${self:service}-${self:provider.stage}-Bundle"
+    BundleBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        BucketName:
+          {
+            Fn::Join:
+              [
+                "-",
+                [
+                  "${self:service}",
+                  "${self:provider.stage}",
+                  "attachments",
+                  { Ref: AWS::AccountId },
+                ],
+              ],
+          }

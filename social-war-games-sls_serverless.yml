@@ -1,0 +1,334 @@
+service: swg
+
+plugins:
+  - serverless-webpack
+  - serverless-domain-manager
+  - serverless-dynamodb-local
+  - serverless-step-functions
+  - serverless-step-functions-local
+  - serverless-offline
+  - serverless-pseudo-parameters
+  - serverless-s3-local
+  - serverless-plugin-additional-stacks
+
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-west-2
+  accountId: 114394156384
+  logRetentionInDays: 7
+  websocketsApiName: swg-socket
+  websocketsApiRouteSelectionExpression: $request.body.action
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:UpdateItem
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+        - states:StartExecution
+        - s3:GetObjectAcl
+        - s3:GetObject
+        - s3:GetObjectTagging
+        - s3:DeleteObject
+        - s3:DeleteObjectVersion
+        - s3:PutObject
+        - s3:PutObjectTagging
+        - s3:PutObjectAcl
+      Resource: "*"
+
+custom:
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    includeModules: true
+    packager: 'npm'
+  customDomain:
+    rest:
+      domainName: api.socialwargames.com
+      basePath: ''
+      stage: ${self:provider.stage}
+      createRoute53Record: true
+    websocket:
+      domainName: ws.socialwargames.com
+      basePath: ''
+      stage: ${self:provider.stage}
+      createRoute53Record: true
+      endpointType: 'regional'
+      certificateName: socialwargames.com
+      securityPolicy: tls_1_2
+  serverless-offline:
+    host: 0.0.0.0
+    noPrependStageInUrl: true
+    httpPort: 5103
+  lambda:
+    host: 0.0.0.0
+    region: us-west-2
+    port: 9898
+  s3:
+    host: localhost
+    directory: ./.s3-local
+    cors: ./.s3-local/cors.xml
+  stepFunctionsLocal:
+    accountId: 114394156384
+    region: us-west-2
+    lambdaEndpoint: http://localhost:3002
+    TaskResourceMapping:
+      Iterator: arn:aws:lambda:us-west-2:114394156384:function:swg-dev-iterator
+      Next: arn:aws:lambda:us-west-2:114394156384:function:swg-dev-iterator
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8020
+      heapInitial: 200m
+      heapMax: 1g
+      dbPath: ./.dynamo-data-local
+      migrate: true
+
+resources:
+  Resources:
+    GamesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: swg-games
+        AccessControl: PublicRead
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+    RulesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+        BucketName: swg-rules
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: swg-connections
+        AttributeDefinitions:
+          - AttributeName: connectionId
+            AttributeType: S
+          - AttributeName: gameIdFactionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: connectionId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: GameFactionIndex
+            KeySchema:
+            - AttributeName: gameIdFactionId
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 4
+              WriteCapacityUnits: 4
+        ProvisionedThroughput:
+          ReadCapacityUnits: 4
+          WriteCapacityUnits: 4
+    redisTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: swg-redis-table
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 200
+          WriteCapacityUnits: 20
+
+stepFunctions:
+  stateMachines:
+    workRunner:
+      name: workRunner
+      definition:
+        StartAt: Iterator
+        States:
+          Iterator:
+            Type: Task
+            ResultPath: "$.iterator"
+            Resource:
+              Fn::GetAtt: [iterator, Arn]
+            Next: IsCountReached
+          IsCountReached:
+            Type: Choice
+            Choices:
+              - Variable: "$.iterator.continue"
+                BooleanEquals: true
+                Next: "Wait"
+              - Variable: "$.iterator.next"
+                BooleanEquals: true
+                Next: "WaitAndDone"
+            Default: Done
+          Wait:
+            Type: Wait
+            Seconds: 15
+            Next: Iterator
+          WaitAndDone:
+            Type: Wait
+            Seconds: 15
+            Next: Next
+          Next:
+            Type: Task
+            ResultPath: "$.iterator"
+            Resource:
+              Fn::GetAtt: [iterator, Arn]
+            End: true
+          Done:
+            Type: Pass
+            End: true
+  validate: true
+
+
+functions:
+  vote:
+    handler: handler.vote
+    memorySize: 256
+    events:
+      - http:
+          path: vote
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - GameId
+  user-details:
+    handler: handler.userDetails
+    memorySize: 256
+    events:
+      - http:
+          path: user-details
+          method: get
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - GameId
+  register:
+    handler: handler.register
+    events:
+      - http:
+          path: register
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - GameId
+  login:
+    handler: handler.login
+    events:
+      - http:
+          path: login
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - GameId
+  ladder:
+    handler: handler.ladder
+    events:
+      - http:
+          path: ladder
+          method: get
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - GameId
+  get-games:
+    handler: handler.getGames
+    memorySize: 128
+    events:
+      - http:
+          path: games
+          method: get
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - GameId
+  start-worker:
+    handler: handler.startWorker
+    memorySize: 128
+    timeout: 29
+    events:
+      - http:
+          path: start-worker
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - GameId
+  stop-worker:
+    handler: handler.stopWorker
+    memorySize: 128
+    events:
+      - http:
+          path: stop-worker
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - GameId
+  iterator:
+    handler: iteratorHandler.iterator
+    memorySize: 128
+  setup:
+    handler: functions/setup.setupHandler
+    memorySize: 512
+    timeout: 29
+    events:
+      - http:
+          path: --setup
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - GameId
+  work:
+    handler: functions/work.workHandler
+    timeout: 59
+    memorySize: 256
+    reservedConcurrency: 1
+  roundUpdate:
+    handler: functions/roundUpdate.roundUpdateHandler
+    timeout: 14
+    memorySize: 256
+    reservedConcurrency: 1
+  connect:
+    handler: socketHandler.connect
+    events:
+      - websocket: $connect
+  disconnect:
+    handler: socketHandler.disconnect
+    events:
+      - websocket: $disconnect

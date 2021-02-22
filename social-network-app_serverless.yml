@@ -1,0 +1,334 @@
+service: social-network-app
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+
+plugins:
+  - serverless-domain-manager
+
+custom:
+  secrets: ${file(secrets.json)}
+
+  customDomain:
+    domainName: data.pratikmathur.com
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  environment:
+    JWT_SECRET: ${self:custom.secrets.JWT_SECRET}
+    USERS_TABLE: { "Ref": "UsersDynamoTable" } 
+    USERS_ACTIVITY_TABLE: { "Ref": "UserActivityDynamoTable"}
+    FEED_TABLE: { "Ref": "FeedDynamoTable" }
+    PEOPLE_TABLE: { "Ref": "PeopleDynamoTable"}
+    FOLLOW_TABLE: { "Ref": "FollowDynamoTable"}
+    EMAIL: "pratikmathur279@gmail.com"
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - { "Fn::GetAtt": ["UsersDynamoTable", "Arn"] }
+        - { "Fn::GetAtt": ["UserActivityDynamoTable", "Arn"] }
+        - { "Fn::GetAtt": ["FeedDynamoTable", "Arn"] }
+        - { "Fn::GetAtt": ["PeopleDynamoTable", "Arn"] }
+        - { "Fn::GetAtt": ["FollowDynamoTable", "Arn"] }
+
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+      Resource: "*"
+
+functions:
+#login user
+  login:
+    handler: auth/login.login
+    events:
+      - http:
+          path: login
+          method: post
+          cors: true
+
+#register user
+  register:
+    handler: auth/AuthHandler.register
+    events:
+      - http:
+          path: register
+          method: post
+          cors: true
+
+
+#check if user exists(login)
+  checkUser:
+    handler: users/check.check
+    events:
+      - http:
+          path: users/{email}
+          method: get
+          cors: true
+
+#create user
+  createUser:
+    handler: users/create.create
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true          
+
+#follow user
+  followUser:
+    handler: follow/followUser.create
+    events:
+      - http:
+          path: followUser
+          method: post
+          cors: true          
+
+#unfollow user
+  unfollowUser:
+    handler: follow/unfollowUser.delete
+    events:
+      - http:
+          path: unfollowUser
+          method: post
+          cors: true
+
+#delete feed item
+  deleteFeed:
+    handler: feed/delete.delete
+    events:
+      - http:
+          path: deleteFeed/{id}
+          method: post
+          cors: true 
+
+#userFollowing list
+  userFollowingList:
+    handler: follow/userFollowingList.get
+    events:
+      - http:
+          path: userfollowlist/{email}
+          method: get
+          cors: true
+          
+#userFollowed list
+  userFollowedList:
+    handler: follow/userFollowedList.get
+    events:
+      - http:
+          path: userfollowedlist/{email}
+          method: get
+          cors: true
+
+#create feed item
+  createNote:
+    handler: feed/create.create
+    events:
+      - http:
+          path: feed
+          method: post
+          cors: true
+
+#list feed
+  listFeed:
+    handler: feed/list.list
+    events:
+      - http:
+          path: feed
+          method: get
+          cors: true
+
+#list people
+  listPeople:
+    handler: people/list.list
+    events:
+      - http:
+          path: people
+          method: post
+          cors: true
+
+#update feed image for profiles
+  updateImageFeed: 
+    handler: feed/updateImage.update
+    events: 
+      - http: 
+          path: updateImageFeed/{email}
+          method: post
+          cors: true
+
+#get feed for user 
+  getUserFeed:
+    handler: feed/getUserFeed.list
+    events:
+      - http:
+          path: feed/{email}
+          method: get
+          cors: true
+
+#get user by email
+  getUser:
+    handler: users/get.get  
+    events:
+      - http:
+          path: user/{email}
+          method: get
+          cors: true          
+
+#get user by id
+  getUserById:
+    handler: users/getUserById.get  
+    events:
+      - http:
+          path: getuser/{id}
+          method: get
+          cors: true          
+
+#create user activity
+  createUserActivity:
+    handler: users/createUserActivity.createUserActivity
+    events:
+      - http: 
+          path: userActivity
+          method: post
+          cors: true
+
+#update user activity
+  updateUserActivity:
+    handler: users/updateUserActivity.updateUserActivity
+    events:
+      - http: 
+          path: userActivity/{email}
+          method: put
+          cors: true
+
+#update user profile
+  updateProfile:
+    handler: users/updateProfile.update
+    events:
+      - http: 
+          path: userProfile/{id}
+          method: put
+          cors: true
+
+#update user profile image
+  updateUserImage:
+    handler: people/updateUserImage.update
+    events:
+      - http: 
+          path: updateUserImage
+          method: put
+          cors: true          
+                  
+#get user activity
+  getUserActivity:
+    handler: users/getUserActivity.getUserActivity
+    events:
+      - http: 
+          path: userActivity
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    UsersDynamoTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:service}-users
+
+    UserActivityDynamoTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:service}-userActivity
+      
+    FeedDynamoTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:service}-feed
+
+    PeopleDynamoTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:service}-people
+    
+    FollowDynamoTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:service}-follow
+    

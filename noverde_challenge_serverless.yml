@@ -1,0 +1,152 @@
+org: chrismaille
+app: noverde-challenge
+service: noverdechallenge
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    SENTRY_DSN: ${param:NOVERDE_SENTRY_DSN}
+    SENTRY_ENV: ${self:provider.stage}
+    NOVERDE_API_TOKEN: ${param:NOVERDE_API_TOKEN}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+        - states:StartExecution
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+        - "*"
+  tracing:
+    apiGateway: true
+    lambda: true
+
+functions:
+  GetLoan:
+    handler: noverde_challenge/handlers/loan.get
+    events:
+      - http:
+          path: api/loans/{loan_id}
+          method: get
+          cors: true
+          request:
+            paths:
+              loan_id: true
+  CreateLoan:
+    handler: noverde_challenge/handlers/loan.post
+    environment:
+      LOAN_ANALYSIS_ARN: ${self:resources.Outputs.LoanAnalysisStateMachine.Value}
+    events:
+      - http:
+          path: api/loans
+          method: post
+          cors: true
+  RunAgePolicy:
+    handler: noverde_challenge/handlers/analysis.run_age_policy
+  RunScorePolicy:
+    handler: noverde_challenge/handlers/analysis.run_score_policy
+  RunCommitmentPolicy:
+    handler: noverde_challenge/handlers/analysis.run_commitment_policy
+
+stepFunctions:
+  stateMachines:
+    loanAnalysis:
+      name: LoanAnalysisStateMachine
+      type: EXPRESS
+      loggingConfig:
+        level: ALL
+        includeExecutionData: true
+        destinations:
+          - Fn::GetAtt: [LoanAnalysisLogGroup, Arn]
+      definition:
+        StartAt: runAgePolicy
+        States:
+          runAgePolicy:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [RunAgePolicy, Arn]
+            Next: afterAgeChoice
+          afterAgeChoice:
+            Type: Choice
+            Choices:
+              - Variable: "$.status"
+                StringEquals: "completed"
+                Next: finishAnalysis
+            Default: runScorePolicy
+          runScorePolicy:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [RunScorePolicy, Arn]
+            Next: afterScoreChoice
+          afterScoreChoice:
+            Type: Choice
+            Choices:
+              - Variable: "$.status"
+                StringEquals: "completed"
+                Next: finishAnalysis
+            Default: runCommitmentPolicy
+          runCommitmentPolicy:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [RunCommitmentPolicy, Arn]
+            Next: finishAnalysis
+          finishAnalysis:
+            Type: Pass
+            End: true
+
+resources:
+  Outputs:
+    LoanAnalysisStateMachine:
+      Value:
+        Ref: LoanAnalysisStateMachine
+  Resources:
+    LoanAnalysisLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: ${self:service}-${opt:stage, self:provider.stage}-loan-analysis-log
+        RetentionInDays: 1
+    NoverdeChallengeDB:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: loan_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: loan_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+plugins:
+  - serverless-python-requirements
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+  - serverless-dynamodb-local
+  - serverless-step-functions-offline
+  - serverless-offline
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      migrate: true
+  pythonRequirements:
+    dockerizePip: non-linux
+    usePoetry: false
+  serverless-offline:
+    noTimeout: true
+  stepFunctionsOffline:
+    runAgePolicy: RunAgePolicy
+    runScorePolicy: RunScorePolicy
+    runCommitmentPolicy: RunCommitmentPolicy

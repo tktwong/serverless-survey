@@ -1,0 +1,104 @@
+service: auction-service
+
+plugins:
+  - serverless-bundle
+  - serverless-pseudo-parameters
+
+# package:
+#   individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 256
+  apiGateway:
+    shouldStartNameWithService: true
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-2
+  environment:
+    AUCTIONS_TABLE_NAME: ${self:custom.AuctionsTable.name}
+    AUCTIONS_BUCKET_NAME: ${self:custom.AuctionsBucket.name}
+    MAIL_QUEUE_URL: ${self:custom.MailQueue.url}
+  iamRoleStatements:
+    - ${file(iam/auctions-table-iam.yml):AuctionsTableIAM}
+    - ${file(iam/mail-queue-iam.yml):MailQueueIAM}
+    - ${file(iam/auctions-bucket-iam.yml):AuctionsBucketIAM}
+
+resources:
+  # we are now in AWS world
+  Resources:
+    AuctionsTable: ${file(resources/auctions-table.yml):AuctionsTable}
+    AuctionsBucket: ${file(resources/auctions-bucket.yml):AuctionsBucket}
+    AuctionsBucketPolicy: ${file(resources/auctions-bucket.yml):AuctionsBucketPolicy}
+
+          
+functions:
+  createAuction:
+    handler: src/handlers/createAuction.handler
+    events:
+      - http:
+          method: POST
+          path: /auctions
+          cors: true
+          authorizer: ${self:custom.authorizer}
+          
+    # package:
+    #   exclude:
+    #     - node_modules/**
+    #     - package*json
+
+  getAuctions:
+    handler: src/handlers/getAuctions.handler
+    events:
+      - http:
+          method: GET
+          path: /auctions
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  getAuction:
+    handler: src/handlers/getAuction.handler
+    events:
+      - http:
+          method: GET
+          path: /auctions/{id}
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  placeBid:
+    handler: src/handlers/placeBid.handler
+    events:
+      - http:
+          method: PATCH
+          path: /auctions/{id}/bid
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  uploadAuctionPicture:
+    handler: src/handlers/uploadAuctionPicture.handler
+    events:
+      - http:
+          method: PATCH
+          path: /auctions/{id}/picture
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  processAuctions:
+    handler: src/handlers/processAuctions.handler
+    # events:
+    #   - schedule: rate(1 minute)
+
+custom:
+  # template arn of lambda - arn:aws:lambda:eu-west-2:MyAccountId:function:serverless-auth-dev-auth
+  authorizer: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:serverless-auth-${self:provider.stage}-auth
+  AuctionsTable:
+    name: !Ref AuctionsTable
+    arn: !GetAtt AuctionsTable.Arn
+  MailQueue:
+    # adding a cf (CloudFormation) dependency via stack name
+    arn: ${cf:serverless-notification-${self:provider.stage}.MailQueueArn}
+    url: ${cf:serverless-notification-${self:provider.stage}.MailQueueUrl}
+  AuctionsBucket:
+    name: auction-bucket-bg4-${self:provider.stage}
+  bundle:
+    linting: false

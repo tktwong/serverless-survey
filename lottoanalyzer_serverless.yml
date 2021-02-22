@@ -1,0 +1,92 @@
+# NOTE: update this with your service name
+service: lottoanalyzer-backend
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+#  - serverless-plugin-typescript
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: ap-northeast-2
+  environment:
+    STAGE: ${self:provider.stage}
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}-watch
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/*"
+
+custom:
+  bundle:
+    # sourcemaps: true      # Enable source maps
+    # caching: true         # Enable Webpack caching
+    # stats: false          # Don't print out any Webpack output
+    linting: false         # Enable linting as a part of the build process
+    # copyFiles:            # Copy any additional files to the generated package
+    #   - from: 'public/*'    # Where the files are currently
+    #     to: './'            # Where in the package should they go
+  # STAGE: ${self:provider.stage}
+  # DB_CONFIG: ${file(./config/config.js):DB_CONFIG}
+
+functions:
+  autoSaveNumber:
+    handler: lotto.autoSaveNumber
+    events:
+      - http:
+          path: autoSaveNumber
+          method: get
+          cors: false
+  scanAll:
+    handler: lotto.scanAll
+    events:
+      - http:
+          path: scanAll
+          method: get
+          cors: false
+  getNumber:
+    handler: lotto.getNumber
+    events:
+      - http:
+          path: getNumber/{id}
+          method: get
+          cors: false
+  setNumber:
+    handler: lotto.setNumber
+    events:
+      - http:
+          path: setNumber
+          method: post
+          cors: false
+resources:
+  Resources:
+    LottoTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+
+        #BillingMode: PAY_PER_REQUEST
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        
+        TableName: "Lotto"

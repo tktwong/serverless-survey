@@ -1,0 +1,118 @@
+service: hardyng-app-mono-subscriptions
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  webpack:
+    webpackConfig: ../../webpack.config.js
+    includeModules: true
+plugins:
+  - serverless-webpack
+  - serverless-offline
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sns:*
+        - cognito-idp:AdminGetUser
+      Resource: "*"
+functions:
+  #  TODO
+  # cognito events not working properly yet
+  # im waiting for pull request to close: https://github.com/serverless/serverless/pull/5642
+  # thread ref: https://github.com/serverless/serverless/issues/5401
+  # as for now, there is necessity to assign cognito hook to lambda function by hand in console
+  createUser:
+    handler: handler.createUser
+  #    events:
+  #    - cognitoUserPool:
+  #        pool: MyUserPool
+  #        trigger: PostConfirmation
+  me:
+    handler: handler.me
+    events:
+      - http:
+          path: /users/me
+          method: get
+          cors: true
+          authorizer: aws_iam
+  getTopics:
+    handler: handler.getTopics
+    events:
+      - http:
+          path: /topics
+          method: get
+          cors: true
+  getTopic:
+    handler: handler.getTopic
+    events:
+      - http:
+          path: /topics/{id}
+          method: get
+          cors: true
+  updateTopic:
+    handler: handler.updateTopic
+    events:
+      - http:
+          path: /topics/{id}
+          method: put
+          cors: true
+  deleteTopic:
+    handler: handler.deleteTopic
+    events:
+      - http:
+          path: /topics/{id}
+          method: delete
+          cors: true
+  createTopic:
+    handler: handler.createTopic
+    events:
+      - http:
+          path: /topics
+          method: post
+          cors: true
+          authorizer: aws_iam
+  createSubscription:
+    handler: handler.createSubscription
+    events:
+      - http:
+          path: /subscriptions
+          method: post
+          cors: true
+          authorizer: aws_iam
+  createNotification:
+    handler: handler.createNotification
+    events:
+      - http:
+          path: /notifications
+          method: post
+          cors: true
+          authorizer: aws_iam
+  unsubscribe:
+    handler: handler.unsubscribe
+    events:
+      - http:
+          path: /subscriptions
+          method: delete
+          cors: true
+          authorizer: aws_iam
+resources:
+  Resources:
+  Outputs:
+    ApiGatewayRestApiId:
+      Value:
+        Ref: ApiGatewayRestApi
+      Export:
+        Name: ${self:custom.stage}-ApiGatewayRestApiId
+
+    ApiGatewayRestApiRootResourceId:
+      Value:
+        Fn::GetAtt:
+          - ApiGatewayRestApi
+          - RootResourceId
+      Export:
+        Name: ${self:custom.stage}-ApiGatewayRestApiRootResourceId

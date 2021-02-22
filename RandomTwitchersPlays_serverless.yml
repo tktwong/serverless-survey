@@ -1,0 +1,103 @@
+service: random-twitchers-play
+
+provider:
+  name: aws
+  runtime: python3.8
+  websocketApiName: random-twitchers-broadcast
+  websocketApiRouteSelectionExpressi3/on: $request.body.action
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "execute-api:ManageConnections"
+        - "execute-api:Invoke"
+      Resource:
+        - "arn:aws:execute-api:*:*:**/@connections/*"
+  vpc:
+    securityGroupIds:
+      - sg-032721f6f2294fd9a
+    subnetIds:
+      - subnet-05798f675e5af045f
+      - subnet-0ae23843b73f4d790
+  environment:
+    TWITCH_CLIENT_ID: ${env:TWITCH_CLIENT_ID}
+    TWITCH_CLIENT_SECRET: ${env:TWITCH_CLIENT_SECRET}
+    PRESENTER_SUPER_SECRET: ${env:PRESENTER_SUPER_SECRET}
+
+plugins:
+  - serverless-python-requirements
+  - serverless-offline-python
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    noDeploy: []
+
+functions:
+  connectionManager:
+    handler: api_websocket.connection_manager
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+  defaultMessage:
+    handler: api_websocket.default_message
+    events:
+      - websocket:
+          route: $default
+  status:
+    handler: api_websocket.get_status
+    events:
+      - websocket:
+          route: status
+  broadcast:
+    handler: api_websocket.broadcast_status
+    events:
+      - http:
+          path: queue
+          method: GET
+
+  rotate:
+    handler: api_queue.rotate_queue
+    events:
+      - http:
+          path: queue
+          method: POST
+  whitelist:
+    handler: api_queue.whitelist
+    events:
+      - http:
+          path: queue
+          method: PUT
+
+  join:
+    handler: api_user.join_queue
+    events:
+      - http:
+          path: user
+          method: PUT
+  leave:
+    handler: api_user.leave_queue
+    events:
+      - http:
+          path: user
+          method: DELETE
+  position:
+    handler: api_user.position_queue
+    events:
+      - http:
+          path: user/{username}
+          method: GET
+          request:
+            parameters:
+              paths:
+                username: true
+  login:
+    handler: api_user.login
+    events:
+      - http:
+          path: login/{code}
+          method: GET
+          request:
+            parameters:
+              paths:
+                code: true

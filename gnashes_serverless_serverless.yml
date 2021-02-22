@@ -1,0 +1,90 @@
+service: the-gnashes-serverless # NOTE: update this with your service name
+
+provider:
+    name: aws
+    runtime: nodejs8.10
+    stage: dev
+    region: us-east-1
+    iamRoleStatements:
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+          Resource:
+            - { "Fn::GetAtt": [ "VotesDynamoDBTable", "Arn" ] }
+            - { "Fn::GetAtt": [ "CandidatesDynamoDBTable", "Arn" ] }
+    environment:
+        CANDIDATES_TABLE: ${self:custom.candidatesTable}
+        VOTES_TABLE: ${self:custom.votesTable}
+
+
+plugins:
+    - serverless-s3-sync
+
+custom:
+    candidatesTable: 'Candidates'
+    votesTable: 'Votes'
+    s3Sync:
+        - bucketName: gnashes.junwenchen.com
+          localDir: public
+          acl: public-read # optional
+          followSymlinks: true # optional
+          params: # optional
+              - index.html:
+                    CacheControl: "no-cache"
+
+environment:
+    SERVERLESS_EXPRESS_PLATFORM: aws
+
+functions:
+    app:
+        handler: index.handler
+        events:
+            - http:
+                  path: /{proxy+}
+                  method: ANY
+
+resources:
+    Resources:
+        GnashesAwsSiteBucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: gnashes.junwenchen.com
+                AccessControl: PublicRead
+                WebsiteConfiguration:
+                    IndexDocument: index.html
+                    ErrorDocument: index.html
+        VotesDynamoDBTable:
+            Type: 'AWS::DynamoDB::Table'
+            Properties:
+                AttributeDefinitions:
+                -
+                    AttributeName: id
+                    AttributeType: N
+                KeySchema:
+                -
+                    AttributeName: id
+                    KeyType: HASH
+                ProvisionedThroughput:
+                    ReadCapacityUnits: 1
+                    WriteCapacityUnits: 1
+                TableName: ${self:custom.votesTable}
+        CandidatesDynamoDBTable:
+            Type: 'AWS::DynamoDB::Table'
+            Properties:
+                AttributeDefinitions:
+                -
+                    AttributeName: id
+                    AttributeType: N
+                KeySchema:
+                -
+                    AttributeName: id
+                    KeyType: HASH
+                ProvisionedThroughput:
+                    ReadCapacityUnits: 1
+                    WriteCapacityUnits: 1
+                TableName: ${self:custom.candidatesTable}

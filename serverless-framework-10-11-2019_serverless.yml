@@ -1,0 +1,64 @@
+service:
+  name: serverless-framework-10-11-2019
+
+frameworkVersion: ">=1.57.0 <2.0.0"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  config: ${file(config/${self:custom.stage}.yml)}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  apiGateway:
+    minimumCompressionSize: 1024
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    SLS_STAGE: ${self:custom.stage}
+    DDB_TABLE_NAME: !Ref ParsedLinksDB
+  iamRoleStatements:
+    - Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: !GetAtt ParsedLinksDB.Arn
+      Effect: Allow
+
+functions:
+  home:
+    handler: lambdas/home.handler
+    events:
+      - http:
+          path: /
+          method: get
+  create:
+    handler: lambdas/create.handler
+    events:
+      - http:
+          path: /
+          method: post
+  redirect:
+    handler: lambdas/redirect.handler
+    events:
+      - http:
+          path: /{slug}
+          method: get
+
+resources:
+  Resources:
+    ParsedLinksDB:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: slug
+            AttributeType: S
+        KeySchema:
+          - AttributeName: slug
+            KeyType: HASH
+        ProvisionedThroughput: ${self:custom.config.DynamoDBCapacity}
+        TableName: ${self:custom.stage}-parsed-links

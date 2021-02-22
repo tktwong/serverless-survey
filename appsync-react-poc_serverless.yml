@@ -1,0 +1,57 @@
+service: iblis-appsync
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+resources:
+  Resources:
+    usersTable: # name of the resource to be use later
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: usersTable # name of the table
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id # partition key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-appsync-plugin
+  - serverless-appsync-offline
+  - serverless-offline
+
+custom:
+  appsync-offline: # appsync-offline configuration
+    port: 62222
+    dynamodb:
+      client:
+        endpoint: "http://localhost:8000"
+  appSync: # appsync plugin configuration
+    name: graphql    
+    authenticationType: API_KEY # use API_KEY in this tutorial
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: usersSource # name of the resource
+        config:
+          tableName: usersTable # name of our DynamoDB table
+    mappingTemplates:
+      - dataSource: usersSource
+        type: Query
+        field: listUsers # from the query in schema.graphql
+        request: "list_users/request.vtl"
+        response: "list_users/response.vtl"
+      - dataSource: usersSource
+        type: Mutation
+        field: createUser # from the mutation in schema.graphql
+        request: "create_user/request.vtl"
+        response: "create_user/response.vtl"
+      - dataSource: usersSource
+        type: Mutation
+        field: deleteUser # from the mutation in schema.graphql
+        request: "delete_user/request.vtl"
+        response: "delete_user/response.vtl"

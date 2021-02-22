@@ -1,0 +1,117 @@
+service: aqts-capture-dvstat-transform
+
+provider:
+  name: aws
+  rolePermissionsBoundary:
+    Fn::Sub:
+      - "arn:aws:iam::${accountId}:policy/csr-Developer-Permissions-Boundary"
+      - accountId:
+         Ref: "AWS::AccountId"
+  region: ${opt:region, 'us-west-2'}
+  stage: ${opt:stage, 'TEST'}
+  runtime: java11
+  memorySize: 384
+  timeout: 60
+  logRetentionInDays: 90
+  vpc: ${self:custom.vpc}
+  deploymentBucket:
+    name: ${opt:bucket, iow-cloud-applications}
+  stackTags:
+    "wma:project_id": "aqtscapture"
+    "wma:subSystem": "aqtscapture"
+    "wma:application_id": "AQTS Time Series Daily Value Stat Transform"
+    "wma:contact": "Jim Kreft jkreft@usgs.gov"
+    "wma:environment": ${self:provider.stage}
+    "wma:taggingVersion": ${opt:taggingVersion}
+    "wma:costCenter": TBD
+    "wma:organization": IOW
+    "displayName": "Dvstat Transform"
+    commitIdentifier: ${git:sha1}
+
+custom:
+  prune:
+    automatic: true
+    number: 3
+  exportGitVariables: false
+  vpc:
+    securityGroupIds: ${ssm:/iow/retriever-capture/${self:provider.stage}/securityGroupIds~split}
+    subnetIds: ${ssm:/iow/aws/vpc/${self:provider.stage}/subnetIds~split}
+  db:
+    connectInfo: ${ssm:/aws/reference/secretsmanager/NWCAPTURE-DB-${self:provider.stage}~true}
+  esLogs:
+    endpoint: ${ssm:/iow/aws/vpc/${self:provider.stage}/elasticsearchEndpoint}
+    index: ${self:service}
+    retentionInDays: 90
+    filterPattern: "?java.lang.RuntimeException"
+
+functions:
+  transform:
+    handler: gov.usgs.wma.waterdata.TransformDailyValueHandler
+    role:
+      Fn::Sub:
+        - arn:aws:iam::${accountId}:role/csr-Lambda-Role
+        - accountId:
+            Ref: AWS::AccountId
+    reservedConcurrency: 35
+    environment:
+      FUNCTION_NAME: transform
+      AQTS_DATABASE_ADDRESS: ${self:custom.db.connectInfo.DATABASE_ADDRESS}
+      AQTS_DATABASE_PORT: ${self:custom.db.connectInfo.DATABASE_PORT}
+      AQTS_SCHEMA_NAME: ${self:custom.db.connectInfo.SCHEMA_NAME}
+      AQTS_SCHEMA_OWNER_USERNAME: ${self:custom.db.connectInfo.SCHEMA_OWNER_USERNAME}
+      AQTS_DATABASE_NAME: ${self:custom.db.connectInfo.DATABASE_NAME}
+      AQTS_SCHEMA_OWNER_PASSWORD: ${self:custom.db.connectInfo.SCHEMA_OWNER_PASSWORD}
+      AWS_DEPLOYMENT_REGION: ${self:provider.region}
+      ROOT_LOG_LEVEL: INFO
+
+resources:
+  Resources:
+    snsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: ${self:service}-${self:provider.stage}-topic
+        TopicName: ${self:service}-${self:provider.stage}-topic
+    concurrencyAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-concurrency-alarm
+        AlarmDescription: Notify when concurrency exceeds the specified threshold
+        Namespace: 'AWS/Lambda'
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: TransformLambdaFunction
+        MetricName: ConcurrentExecutions
+        Statistic: Maximum
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        Threshold: 150
+        Period: 60
+        EvaluationPeriods: 1
+        AlarmActions:
+          - Ref: snsTopic
+    errorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-error-alarm
+        AlarmDescription: Notify when number of errors exceeds the specified threshold
+        Namespace: 'AWS/Lambda'
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: TransformLambdaFunction
+        MetricName: Errors
+        Statistic: Sum
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        Threshold: 10
+        Period: 60
+        EvaluationPeriods: 1
+        AlarmActions:
+          - Ref: snsTopic
+
+plugins:
+  - serverless-plugin-git-variables
+  - serverless-prune-plugin
+  - serverless-es-logs
+
+package:
+  artifact: aqts-capture-dvstat-transform-aws.jar

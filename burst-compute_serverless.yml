@@ -1,0 +1,179 @@
+service: burst-compute
+
+plugins:
+  - serverless-step-functions
+  - serverless-plugin-package-json
+
+custom:
+  version: ${pkgjson:version}
+  tracing: false
+  debug: true
+  tasksTable: ${self:service}-${self:provider.stage}-tasks
+  stateMachine: ${self:service}-${self:provider.stage}-lifecycle
+  defaultJobTimeoutSecs: 60
+
+provider:
+  name: aws
+  region: ${opt:region, "us-east-1"}
+  stage: ${opt:stage, "dev"}
+  tags:
+    PROJECT: BurstCompute
+    VERSION: ${self:custom.version}
+    DEVELOPER: ${env:USER}
+  stackTags:
+    PROJECT: BurstCompute
+    VERSION: ${self:custom.version}
+    DEVELOPER: ${env:USER}
+    STAGE: ${self:provider.stage}
+  tracing:
+    lambda: ${self:custom.tracing}
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.tasksTable}"
+    - Effect: Allow
+      Action:
+        - states:StartExecution
+      Resource: "arn:aws:states:${self:provider.region}:*:stateMachine:${self:custom.stateMachine}"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource: "*"
+
+package:
+  individually: true
+  exclude:
+    - src/test/**
+  include:
+    - src/main/nodejs/**
+
+functions:
+
+  dispatch:
+    runtime: nodejs12.x
+    handler: src/main/nodejs/dispatch.dispatchHandler
+    memorySize: 256
+    # 5 minute timeout
+    timeout: 300
+    environment:
+      DEBUG: ${self:custom.debug}
+      JOB_TIMEOUT_SECS: ${self:custom.defaultJobTimeoutSecs}
+      DISPATCH_FUNCTION_NAME: ${self:service}-${self:provider.stage}-dispatch
+      MONITOR_FUNCTION_NAME: ${self:service}-${self:provider.stage}-monitor
+      STATE_MACHINE_ARN: ${self:resources.Outputs.JobLifecycleStateMachine.Value}
+      TASKS_TABLE_NAME: ${self:custom.tasksTable}
+
+  monitor:
+    runtime: nodejs12.x
+    handler: src/main/nodejs/monitor.monitorHandler
+    memorySize: 128
+    # 10 second timeout
+    timeout: 10
+    environment:
+      DEBUG: ${self:custom.debug}
+      JOB_TIMEOUT_SECS: ${self:custom.defaultJobTimeoutSecs}
+      TASKS_TABLE_NAME: ${self:custom.tasksTable}
+
+stepFunctions:
+  validate: true # enable pre-deployment definition validation
+  stateMachines:
+
+    jobLifecycleStateMachine:
+      id: JobLifecycleStateMachine
+      name: ${self:custom.stateMachine}
+      definition:
+        Comment: "Monitors a burst compute job and calls the combiner when all tasks are done"
+        StartAt: Monitor
+        States:
+          Monitor:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName.$: "$$.Execution.Input.monitorFunctionName"
+              Payload.$: "$"
+            OutputPath: "$.Payload"
+            Retry:
+              - ErrorEquals: 
+                - Lambda.TooManyRequestsException
+                IntervalSeconds: 1
+                MaxAttempts: 100
+            Next: IsTimedOut
+          IsTimedOut:
+            Type: Choice
+            Choices:
+              - Variable: "$.timedOut"
+                BooleanEquals: true
+                Next: Combine
+            Default: AreWeDoneYet
+          AreWeDoneYet:
+            Type: Choice
+            Choices:
+              - Variable: "$.completed"
+                BooleanEquals: true
+                Next: Combine
+            Default: Wait
+          Wait:
+            Type: Wait
+            Seconds: 1
+            Next: Monitor
+          Combine:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName.$: "$$.Execution.Input.combinerFunctionName"
+              Payload.$: "$"
+            OutputPath: "$.Payload"
+            Next: EndState
+          EndState:
+            Type: Pass
+            End: true
+ 
+resources:
+
+  Resources:
+    TasksTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tasksTable}
+        KeySchema:
+          - AttributeName: jobId
+            KeyType: HASH
+          - AttributeName: batchId
+            KeyType: RANGE
+        AttributeDefinitions:
+          - AttributeName: jobId
+            AttributeType: S
+          - AttributeName: batchId
+            AttributeType: N
+        BillingMode: PAY_PER_REQUEST
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: "true"
+
+  Outputs:
+    TasksTable:
+      Description: Name of the tasks table
+      Value:
+        "Ref": TasksTable
+      Export:
+        Name: BurstComputeTasksTable-${self:provider.stage}
+    JobLifecycleStateMachine:
+      Description: The ARN of the state machine
+      Value:
+        Ref: JobLifecycleStateMachine
+    DispatchLambdaFunction:
+      Description: Name of the dispatch function
+      Value:
+        Ref: DispatchLambdaFunction
+      Export:
+        Name: BurstComputeDispatchLambdaFunction-${self:provider.stage}
+    MonitorLambdaFunction:
+      Description: Name of the monitor function
+      Value:
+        Ref: MonitorLambdaFunction
+      Export:
+        Name: BurstComputeMonitorLambdaFunction-${self:provider.stage}

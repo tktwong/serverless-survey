@@ -1,0 +1,250 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: suzukima-nature-remo-app
+# app and org for use with dashboard.serverless.com
+app: nature-remo
+org: suzukima
+
+plugins:
+  - serverless-plugin-scripts
+  - sample
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  SecretManagerName: nature-remo-secret
+  SecretManagerSecretId: AccessToken
+  DynamoDbTableName: nature-remo-events-history
+  S3BucketName: nature-remo-event
+  NatureRemoAccessToken: ${file(./crypto.js):getDecriptedAccessToken}
+  Asterisk: "*"
+  AppName: "NatureRemoTest"
+  AthenaPrefix: nature_remo_events
+  timeStamp: ${file(./timestamp.js):getTimeStamp}
+  scripts:
+    hooks:
+      - 'before:deploy:deploy': ${file(./beforedeploy.js):beforeDeploy}
+      - 'deploy:finalize': ${file(./finalizedeploy.js):finalizeDeploy}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ap-northeast-1
+  stackName: ${self:service}
+  apiName: api-${self:service}
+  profile: default
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource:
+        - Ref: NatureRemoSecretManager
+    - Effect: "Allow"
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:Query
+      Resource:
+        -
+          Fn::GetAtt:
+            - NatureRemoDynamoDBTable
+            - Arn
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:GetObject"
+      Resource:
+        - arn:aws:s3:::${self:custom.S3BucketName}/*
+    - Effect: "Allow"
+      Action:
+        - "lambda:InvokeFunction"
+      Resource:
+        - ${self:custom.Asterisk}
+
+# you can define service wide environment variables here
+  environment:
+#    variable1: value1
+    TZ: Asia/Tokyo
+    APP_NAME: ${self:custom.AppName}
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  getNewestEvents:
+    handler: lambda/getNewestEvents.handler
+    name: getNewestEvents
+    events:
+      - http:
+          path: /newestevents
+          method: get
+      - schedule: cron(5 * * * ? *)
+    environment:
+      SECRET_MANAGER_NAME: ${self:custom.SecretManagerName}
+      DYNAMO_DB_TABLE_NAME: ${self:custom.DynamoDbTableName}
+      SECRET_MANAGER_SECRET_ID: ${self:custom.SecretManagerSecretId}
+
+  getAllEvents:
+    handler: lambda/getAllEvents.handler
+    name: getAllEvents
+    events:
+      - http:
+          path: /allevents
+          method: get
+          request:
+            parameters:
+              querystrings:
+                date: false
+    environment:
+      DYNAMO_DB_TABLE_NAME: ${self:custom.DynamoDbTableName}
+
+  createQsJson:
+    handler: lambda/createQsJson.handler
+    name: createQsJson
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - NatureRemoDynamoDBTable
+              - StreamArn
+    environment:
+      S3_BUCKET_NAME: ${self:custom.S3BucketName}
+
+  putAbsoluteHumidity:
+    handler: lambda/putAbsoluteHumidity.handler
+    name: putAbsoluteHumidity
+    environment:
+      DYNAMO_DB_TABLE_NAME: ${self:custom.DynamoDbTableName}
+      
+
+#      - websocket: $connect
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(60 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+#      - alb:
+#          listenerArn: arn:aws:elasticloadbalancing:us-east-1:XXXXXX:listener/app/my-load-balancer/50dc6c495c0c9188/
+#          priority: 1
+#          conditions:
+#            host: example.com
+#            path: /hello
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    NatureRemoDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.DynamoDbTableName}
+        AttributeDefinitions:
+          -
+            AttributeName: app_name
+            AttributeType: S
+          -
+            AttributeName: date_time_num
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: app_name
+            KeyType: HASH
+          -
+            AttributeName: date_time_num
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+    NatureRemoSecretManager:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:custom.SecretManagerName}
+        Description: Nature-RemoのAccessToken
+        SecretString: '{"${self:custom.SecretManagerSecretId}": "${self:custom.NatureRemoAccessToken}"}'
+
+    NatureRemoBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.S3BucketName}
+
+    NatureRemoAthena:
+      Type: AWS::Athena::NamedQuery
+      Properties:
+        Database: ${self:custom.AthenaPrefix}
+        Description: "select query for ${self:custom.AthenaPrefix}"
+        Name: ${self:custom.AthenaPrefix}_query_${self:custom.timeStamp}
+        QueryString: "SELECT event.date_time AS date_time, event.temperature AS temperature, event.humidity AS humidity, event.brightness AS brightness, event.absolute_humidity AS absolute_humidity FROM ${self:custom.AthenaPrefix}, UNNEST(events) AS t(event) ORDER BY event.date_time"
+
+    NatureRemoAthenaDDL:
+      Type: AWS::Athena::NamedQuery
+      Properties:
+        Database: ${self:custom.AthenaPrefix}
+        Description: "create external table DDL query of ${self:custom.AthenaPrefix}"
+        Name: ${self:custom.AthenaPrefix}_create_external_table_${self:custom.timeStamp}
+        QueryString: "CREATE EXTERNAL TABLE IF NOT EXISTS ${self:custom.AthenaPrefix}.${self:custom.AthenaPrefix} (events ARRAY<STRUCT<date_time:TIMESTAMP, temperature: FLOAT, humidity:INT, brightness:FLOAT, absolute_humidity:INT>>) ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe' LOCATION 's3://${self:custom.S3BucketName}/'"
+
+    NatureRemoAthenaView:
+      Type: AWS::Athena::NamedQuery
+      Properties:
+        Database: ${self:custom.AthenaPrefix}
+        Description: "create VIEW DDL query of ${self:custom.AthenaPrefix}"
+        Name: ${self:custom.AthenaPrefix}_create_view_${self:custom.timeStamp}
+        QueryString: "CREATE OR REPLACE VIEW ${self:custom.AthenaPrefix}_view AS SELECT event.date_time AS date_time, event.temperature AS temperature, event.humidity AS humidity, event.brightness AS brightness, event.absolute_humidity AS absolute_humidity FROM nature_remo_events, UNNEST(events) AS t(event) ORDER BY event.date_time"
+
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

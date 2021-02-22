@@ -1,0 +1,66 @@
+service: websocket-chrome-extension-backend
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: dev
+  region: eu-west-2
+  endpointType: regional
+  versionFunctions: false
+  memorySize: 128
+  timeout: 6
+  logs:
+    websocket:
+      level: ERROR
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource:
+        - Ref: LoopBackTopic
+
+package:
+  individually: true
+  exclude:
+    - ./**
+
+functions:
+  trigger:
+    handler: bin/apitrigger
+    package:
+      include:
+        - ./bin/apitrigger
+    events:
+      - http: POST send/{connectionID}
+  api:
+    handler: bin/connectionmanager
+    package:
+      include:
+        - ./bin/connectionmanager
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+    environment:
+      TOPIC_ARN: 
+        Ref: LoopBackTopic
+  pushfromsns:
+    handler: bin/loopback
+    package:
+      include:
+        - ./bin/loopback
+    events:
+      - sns: 
+          arn: !Ref LoopBackTopic
+          topicName: ${self:service}-${opt:stage, self:provider.stage}-loopback
+
+resources:
+  Resources:
+    LoopBackTopic:
+      Type: "AWS::SNS::Topic"
+      Properties:
+        TopicName: ${self:service}-${opt:stage, self:provider.stage}-loopback
+        Tags:
+          - Key: Environment
+            Value: ${opt:stage, self:provider.stage}

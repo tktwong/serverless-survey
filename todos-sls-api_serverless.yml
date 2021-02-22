@@ -1,0 +1,166 @@
+organization: jdemilo
+app: spotwoke-serverless-api
+service: spotwoke-serverless-api
+
+package:
+  exclude:
+    - node_modules/dynamodb-localhost/**
+    - node_modules/serverless-dynamodb-local/**
+    - node_modules/serverless-offline/**
+
+# Create our resources with separate CloudFormation templates
+resources:
+  Resources: ${file(offline/migrations/todo.yml)}
+  # # API Gateway Errors
+  # #- ${file(resources/api-gateway-errors.yml)}
+  # - ${file(offline/migrations/todo.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  logs:
+    restApi: true
+  environment:
+    TABLE_PREFIX: ${self:service}-${opt:stage, self:provider.stage}
+    KINESIS_STREAM: ${opt:stage, self:provider.stage}-data-receiver
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_PREFIX}-todos"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_PREFIX}-spots"
+    - Effect: Allow
+      Action:
+        - kinesis:*
+      Resource: "arn:aws:kinesis:${opt:region, self:provider.region}:*:stream/${self:provider.environment.KINESIS_STREAM}"
+ 
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-plugin-typescript
+
+custom:
+  serverless-offline:
+    port: 9000 
+  stage: ${opt:stage, self:provider.stage}
+  DB_PREFIX: ${self:service}-${opt:stage, self:provider.stage}
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+      domain:
+        sources:
+          - table: ${self:custom.DB_PREFIX}-todos
+            sources: [./offline/migrations/todo-seed.json]
+          # - table: ${self:custom.DB_PREFIX}-spots
+          #   sources: [./offline/migrations/spot-seed.json]
+  authorizer:
+    name: authorizer
+    type: "TOKEN"
+    identitySource: method.request.header.Authorization
+  webpack: config/webpack.config.js
+  
+
+functions:
+  authorizer:
+    handler: functions/authorizer.handler
+    package:
+      exclude:
+        - "!authorizer.*"
+          
+  spot-update:
+    handler: functions/spots/update.main
+    events:
+      - http:
+          path: spots/{id}
+          method: put
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  spot-get:
+    handler: functions/spots/get.main
+    events:
+      - http:
+          path: spots
+          method: get
+          cors: true
+
+  spot-create:
+    handler: functions/spots/create.main
+    events:
+      - http:
+          path: spots
+          method: post
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  invite-text:
+    handler: functions/invites/text.main
+    events:
+      - http:
+          path: invites/text
+          method: post
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  invite-email:
+    handler: functions/invites/email.main
+    events:
+      - http:
+          path: invites/email
+          method: post
+          cors: true
+          authorizer: ${self:custom.authorizer}
+
+  todos-list:
+    handler: functions/todos/list.main
+    events:
+      - http:
+          path: todos
+          method: get
+          cors: true
+
+  todo-get:
+    handler: functions/todos/get.main
+    events:
+      - http:
+          path: todos/{id}
+          method: get
+          cors: true
+
+
+  createTodo:
+    handler: functions/todo.createTodo
+    events:
+      - http:
+          method: POST
+          path: todos
+          cors: true
+
+  updateTodo:
+    handler: functions/todo.updateTodo
+    events:
+      - http:
+          method: PUT
+          path: todos
+          cors: true
+  
+  deleteTodo:
+    handler: functions/todo.deleteTodo
+    events:
+      - http:
+          method: DELETE
+          path: todos/delete
+          cors: true

@@ -1,0 +1,257 @@
+service: let-me-in
+
+custom:
+  LMI_NAME: "<<name>>"
+  SG_ID: "<<security group ID>>"
+  TOPIC_NAME: "lmi-notifications"
+  EMAIL: "<<email address to receive notifications about added/removed SG rules>>"
+  TABLE_NAME: "lmi-rule"
+  MINS_TO_LIVE_CAP: 30 # hard limit on max time a rule is allowed to stay alive (value in minutes)
+  # USER_POOL_NAME: 'lmi-users'
+  USER_POOL_ARN: '<<plug here your pool ARN>>'
+  BUCKET_NAME: '<<unique bucket name>>'
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ap-southeast-2
+  stage: dev
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action: 'SNS:Publish'
+      Resource:
+        Fn::Join:
+          - ':'
+          - - 'arn:aws:sns'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - ${self:custom.TOPIC_NAME}
+    - Effect: 'Allow'
+      Action: 'ec2:DescribeSecurityGroups'
+      Resource: '*'
+    - Effect: 'Allow'
+      Action:
+        - 'ec2:AuthorizeSecurityGroupIngress'
+        - 'ec2:RevokeSecurityGroupIngress'
+      Resource:
+        Fn::Join:
+          - ''
+          - - Fn::Join:
+              - ':'
+              - - 'arn:aws:ec2'
+                - Ref: 'AWS::Region'
+                - Ref: 'AWS::AccountId'
+                - 'security-group/'
+            - ${self:custom.SG_ID}
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:Scan'
+        - 'dynamodb:GetItem'
+        - 'dynamodb:GetRecords'
+        - 'dynamodb:GetShardIterator'
+        - 'dynamodb:DescribeStream'
+        - 'dynamodb:ListStreams'
+        - 'dynamodb:PutItem'
+        - 'dynamodb:DeleteItem'
+      Resource:
+        Fn::Join:
+          - ''
+          - - Fn::Join:
+              - ':'
+              - - 'arn:aws:dynamodb'
+                - Ref: 'AWS::Region'
+                - Ref: 'AWS::AccountId'
+                - 'table/'
+            - ${self:custom.TABLE_NAME}
+
+package:
+  exclude:
+    - tests/**
+
+functions:
+  lmi_apighandler:
+    handler: apighandler.handler
+    environment:
+      LMI_NAME: ${self:custom.LMI_NAME}
+      SG_ID: ${self:custom.SG_ID}
+      TABLE_NAME: ${self:custom.TABLE_NAME}
+      MINS_TO_LIVE_CAP: ${self:custom.MINS_TO_LIVE_CAP}
+    events:
+      - http:
+          path: lmi
+          method: post
+          cors: true
+          integration: lambda
+          request:
+            template:
+              application/json: >
+                #set($inputRoot = $input.path('$'))
+                {
+                  "sourceIp": "$context.identity.sourceIp",
+                  "userId": "$context.authorizer.claims.email",
+                  "minutesToLive": $inputRoot.minutesToLive,
+                  "rule": {
+                    "ip": "$inputRoot.ip",
+                    "ports": [
+                #foreach($p in $inputRoot.ports)
+                      { "from": $p.from, "to": $p.to }#if($foreach.hasNext),#end
+                #end
+                    ]
+                  }
+                }
+          authorizer:
+            name: authorizer
+            arn: ${self:custom.USER_POOL_ARN}
+              # NOT SUPPORTED
+              # Fn::GetAtt:
+              #   - CognitoUserPool
+              #   - Arn
+            claims:
+              - email
+              - sub
+      - http:
+          path: lmi
+          method: get
+          cors: true
+          integration: lambda
+          request:
+            template:
+              application/json: >
+                {
+                  "sourceIp": "$context.identity.sourceIp",
+                  "userId": "$context.authorizer.claims.email",
+                  "action": "get-rules"
+                }
+          authorizer:
+            name: authorizer
+            arn: ${self:custom.USER_POOL_ARN}
+            claims:
+              - email
+              - sub
+      - http:
+          path: lmi
+          method: delete
+          cors: true
+          integration: lambda
+          request:
+            template:
+              application/json: >
+                {
+                  "sourceIp": "$context.identity.sourceIp",
+                  "userId": "$context.authorizer.claims.email",
+                  "action": "delete-rule",
+                  "ruleId": "$input.params('ruleId')"
+                }
+          authorizer:
+            name: authorizer
+            arn: ${self:custom.USER_POOL_ARN}
+            claims:
+              - email
+              - sub
+      - http:
+          path: updateIp
+          method: post
+          cors: true
+          integration: lambda
+          request:
+            template:
+              application/json: >
+                #set($inputRoot = $input.path('$'))
+                {
+                  "sourceIp": "$context.identity.sourceIp",
+                  "userId": "$context.authorizer.claims.email",
+                  "newIp": "$inputRoot.newIp"
+                }
+          authorizer:
+            name: authorizer
+            arn: ${self:custom.USER_POOL_ARN}
+            claims:
+              - email
+              - sub
+
+  lmi_ddbhandler:
+    handler: ddbhandler.handler
+    environment:
+      LMI_NAME: ${self:custom.LMI_NAME}
+      TOPIC_ARN:
+        Fn::Join:
+          - ':'
+          - - 'arn:aws:sns'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - ${self:custom.TOPIC_NAME}
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - DdbRuleTable
+              - StreamArn
+          batchSize: 1
+
+resources:
+  Resources:
+    SnsTopic:
+      Type: "AWS::SNS::Topic"
+      Properties:
+        TopicName: ${self:custom.TOPIC_NAME}
+        Subscription:
+          - Endpoint: ${self:custom.EMAIL}
+            Protocol: email
+    DdbRuleTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:custom.TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: user_id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        TimeToLiveSpecification:
+          AttributeName: expiry
+          Enabled: true
+    # COMMENTED OUT BECAUSE DUE TO SUPPORT LIMITATIONS I CREATED THE POOL BEFORE DEPLOYING THE PROJECT
+    # CognitoUserPool:
+    #   Type: "AWS::Cognito::UserPool"
+    #   Properties:
+    #     UserPoolName: ${self:custom.USER_POOL_NAME}
+    #     AdminCreateUserConfig:
+    #       AllowAdminCreateUserOnly: true
+    #     AutoVerifiedAttributes:
+    #       - email
+    # CognitoAppClient:
+    #   Type: "AWS::Cognito::UserPoolClient"
+    #   Properties:
+    #     ClientName: react
+    #     GenerateSecret: false
+    #     UserPoolId:
+    #       Ref: CognitoUserPool
+    S3BucketForStaticWebsite:
+        Type: "AWS::S3::Bucket"
+        Properties:
+          BucketName: ${self:custom.BUCKET_NAME}
+          AccessControl: PublicRead
+          WebsiteConfiguration:
+            IndexDocument: "index.html"
+            ErrorDocument: "error.html"
+  Outputs:
+    ReactAppBucketName:
+      Value:
+        Ref: S3BucketForStaticWebsite
+      Description: "Name of S3 bucket to host React web app"
+    ReactAppUrl:
+      Value:
+        Fn::GetAtt:
+          - S3BucketForStaticWebsite
+          - WebsiteURL
+      Description: "React web app URL"

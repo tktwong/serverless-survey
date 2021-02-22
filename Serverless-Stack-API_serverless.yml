@@ -1,0 +1,144 @@
+# This file contains the configuration on what AWS services Serverless
+# will provision and how to configure them.
+
+# NOTE: update this with your service name
+service: notes-app-api
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: prod
+  region: us-east-2
+  # To load environment variables externally
+  # rename env.example to .env and uncomment
+  # the following line. Also, make sure to not
+  # commit your .env.
+  
+  #environment:
+  #  sampleEnvVar: ${env:SAMPLE_ENV_VAR} (Done already)
+
+  # These environment variables are made available to our functions 
+  # under process.env.
+  # (This block allows us to define environment variables for our 
+  # Lambda function. These are made available under the process.env 
+  # Node.js variable. In our specific case, we are using 
+  # process.env.tableName to access the name of our DynamoDB table.)
+
+  # - The STRIPE_SECRET_KEY from the .env file above gets loading as an
+  #   environment variable when we test our code locally
+  # - This allows us to add a Lambda environment variables called
+  #   StripeSecretKey. We do this using the stripeSecreyKey: 
+  #   ${env:STRIPE_SECRET_KEY} line. And just like our tableName environment
+  #   variable, we can reference it in our Lambda function using
+  #   process.env.stripeSecretKey
+  environment:
+    tableName: notes
+    stripeSecretKey: ${env:STRIPE_SECRET_KEY}
+
+  # 'iamRoleStatements' defines the permission policy for the 
+  # Lambda function. In this case Lambda functions are granted 
+  # with permissions to access DynamoDB. (This section is telling AWS 
+  # which resources our Lambda functions have access to. In this case we 
+  # are saying that our Lambda functions can carry out the actions on 
+  # DynamoDB. We specify DynamoDB using arn:aws:dynamodb:us-east-2:1*:*. 
+  # This is roughly pointing to every DynamoDB table in the us-east-2 
+  # region. We can be more specific here by specifying the table name.)
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-2:*:*"
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /notes
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser 
+  # cross domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  create:
+    handler: create.main
+    events:
+      - http:
+          path: notes
+          method: post
+          cors: true # CORS support to true because our frontend
+                     # is going to be served from a different domain
+          authorizer: aws_iam
+  get:
+    # Defines an HTTP API endpoint that calls the main function in get.js
+    # -path: url path is /notes/{id}
+    # -method: GET request
+    handler: get.main
+    events:
+      - http:
+          path: notes/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  list:
+    # Defines an HTTP API endpoint that calls the main function in 
+    # list.js
+    # - path: url path is /notes
+    # - method: GET request
+    handler: list.main
+    events:
+      - http:
+          path: notes
+          method: get
+          cors: true
+          authorizer: aws_iam
+  update:
+    # Defines an HTTP API endpoint that calls the main function in update.js
+    # - path: url path is /notes/{id}
+    # - method: PUT request
+    handler: update.main
+    events:
+      - http:
+          path: notes/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  delete: 
+    # Defines an HTTP API endpoint that calls the main function in delete.js
+    # - path: url path is /notes/{id}
+    # - method: DELETE request
+    handler: delete.main
+    events:
+      - http:
+          path: notes/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+  billing:
+    # Defines an HTTP API endpoint that calls the main function in 
+    # billing.js
+    # - path: url path is /billing
+    # - method: POST request
+    handler: billing.main
+    events:
+      - http:
+          path: billing
+          method: post
+          cors: true
+          authorizer: aws_iam   
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}

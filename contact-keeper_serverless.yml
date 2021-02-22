@@ -1,0 +1,220 @@
+service:
+  name: mido-contact-keeper
+
+plugins:
+  - serverless-webpack
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+  - serverless-iam-roles-per-function
+  - serverless-plugin-tracing
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-central-1'}
+  environment:
+    CONTACTS_TABLE: Contacts-${self:provider.stage}
+    INDEX_NAME: userIDIndex
+    S3_BUCKET: ${self:service.name}-contacts-s3-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTelemetryRecords
+        - xray:PutTraceSegments
+      Resource: "*"
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Mido Contact Keeper API
+        description: Serverless Contact Keeper Application
+    models:
+      - name: CreateContactRequest
+        contentType: application/json
+        schema: ${file(models/create-contact-request.json)}
+      - name: UpdateContactRequest
+        contentType: application/json
+        schema: ${file(models/updatecontact-request.json)}
+
+functions:
+  Auth:
+    tracing: true
+    iamRoleStatementsInherit: true
+    handler: src/lambda/auth/auth0Authorizer.handler
+  GetContacts:
+    tracing: true
+    iamRoleStatementsInherit: true
+    handler: src/lambda/http/getContacts.handler
+    events:
+      - http:
+          method: get
+          path: contacts
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:service.name}-get-contacts-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CONTACTS_TABLE}
+  CreateContact:
+    tracing: true
+    iamRoleStatementsInherit: true
+    handler: src/lambda/http/createContact.handler
+    events:
+      - http:
+          method: post
+          path: contacts
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new contact
+            description: Create a new contact
+            requestModels:
+              "application/json": CreateContactRequest
+    iamRoleStatementsName: ${self:service.name}-create-contact-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CONTACTS_TABLE}
+  DeleteContact:
+    tracing: true
+    iamRoleStatementsInherit: true
+    handler: src/lambda/http/deleteContact.handler
+    events:
+      - http:
+          method: delete
+          path: contacts/{contactId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:service.name}-delete-contacts-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CONTACTS_TABLE}
+  UpdateContact:
+    tracing: true
+    iamRoleStatementsInherit: true
+    handler: src/lambda/http/updateContact.handler
+    events:
+      - http:
+          method: patch
+          path: contacts/{contactId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a contact
+            description: Update a contact
+            requestModels:
+              "application/json": UpdateContactRequest
+    iamRoleStatementsName: ${self:service.name}-update-contacts-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CONTACTS_TABLE}
+  GenerateUploadUrl:
+    tracing: true
+    iamRoleStatementsInherit: true
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: contacts/{contactId}/attachment
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:service.name}-generate-contact-url-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CONTACTS_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PATCH,DELETE'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: "request-body-validator"
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    ContactsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: contactId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: contactId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.CONTACTS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.INDEX_NAME}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: contactId
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+    AttachmentBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: "*"
+              Action: "s3:GetObject"
+              Resource: "arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*"
+        Bucket: !Ref AttachmentBucket

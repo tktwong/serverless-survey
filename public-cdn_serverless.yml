@@ -1,0 +1,185 @@
+service:
+  name: ${env:BUCKET_NAME}-distribution
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stackName: ${self:service.name}-stack
+  stage: ${opt:stage, 'prod'}
+  region: eu-central-1
+  deploymentBucket:
+    name: kaskadi-serverless-deployment-bucket
+
+resources:
+  Resources:
+    # Public S3 assets bucket
+    PublicBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+        BucketName: ${env:BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+                - PUT
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+    # bucket policy to allow public objects access
+    PublicBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref PublicBucket
+        PolicyDocument:
+          Statement:
+          - Action: s3:GetObject
+            Effect: Allow
+            Resource:
+              Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - !Ref PublicBucket
+                  - "/*"
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+          - Action:
+             - s3:ListBucket
+             - s3:GetObject
+             - s3:PutObject
+            Effect: Allow
+            Resource:
+              - Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - !Ref PublicBucket
+              - Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - !Ref PublicBucket
+                  - "/*"
+            Principal:
+              AWS:
+                Fn::Join:
+                  - ""
+                  - - "arn:aws:iam::"
+                    - Ref: 'AWS::AccountId'
+                    - ":role/"
+                    - !ImportValue KaskadiS3FullAccessRoleName
+          - Action:
+             - s3:ListBucket
+             - s3:GetObject
+            Effect: Allow
+            Resource:
+              - Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - !Ref PublicBucket
+              - Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - !Ref PublicBucket
+                  - "/*"
+            Principal:
+              AWS:
+                Fn::Join:
+                  - ""
+                  - - "arn:aws:iam::"
+                    - Ref: 'AWS::AccountId'
+                    - ":role/"
+                    - !ImportValue KaskadiS3ReadRoleName
+          - Action:
+             - s3:PutObject
+            Effect: Allow
+            Resource:
+              - Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - !Ref PublicBucket
+                  - "/*"
+            Principal:
+              AWS:
+                Fn::Join:
+                  - ""
+                  - - "arn:aws:iam::"
+                    - Ref: 'AWS::AccountId'
+                    - ":role/"
+                    - !ImportValue KaskadiS3WriteRoleName
+          - Action:
+             - s3:PutObject
+            Effect: Allow
+            Resource:
+              - Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - !Ref PublicBucket
+                  - "/*"
+            Principal:
+              AWS:
+                Fn::Join:
+                  - ""
+                  - - "arn:aws:iam::"
+                    - Ref: 'AWS::AccountId'
+                    - ":user/"
+                    - "kaskadi-public-push"
+    # CloudFront user access the public bucket
+    CloudFrontOriginAccessIdentity:
+      Type: "AWS::CloudFront::CloudFrontOriginAccessIdentity"
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: !Ref PublicBucket
+    # Public CloudFront distribution
+    CloudFrontDistribution:
+      Type: 'AWS::CloudFront::Distribution'
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - "cdn.klimapartner.net"
+          ViewerCertificate:
+            AcmCertificateArn: "arn:aws:acm:us-east-1:374163881813:certificate/9eb025fc-5aa4-4f4b-83fb-08e775374ec6"
+            MinimumProtocolVersion: TLSv1
+            SslSupportMethod: sni-only
+          Origins:
+          - DomainName: !GetAtt PublicBucket.RegionalDomainName
+            Id: PublicBucket
+            S3OriginConfig:
+              OriginAccessIdentity:
+                Fn::Join:
+                  - ""
+                  - - "origin-access-identity/cloudfront/"
+                    - !Ref CloudFrontOriginAccessIdentity
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            Compress: true
+            DefaultTTL: 3600 # in seconds
+            ForwardedValues:
+              Cookies:
+                Forward: none
+              Headers:
+                # set CloudFront to forward the Access-Control-Allow-Origin header from S3 so that we enable CORS
+                - Access-Control-Request-Headers
+                - Access-Control-Request-Method
+                - Access-Control-Allow-Origin
+                - Origin
+              QueryString: false
+            MaxTTL: 86400 # in seconds
+            MinTTL: 60 # in seconds
+            TargetOriginId: PublicBucket
+            ViewerProtocolPolicy: redirect-to-https
+          Enabled: true
+          HttpVersion: http2
+          PriceClass: 'PriceClass_All'
+          DefaultRootObject: index.html
+  Outputs:
+    KaskadiPublicBucketName:
+      Value: ${self:resources.Resources.PublicBucket.Properties.BucketName}
+      Export:
+        Name: KaskadiPublicBucketName

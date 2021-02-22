@@ -1,0 +1,315 @@
+service:
+  name: location-snap
+app: location-snap
+org: willsamuel
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  scripts:
+    commands:
+      hello: echo Hello from ${self:service} service!
+    hooks:
+      "deploy:finalize": sls invoke -f setupPostgresTable
+
+  databaseSecret: ${ssm:/aws/reference/secretsmanager/${self:provider.environment.RDS_DBC_SECRET_ID}~true}
+  clusterIdentifier: location-snap-cluster-${self:provider.stage}
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-pseudo-parameters
+  - serverless-plugin-scripts
+  - serverless-iam-roles-per-function
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 128
+  apiGateway:
+    minimumCompressionSize: 512 # Enable gzip compression for responses > 1 KB
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-central-1'}
+
+  # ---------------------------------------------------------------------------- #
+  #                                  ENVIRONMEN                                  #
+  # ---------------------------------------------------------------------------- #
+
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    RDS_DBC_SECRET_ID: snap-rds-key-${self:provider.stage}
+    SECRET_STORE_ARN: !Ref RDSDBCKey
+    AURORA_CLUSTER_ARN: arn:aws:rds:${self:provider.region}:#{AWS::AccountId}:cluster:${self:custom.clusterIdentifier}
+    DATABASE_NAME: postgres
+    LOCATION_TABLE_NAME: picture_location_${self:provider.stage}
+    SEEN_TABLE_NAME: picture_seen_${self:provider.stage}
+    PICTURE_DATA_TABLE: pictures-${self:provider.stage}
+    PICTURE_DATA_CREATED_AT_INDEX: pictures-index-createdAt
+    PICTURE_BUCKET: location-snap-pictures-${self:provider.stage}
+    URL_EXPIRATION_TIME: 300
+
+# ---------------------------------------------------------------------------- #
+#                                   FUNCTIONS                                  #
+# ---------------------------------------------------------------------------- #
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  syncWithPostgres:
+    handler: src/lambda/streams/syncWithPostgres.handler
+    timeout: 60
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt PictureTable.StreamArn
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - kms:Decrypt
+        Resource: !GetAtt KMSKey.Arn
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref RDSDBCKey
+      - Effect: Allow
+        Action:
+          - rds-data:CommitTransaction
+          - rds-data:ExecuteStatement
+        Resource: ${self:provider.environment.AURORA_CLUSTER_ARN}
+
+  getDataInRange:
+    handler: src/lambda/http/getDataInRange.handler
+    timeout: 60 # in case of aurora cluster resuming
+    events:
+      - http:
+          method: get
+          path: data
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - kms:Decrypt
+        Resource: !GetAtt KMSKey.Arn
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref RDSDBCKey
+      - Effect: Allow
+        Action:
+          - rds-data:CommitTransaction
+          - rds-data:ExecuteStatement
+        Resource: ${self:provider.environment.AURORA_CLUSTER_ARN}
+
+  setPictureSeen:
+    handler: src/lambda/http/setPictureSeen.handler
+    events:
+      - http:
+          method: post
+          path: pictures/{pictureId}
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - kms:Decrypt
+        Resource: !GetAtt KMSKey.Arn
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref RDSDBCKey
+      - Effect: Allow
+        Action:
+          - rds-data:CommitTransaction
+          - rds-data:ExecuteStatement
+        Resource: ${self:provider.environment.AURORA_CLUSTER_ARN}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.PICTURE_BUCKET}/*
+
+  addPicture:
+    handler: src/lambda/http/addPicture.handler
+    events:
+      - http:
+          method: put
+          path: pictures
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          request:
+            schema:
+              application/json: ${file(models/add-picture-request.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - kms:Decrypt
+        Resource: !GetAtt KMSKey.Arn
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref RDSDBCKey
+      - Effect: Allow
+        Action:
+          - rds-data:CommitTransaction
+          - rds-data:ExecuteStatement
+        Resource: ${self:provider.environment.AURORA_CLUSTER_ARN}
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.PICTURE_DATA_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.PICTURE_BUCKET}/*
+
+  # ! Post deployment function
+  setupPostgresTable:
+    handler: src/deployment/setupPostgres.handler
+    timeout: 60
+    events:
+      - http:
+          method: get
+          path: wakeuppostgres
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - kms:Decrypt
+        Resource: !GetAtt KMSKey.Arn
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref RDSDBCKey
+      - Effect: Allow
+        Action:
+          - rds-data:CommitTransaction
+          - rds-data:ExecuteStatement
+        Resource: ${self:provider.environment.AURORA_CLUSTER_ARN}
+
+# ---------------------------------------------------------------------------- #
+#                                   RESOURCES                                  #
+# ---------------------------------------------------------------------------- #
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: "request-body-validator"
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    RDSCluster:
+      Type: AWS::RDS::DBCluster
+      Properties:
+        MasterUsername: ${self:custom.databaseSecret.username}
+        MasterUserPassword: ${self:custom.databaseSecret.password}
+        DBClusterIdentifier: ${self:custom.clusterIdentifier}
+        EnableHttpEndpoint: true
+        Engine: aurora-postgresql
+        EngineMode: serverless
+        EngineVersion: "10.7"
+        ScalingConfiguration:
+          AutoPause: true
+          MinCapacity: 2
+          MaxCapacity: 4
+          SecondsUntilAutoPause: 900
+
+    KMSKey:
+      Type: AWS::KMS::Key
+      Properties:
+        Description: KMS key for RDS DB Cluster
+        KeyPolicy:
+          Version: "2012-10-17"
+          Id: location-snap-rds-db-cluster-${self:provider.stage}
+          Statement:
+            - Sid: Allow administration of the key
+              Effect: Allow
+              Principal:
+                AWS:
+                  Fn::Join:
+                    - ":"
+                    - - "arn:aws:iam:"
+                      - Ref: AWS::AccountId
+                      - "root"
+              Action:
+                - "kms:*"
+              Resource: "*"
+
+    KMSKeyAlias:
+      Type: AWS::KMS::Alias
+      Properties:
+        AliasName: alias/${self:provider.environment.RDS_DBC_SECRET_ID}
+        TargetKeyId: !Ref KMSKey
+
+    RDSDBCKey:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:provider.environment.RDS_DBC_SECRET_ID}
+        KmsKeyId: !Ref KMSKey
+
+    PictureTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: pictureId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: pictureId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.PICTURE_DATA_TABLE}
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.PICTURE_DATA_CREATED_AT_INDEX}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL # What attributes will be copied to an index
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+    PictureBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.PICTURE_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 300

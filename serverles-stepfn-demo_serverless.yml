@@ -1,0 +1,71 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: aws-serverless-stepfn
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  deploymentBucket:
+    name: ${self:service}-${opt:stage}
+    serverSideEncryption: AES256
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ec2:*"
+        - "s3:*"
+      Resource:
+        - "*"
+
+
+functions:
+  startEC2:
+    handler: handler.startEC2
+  writeS3:
+    handler: handler.writeS3
+    
+stepFunctions:
+  stateMachines:
+    hellostepfunc1:
+      events:
+        - http:
+            path: startEC2
+            method: post
+      definition:
+        Comment: "A sample application"
+        StartAt: StartEC2
+        States:
+          StartEC2:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-startEC2"
+            Next: WriteS3
+          WriteS3:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-writeS3"
+            End: true
+
+plugins:
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+  - serverless-deployment-bucket
+
+resources:
+   # S3
+  - ${file(s3-bucket.yml)}

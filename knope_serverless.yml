@@ -1,0 +1,68 @@
+service: knope
+
+custom:
+  topicName: wyatt-${opt:stage, "dev"}
+  wyattBucket: wyatt-bills
+  configBucket: ${self:service}-config
+  snsTopic: ${self:service}-${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: java8
+  stage: ${opt:stage, "dev"}
+  region: us-west-2
+  memorySize: 512
+  timeout: 20
+  environment:
+    SNS_TOPIC: { "Fn::Join" : ["", ["arn:aws:sns:${self:provider.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.snsTopic}" ] ] }
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+      Resource: arn:aws:s3:::${self:custom.wyattBucket}/*
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+      Resource: arn:aws:s3:::${self:custom.wyattBucket}
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+      Resource: arn:aws:s3:::${self:custom.configBucket}/*
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+      Resource: arn:aws:s3:::${self:custom.configBucket}
+    - Effect: Allow
+      Action:
+        - SNS:Publish
+      Resource: arn:aws:sns:${self:provider.region}:*:${self:custom.snsTopic}
+
+package:
+  artifact: /tmp/workspace/build/distributions/${self:service}.zip
+
+functions:
+  sns-handler:
+    handler: com.merricklabs.knope.handlers.SnsHandler
+    events:
+      - sns:
+          arn:
+            Fn::Join:
+              - ":"
+              - - "arn:aws:sns"
+                - Ref: "AWS::Region"
+                - Ref: "AWS::AccountId"
+                - ${self:custom.topicName}
+          topicName: ${self:custom.topicName}
+
+resources:
+  Resources:
+    SNSTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: ${self:custom.snsTopic}
+        TopicName: ${self:custom.snsTopic}
+    configBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.configBucket}
+        AccessControl: BucketOwnerRead

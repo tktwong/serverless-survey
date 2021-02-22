@@ -1,0 +1,79 @@
+service:
+    name: auction-service
+
+plugins:
+    - serverless-webpack
+    - serverless-pseudo-parameters
+
+# Global properties used by the serverless framework
+custom:
+    AuctionsTable:
+        name: !Ref AuctionsTable #Key in resources.Resources
+        arn: !GetAtt AuctionsTable.Arn
+    MailSQS:
+        name: mail-sqs-${self:provider.stage}
+        arn: !GetAtt MailSQS.Arn
+
+provider:
+    name: aws
+    runtime: nodejs12.x
+    memorySize: 256
+    stage: ${opt:stage, 'dev'}
+    region: ap-southeast-1
+    environment:
+        AUCTIONS_TABLE_NAME: ${self:custom.AuctionsTable.name}
+        EMAIL: ryanashneil@gmail.com
+    iamRoleStatements:
+        - ${file(template/iam.yml):AuctionsTable}
+        - ${file(template/iam.yml):SendEmail}
+
+resources:
+    Resources:
+        AuctionsTable: ${file(template/dynamodb.yml):AuctionsTable}
+        MailSQS: ${file(template/sqs.yml):MailSQS}
+
+functions:
+    getAuctions:
+        handler: src/backend/http/getAuctions.main
+        events:
+            - http:
+                  method: GET
+                  path: /auction
+                  cors: true
+
+    getAuctionById:
+        handler: src/backend/http/getAuctionById.main
+        events:
+            - http:
+                  method: GET
+                  path: /auction/{id}
+                  cors: true
+                  authorizer: checkAuthorization
+    createAuction:
+        handler: src/backend/http/createAuction.main
+        events:
+            - http:
+                  method: POST
+                  path: /auction
+                  cors: true
+                  authorizer: checkAuthorization # can use external project within AWS as Auth via its ARN
+    placeBid:
+        handler: src/backend/http/placeBid.main
+        events:
+            - http:
+                  method: PATCH
+                  path: /auction/{id}
+                  cors: true
+                  authorizer: checkAuthorization # can use external project within AWS as Auth via its ARN
+    processAuctions:
+        handler: src/backend/schedule/processAuctions.main
+        events:
+            - schedule: rate(1 minute)
+    checkAuthorization:
+        handler: src/backend/auth/checkAuthorization.main
+    sendEmail:
+        handler: src/backend/event/sendEmail.main
+        events:
+            - sqs:
+                  arn: ${self:custom.MailSQS.arn}
+                  batchSize: 1

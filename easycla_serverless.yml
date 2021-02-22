@@ -1,0 +1,643 @@
+# Copyright The Linux Foundation and each contributor to CommunityBridge.
+# SPDX-License-Identifier: MIT
+
+service: cla-backend
+frameworkVersion: '^2.11.0'
+
+package:
+  # Exclude all first - selectively add in lambda functions
+  exclude:
+    - auth/**
+    - ./backend-aws-lambda
+    - ./user-subscribe-lambda
+    - ./metrics-aws-lambda
+    - ./metrics-report-lambda
+    - ./dynamo-events-lambda
+    - ./zipbuilder-scheduler-lambda
+    - ./zipbuilder-lambda
+    - ./functional-tests
+    - dev.sh
+    - docs/**
+    - helpers/**
+    - Makefile
+    - .env/**
+    - .venv/**
+    - .git*
+    - .git/**
+    - .vscode/**
+    - .serverless-wsgi
+    - .pylintrc
+    - node_modules/**
+    - package-lock.json
+    - yarn.lock
+
+custom:
+  allowed_origins: ${file(./env.json):cla-allowed-origins-${opt:stage}, ssm:/cla-allowed-origins-${opt:stage}}
+  wsgi:
+    app: cla.routes.__hug_wsgi__
+    pythonBin: python
+    packRequirements: false
+  # Config for serverless-prune-plugin - remove all but the 10 most recent
+  # versions to avoid the "Code storage limit exceeded" error
+  prune:
+    automatic: true
+    number: 3
+  userEventsSNSTopicARN: arn:aws:sns:us-east-2:#{AWS::AccountId}:userservice-triggers-${self:provider.stage}-user-sns-topic
+
+  certificate:
+    arn:
+      # From env Certificate Manager -
+      # currently, PROD is managed externally, DEV and STAGING are still managed by serverless
+      dev: arn:aws:acm:us-east-1:395594542180:certificate/b3bb6710-c11c-4bd1-a370-ec7c09f5ce52
+      staging: arn:aws:acm:us-east-1:844390194980:certificate/f8ed594d-b1b5-47de-bf94-32eade2a2e4c
+      prod: arn:aws:acm:us-east-1:716487311010:certificate/4a3c3018-df9e-4c3a-84a6-231317f8bcec
+  product:
+    domain:
+      name:
+        dev: 'api.lfcla.dev.platform.linuxfoundation.org'
+        staging: 'api.lfcla.staging.platform.linuxfoundation.org'
+        prod: 'api.easycla.lfx.linuxfoundation.org'
+        other: 'api.dev.lfcla.com'
+        enabled:
+          dev: true
+          staging: true
+          prod: true
+          other: true
+      alt:
+        dev: 'api.dev.lfcla.com'
+        staging: 'api.staging.lfcla.com'
+        prod: 'api.easycla.lfx.linuxfoundation.org'
+        other: 'api.dev.lfcla.com'
+        enabled:
+          dev: true
+          staging: true
+          prod: false
+          other: true
+
+  customDomains:
+    # https://github.com/amplify-education/serverless-domain-manager
+    - primaryDomain:
+      domainName: ${self:custom.product.domain.name.${opt:stage}, self:custom.product.domain.name.other}
+      stage: ${opt:stage}
+      basePath: ''  # a value of '/' will not work
+      securityPolicy: tls_1_2
+      apiType: rest
+      certificateArn: ${self:custom.certificate.arn.${opt:stage}, self:custom.certificate.arn.other}
+      protocols:
+        - https
+      enabled: true
+
+    - alternateDomain:
+      domainName: ${self:custom.product.domain.alt.${opt:stage}, self:custom.product.domain.alt.other}
+      stage: ${opt:stage}
+      basePath: ''  # a value of '/' will not work
+      securityPolicy: tls_1_2
+      apiType: rest
+      certificateArn: ${self:custom.certificate.arn.${opt:stage}, self:custom.certificate.arn.other}
+      protocols:
+        - https
+      enabled: ${self:custom.product.domain.alt.enabled.${opt:stage}, self:custom.product.domain.alt.enabled.other}
+
+  ses_from_email:
+    dev: admin@dev.lfcla.com
+    staging: admin@staging.lfcla.com
+    prod: admin@lfx.linuxfoundation.org
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${opt:stage}
+  region: us-east-1
+  timeout: 60 # optional, in seconds, default is 6
+  logRetentionInDays: 14
+  apiGateway:
+    # https://www.serverless.com/framework/docs/deprecations/#AWS_API_GATEWAY_NAME_STARTING_WITH_SERVICE
+    shouldStartNameWithService: true
+    # Configuring API Gateway to return binary media can be done via the binaryMediaTypes config:
+    binaryMediaTypes:
+      #- '*/*'
+      - 'image/*'
+      - 'application/pdf'
+      - 'application/zip'
+      - 'application/octet-stream'
+      - 'application/x-zip-compressed'
+      - 'application/x-rar-compressed'
+      - 'multipart/x-zip'
+    minimumCompressionSize: 1024
+    metrics: true
+
+  logs:
+    restApi: true
+
+  tracing:
+    apiGateway: true
+    lambda: true
+
+  # Alongside provider.iamRoleStatements managed policies can also be added to this service-wide Role
+  # These will also be merged into the generated IAM Role
+  iamManagedPolicies:
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaDynamoDBExecutionRole"
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - cloudwatch:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:DeleteObject
+        - s3:PutObjectAcl
+      Resource:
+        - "arn:aws:s3:::cla-signature-files-${self:provider.stage}/*"
+        - "arn:aws:s3:::cla-project-logo-${self:provider.stage}/*"
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource:
+        - "arn:aws:s3:::cla-signature-files-${self:provider.stage}"
+        - "arn:aws:s3:::cla-project-logo-${self:provider.stage}"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource:
+        - "arn:aws:lambda:${self:provider.region}:#{AWS::AccountId}:function:cla-backend-${opt:stage}-zipbuilder-lambda"
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter
+      Resource:
+        - "arn:aws:ssm:${self:provider.region}:#{AWS::AccountId}:parameter/cla-*"
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+        - ses:SendRawEmail
+      Resource:
+        - "*"
+      Condition:
+        StringEquals:
+          ses:FromAddress: ${self:custom.ses_from_email.${opt:stage}}
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource:
+        - "*"
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+      Resource:
+        - "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:DeleteItem
+        - dynamodb:UpdateItem
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:Scan
+        - dynamodb:DescribeTable
+        - dynamodb:BatchGetItem
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+      Resource:
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-ccla-whitelist-requests"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-cla-manager-requests"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-companies"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-company-invites"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-events"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-gerrit-instances"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-github-orgs"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-projects"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-repositories"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-session-store"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-store"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-user-permissions"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-users"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-metrics"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-projects-cla-groups"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource:
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-ccla-whitelist-requests/index/company-id-project-id-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-ccla-whitelist-requests/index/ccla-approval-list-request-project-id-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-users/index/github-user-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-users/index/github-username-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-users/index/github-user-external-id-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-users/index/lf-username-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-users/index/lf-email-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-gerrit-instances/index/gerrit-name-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-gerrit-instances/index/gerrit-project-id-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-gerrit-instances/index/gerrit-project-sfid-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/project-signature-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/project-signature-date-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/reference-signature-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/signature-project-reference-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/signature-user-ccla-company-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/project-signature-external-id-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/signature-company-signatory-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/reference-signature-search-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/signature-project-id-type-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/signature-company-initial-manager-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-signatures/index/signature-project-id-sigtype-signed-approved-id-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-companies/index/external-company-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-companies/index/company-name-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-companies/index/company-signing-entity-name-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-projects/index/external-project-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-projects/index/project-name-search-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-projects/index/project-name-lower-search-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-projects/index/foundation-sfid-project-name-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-repositories/index/project-repository-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-repositories/index/repository-name-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-repositories/index/repository-organization-name-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-repositories/index/external-repository-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-repositories/index/sfdc-repository-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-repositories/index/project-sfid-repository-organization-name-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-repositories/index/project-sfid-repository-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-github-orgs/index/github-org-sfid-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-github-orgs/index/project-sfid-organization-name-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-github-orgs/index/organization-name-lower-search-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-company-invites/index/requested-company-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-events/index/event-type-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-events/index/user-id-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-events/index/company-id-external-project-id-event-epoch-time-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-events/index/event-project-id-event-time-epoch-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-events/index/event-date-and-contains-pii-event-time-epoch-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-events/index/company-sfid-foundation-sfid-event-time-epoch-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-events/index/company-sfid-project-id-event-time-epoch-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-events/index/company-id-event-type-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-events/index/event-foundation-sfid-event-time-epoch-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-metrics/index/metric-type-salesforce-id-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-cla-manager-requests/index/cla-manager-requests-company-project-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-cla-manager-requests/index/cla-manager-requests-external-company-project-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-cla-manager-requests/index/cla-manager-requests-project-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-projects-cla-groups/index/cla-group-id-index"
+        - "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/cla-${opt:stage}-projects-cla-groups/index/foundation-sfid-index"
+
+  environment:
+    STAGE: ${self:provider.stage}
+    HOME: /tmp
+    REGION: us-east-1
+    DYNAMODB_AWS_REGION: us-east-1
+    GH_APP_WEBHOOK_SECRET: ${file(./env.json):gh-app-webhook-secret, ssm:/cla-gh-app-webhook-secret-${opt:stage}~true}
+    GH_APP_ID: ${file(./env.json):gh-app-id, ssm:/cla-gh-app-id-${opt:stage}~true}
+    GH_OAUTH_CLIENT_ID: ${file(./env.json):gh-oauth-client-id, ssm:/cla-gh-oauth-client-id-${opt:stage}~true}
+    GH_OAUTH_SECRET: ${file(./env.json):gh-oauth-secret, ssm:/cla-gh-oauth-secret-${opt:stage}~true}
+    GITHUB_OAUTH_TOKEN: ${file(./env.json):gh-access-token, ssm:/cla-gh-access-token-${opt:stage}~true}
+    GITHUB_APP_WEBHOOK_SECRET: ${file(./env.json):gh-app-webhook-secret, ssm:/cla-gh-app-webhook-secret-${opt:stage}~true}
+    GH_STATUS_CTX_NAME: "EasyCLA"
+    AUTH0_DOMAIN: ${file(./env.json):auth0-domain, ssm:/cla-auth0-domain-${opt:stage}~true}
+    AUTH0_CLIENT_ID: ${file(./env.json):auth0-clientId, ssm:/cla-auth0-clientId-${opt:stage}~true}
+    AUTH0_USERNAME_CLAIM: ${file(./env.json):auth0-username-claim, ssm:/cla-auth0-username-claim-${opt:stage}}
+    AUTH0_ALGORITHM: ${file(./env.json):auth0-algorithm, ssm:/cla-auth0-algorithm-${opt:stage}}
+    SF_INSTANCE_URL: ${file(./env.json):sf-instance-url, ssm:/cla-sf-instance-url-${opt:stage}~true}
+    SF_CLIENT_ID: ${file(./env.json):sf-client-id, ssm:/cla-sf-consumer-key-${opt:stage}~true}
+    SF_CLIENT_SECRET: ${file(./env.json):sf-client-secret, ssm:/cla-sf-consumer-secret-${opt:stage}~true}
+    SF_USERNAME: ${file(./env.json):sf-username, ssm:/cla-sf-username-${opt:stage}~true}
+    SF_PASSWORD: ${file(./env.json):sf-password, ssm:/cla-sf-password-${opt:stage}~true}
+    DOCRAPTOR_API_KEY: ${file(./env.json):doc-raptor-api-key, ssm:/cla-doc-raptor-api-key-${opt:stage}}
+    DOCUSIGN_ROOT_URL: ${file(./env.json):docusign-root-url, ssm:/cla-docusign-root-url-${opt:stage}}
+    DOCUSIGN_USERNAME: ${file(./env.json):docusign-username, ssm:/cla-docusign-username-${opt:stage}}
+    DOCUSIGN_PASSWORD: ${file(./env.json):docusign-password, ssm:/cla-docusign-password-${opt:stage}}
+    DOCUSIGN_INTEGRATOR_KEY: ${file(./env.json):docusign-integrator-key, ssm:/cla-docusign-integrator-key-${opt:stage}}
+    CLA_API_BASE: ${file(./env.json):cla-api-base, ssm:/cla-api-base-${opt:stage}}
+    CLA_CONTRIBUTOR_BASE: ${file(./env.json):cla-contributor-base, ssm:/cla-contributor-base-${opt:stage}}
+    CLA_CONTRIBUTOR_V2_BASE: ${file(./env.json):cla-contributor-v2-base, ssm:/cla-contributor-v2-base-${opt:stage}}
+    CLA_CORPORATE_BASE: ${file(./env.json):cla-corporate-base, ssm:/cla-corporate-base-${opt:stage}}
+    CLA_CORPORATE_V2_BASE: ${file(./env.json):cla-corporate-v2-base, ssm:/cla-corporate-v2-base-${opt:stage}}
+    CLA_LANDING_PAGE: ${file(./env.json):cla-landing-page, ssm:/cla-landing-page-${opt:stage}}
+    CLA_SIGNATURE_FILES_BUCKET: ${file(./env.json):cla-signature-files-bucket, ssm:/cla-signature-files-bucket-${opt:stage}~true}
+    CLA_BUCKET_LOGO_URL: ${file(./env.json):cla-logo-url, ssm:/cla-logo-url-${opt:stage}~true}
+    SES_SENDER_EMAIL_ADDRESS: ${file(./env.json):cla-ses-sender-email-address, ssm:/cla-ses-sender-email-address-${opt:stage}}
+    SMTP_SENDER_EMAIL_ADDRESS: ${file(./env.json):cla-smtp-sender-email-address, ssm:/cla-smtp-sender-email-address-${opt:stage}}
+    LF_GROUP_CLIENT_ID: ${file(./env.json):lf-group-client-id, ssm:/cla-lf-group-client-id-${opt:stage}}
+    LF_GROUP_CLIENT_SECRET: ${file(./env.json):lf-group-client-secret, ssm:/cla-lf-group-client-secret-${opt:stage}}
+    LF_GROUP_REFRESH_TOKEN: ${file(./env.json):lf-group-refresh-token, ssm:/cla-lf-group-refresh-token-${opt:stage}}
+    LF_GROUP_CLIENT_URL: ${file(./env.json):lf-group-client-url, ssm:/cla-lf-group-client-url-${opt:stage}}
+    SNS_EVENT_TOPIC_ARN: ${file(./env.json):sns-event-topic-arn, ssm:/cla-sns-event-topic-arn-${opt:stage}}
+    PLATFORM_AUTH0_URL: ${file(./env.json):cla-auth0-platform-url, ssm:/cla-auth0-platform-url-${opt:stage}}
+    PLATFORM_AUTH0_CLIENT_ID: ${file(./env.json):cla-auth0-platform-client-id, ssm:/cla-auth0-platform-client-id-${opt:stage}}
+    PLATFORM_AUTH0_CLIENT_SECRET: ${file(./env.json):cla-auth0-platform-client-secret, ssm:/cla-auth0-platform-client-secret-${opt:stage}}
+    PLATFORM_AUTH0_AUDIENCE: ${file(./env.json):cla-auth0-platform-audience, ssm:/cla-auth0-platform-audience-${opt:stage}}
+    PLATFORM_GATEWAY_URL: ${file(./env.json):platform-gateway-url, ssm:/cla-auth0-platform-api-gw-${opt:stage}}
+    PLATFORM_MAINTAINERS: ${file(./env.json):platform-maintainers, ssm:/cla-lf-platform-maintainers-${opt:stage}}
+    # Set to true for verbose API logging - useful when Debugging API calls for Core Platform Services or other external services
+    # LOG_DEVEL: debug              # default is debug
+    # DEBUG: false                  # default is false
+    LOG_FORMAT: json
+    # GH_ORG_VALIDATION: true       # default is true/enabled
+    # COMPANY_USER_VALIDATION: true # default is true/enabled
+    # 08/31/2020 - SETUPTOOLS needs to be set for the Python run-time + Debian/Ubuntu (current lambda run-time),
+    # See:
+    # https://github.com/pypa/setuptools/issues/2350 and
+    # https://github.com/pypa/setuptools/issues/2232
+    SETUPTOOLS_USE_DISTUTILS: stdlib
+
+  stackTags:
+    Name: ${self:service}
+    stage: ${self:provider.stage}
+    Project: "EasyCLA"
+    Product: "EasyCLA"
+    ManagedBy: "Serverless CloudFormation"
+    SericeType: "Product"
+    Service: ${self:service}
+    ServiceRole: "Backend"
+    ProgrammingPlatform: Go
+    Owner: "David Deal"
+  tags:
+    Name: ${self:service}
+    stage: ${self:provider.stage}
+    Project: "EasyCLA"
+    Product: "EasyCLA"
+    ManagedBy: "Serverless CloudFormation"
+    SericeType: "Product"
+    Service: ${self:service}
+    ServiceRole: "Backend"
+    ProgrammingPlatform: Go
+    Owner: "David Deal"
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+  - serverless-plugin-tracing
+  - serverless-pseudo-parameters
+  # Serverless Finch does s3 uploading. Called with 'sls client deploy'.
+  # Also allows bucket removal with 'sls client remove'.
+  - serverless-finch
+  # To avoid a Code Storage Limit after tons of deploys and revisions - we can prune old versions
+  # This plugin allows us to remove/prune the old versions either manually or automatically
+  - serverless-prune-plugin
+  - serverless-offline
+  - serverless-domain-manager
+
+functions:
+  authorizer:
+    handler: auth/bin/authorizer
+    description: "EasyCLA API authorizer"
+    runtime: go1.x
+    package:
+      individually: true
+      include:
+        - auth/bin/**
+
+  apiv3:
+    runtime: go1.x
+    handler: backend-aws-lambda
+    description: "EasyCLA Golang API handler for the /v3 endpoints"
+    events:
+      - http:
+          method: ANY
+          path: v3/{proxy+}
+          # cors: true # CORS handled at the API implementation
+    package:
+      individually: true
+      include:
+        - ./backend-aws-lambda
+
+  dynamo-projects-events-lambda:
+    handler: dynamo-events-lambda
+    name: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-dynamo-projects-lambda
+    description: "EasyCLA DynamoDB stream events handler for the projects table"
+    runtime: go1.x
+    package:
+      individually: true
+      include:
+        - ./dynamo-events-lambda
+
+  dynamo-signatures-events-lambda:
+    handler: dynamo-events-lambda
+    name: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-dynamo-signatures-events-lambda
+    description: "EasyCLA DynamoDB stream events handler for the signatures table"
+    runtime: go1.x
+    package:
+      individually: true
+      include:
+        - ./dynamo-events-lambda
+
+  dynamo-events-events-lambda:
+    handler: dynamo-events-lambda
+    name: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-dynamo-events-events-lambda
+    description: "EasyCLA DynamoDB stream events handler for the events table"
+    runtime: go1.x
+    package:
+      individually: true
+      include:
+        - ./dynamo-events-lambda
+
+  dynamo-repositories-events-lambda:
+    handler: dynamo-events-lambda
+    name: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-dynamo-repositories-events-lambda
+    description: "EasyCLA DynamoDB stream events handler for the repositories table"
+    runtime: go1.x
+    package:
+      individually: true
+      include:
+        - ./dynamo-events-lambda
+
+  dynamo-projects-cla-groups-events-lambda:
+    handler: dynamo-events-lambda
+    name: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-dynamo-projects-cla-groups-events-lambda
+    description: "EasyCLA DynamoDB stream events handler for the projects-cla-groups table"
+    runtime: go1.x
+    package:
+      individually: true
+      include:
+        - ./dynamo-events-lambda
+
+  dynamo-github-orgs-events-lambda:
+    handler: dynamo-events-lambda
+    name: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-dynamo-github-orgs-events-lambda
+    description: "EasyCLA DynamoDB stream events handler for cla-<stage>-github-orgs the table"
+    runtime: go1.x
+    package:
+      individually: true
+      include:
+        - ./dynamo-events-lambda
+
+  saveMetrics:
+    description: "EasyCLA Save Metrics API handler"
+    runtime: go1.x
+    handler: metrics-aws-lambda
+    timeout: 900 # maximum time allowed
+    events:
+      - schedule:
+          description: 'A function that gathers metrics on a given schedule'
+          rate: rate(1 hour)
+          enabled: true
+    package:
+      individually: true
+      include:
+        - ./metrics-aws-lambda
+
+  reportMetrics:
+    description: "EasyCLA Report Metrics API handler"
+    runtime: go1.x
+    handler: metrics-report-lambda
+    timeout: 900 # maximum time allowed
+    events:
+      - schedule:
+          description: 'A function that reports metrics on a given schedule'
+          rate: rate(1 day)
+          enabled: true
+    package:
+      individually: true
+      include:
+        - ./metrics-report-lambda
+
+
+  zipbuilder-scheduler-lambda:
+    handler: zipbuilder-scheduler-lambda
+    name: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-zipbuilder-scheduler-lambda
+    description: "call zipbuilder-lambda for all cla groups periodically"
+    runtime: go1.x
+    timeout: 900 # maximum time allowed
+    events:
+      - schedule:
+          description: 'build zip file of signed PDFs for CLA Groups'
+          rate: rate(15 minutes)
+          enabled: true
+    package:
+      individually: true
+      include:
+        - ./zipbuilder-scheduler-lambda
+
+  zipbuilder-lambda:
+    handler: zipbuilder-lambda
+    name: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-zipbuilder-lambda
+    description: "build zip of signed signature pdf for cla group"
+    runtime: go1.x
+    timeout: 900 # maximum time allowed
+    memorySize: 1024
+    package:
+      individually: true
+      include:
+        - ./zipbuilder-lambda
+
+  apiv1:
+    handler: wsgi_handler.handler
+    description: "EasyCLA Python API handler for the /v1 endpoints"
+    events:
+      - http:
+          method: ANY
+          path: v1/{proxy+}
+          cors: true
+
+  apiv2:
+    handler: wsgi_handler.handler
+    description: "EasyCLA Python API handler for the /v2 endpoints"
+    events:
+      - http:
+          method: ANY
+          path: v2/{proxy+}
+          cors: true
+
+  salesforceprojects:
+    handler: cla.salesforce.get_projects
+    description: "EasyCLA API Callback Handler for fetching all SalesForce projects"
+    events:
+      - http:
+          method: ANY
+          path: v1/salesforce/projects
+          cors: true
+
+  salesforceprojectbyID:
+    handler: cla.salesforce.get_project
+    description: "EasyCLA API Callback Handler for fetching SalesForce projects by ID"
+    events:
+      - http:
+          method: ANY
+          path: v1/salesforce/project
+          cors: true
+
+  # GitHub callback handler
+  githubinstall:
+    handler: wsgi_handler.handler
+    description: "EasyCLA API Callback Handler for GitHub bot installations"
+    events:
+      - http:
+          method: ANY
+          path: v2/github/installation
+
+  # GitHub callback handler
+  githubactivity:
+    handler: wsgi_handler.handler
+    description: "EasyCLA API Callback Handler for GitHub activity"
+    events:
+      - http:
+          method: POST
+          path: v2/github/activity
+
+  # User Subscribe event for dynamodb cla-stage-users table.
+  easyClaUserSubscribe:
+    handler: user-subscribe-lambda
+    name: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-user-subscribe-lambda
+    runtime: go1.x
+    description: Update easycla user data to user object in dynamodb
+    package:
+      individually: true
+      include:
+        - ./user-subscribe-lambda
+    reservedConcurrency: 5
+    events:
+      - sns:
+          arn: ${self:custom.userEventsSNSTopicARN}
+
+resources:
+  Conditions:
+    # Helper functions since we conditionally create some resources
+    # https://gist.github.com/DavidWells/be078deef45f8cb2e280ccc7af947392
+    isProd: { "Fn::Equals": [ "${env:STAGE}", "prod" ] }
+    isStaging: { "Fn::Equals": [ "${env:STAGE}", "staging" ] }
+    isDev: { "Fn::Equals": [ "${env:STAGE}", "dev" ] }
+    isNotProd: {"Fn::Or": [{"Condition": "isDev"}, {"Condition": "isStaging" }]}
+    # true when a TSL certificate should be created by serverless (false created externally)
+    ShouldGenerateCertificate:
+      Fn::Not: [ Fn::Equals: [ "${env:STAGE}", "prod" ] ]
+
+  Resources:
+    # ApiGatewayRestApi, and GatewayResponse are used to enable Cors on custom authorizer responses.
+    # This let's the client read the HTTP status on error.
+    # see link for more detail
+    # https://serverless.com/blog/cors-api-gateway-survival-guide/#cors-with-custom-authorizers
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: ${self:service}-${self:provider.stage}
+        Description: EasyCLA API Gateway
+
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+    Cert:
+      Type: AWS::CertificateManager::Certificate
+      Condition: ShouldGenerateCertificate
+      Properties:
+        DomainName: ${self:custom.product.domain.name.${opt:stage}, self:custom.product.domain.name.other}
+        SubjectAlternativeNames:
+          - ${self:custom.product.domain.alt.${opt:stage}, self:custom.product.domain.alt.other}
+        ValidationMethod: DNS
+
+  Outputs:
+    APIGatewayRootResourceID:
+      Value:
+        Fn::GetAtt:
+          - ApiGatewayRestApi
+          - RootResourceId
+      Export:
+        Name: APIGatewayRootResourceID

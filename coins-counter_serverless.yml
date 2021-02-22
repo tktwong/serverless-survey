@@ -1,0 +1,93 @@
+service:
+  name: coins-counter
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    host: 0.0.0.0
+  dynamodb:
+    start:
+      port: 8007
+      dbPath: ${env:PWD}/dynamo-db
+      migrate: true
+    stages:
+      - dev
+
+provider:
+  name: aws
+  runtime: nodejs10.15
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'localhost'}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  getInventory:
+    handler: src/api/index.getInventory
+    events:
+      - http:
+          path: /get-inventory
+          method: get
+          cors:
+            origin: '*'
+
+  resetInventory:
+    handler: src/api/index.resetInventory
+    events:
+      - http:
+          path: /reset-inventory
+          method: get
+          cors:
+            origin: '*'
+
+  calculateChange:
+    handler: src/api/index.getChangeFor
+    events:
+      - http:
+          path: /calculate-change
+          method: post
+          cors:
+            origin: '*'
+
+  calculateOptimalChange:
+    handler: src/api/index.getOptimalChangeFor
+    events:
+      - http:
+          path: /calculate-optimal-change
+          method: post
+          cors:
+            origin: '*'
+
+resources:
+  Resources:
+    CoinsInventoryStorage:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: type
+            AttributeType: S
+
+        KeySchema:
+          -
+            AttributeName: type
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+

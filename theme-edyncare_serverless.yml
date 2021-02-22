@@ -1,0 +1,581 @@
+service: edyncare-backend
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-plugin-split-stacks
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  splitStacks:
+    perFunction: true
+    perType: false
+  serverless-offline:
+    port: 3001
+  dynamodb:
+    start:
+      port: ${self:provider.environment.DYNAMODB_LOCAL_PORT}
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-west-2
+  stage: local
+  environment:
+    ADMIN_DYNAMODB_TABLE: admin-${opt:stage, self:provider.stage}
+    CAREPLAN_DYNAMODB_TABLE: careplan-${opt:stage, self:provider.stage}
+    CARER_DYNAMODB_TABLE: carer-${opt:stage, self:provider.stage}
+    CARER_INTERVIEW_SCHEDULE_DYNAMODB_TABLE: carer-interview-schedule-${opt:stage, self:provider.stage}
+    CARER_PAYMENT_INFORMATION_DYNAMODB_TABLE: carer-payment-information-${opt:stage, self:provider.stage}
+    CARER_VISIT_DYNAMODB_TABLE: carer-visit-${opt:stage, self:provider.stage}
+    CLIENT_CARER_CONTRACT_DYNAMODB_TABLE: client-carer-contract-${opt:stage, self:provider.stage}
+    CLIENT_CONSULTATION_REQUEST_DYNAMODB_TABLE: client-consulation-request-${opt:stage, self:provider.stage}
+    CLIENT_DYNAMODB_TABLE: client-${opt:stage, self:provider.stage}
+    CLIENT_PAYMENT_INFORMATION_DYNAMODB_TABLE: client-payment-information-${opt:stage, self:provider.stage}
+    CONTRACT_DYNAMODB_TABLE: contract-${opt:stage, self:provider.stage}
+    MY_CARE_TEAM_DYNAMODB_TABLE: my-care-team-${opt:stage, self:provider.stage}
+    RECIPIENT_DYNAMODB_TABLE: recipient-${opt:stage, self:provider.stage}
+    UKPOSTCODE_DYNAMODB_TABLE: ukpostcode-${opt:stage, self:provider.stage}
+
+    DYNAMODB_LOCAL_PORT: 8001
+    STAGE_NAME: ${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+        - ses:SendEmail
+        - ses:SendRawEmail
+        - secretsmanager:GetSecretValue
+        - secretsmanager:PutSecretValue
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CARER_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.ADMIN_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CLIENT_CONSULTATION_REQUEST_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CLIENT_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CARER_INTERVIEW_SCHEDULE_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CONTRACT_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.MY_CARE_TEAM_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CLIENT_CARER_CONTRACT_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CARER_DYNAMODB_TABLE}/index/Email-Index"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CLIENT_DYNAMODB_TABLE}/index/Email-Index"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.UKPOSTCODE_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CAREPLAN_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CARER_PAYMENT_INFORMATION_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CLIENT_PAYMENT_INFORMATION_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.RECIPIENT_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.RECIPIENT_DYNAMODB_TABLE}/index/ClientId-Index"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CARER_VISIT_DYNAMODB_TABLE}"
+        - "arn:aws:ses:eu-west-1:*:*"
+
+functions:
+  carer-create:
+    handler: services/api/carer/create.create
+    events:
+      - http:
+          path: carer
+          method: post
+          cors: true
+  admin-create:
+    handler: services/api/admin/create.create
+    events:
+      - http:
+          path: admin
+          method: post
+          cors: true
+  carer-get:
+    handler: services/api/carer/get.get
+    events:
+      - http:
+          path: carer/{id}
+          method: get
+          cors: true
+  carer-update:
+    handler: services/api/carer/update.update
+    events:
+      - http:
+          path: carer/update
+          method: post
+          cors: true
+  carer-list:
+    handler: services/api/carer/list.list
+    events:
+      - http:
+          path: carer
+          method: get
+          cors: true
+  carer-validate-email:
+    handler: services/api/carer/validateEmail.validateEmail
+    events:
+      - http:
+          path: carer/validate-email/{email}
+          method: get
+          cors: true
+  carer-interview-scheduled:
+    handler: services/api/carer/interviewscheduled.interviewScheduled
+    events:
+      - http:
+          path: carer/interviewscheduled
+          method: post
+          cors: true
+  client-create:
+    handler: services/api/client/create.create
+    events:
+      - http:
+          path: client
+          method: post
+          cors: true
+  client-validate-email:
+    handler: services/api/client/validateEmail.validateEmail
+    events:
+      - http:
+          path: client/validate-email/{email}
+          method: get
+          cors: true
+  client-carer-list:
+    handler: services/api/client/carerList.get
+    events:
+      - http:
+          path: carer-list
+          method: get
+          cors: true
+  client-my-care-team:
+    handler: services/api/client/myCareTeam.create
+    events:
+      - http:
+          path: care-request
+          method: post
+          cors: true
+  create-contract:
+    handler: services/api/contracts/createContract.createContract
+    events:
+      - http:
+          path: contract/carer/create
+          method: post
+          cors: true
+  create-carer-client-contract:
+    handler: services/api/contracts/createCarerClientContract.createContract
+    events:
+      - http:
+          path: contract/carer-client/create
+          method: post
+          cors: true
+ 
+  sign-contract:
+    handler: services/api/contracts/signContract.signContract
+    events:
+      - http:
+          path: contract/carer/sign/{id}
+          method: get
+          cors: true
+  update-contract:
+    handler: services/api/contracts/updateContract.updateContract
+    events:
+      - http:
+          path: contract/carer/update/{id}
+          method: get
+          cors: true
+  update-client-carer-contract:
+    handler: services/api/contracts/updateClientCarerContract.updateClientCarerContract
+    events:
+      - http:
+          path: contract/client-carer/update
+          method: post
+          cors: true
+  sign-carer-client-contract:
+    handler: services/api/contracts/signCarerClientContract.signContract
+    events:
+      - http:
+          path: contract/carer-client/sign
+          method: post
+          cors: true
+  signed-carer-client-contracts:
+    handler: services/api/contracts/signedContracts.signedContracts
+    events:
+      - http:
+          path: contract/signed-contracts
+          method: get
+          cors: true
+  client-get:
+    handler: services/api/client/get.get
+    events:
+      - http:
+          path: client/{id}
+          method: get
+          cors: true
+  client-list:
+    handler: services/api/client/list.list
+    events:
+      - http:
+          path: client
+          method: get
+          cors: true
+  client-update:
+    handler: services/api/client/update.update
+    events:
+      - http:
+          path: client/update
+          method: post
+          cors: true
+  client-request-consultation:
+    handler: services/api/client/requestConsultation.create
+    events:
+      - http:
+          path: client/requestConsultation
+          method: post
+          cors: true
+  client-mailing-list:
+    handler: services/api/client/mailingList.create
+    events:
+      - http:
+          path: client/mailinglist
+          method: post
+          cors: true
+  careplan-create:
+    handler: services/api/careplan/create.create
+    events:
+      - http:
+          path: careplan
+          method: post
+          cors: true
+  careplan-get:
+    handler: services/api/careplan/get.get
+    events:
+      - http:
+          path: careplan/{ClientId}
+          method: get
+          cors: true
+  careplan-list:
+    handler: services/api/careplan/list.list
+    events:
+      - http:
+          path: careplan
+          method: get
+          cors: true
+  postcode-import:
+    handler: services/api/postcode/import.import
+    events:
+      - http:
+          path: postcode/import
+          method: post
+          cors: true       
+  get-postcode:
+    handler: services/api/postcode/get.get
+    events:
+      - http:
+          path: postcode/{postcode}
+          method: get
+          cors: true      
+  payment-connect-user:
+    handler: services/api/payment/connectUser.connectUser
+    events:
+      - http:
+          path: payment/connect-user
+          method: post
+          cors: true
+  create-visit:
+    handler: services/api/visit/create.create
+    events:
+      - http:
+          path: visit
+          method: post
+          cors: true
+  update-visit:
+    handler: services/api/visit/update.updateVisit
+    events:
+      - http:
+          path: visit
+          method: put
+          cors: true
+resources:
+  Resources:
+    CarerDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: Id
+            AttributeType: S
+          - AttributeName: Email
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: Id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CARER_DYNAMODB_TABLE}
+        GlobalSecondaryIndexes:
+        - IndexName: Email-Index
+          KeySchema:
+          - AttributeName: Email
+            KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+    AdminDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: Id
+            AttributeType: S
+          - AttributeName: Email
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: Id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.ADMIN_DYNAMODB_TABLE}
+        GlobalSecondaryIndexes:
+        - IndexName: Email-Index
+          KeySchema:
+          - AttributeName: Email
+            KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+    ClientDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: Id
+            AttributeType: S
+          - AttributeName: Email
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: Id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CLIENT_DYNAMODB_TABLE}
+        GlobalSecondaryIndexes:
+        - IndexName: Email-Index
+          KeySchema:
+          - AttributeName: Email
+            KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+    ClientConsultationRequestDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: Id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: Id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CLIENT_CONSULTATION_REQUEST_DYNAMODB_TABLE}
+    CarerInterviewScheduleRequestDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: CarerId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: CarerId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CARER_INTERVIEW_SCHEDULE_DYNAMODB_TABLE}
+    UKPostCodesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: postcode
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: postcode
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.UKPOSTCODE_DYNAMODB_TABLE}
+    ContractDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: CarerId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: CarerId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CONTRACT_DYNAMODB_TABLE}
+    CarePlanDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: CarePlanId
+            AttributeType: S
+          - AttributeName: ClientId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: CarePlanId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CAREPLAN_DYNAMODB_TABLE}
+        GlobalSecondaryIndexes:
+        - IndexName: ClientId-Index
+          KeySchema:
+          - AttributeName: ClientId
+            KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+
+    CarerPaymentInformationDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: CarerId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: CarerId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CARER_PAYMENT_INFORMATION_DYNAMODB_TABLE}
+    ClientPaymentInformationDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: ClientId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: ClientId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CLIENT_PAYMENT_INFORMATION_DYNAMODB_TABLE}
+    RecipientDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: Id
+            AttributeType: S
+          - AttributeName: ClientId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: Id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.RECIPIENT_DYNAMODB_TABLE}
+        GlobalSecondaryIndexes:
+        - IndexName: ClientId-Index
+          KeySchema:
+          - AttributeName: ClientId
+            KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+    MyCareTeamDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: RecepientId 
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: RecepientId 
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.MY_CARE_TEAM_DYNAMODB_TABLE}
+    ClientCarerContractDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: contractID
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: contractID
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CLIENT_CARER_CONTRACT_DYNAMODB_TABLE}
+    CarerVisitDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: Id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: Id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CARER_VISIT_DYNAMODB_TABLE}    

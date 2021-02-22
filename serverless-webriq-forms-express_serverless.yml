@@ -1,0 +1,232 @@
+org: webriq
+service: webriqforms-v2
+app: webriqforms-v2
+
+custom:
+  WebriQ_Forms_TableName: "webriqforms-v2-primary-table-${self:provider.stage}"
+  WebriQ_Forms_UserTableName: "webriqforms-v2-users-table-${self:provider.stage}"
+  WebriQ_Forms_Bucket: "webriqforms-v2-${self:provider.stage}-bucket"
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+    start:
+      migrate: true
+  s3:
+    port: 8001
+    directory: /tmp
+  logRetentionInDays:
+    production: 90
+    dev: 30
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        - { "Fn::GetAtt": ["WebriQFormsDynamoDBTable", "Arn"] }
+        - { "Fn::GetAtt": ["WebriQFormsUsersDynamoDBTable", "Arn"] }
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::${self:custom.WebriQ_Forms_Bucket}/*"
+    - Effect: Allow
+      Action:
+        - ses:SendRawEmail
+      Resource: "*"
+  environment:
+    WEBRIQ_FORMS_TABLE: ${self:custom.WebriQ_Forms_TableName}
+    WEBRIQ_FORMS_USERS_TABLE: ${self:custom.WebriQ_Forms_UserTableName}
+    BUCKET: ${self:custom.WebriQ_Forms_Bucket}
+    APP_URL: ${param:APP_URL, "https://forms.webriq.com"}
+    APP_STAGE: ${self:custom.stage}
+    APP_REGION: ${self:custom.region}
+    APP_MAIL_FROM: ${param:APP_MAIL_FROM}
+    APP_DEFAULT_RECAPTCHA_KEY: ${param:APP_DEFAULT_RECAPTCHA_KEY, "6Lc0DGoUAAAAAMVQyBWYOoBPROnXpLoK1vvF_vx8"}
+    APP_DEFAULT_RECAPTCHA_SECRET: ${param:APP_DEFAULT_RECAPTCHA_SECRET, "6Lc0DGoUAAAAAEwAwSrku8PZ_eNRb_wtQtENx-S4"}
+    APP_V3_RECAPTCHA_KEY: ${param:APP_V3_RECAPTCHA_KEY, "6Lfmu8oZAAAAALbzT0rK835lmU7gVgJW8Cjf4RLy"}
+    APP_V3_RECAPTCHA_SECRET: ${param:APP_V3_RECAPTCHA_SECRET, "6Lfmu8oZAAAAAK9GBEMdgPllpYgJzhN-sItUo6XL"}
+    MAILGUN_USER: ${param:MAILGUN_USER, "postmaster@mg.dorelljames.com"}
+    MAILGUN_PASSWORD: ${param:MAILGUN_PASSWORD, "0ecf4725002739a3e850d6abfbadf3c0-65b08458-72c50e82"}
+    MAILTRAP_USER: ${param:MAILTRAP_USER, "44314661af65a2928"}
+    MAILTRAP_PASSWORD: ${param:MAILTRAP_PASSWORD, "093bfd51adeb42"}
+    WEBRIQ_FORMS_API_URL:
+      {
+        "Fn::Join":
+          [
+            "",
+            [
+              " https://",
+              { "Ref": "ApiGatewayRestApi" },
+              ".execute-api.${self:custom.region}.amazonaws.com/${self:custom.stage}/",
+            ],
+          ],
+      }
+  logRetentionInDays: ${self:custom.logRetentionInDays.${self:custom.stage}}
+  apiGateway:
+    binaryMediaTypes:
+      - "*/*"
+
+functions:
+  app:
+    handler: index.handler
+    events:
+      - http:
+          method: ANY
+          path: /
+          cors: true
+      - http:
+          method: ANY
+          path: "{proxy+}"
+          cors: true
+
+  jwtTokenTest:
+    handler: index.handler
+    events:
+      - http: "GET /tokentest"
+
+  postLogin:
+    handler: index.handler
+    events:
+      - http: "POST /login"
+
+  getFormSubmissions:
+    handler: index.handler
+    events:
+      - http: "GET /forms/{proxy}/submissions"
+  getFormSubmission:
+    handler: index.handler
+    events:
+      - http: "GET /forms/{proxy}/submissions/{id}"
+  createFormSubmission:
+    handler: index.handler
+    events:
+      - http:
+          method: POST
+          path: "/forms/{proxy}/submissions"
+          cors: true
+    environment:
+      BUCKET: ${self:custom.WebriQ_Forms_Bucket}
+  deleteFormSubmissions:
+    handler: index.handler
+    events:
+      - http: "DELETE /forms/{proxy}/submissions"
+  deleteFormSubmission:
+    handler: index.handler
+    events:
+      - http: "DELETE /forms/{proxy}/submissions/{id}"
+
+  createForm:
+    handler: index.handler
+    events:
+      - http: "POST /forms"
+  getForms:
+    handler: index.handler
+    events:
+      - http: "GET /forms"
+  getFormByURL:
+    handler: index.handler
+    events:
+      - http:
+          method: GET
+          path: "/forms/{proxy}/url"
+          cors: true
+  getForm:
+    handler: index.handler
+    events:
+      - http: "GET /forms/{proxy}"
+
+  updateForm:
+    handler: index.handler
+    events:
+      - http: "PUT /forms/{proxy}"
+  deleteForm:
+    handler: index.handler
+    events:
+      - http: "DELETE /forms/{proxy}"
+
+  getJSLib:
+    handler: index.handler
+    events:
+      - http:
+          method: GET
+          path: "/js/initForms"
+          cors: true
+  getReactJSLib:
+    handler: index.handler
+    events:
+      - http:
+          method: GET
+          path: "/js/initReactForms"
+          cors: true
+  
+  siteVerify:
+    handler: index.handler
+    events:
+      - http:
+          method: POST
+          cors: true
+          path: "/siteVerify"
+
+plugins:
+  - serverless-s3-local
+  - serverless-dynamodb-local
+  - serverless-offline
+
+resources:
+  Resources:
+    WebriQFormsDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:custom.WebriQ_Forms_TableName}
+        AttributeDefinitions:
+          - AttributeName: _type
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: N
+        KeySchema:
+          - AttributeName: _type
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TimeToLiveSpecification:
+          AttributeName: expiresAt
+          Enabled: true
+    WebriQFormsUsersDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:custom.WebriQ_Forms_UserTableName}
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    WebriQFormsS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.WebriQ_Forms_Bucket}
+        AccessControl: PublicRead
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+                - HEAD
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"

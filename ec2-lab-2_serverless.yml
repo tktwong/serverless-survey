@@ -1,0 +1,214 @@
+service: ec2-lab-2
+
+frameworkVersion: ">=1.27.2 <2.0.0"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  defaultStage: dev
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs6.10
+
+functions:
+
+resources:
+  Resources:
+    InstanceSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupName: "Ec2DMZ"
+        GroupDescription: "SSH HTTP HTTPS for DMZ"
+        SecurityGroupIngress:
+          - IpProtocol: "tcp"
+            FromPort: 22
+            ToPort: 22
+            CidrIp: "0.0.0.0/0"
+          - IpProtocol: "tcp"
+            FromPort: 80
+            ToPort: 80
+            CidrIp: "0.0.0.0/0"
+          - IpProtocol: "tcp"
+            FromPort: 443
+            ToPort: 443
+            CidrIp: "0.0.0.0/0"
+    Ec2Instance1:
+      Type: AWS::EC2::Instance
+      Properties:
+        ImageId: "ami-0080e4c5bc078760e" #Amazon Linux AMI HVM
+        InstanceType: "t2.micro"
+        KeyName: "MyEc2-Lab-Key" #setup key pair before deploy
+        SecurityGroups:
+          - Ref: "InstanceSecurityGroup"
+          - "default"
+        BlockDeviceMappings:
+          - DeviceName: "/dev/xvda"
+            Ebs:
+              VolumeType: "gp2"
+              DeleteOnTermination: "true"
+              VolumeSize: "8"
+          - DeviceName: "/dev/sdf"
+            Ebs:
+              VolumeType: "standard"
+              DeleteOnTermination: "true"
+              VolumeSize: "15"
+        Tags:
+          - Key: "Name"
+            Value: "Ec2-Lab-2.1"
+        UserData: ${file(scripts/ec2_startup.sh.base64)}
+    Ec2Instance2:
+      Type: AWS::EC2::Instance
+      Properties:
+        ImageId: "ami-0080e4c5bc078760e" #Amazon Linux AMI HVM
+        InstanceType: "t2.micro"
+        KeyName: "MyEc2-Lab-Key" #setup key pair before deploy
+        SecurityGroups:
+          - Ref: "InstanceSecurityGroup"
+          - "default"
+        BlockDeviceMappings:
+          - DeviceName: "/dev/xvda"
+            Ebs:
+              VolumeType: "gp2"
+              DeleteOnTermination: "true"
+              VolumeSize: "8"
+          - DeviceName: "/dev/sdf"
+            Ebs:
+              VolumeType: "standard"
+              DeleteOnTermination: "true"
+              VolumeSize: "15"
+        Tags:
+          - Key: "Name"
+            Value: "Ec2-Lab-2.2"
+        UserData: ${file(scripts/ec2_startup.sh.base64)}
+    ElasticLoadBalancer:
+      Type: AWS::ElasticLoadBalancing::LoadBalancer
+      Properties:
+        CrossZone: "true"
+        ConnectionDrainingPolicy:
+          Enabled: "true"
+          Timeout: "300"
+        AvailabilityZones:
+          Fn::GetAZs:
+            Ref: "AWS::Region"
+        Instances:
+          - Ref: Ec2Instance1
+          - Ref: Ec2Instance2
+        Listeners:
+          - LoadBalancerPort: "80"
+            Protocol: "HTTP"
+            InstancePort: "80"
+            InstanceProtocol: "HTTP"
+        HealthCheck:
+          HealthyThreshold: "3"
+          UnhealthyThreshold: "2"
+          Interval: "10"
+          Timeout: "5"
+          Target:
+            Fn::Join:
+              - ""
+              - - "HTTP:"
+                - "80"
+                - "/index.html"
+        SecurityGroups:
+          - Fn::GetAtt: [InstanceSecurityGroup, GroupId]
+        Tags:
+          - Key: "ClassicELB"
+            Value: "On"
+    ElasticLoadBalancer2:
+      Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+      Properties:
+        Subnets:
+          - "xxxa"
+          - "xxxb"
+          - "xxxc"
+          - "xxxd"
+          - "xxxe"
+          - "xxxf"
+        SecurityGroups:
+          - Fn::GetAtt: [InstanceSecurityGroup, GroupId]
+        Tags:
+          - Key: "ApplicationELB"
+            Value: "On"
+    ElasticLoadBalancer2Listener:
+      Type: AWS::ElasticLoadBalancingV2::Listener
+      Properties:
+        DefaultActions:
+          - Type: "forward"
+            TargetGroupArn:
+              Ref: "ElasticLoadBalancer2TargetGroup"
+        LoadBalancerArn:
+          Ref: ElasticLoadBalancer2
+        Port: "80"
+        Protocol: "HTTP"
+    ElasticLoadBalancer2TargetGroup:
+      Type: AWS::ElasticLoadBalancingV2::TargetGroup
+      Properties:
+        Port: "80"
+        Protocol: "HTTP"
+        HealthCheckIntervalSeconds: "10"
+        HealthCheckPath: "/index.html"
+        HealthCheckPort: "80"
+        HealthCheckProtocol: "HTTP"
+        HealthCheckTimeoutSeconds: "5"
+        HealthyThresholdCount: "3"
+        UnhealthyThresholdCount: "2"
+        Matcher:
+          HttpCode: "200-299"
+        Targets:
+          - Id:
+              Ref: "Ec2Instance1"
+          - Id:
+              Ref: "Ec2Instance2"
+        VpcId: "xxxx"
+    FileSystem:
+      Type: AWS::EFS::FileSystem
+    MountTarget1:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId:
+          Ref: "FileSystem"
+        SubnetId: "xxxa" #look in VPC AWS Console and select a subnet
+        SecurityGroups:
+          - "sg-xxxx" #id of default security group vpc
+    MountTarget2:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId:
+          Ref: "FileSystem"
+        SubnetId: "xxxb" #look in VPC AWS Console and select a subnet
+        SecurityGroups:
+          - "sg-xxxx" #id of default security group vpc
+    MountTarget3:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId:
+          Ref: "FileSystem"
+        SubnetId: "xxxc" #look in VPC AWS Console and select a subnet
+        SecurityGroups:
+          - "sg-xxxx" #id of default security group vpc
+    MountTarget4:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId:
+          Ref: "FileSystem"
+        SubnetId: "xxxd" #look in VPC AWS Console and select a subnet
+        SecurityGroups:
+          - "sg-xxxx" #id of default security group vpc
+    MountTarget5:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId:
+          Ref: "FileSystem"
+        SubnetId: "xxxe" #look in VPC AWS Console and select a subnet
+        SecurityGroups:
+          - "sg-xxxx" #id of default security group vpc
+    MountTarget6:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId:
+          Ref: "FileSystem"
+        SubnetId: "xxxf" #look in VPC AWS Console and select a subnet
+        SecurityGroups:
+          - "sg-xxxx" #id of default security group vpc
+

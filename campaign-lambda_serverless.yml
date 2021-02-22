@@ -1,0 +1,86 @@
+service: b2c-campaign-backoffice
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-central-1
+  stage: stage
+  timeout: 3
+  environment:
+    BUCKET: b2c-campaign-lambda-${opt:stage, self:provider.stage}
+    API_VERSION: v1
+    STAGE: ${opt:stage, self:provider.stage}
+    VERSION: ${opt:version, '1.0'}
+    COMMIT_HASH: ${opt:commitHash, 'latest'}
+    DEPLOY_TIME: ${opt:deployTime, ''}
+  tracing: true # enable tracing
+  usagePlan: {}
+  iamRoleStatements:
+    - Effect: "Allow" # xray permissions (required)
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+        - "s3:*"
+        - "lambda:InvokeFunction"
+      Resource:
+        - "*"
+
+plugins:
+  - '@hewmen/serverless-plugin-typescript'
+  - serverless-offline
+  - serverless-plugin-warmup
+  - serverless-plugin-warmup-ts-adapter
+  - serverless-aws-documentation
+  - serverless-reqvalidator-plugin
+  - serverless-openapi-documentation
+  - serverless-domain-manager
+  - serverless-plugin-existing-s3
+  - serverless-plugin-tracing
+  - serverless-plugin-aws-alerts
+
+package:
+  individually: false
+  excludeDevDependencies: true
+  include:
+  - src/**/!(*.spec).js
+  exclude:
+  - src/**/*.ts
+
+functions:
+  campaignInfo:
+    handler: src/campaign/handler.campaignInfo
+    description: Campaign Info Handler
+    events:
+    - http:
+        path: ${self:provider.environment.API_VERSION}/campaign
+        method: get
+        cors: true
+        documentation:
+          summary: Returns the details of campaigns
+          description: Returns the details of campaigns
+          tags:
+          - Campaigns
+          methodResponses:
+          - statusCode: '200'
+            description: Returned when the operation is completed successfully.
+            responseModels:
+              "application/json": CampaignResponse
+custom:
+  warmup:
+    cleanFolder: false
+    timeout: 30
+    prewarm: true
+    package:
+      individually: false
+    enabled:
+      - staging
+      - prod
+  documentation:
+    models:
+    -
+      name: CampaignResponse
+      contentType: "application/json"
+      schema: ${file(openapi.yml):components.schemas.CampaignResponse}
+
+resources:
+  Resources:
+    ${file(./sls/${opt:stage, self:provider.stage}.yml):Resources}

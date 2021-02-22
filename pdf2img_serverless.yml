@@ -1,0 +1,103 @@
+service:
+  name: pdf2img
+
+custom:
+  pdfTriggerBucket: ${self:service}-${opt:stage, self:provider.stage}-pdf-trigger
+  pdfPagesTriggerBucket: ${self:service}-${opt:stage, self:provider.stage}-pdf-pages-trigger
+  imgBucket: ${self:service}-${opt:stage, self:provider.stage}-img
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules:
+      forceExclude:
+        - aws-sdk
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+  prune:
+    automatic: true
+    number: 3
+  profiles:
+    prod: pdf2jpg
+    dev: default
+  regions:
+    prod: ca-central-1
+    dev: eu-central-1
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-prune-plugin
+
+layers:
+  poppler:
+    path: layer
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  region: ${opt:region, self:custom.regions.${self:provider.stage}}
+  memorySize: 512
+  timeout: 500
+  environment:
+    NODE_ENV: ${self:provider.stage}
+    SENDER_EMAIL: <my@verified.email>
+    RECEIVER_EMAIL: <my@verified.email>
+
+functions:
+  convert:
+    handler: src/convert.index
+    events:
+      - s3:
+          bucket: ${self:custom.pdfPagesTriggerBucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .pdf
+    environment:
+      IMG_BUCKET: ${self:custom.imgBucket}
+    layers:
+      - { Ref: PopplerLambdaLayer }
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - s3:*
+        Resource:
+          - "arn:aws:s3:::${self:custom.pdfPagesTriggerBucket}/*"
+          - "arn:aws:s3:::${self:custom.imgBucket}/*"
+      - Effect: Allow
+        Action:
+          - ses:SendEmail
+          - ses:SendRawEmail
+        Resource: "*"
+  split:
+    handler: src/split.index
+    events:
+      - s3:
+          bucket: ${self:custom.pdfTriggerBucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .pdf
+    environment:
+      PAGES_BUCKET: ${self:custom.pdfPagesTriggerBucket}
+    memorySize: 2048
+    layers:
+      - { Ref: PopplerLambdaLayer }
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - s3:*
+        Resource:
+          - "arn:aws:s3:::${self:custom.pdfTriggerBucket}/*"
+          - "arn:aws:s3:::${self:custom.pdfPagesTriggerBucket}/*"
+      - Effect: Allow
+        Action:
+          - ses:SendEmail
+          - ses:SendRawEmail
+        Resource: "*"
+
+resources:
+  Resources:
+    ImgBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.imgBucket}

@@ -1,0 +1,111 @@
+service:
+  name: coinwatch-serverless
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 256
+  stage: dev
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "dynamoDb:DescribeTable"
+        - "dynamoDb:Scan"
+        - "dynamoDb:Query"
+        - "dynamoDb:PutItem"
+        - "dynamoDb:GetItem"
+        - "dynamoDb:UpdateItem"
+        - "dynamoDb:DeleteItem"
+      Resource:
+        - "arn:aws:dynamodb:us-east-1:102969031384:table/coinbase_notifier_recipient"
+
+package:
+  include:
+    - static
+
+functions:
+  home:
+    handler: handler.home
+    events:
+      - http:
+          method: get
+          path: /
+    environment:
+      JWT_SECRET: ${env:JWT_SECRET}
+  unsubscribe:
+    handler: handler.unsubscribe
+    events:
+      - http:
+          method: get
+          path: /unsubscribe
+    environment:
+      USER_TABLE_NAME: coinbase_notifier_recipient
+  subscribe:
+    handler: handler.subscribe
+    events:
+      - http:
+          method: post
+          path: /subscribe
+    environment:
+      USER_TABLE_NAME: coinbase_notifier_recipient
+      JWT_SECRET: ${env:JWT_SECRET}
+      CAPTCHA_SECRET_KEY: ${env:CAPTCHA_SECRET_KEY}
+  verify:
+    handler: handler.verifyEmail
+    events:
+      - http:
+          method: get
+          path: /verify
+    environment:
+      USER_TABLE_NAME: coinbase_notifier_recipient
+  dailyAlert:
+    handler: handler.dailyAlert
+    events:
+      - schedule: cron(0 17 * * ? *)
+    environment:
+      USER_TABLE_NAME: coinbase_notifier_recipient
+  # fiveMinuteAlert:
+  #   handler: handler.fiveMinuteAlert
+  #   events:
+  #     - schedule: cron(*/5 * * * ? *)
+  #   environment:
+  #     USER_TABLE_NAME: coinbase_notifier_recipient
+
+resources:
+  Resources:
+    static:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: coinwatch-static
+    # usersTable:
+    #   Type: AWS::DynamoDB::Table
+    #   Properties:
+    #     TableName: coinwatch_users
+    #     AttributeDefinitions:
+    #       - AttributeName: email
+    #         AttributeType: S
+    #     KeySchema:
+    #       - AttributeName: email
+    #         KeyType: HASH
+    #     ProvisionedThroughput:
+    #       ReadCapacityUnits: 25
+    #       WriteCapacityUnits: 4
+
+custom:
+  customDomain:
+    domainName: coinwatch.fyi
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+

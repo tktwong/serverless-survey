@@ -1,0 +1,90 @@
+service:
+  name: quetzal-quark
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+
+functions:
+  graphql:
+    handler: handler.graphqlHandler
+    environment:
+      NODE_ENV: production
+      CFNStackName: 
+        Ref: StackName
+    events:
+      - http:
+          method: post
+          path: graphql
+          cors: true
+  graphiql:
+    handler: handler.graphqlHandler
+    events:
+      - http:
+          method: get
+          path: graphiql
+          cors: true
+
+resources:
+  Parameters:
+    StackName:
+      Type: String
+    Region:
+      Type: String
+  Conditions:
+    CreateProdResources: 
+      Fn::Equals: 
+        - Ref: Region
+        - us-east-1
+  Resources:
+    GraphqlLambdaFunction:
+      Properties:
+        Code:
+          S3Key: test/file.zip
+    IamRoleLambdaExecution:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument: 
+          Version: '2012-10-17'
+          Statement: 
+            - Effect: Allow
+              Principal: 
+                Service: 
+                  - lambda.amazonaws.com
+                  - edgelambda.amazonaws.com
+              Action: 'sts:AssumeRole'
+        ManagedPolicyArns:
+          - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+    QuetzalDBRotationSecret:
+      Type: AWS::SecretsManager::Secret
+      Condition: CreateProdResources
+      Properties:
+        Description: Quetzal DB instance
+        GenerateSecretString:
+          SecretStringTemplate: '{"username": "root"}'
+          GenerateStringKey: password
+          PasswordLength: 16
+          ExcludeCharacters: '"@/\'
+    SecretQuetzalAttachment:
+      Type: AWS::SecretsManager::SecretTargetAttachment
+      Condition: CreateProdResources
+      Properties:
+        SecretId: !Ref QuetzalDBRotationSecret
+        TargetId: !Ref QuetzalDB
+        TargetType: AWS::RDS::DBInstance
+    QuetzalDB:
+      Type: AWS::RDS::DBInstance
+      Condition: CreateProdResources
+      Properties:
+        AllocatedStorage: 20
+        DBInstanceClass: db.t3.micro
+        DBName: quetzal_db
+        Engine: postgres
+        EngineVersion: '11.5'
+        MasterUsername: !Join ['', [ '{{resolve:secretsmanager:', !Ref QuetzalDBRotationSecret, ':SecretString:username}}' ]]
+        MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref QuetzalDBRotationSecret, ':SecretString:password}}' ]]

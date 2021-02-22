@@ -1,0 +1,67 @@
+service: serverless-dynamo-algolia-mb
+custom:
+  settings:
+    PERSONS_DYNAMODB_TABLE: sls-algolia-persons
+    ALGOLIA_APP_ID: ${ssm:serverless-algolia-app-id}
+    ALGOLIA_ADMIN_API_KEY: ${ssm:serverless-algolia-admin-api-key}
+    ALGOLIA_INDEX_NAME: serverless-persons-index
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: default
+  region: us-east-1
+  environment: ${self:custom.settings}
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:GetItem'
+        - 'dynamodb:PutItem'
+        - 'dynamodb:UpdateItem'
+        - 'dynamodb:DeleteItem'
+        - 'dynamodb:ListStreams'
+      Resource:
+        - 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.PERSONS_DYNAMODB_TABLE}'
+
+functions:
+  savePerson:
+    handler: handler.savePerson
+    events:
+      - http:
+          path: person
+          method: post
+  updateAlgoliaIndex:
+    handler: handler.updateAlgoliaIndex
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - PersonsTable
+              - StreamArn
+  searchAlgoliaIndex:
+    handler: handler.searchAlgoliaIndex
+    events:
+      - http:
+          path: person/search
+          method: get
+
+resources:
+  Resources:
+    PersonsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: 'personId'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'personId'
+            KeyType: 'HASH'
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.settings.PERSONS_DYNAMODB_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE

@@ -1,0 +1,59 @@
+service:
+  name: serverless-node-project
+# app and org for use with dashboard.serverless.com
+app: serverless-node-project-app
+org: mahmoudgz2003
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt.stage, 'dev'} # that means whether to get the stage from the command line or st the default value as dev
+  region: ${opt.region, 'us-east-2'} # that means whether to get the region from the command line or st the default value as Ohaio region
+
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    GROUPS_TABLE: Groups-${self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+      Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.GROUPS_TABLE}
+
+functions:
+  GetGroups:
+    handler: src/lambda/http/groups.handler
+    events:
+      - http:
+          method: get
+          path: groups # or getGroups or what ever path you want
+          cros: true
+
+resources:
+  Resources:
+    GroupsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.GROUPS_TABLE}
+
+          

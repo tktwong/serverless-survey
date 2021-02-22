@@ -1,0 +1,163 @@
+service: kinesis-test
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-plugin-tracing
+  - serverless-plugin-stage-variables
+  - api-gateway-stage-tag-plugin
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  awsTracingConfig:
+    mode: Active    
+  tracing: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTelemetryRecords
+        - xray:PutTraceSegments
+      Resource: "*"  
+
+custom:
+  apiStageTags:
+    Application: GlobalCare
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: hello
+          method: get
+
+resources:
+  Resources:
+    # Enable API Gateway logging to Cloudwatch.
+    ApiGatewayStage:
+      Type: AWS::ApiGateway::Stage
+      Properties:
+        RestApiId:
+          Ref: ApiGatewayRestApi      
+        MethodSettings:
+          - DataTraceEnabled: true
+            HttpMethod: "*"
+            LoggingLevel: INFO
+            ResourcePath: "/*"
+            MetricsEnabled: true       
+    # Bucket for logs
+    KinesisLogBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: kinesis-cloudwatch-bucket
+    # Role allowing Cloudwatch to put events onto Kinesis stream
+    CloudWatchToKinesisRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: CloudWatchToKinesisRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - logs.#{AWS::Region}.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: CloudWatchToKinesisPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:    
+                - Effect: Allow
+                  Action:
+                    - "firehose:*"
+                  Resource:
+                    - "arn:aws:firehose:#{AWS::Region}:#{AWS::AccountId}:*"
+                - Effect: Allow
+                  Action:
+                    - "iam:PassRole"
+                  Resource:
+                    - "arn:aws:iam::#{AWS::AccountId}:role/CloudWatchToKinesisRole"
+    # Role allowing Kinesis firehose to put object to S3.                  
+    FirehoseToS3Role:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - firehose.amazonaws.com
+              Action: sts:AssumeRole           
+            - Effect: Allow
+              Principal:
+                Service:
+                  - logs.#{AWS::Region}.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: KinesisToS3Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:   
+                - Effect: Allow
+                  Action:
+                    - s3:AbortMultipartUpload 
+                    - s3:GetBucketLocation
+                    - s3:GetObject
+                    - s3:ListBucket
+                    - s3:ListBucketMultipartUploads
+                    - s3:PutObject
+                  Resource:
+                    - Fn::GetAtt: [KinesisLogBucket, Arn]
+                    - Fn::Join:
+                      - ""
+                      -
+                        - Fn::GetAtt: [KinesisLogBucket, Arn]
+                        - "/*"
+        RoleName: gc-${opt:stage}-CloudWatchPushLogsToKinesis
+    # Kinesis firehose delivery stream
+    ServerlessKinesisFirehose:
+      Type: AWS::KinesisFirehose::DeliveryStream
+      Properties:
+        DeliveryStreamName: gc-${opt:stage}-serverless-kinesis-firehose
+        DeliveryStreamType: DirectPut
+        S3DestinationConfiguration:
+          BucketARN:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:s3:::'
+              - Ref: KinesisLogBucket
+          BufferingHints:
+            IntervalInSeconds: "60"
+            SizeInMBs: "1"
+          CompressionFormat: "UNCOMPRESSED"
+          Prefix: "kinesis/"
+          RoleARN: { Fn::GetAtt: [ FirehoseToS3Role, Arn ] }
+    # Subscribe to lambda logs
+    CloudwatchLambdaSubscriptionFilter:
+      Type: AWS::Logs::SubscriptionFilter
+      Properties: 
+        DestinationArn:
+          Fn::GetAtt: [ServerlessKinesisFirehose, Arn]
+        FilterPattern: ""
+        LogGroupName: "/aws/lambda/${self:service}-${opt:stage}-hello"
+        RoleArn: { Fn::GetAtt: [ CloudWatchToKinesisRole, Arn ] }
+    # Subscribe to API Gateway logs
+    CloudwatchApiSubscriptionFilter:
+      Type: AWS::Logs::SubscriptionFilter
+      Properties: 
+        DestinationArn:
+          Fn::GetAtt: [ServerlessKinesisFirehose, Arn]
+        FilterPattern: ""
+        LogGroupName:
+          Fn::Join:
+            - ""
+            -
+              - API-Gateway-Execution-Logs_
+              - Ref: ApiGatewayRestApi
+              - /${opt:stage}
+        RoleArn: { Fn::GetAtt: [ CloudWatchToKinesisRole, Arn ] }        
+ 

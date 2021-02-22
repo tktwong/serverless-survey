@@ -1,0 +1,181 @@
+service:
+  name: BoBot
+
+# Add the serverless-webpack plugin
+provider:
+  name: aws
+  stage: dev
+  runtime: nodejs8.10
+  timeout: 30
+  memorySize: 512
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "states:StartExecution"
+      Resource:
+        - "${self:resources.Outputs.Poller.Value}" # TODO change to be more specific arns
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.ORDERS_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.SLACK_APP_TABLE}"
+
+  region: us-east-1
+  environment:
+    ORDERS_TABLE: ${self:service}-${opt:stage, self:provider.stage}-OrderInfo
+    SLACK_APP_TABLE: ${self:service}-${opt:stage, self:provider.stage}-SlackApp
+    SLACK_CLIENT_ID: "552776779697.553305394532"
+    SLACK_SECRET: "21c7e54019f22d9645c46f0928c115fd"
+
+custom:
+  webpack:
+    webpackConfig: './webpack.config.js'   # Name of webpack configuration file
+    includeModules: false   # Node modules configuration for packaging
+    packager: 'yarn'
+
+functions:
+  getTimeZone:
+    handler: slack.getTimeZone
+  testCreate:
+    handler: dynamodb.testCreate
+  startBoba:
+    handler: startBoba.startBoba
+    events:
+      - http:
+          path: start-boba
+          method: post
+    environment:
+      POLLER_ARN: ${self:resources.Outputs.Poller.Value}
+  didCheckout:
+    handler: doordash.didCheckout
+  getBill:
+    handler: doordash.getBill
+    events:
+      - http:
+          path: getBill 
+          method: post
+  accounting:
+    handler: doordash.accounting
+    events:
+      - http:
+          path: interact
+          method: post
+  authorize:
+    handler: slack.authorize
+    events:
+      - http:
+          path: authorize
+          method: get
+
+stepFunctions:
+  stateMachines:
+    poller:
+      name: poller
+      definition:
+        StartAt: poll
+        States:
+          poll:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-didCheckout"
+            Next: check-result
+          check-result:
+            Type: Choice
+            Choices:
+              - Variable: "$.didCheckout"
+                NumericEquals: 1
+                Next: notify
+            Default: sleep
+          sleep:
+            Type: Wait
+            Seconds: 300
+            Next: poll
+          notify:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-getBill"
+            End: True
+
+
+
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    OrdersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 3
+          WriteCapacityUnits: 3
+        TableName: ${self:provider.environment.ORDERS_TABLE}
+    SlackAppDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: team_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: team_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.SLACK_APP_TABLE}
+  Outputs:
+    Poller:
+      Description: The ARN of the doordash poller
+      Value:
+        Ref: Poller
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+  - serverless-dynamodb-local

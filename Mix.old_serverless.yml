@@ -1,0 +1,161 @@
+service: serverless-api
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: eu-west-1
+  stage: ${opt:stage}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage}
+    REGION: ${self:provider.region}
+    CROSS_ACCOUNT_ROLE_ARN: arn:aws:iam::<ACCOUNTID>:role/SandBoxReadOnlyMetrics
+
+functions:
+  uptimeauth:
+    handler: src/auth/uptime.handler
+    role: DynamoReadRole
+
+  uptime:
+    handler: src/uptime.handler
+    role: MainRoleForUptime
+    environment:
+      session_name: SandBoxReadOnlyMetricsSession
+    events:
+      - http:
+          path: uptime
+          method: get
+          authorizer: uptimeauth
+
+  addauth:
+    handler: src/auth/add.handler
+    role: DynamoReadRole
+
+  add:
+    handler: src/add.handler
+    role: "DynamoReadAndWriteRole"
+    events:
+      - http:
+          path: add
+          method: post
+          authorizer: addauth
+
+  initdb:
+    handler: src/initdb.handler
+    role: "DynamoReadAndWriteRole"
+
+resources:
+  Resources:
+    CustomInitDB:
+      Type: 'Custom::CustomInitDB'
+      Properties:
+        ServiceToken: !GetAtt InitdbLambdaFunction.Arn
+
+    DynamoReadRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: DynamoReadRole${opt:stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: DynamoReadPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+    DynamoReadAndWriteRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: DynamoReadAndWriteRole${opt:stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: DynamoReadAndWritePolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:DescribeTable
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+    MainRoleForUptime:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: MainRoleForUptime${opt:stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+        - PolicyName: MainPolicyForUpTime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                - sts:AssumeRole
+                Resource: ${self:provider.environment.CROSS_ACCOUNT_ROLE_ARN}
+
+    BaseLambdaPolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: BaseLambdaPolicy${opt:stage}
+        Roles:
+          - Ref: "DynamoReadRole"
+          - Ref: "MainRoleForUptime"
+          - Ref: "DynamoReadAndWriteRole"
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              Resource:
+                - 'Fn::Join':
+                  - ':'
+                  -
+                    - 'arn:aws:logs'
+                    - Ref: 'AWS::Region'
+                    - Ref: 'AWS::AccountId'
+                    - 'log-group:/aws/lambda/*:*:*'
+    tokensTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          -
+            AttributeName: customer
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: customer
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST

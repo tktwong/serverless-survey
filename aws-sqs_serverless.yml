@@ -1,0 +1,44 @@
+service: sqs-triggers-demo
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  # profile: sls
+  region: ap-south-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+        - "sqs:GetQueueUrl"
+      Resource: "arn:aws:sqs:${self:provider.region}:accountId:MyQueueTest"
+    - Effect: "Allow"
+      Action:
+        - "sqs:ListQueues"
+      Resource: "arn:aws:sqs:${self:provider.region}:accountId:*"
+
+
+functions:
+  sender:
+    handler: sender.handler
+    events:
+      - http:
+          path: v1/sender
+          method: post
+  
+  receiver:
+    handler: receiver.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - MyQueueTest
+              - Arn
+          batchSize: 1
+  
+
+resources:
+  Resources:
+    MyQueueTest:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "MyQueueTest"

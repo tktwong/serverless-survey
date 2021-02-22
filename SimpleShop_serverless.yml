@@ -1,0 +1,354 @@
+service: simpleshop
+frameworkVersion: '2'
+
+plugins:
+  - serverless-step-functions
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: dev
+  region: us-east-1
+  memorySize: 128
+  timeout: 3
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+      Resource:
+        - !Join [ '/', [!GetAtt ReportsBucket.Arn, '*'] ]
+    - Effect: "Allow"
+      Action:
+        - "ses:SendBulkTemplatedEmail"
+        - "ses:SendBulkEmail"
+        - "ses:SendTemplatedEmail"
+        - "ses:sendEmail"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:Query"
+        - dynamodb:Scan
+      Resource: 
+        - !GetAtt DataTable.Arn
+        - !Join [ '/', [!GetAtt DataTable.Arn, 'index', '*'] ]
+
+  environment:
+    REPORTSBUCKET: !Ref ReportsBucket
+    REPORTTEMPLATE: !Ref ReportTemplate
+    ORDERTEMPLATE: !Ref OrderTemplate
+    SHIPPEDTEMPLATE: !Ref ShippedTemplate
+    DATATABLE: !Ref DataTable
+    FROMEMAIL: test@test.com
+
+
+functions:
+  ValidateOrder:
+    handler: src/lambdas/ValidateOrder.handler
+  PlaceOrder:
+    handler: src/lambdas/PlaceOrder.handler
+  EmailOrder:
+    handler: src/lambdas/EmailOrder.handler
+  ShipOrder:
+    handler: src/lambdas/ShipOrder.handler
+  EmailShipped:
+    handler: src/lambdas/EmailShipped.handler
+  GenerateReport:
+    handler: src/lambdas/GenerateReport.handler
+  EmailReport:
+    handler: src/lambdas/EmailReport.handler
+
+stepFunctions:
+  stateMachines:
+    generateReport:
+      events:
+        - schedule:
+            rate: cron(0 0 * * ? *)
+            enabled: false
+      name: dailyReportsStateMachine
+      definition:
+        Comment: "Generates daily sales reports."
+        StartAt: GenerateReport
+        States:
+          GenerateReport:
+            Type: Task
+            Resource: !GetAtt GenerateReport.Arn
+            Next: EmailReport
+          EmailReport:
+            Type: Task
+            Resource: !GetAtt EmailReport.Arn
+            End: true
+    placeOrder:
+      name: placeOrderStateMachine
+      definition:
+        Comment: "Places and order, updates inventory, ships order"
+        StartAt: ValidateOrder
+        States:
+          ValidateOrder:
+            Type: Task
+            Resource: !GetAtt ValidateOrder.Arn
+            Next: ChoiceState1
+          ChoiceState1:
+            Type: Choice
+            Choices:
+              - Variable: "$.isValid"
+                BooleanEquals: true
+                Next: PlaceOrder
+            Default: InvalidOrder
+          InvalidOrder:
+            Type: Fail
+            Cause: "Invalid order"
+          PlaceOrder:
+            Type: Task
+            Resource: !GetAtt PlaceOrder.Arn
+            Next: EmailOrder
+          EmailOrder:
+            Type: Task
+            Resource: !GetAtt EmailOrder.Arn
+            Next: ShipOrder
+          ShipOrder:
+            Type: Task
+            Resource: !GetAtt ShipOrder.Arn
+            Next: EmailShipped
+          EmailShipped:
+            Type: Task
+            Resource: !GetAtt EmailShipped.Arn
+            End: true
+
+resources:
+  Resources:
+    ReportsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: broswen-simpleshop-reports
+    DataTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "PK"
+            AttributeType: "S"
+          - AttributeName: "SK"
+            AttributeType: "S"
+          - AttributeName: "PK1"
+            AttributeType: "S"
+          - AttributeName: "SK1"
+            AttributeType: "S"
+          - AttributeName: "PK2"
+            AttributeType: "S"
+          - AttributeName: "SK2"
+            AttributeType: "S"
+        GlobalSecondaryIndexes:
+          - IndexName: GSI1
+            KeySchema:
+              - AttributeName: "PK1"
+                KeyType: "HASH"
+              - AttributeName: "SK1"
+                KeyType: "RANGE"
+            Projection:
+              ProjectionType: ALL
+          - IndexName: GSI2
+            KeySchema:
+              - AttributeName: "PK2"
+                KeyType: "HASH"
+              - AttributeName: "SK2"
+                KeyType: "RANGE"
+            Projection:
+              ProjectionType: ALL
+        KeySchema:
+          - AttributeName: "PK"
+            KeyType: "HASH"
+          - AttributeName: "SK"
+            KeyType: "RANGE"
+        TableName: SimpleShopData
+        BillingMode: PAY_PER_REQUEST
+
+    ReportTemplate:
+        Type: AWS::SES::Template
+        Properties:
+          Template:
+              HtmlPart: "The report for {{date}} has generated, The file is {{key}}"
+              SubjectPart: Automated Report
+              TemplateName: ReportTemplate 
+              TextPart: "The report for {{date}} has generated, The file is {{key}}"
+    OrderTemplate:
+        Type: AWS::SES::Template
+        Properties:
+          Template:
+              HtmlPart: "Your order {{id}} has been completed! You will get an email when it ships."
+              SubjectPart: Order confirmed
+              TemplateName: OrderTemplate 
+              TextPart: "Your order {{id}} has been completed! You will get an email when it ships."
+    ShippedTemplate:
+        Type: AWS::SES::Template
+        Properties:
+          Template:
+              HtmlPart: "Your order {{id}} has shipped! The tracking number is {{shippinglabel}}"
+              SubjectPart: Your order has shipped!
+              TemplateName: ShippedTemplate 
+              TextPart: "Your order {{id}} has shipped! The tracking number is {{shippinglabel}}"
+
+    SimpleShopDataRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: SimpleShopDataRole 
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                - appsync.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+        - PolicyName: DDBQuery
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                Resource: 
+                  - !GetAtt DataTable.Arn
+                  - !GetAtt DataTable.Arn
+                  - !Join [ '/', [!GetAtt DataTable.Arn, 'index', '*'] ]
+
+    SimpleShopApiCloudWatchRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: SimpleShopApiCloudWatchRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - appsync.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: "*"
+
+    SimpleShopGraphQLApi:
+      Type: AWS::AppSync::GraphQLApi
+      Properties:
+        AuthenticationType: API_KEY
+        Name: SimpleShopApi
+        LogConfig:
+          CloudWatchLogsRoleArn: !GetAtt SimpleShopApiCloudWatchRole.Arn
+          FieldLogLevel: ALL
+      
+    SimpleShopApiKey:
+      Type: AWS::AppSync::ApiKey
+      Properties:
+        ApiId: !GetAtt SimpleShopGraphQLApi.ApiId
+
+    SimpleShopData:
+      Type: AWS::AppSync::DataSource
+      Properties:
+        ApiId: !GetAtt SimpleShopGraphQLApi.ApiId
+        Name: SimpleShopData
+        DynamoDBConfig:
+          AwsRegion: us-east-1
+          TableName: !Ref DataTable
+        ServiceRoleArn: !GetAtt SimpleShopDataRole.Arn
+        Type: AMAZON_DYNAMODB
+
+    SimpleShopSchema:
+      Type: AWS::AppSync::GraphQLSchema
+      Properties:
+        ApiId: !GetAtt SimpleShopGraphQLApi.ApiId
+        Definition: | 
+          schema {
+            query:Query
+          }
+
+          type Query {
+            getOrder(id: String!): Order!
+            getItems(limit: Int, nextToken: String): ItemConnection
+          }
+
+          type ItemConnection {
+            items: [Item]
+            nextToken: String
+          }
+           
+          type Order {
+            id: String!
+            shippinglabel: String
+            total: Float!
+          }
+
+          type Item {
+            id: String!
+            name: String!
+            price: Float!
+            count: Int!
+          }
+
+    GetOrderResolver:
+      Type: AWS::AppSync::Resolver
+      Properties:
+        ApiId: !GetAtt SimpleShopGraphQLApi.ApiId
+        FieldName: getOrder
+        TypeName: Query 
+        DataSourceName: !GetAtt SimpleShopData.Name
+        Kind: UNIT
+        RequestMappingTemplate: |
+          {
+            #set($prefix ="ORDER#")
+            #set($key = "$prefix$ctx.args.id")
+
+            "version": "2017-02-28",
+            "operation": "GetItem",
+            "key": {
+              "PK": $util.dynamodb.toDynamoDBJson($key),
+              "SK": $util.dynamodb.toDynamoDBJson($key),
+            },
+            "consistentRead" : true
+          }
+
+        ResponseMappingTemplate: |
+            $util.toJson($ctx.result)
+
+    GetItemsResolver:
+      Type: AWS::AppSync::Resolver
+      Properties:
+        ApiId: !GetAtt SimpleShopGraphQLApi.ApiId
+        FieldName: getItems
+        TypeName: Query 
+        DataSourceName: !GetAtt SimpleShopData.Name
+        Kind: UNIT
+        RequestMappingTemplate: |
+          {
+            "version" : "2017-02-28",
+            "operation" : "Scan",
+            "index" : "GSI2",
+            "limit": $util.defaultIfNull(${ctx.args.limit}, 20),
+            "nextToken": $util.toJson($util.defaultIfNullOrBlank($ctx.args.nextToken, null))
+          }
+
+        ResponseMappingTemplate: |
+          {
+            "items": $util.toJson($ctx.result.items),
+            "nextToken": $util.toJson($util.defaultIfNullOrBlank($context.result.nextToken, null))
+          } 
+     

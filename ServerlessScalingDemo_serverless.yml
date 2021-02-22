@@ -1,0 +1,80 @@
+service: Murali-KyruusExercise
+Description: Example serverless app
+tenant: muralia
+app: kyruus
+
+
+frameworkVersion: '>=1.51.0'
+
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  deletionPolicy:
+    dev: Delete
+    prod: Retain
+  tableThroughputs:
+    prod: 3
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  pythonRequirements:
+    dockerizePip: true
+  env_name: ${env:${self:custom.stage}_NAME}
+
+
+provider:
+  name: aws
+  runtime: python3.7
+  # profile: kyruus
+  stage: dev
+  region: us-east-1 # US East (N. Virginia).
+  stackTags:
+    APP: kyruus
+    STAGE: ${self:custom.stage}
+  logs:
+    restApi: true
+  logRetentionInDays: 60
+  usagePlan:
+    quota:
+      limit: 1000
+      offset: 2 # if starting in middle of month, deduct this from limit.
+      period: MONTH
+    throttle:
+      burstLimit: 50 # max requests in a short time (1 to few seconds)
+      rateLimit: 100 # Average requests over an extend period
+
+
+functions:
+  HelloWorld:
+    name: ${self:custom.stage}-Kyruus-HelloWorld
+    description: Simple API which returns a 'hello world' message.
+    handler: src/app.handler
+    memorySize: 128
+    timeout: 5
+    reservedConcurrency: 5
+    role: HelloWorldRole
+    events:
+    - http:
+        path: helloworld
+        method: get
+        cors: true
+    environment:
+      NAME:
+        ${self:custom.env_name}
+
+
+
+plugins:
+  - serverless-python-requirements
+package:
+  exclude:
+    - node_modules/**
+    - set_env_vars.sh
+    - package.json
+    - package-lock.json
+
+
+resources:
+  # IAM Policies
+  - ${file(resources/IAM/HelloWorld.yml)}
+
+

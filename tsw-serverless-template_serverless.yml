@@ -1,0 +1,96 @@
+service: tsw
+
+plugins:
+  - serverless-stage-manager
+
+provider:
+  name: aws
+  runtime: java8
+  region: eu-west-1
+  timeout: 10
+  stage: ${opt:stage,'staging'}
+  vpc:
+    securityGroupIds:
+      - sg-078b2e7c
+    subnetIds:
+      - subnet-95035df2
+      - subnet-890424c0
+      - subnet-0457cc5f
+
+  environment:
+    DB_HOST: ${self:custom.dbHost.${self:provider.stage}}
+    DB_USER: ${self:custom.dbUser.${self:provider.stage}}
+    DB_PASSWORD: ${self:custom.dbPassword.${self:provider.stage}}
+    DB_DATABASE: ${self:custom.dbDatabase.${self:provider.stage}}
+    DB_PORT: ${self:custom.dbPort.${self:provider.stage}}
+
+package:
+  artifact: build/libs/serverless-app-all.jar
+
+custom:
+  stages:
+    - staging
+    - prod
+  dbHost:
+    staging: tswdatabase2.cluster-cnqasrsgtev6.eu-west-1.rds.amazonaws.com
+    prod: tswdatabase2.cluster-cnqasrsgtev6.eu-west-1.rds.amazonaws.com
+  dbUser:
+    staging: tswdatabase
+    prod: tswdatabase
+  dbPassword:
+    staging: ${ssm:/tswdatabase/password~true} #get from ssm (secure)
+    prod: null
+  dbDatabase:
+    staging: tswdatabase
+    prod: tswdatabase
+  dbPort:
+    staging: '5432'
+    prod: '5432'
+functions:
+  migrate:
+    handler: com.getchange.tsw.platform.aws.MigrationHandler
+    timeout: 300
+  create-user:
+    handler: com.getchange.tsw.platform.aws.CreateUserHandler
+    events:
+      - http:
+          path: users
+          method: post
+  get-user:
+    handler: com.getchange.tsw.platform.aws.GetUserHandler
+    events:
+      - http:
+          path: users/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+  create-buy-order:
+    handler: com.getchange.tsw.platform.aws.CreateBuyOrderHandler
+    events:
+      - http:
+          path: orders/buy
+          method: post
+  create-sell-order:
+    handler: com.getchange.tsw.platform.aws.CreateSellOrderHandler
+    events:
+      - http:
+          path: orders/sell
+          method: post
+  create-convert-order:
+    handler: com.getchange.tsw.platform.aws.CreateConvertOrderHandler
+    events:
+      - http:
+          path: orders/convert
+          method: post
+  get-user-orders:
+    handler: com.getchange.tsw.platform.aws.GetUserOrdersHandler
+    events:
+      - http:
+          path: orders/user/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true

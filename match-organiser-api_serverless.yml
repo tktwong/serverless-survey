@@ -1,0 +1,117 @@
+# NOTE: update this with your service name
+service: match-organiser-api
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+# Custom variables
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  tableName: ${self:custom.stage}-matches
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: ap-southeast-2
+  environment:
+    tableName: ${self:custom.tableName}
+
+  # Permissions
+  # @Link: https://serverless.com/framework/docs/providers/aws/guide/functions#permissions
+  # Every AWS Lambda function needs permission to interact with other AWS infrastructure resources
+  # within your account. These permissions are set via an AWS IAM Role. You can set permission policy statements
+  # within this role via the provider.iamRoleStatements property.
+  iamRoleStatements: # permissions for all of your functions can be set here
+    - Effect: Allow
+      Action: # Gives permission to DynamoDB tables.
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to the specific table for the stage
+      Resource:
+        - "Fn::GetAtt": [ MatchesTable, Arn ]
+
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /matches.
+  # - method: POST request.
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross domain api call.
+  # - authorizer: authenticate using the AWS IAM role.
+  #               If you want to require that the caller submit the IAM user's access keys
+  #               in order to be authenticated to invoke your Lambda Function,
+  #               set the authorizer to AWS_IAM. (Link: https://serverless.com/framework/docs/providers/aws/events/apigateway/#http-endpoints-with-aws_iam-authorizers)
+  create:
+    handler: create.main
+    events:
+      - http:
+          path: matches
+          method: post
+          cors: true
+          authorizer: aws_iam
+  get:
+    # Defines an HTTP API endpoint that calls the main function in get.js
+    # - path: url path is /matches/{id}
+    # - method: GET request
+    handler: get.main
+    events:
+      - http:
+          path: matches/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  list:
+    # Defines an HTTP API endpoint that calls the main function in list.js
+    # - path: url path is /matches
+    # - method: GET request
+    handler: list.main
+    events:
+      - http:
+          path: matches
+          method: get
+          cors: true
+          authorizer: aws_iam
+  update:
+    # Defines an HTTP API endpoint that calls the main function in update.js
+    # - path: url path is /matches/{id}
+    # - method: PUT request
+    handler: update.main
+    events:
+      - http:
+          path: matches/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  delete:
+    # Defines an HTTP API endpoint that calls the main function in delete.js
+    # - path: url path is /matches/{id}
+    # - method: DELETE request
+    handler: delete.main
+    events:
+      - http:
+          path: matches/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+# All Resources are other AWS infrastructure resources which the AWS Lambda functions in your Serivce depend on,
+# like AWS DynamoDB or AWS S3.
+resources: # CloudFormation template syntax
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

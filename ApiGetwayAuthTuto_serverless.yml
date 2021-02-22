@@ -1,0 +1,69 @@
+service: ServelessAuthDemo
+provider:
+  name: aws
+  stage: ${opt:stage}
+  region: ${opt:region}
+  runtime: nodejs12.x
+  profile: ${opt:iamProfile}
+  environment:
+    UserTableName: ${opt:userTableName}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - logs:CreateLogGroup
+      Resource: 'arn:aws:logs:*:*:*'
+
+functions:
+  getUsers:
+    handler: getUsers/src/handler.getUsers
+    layers: 
+     - ${opt:commonLibArn}
+    package:
+      include:
+       - getUsers/**
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - dynamodb:Scan
+      Resource: ${opt:userTableArn}
+    events:
+     - http:
+        path: /getUsersUnAuth
+        method: GET   
+        cors: true
+     - http:
+        path: /getUsersCognitoUserAuth
+        method: GET
+        cors: true
+        authorizer:
+         arn: ${opt:userPoolArn}
+     - http:
+        path: /getUsersIDPAuth
+        method: GET
+        cors: true
+        authorizer: aws_iam
+     - http:
+        path: /getUsersCustomAuth
+        method: GET   
+        cors: true
+        authorizer: customAuthorizer
+  customAuthorizer:
+    handler: customAuthorizer/src/authorizer.authorizerFunc
+    package:
+      include:
+       - customAuthorizer/**    
+    iamRoleStatementsInherit: true
+    layers: 
+     - ${opt:commonLibArn}
+
+package:
+  individually: true
+  exclude:
+    - '*/**'
+
+resources:
+  Resources:
+     
+plugins:
+  - serverless-iam-roles-per-function

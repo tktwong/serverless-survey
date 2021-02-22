@@ -1,0 +1,58 @@
+service: fb-api
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  environment:
+    STAGE: "${opt:stage, self:provider.stage}"
+    STORAGE_BUCKET: "${self:custom.storage-bucket-name}"
+  runtime: nodejs10.x
+  timeout: 10
+  region: us-west-2
+  deploymentBucket:
+    name: bb.serverless.deploys
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: arn:aws:s3:::${self:custom.storage-bucket-name}/*
+
+package:
+  individually: true
+
+custom:
+  storage-bucket-name: ${self:service}-storage-${opt:stage, self:provider.stage}
+  webpack:
+    includeModules: true
+  serverless-offline:
+    dontPrintOutput: true
+    port: 3030
+
+functions:
+  api:
+    handler: src/api/index.handler
+    events:
+      - http:
+          method: any
+          path: /{proxy+}
+          cors:
+            origin: "*"
+  schedule:
+    handler: src/scheduled/index.handler
+    events:
+      # -schedule: cron(0 22 ? * FRI-MON 2019-2020) #10pm UST/3pm PST
+      - schedule: cron(0 22 ? * FRI-MON 2019-2020) #10pm UST/3pm PST
+
+resources:
+  Resources:
+    ResultsStorage:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.storage-bucket-name}
+  Outputs:
+    ResultsStorage:
+      Value:
+        Ref: ResultsStorage

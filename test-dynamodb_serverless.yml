@@ -1,0 +1,149 @@
+service: sls-albumsartist
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: qa
+  region: us-east-1
+
+plugins:
+  - serverless-appsync-plugin
+
+custom:
+  appSync: # appsync plugin configuration
+    name: sls-albumsartist-qa
+    authenticationType: API_KEY # use API_KEY
+    dataSources:
+      - type: AMAZON_DYNAMODB # type of resource
+        name: ArtistTable # name of the resource
+        config:
+          tableName: Artist  # name of our DynamoDB table
+      - type: AMAZON_DYNAMODB
+        name: AlbumTable 
+        config:
+          tableName: Album
+    mappingTemplates:
+      - dataSource: ArtistTable
+        type: Query
+        field: listArtists # from the query in schema.graphql
+        request: "Query.listArtists.req.vtl"
+        response: "Common.res.vtl"
+      - dataSource: ArtistTable
+        type: Query
+        field: getArtist 
+        request: "Query.getArtist.req.vtl"
+        response: "Common.res.vtl"
+      - dataSource: ArtistTable
+        type: Mutation
+        field: createArtist # from the mutation in schema.graphql
+        request: "Mutation.createArtist.req.vtl"
+        response: "Common.res.vtl"
+      - dataSource: ArtistTable
+        type: Mutation
+        field: deleteArtist 
+        request: "Mutation.deleteArtist.req.vtl"
+        response: "Common.res.vtl"
+      - dataSource: ArtistTable
+        type: Mutation
+        field: updateArtist 
+        request: "Mutation.updateArtist.req.vtl"
+        response: "Common.res.vtl"
+      
+      - dataSource: AlbumTable
+        type: Query
+        field: listAlbums 
+        request: "Query.listAlbums.req.vtl"
+        response: "Common.res.vtl"
+      - dataSource: AlbumTable
+        type: Query
+        field: getAlbum 
+        request: "Query.getAlbum.req.vtl"
+        response: "Common.res.vtl"
+      - dataSource: AlbumTable
+        type: Mutation
+        field: createAlbum 
+        request: "Mutation.createAlbum.req.vtl"
+        response: "Common.res.vtl"
+      - dataSource: AlbumTable
+        type: Mutation
+        field: deleteAlbum 
+        request: "Mutation.deleteAlbum.req.vtl"
+        response: "Common.res.vtl"
+      - dataSource: AlbumTable
+        type: Mutation
+        field: updateAlbum 
+        request: "Mutation.updateAlbum.req.vtl"
+        response: "Common.res.vtl"
+
+      - dataSource: ArtistTable
+        type: Album
+        field: artist
+        request: "Album.artist.req.vtl"
+        response: "Album.artist.res.vtl"
+      - dataSource: AlbumTable
+        type: Artist
+        field: albums
+        request: "Artist.Albums.req.vtl"
+        response: "Artist.Albums.res.vtl" 
+
+functions:
+  triggerStream:
+      handler: handler.triggerStream
+      environment:
+        SM_GRAPHQL_API: https://.../graphql
+        API_KEY: da2-xxxx
+      events:
+        - stream:
+            type: dynamodb
+            batchSize: 1
+            startingPosition: LATEST
+            arn:
+              Fn::GetAtt:
+                - Album
+                - StreamArn
+
+resources:
+  Resources:
+    Artist: # name of the resource to be use later
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: "Artist" # name of the table
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id" # partition key
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1    
+
+    Album: 
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: "Album" # name of the table
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+          - AttributeName: "albumArtistId"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id" # partition key
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: KEYS_ONLY #Valid Values: NEW_IMAGE | OLD_IMAGE | NEW_AND_OLD_IMAGES | KEYS_ONLY
+        GlobalSecondaryIndexes:
+          - IndexName: "gsi-ArtistAlbums"
+            KeySchema:
+            - AttributeName: albumArtistId
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+            
+ 

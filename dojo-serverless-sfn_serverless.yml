@@ -1,0 +1,126 @@
+service: dojo-lambda-nico
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: eu-west-1
+  environment: ${self:custom.customVars}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource:
+        - '*'
+    - Effect: 'Allow'
+      Action:
+        - 'states:*'
+      Resource:
+        - '*'
+
+package:
+  exclude:
+    - 'node_modules/**'
+
+functions:
+  bucket_watcher:
+    handler: bucket_watcher.handler
+    environment:
+      STATE_MACHINE_ARN: ${self:resources.Outputs.StateMachine.Value}
+    events:
+      - s3: ${self:custom.customVars.DOJO_BUCKET}
+  process_order:
+    handler: process_order.handler
+  cook_meat:
+    handler: cook_meat.handler
+  cook_vegetables:
+    handler: cook_vegetables.handler
+  serve:
+    handler: serve.handler
+  package:
+    handler: package.handler
+
+stepFunctions:
+  stateMachines:
+    cookingpipeline:
+      name: Cookingpipeline
+      definition:
+        Comment: "Cooking Pipeline"
+        StartAt: process_order
+        States:
+          process_order:
+            Type: Task
+            ResultPath: $.order
+            OutputPath: $
+            Resource:
+              Fn::GetAtt: [process_order, Arn]
+            Next: cook
+          cook:
+            Type: Parallel
+            ResultPath: $.meal
+            OutputPath: $
+            Branches:
+              - StartAt: cook_meat
+                States:
+                  cook_meat:
+                    Type: Task
+                    Resource:
+                      Fn::GetAtt: [cook_meat, Arn]
+                    Retry:
+                      - ErrorEquals:
+                          - InternalError
+                        IntervalSeconds: 3
+                        BackoffRate: 2
+                        MaxAttempts: 10
+                    End: true
+              - StartAt: cook_vegetables
+                States:
+                  cook_vegetables:
+                    Type: Task
+                    Resource:
+                      Fn::GetAtt: [cook_vegetables, Arn]
+                    End: true
+            Next: dispatcher
+          dispatcher:
+            Type: Choice
+            Choices:
+              - Variable: "$.order.type"
+                StringEquals: EAT_HERE
+                Next: serve
+              - Variable: "$.order.type"
+                StringEquals: TAKE_AWAY
+                Next: package
+            Default: failed_dispatch
+          serve:
+            Type: Task
+            ResultPath: $.service
+            OutputPath: $
+            Resource:
+              Fn::GetAtt: [serve, Arn]
+            Next: success
+          package:
+            Type: Task
+            ResultPath: $.package
+            OutputPath: $
+            Resource:
+              Fn::GetAtt: [package, Arn]
+            Next: success
+          success:
+            Type: Succeed
+          failed_dispatch:
+            Type: Fail
+            Cause: "Unhandled file type"
+      tags:
+        Team: Dojo
+resources:
+  Outputs:
+    StateMachine:
+      Description: The ARN of the provisioning state machine
+      Value:
+        Ref: Cookingpipeline
+
+custom:
+  customVars:
+    DOJO_BUCKET: dojo-lambda-nico-bucket
+
+plugins:
+  - serverless-step-functions

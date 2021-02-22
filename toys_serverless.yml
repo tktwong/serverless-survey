@@ -1,0 +1,130 @@
+service: toys
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+    packager: "yarn"
+
+  dynamodb:
+    stages:
+      - production
+    start:
+      migrate: true
+      port: ${self:custom.localDynamoDBPort}
+      inMemory: true
+      seed: true
+
+    seed:
+      test:
+        sources:
+          - table: ${self:custom.dynamoDBTableName}
+            sources: [./dynamodb-local-seed.json]
+
+  localDynamoDBPort: ${env:LOCAL_DYNAMODB_PORT, '8000'}
+  awsRegion: ${env:AWS_REGION, ''}
+  dynamoDBTableName: ${env:DYNAMODB_TABLE_NAME, 'toys'}
+  s3StaticBucketName: ${env:S3_STATIC_BUCKET_NAME, ''}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${self:custom.awsRegion}
+  stage: production
+
+  environment:
+    S3_STATIC_BUCKET_NAME: ${self:custom.s3StaticBucketName}
+    LOCAL_DYNAMODB_PORT: ${self:custom.localDynamoDBPort}
+    REGION: ${self:custom.awsRegion}
+    DYNAMODB_TABLE_NAME: ${self:custom.dynamoDBTableName}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:custom.awsRegion}:*:table/${self:custom.dynamoDBTableName}"
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+      Resource: "arn:aws:s3:::${self:custom.s3StaticBucketName}/*"
+
+resources:
+  Resources:
+    toysTableSecond:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.dynamoDBTableName}
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+functions:
+  getWords:
+    handler: src/lambda/words.getWords
+    events:
+      - http:
+          path: /words
+          method: get
+          cors: false
+
+  createWord:
+    handler: src/lambda/words.createWord
+    events:
+      - http:
+          path: /word
+          method: post
+          cors: false
+
+  scanDB:
+    handler: src/lambda/index.scanDB
+    events:
+      - http:
+          path: /scan
+          method: get
+          cors: false
+
+  page:
+    handler: src/lambda/index.index
+    events:
+      - http:
+          path: /{any+}
+          method: get
+          cors: false
+
+  index:
+    handler: src/lambda/index.index
+    events:
+      - http:
+          path: /
+          method: get
+          cors: false
+
+  webapp:
+    handler: src/lambda/index.webapp
+    events:
+      - http:
+          path: /webapp.js
+          method: get
+          cors: false

@@ -1,0 +1,106 @@
+service: serverless-exercise2
+# app and org for use with dashboard.serverless.com
+app: serverless-exercise
+org: zburgermeiszter
+
+custom:
+  tableName: results
+  uploadsBucketName: ${self:service}-uploads
+  lambdaName: ${self:service}-${self:provider.stage}-processVideoIDs
+  s3Sync:
+    - bucketName: ${self:custom.uploadsBucketName}
+      localDir: uploads
+  videoIDsFile: videos.txt
+  remover:
+    buckets:
+      - ${self:custom.uploadsBucketName}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  region: eu-west-2
+
+  environment:
+    tableName: ${self:custom.tableName}
+    uploadsBucketName: ${self:custom.uploadsBucketName}
+    videoIDsFile: ${self:custom.videoIDsFile}
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 's3:ListBucket'
+        - 's3:GetObject'
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - 'Ref': 'UploadsBucket'
+            - '/*'
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - 'Fn::GetAtt': [ResultsTable, Arn]
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: '*'
+
+functions:
+  processVideoIDs:
+    name: ${self:custom.lambdaName}
+    handler: dist/handler.processVideoIDs
+    events:
+      - http:
+          path: processVideoIDs
+          method: get
+
+resources:
+  Resources:
+    UploadsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.uploadsBucketName}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - POST
+                - PUT
+              AllowedOrigins:
+                - '*'
+    ResultsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: videoId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: videoId
+            KeyType: HASH
+        # Set the capacity to auto-scale
+        BillingMode: PAY_PER_REQUEST
+  Outputs:
+    UploadsBucketNameOutputKey:
+      Value: !Ref UploadsBucket
+
+plugins:
+  - serverless-s3-sync
+  - ./dist/plugins/invoker-plugin
+  - serverless-s3-remover
+
+package:
+  exclude:
+    - uploads/**
+    - src/**

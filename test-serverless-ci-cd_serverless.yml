@@ -1,0 +1,86 @@
+service: my-app
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-west-2'}
+
+plugins:
+  - serverless-finch
+  - serverless-plugin-cicd
+
+custom:
+  client:
+    bucketName: ${self:service}-${self:provider.stage}-hosting
+    distributionFolder: build
+    manageResources: false
+  cicd:
+    image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+    # branch: Handle this in each stage
+    owner: FelipeD-FiveTalent
+    repository: test-serverless-ci-cd
+    githubtoken: ${ssm:/my-app/githubToken~true}
+    excludestages:
+      - master
+      - dev
+  testing:
+    branch: testing
+  staging:
+    branch: staging
+  production:
+    branch: production
+
+resources:
+  Resources:
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:service}-${self:provider.stage}-hosting
+        MetricsConfigurations:
+          - Id: EntireBucket
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+      DeletionPolicy: Retain
+    WebsiteCloudfront:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Comment: Cloudfront Distribution pointing to S3 website bucket
+          Origins:
+            - DomainName: !GetAtt S3Bucket.DomainName
+              Id: S3Origin
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: http-only
+          Enabled: true
+          HttpVersion: "http2"
+          DefaultRootObject: index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            TargetOriginId: S3Origin
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+          PriceClass: PriceClass_All
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+              ErrorCachingMinTTL: 0
+
+  Outputs:
+    WebsiteURL:
+      Value: !GetAtt [S3Bucket, WebsiteURL]
+      Description: URL for website hosted on S3
+    S3BucketSecureURL:
+      Value: !Join ["", ["https://", !GetAtt [S3Bucket, DomainName]]]
+      Description: Name of S3 bucket to hold website content

@@ -1,0 +1,61 @@
+service: images
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  tableName: ${self:custom.stage}-users
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  environment:
+    tableName: ${self:custom.tableName}
+    bucket: ggarsa-${self:provider.stage}-deploy
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ UsersTable, Arn ]
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+
+functions:
+  create:
+    handler: create.main
+    environment:
+      NODE_PATH: "./:/opt/nodejs/node_modules"
+    events:
+      - http:
+          path: images
+          method: post
+          cors: true
+          authorizer: aws_iam
+    layers:
+      - ${cf:helpers-nodex-${self:provider.stage}.HelpersLayerExport}
+  get-all:
+    handler: list.main
+    environment:
+      NODE_PATH: "./:/opt/node_modules"
+    events:
+      - http:
+          path: images
+          method: get
+          cors: true
+          authorizer: aws_iam
+    layers:
+      - ${cf:helpers-nodex-${self:provider.stage}.HelpersLayerExport}
+
+resources:
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/s3-bucket.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

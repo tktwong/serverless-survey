@@ -1,0 +1,61 @@
+service: meetup-raffle
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  region: us-west-2
+  environment:
+    MAILCHIMP_API_KEY: ${file(./config.json):MAILCHIMP_API_KEY}
+    MAILCHIMP_REGION: ${file(./config.json):MAILCHIMP_REGION}
+    MAILCHIMP_LIST_ID: ${file(./config.json):MAILCHIMP_LIST_ID}
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - dynamodb:DescribeTable
+      - dynamodb:Query
+      - dynamodb:Scan
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+      - dynamodb:UpdateItem
+      - dynamodb:DeleteItem
+      - dynamodb:BatchWriteItem
+    # Allow function to access only this database
+    Resource: [
+      "arn:aws:dynamodb:us-west-2:*:table/meetup-raffle-db"
+      ]
+
+functions:
+  register:
+    handler: handler.register
+    events:
+      - http:
+          path: enter
+          method: post
+          cors: true
+  raffle:
+    handler: handler.raffle
+    events:
+      - http:
+          path: raffle
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    meetupRaffleDb:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(./config.json):DDB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+          - AttributeName: date
+            AttributeType: N
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+          - AttributeName: date
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

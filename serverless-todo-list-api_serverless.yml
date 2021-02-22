@@ -1,0 +1,117 @@
+service: todolist-api
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-dotenv-plugin
+  - serverless-domain-manager
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${env:AWS_ENV, 'nonprod'}
+  region: ${env:AWS_DEFAULT_REGION, 'ap-southeast-2'}
+  timeout: 30
+  memorySize: 128
+  environment:
+    # RDS_ENDPOINT: ${ssm:/${self:provider.stage}/rds/rds_endpoint~true}
+    # RDS_USERNAME: ${ssm:/${self:provider.stage}/rds/rds_user~true}
+    # RDS_PASSWORD: ${ssm:/${self:provider.stage}/rds/rds_password~true}
+    # RDS_DATABASE: ${ssm:/${self:provider.stage}/rds/rds_db_name~true}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:RemovePermission
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+        - lambda:Invoke
+      Resource: '*'
+
+custom:
+  webpack:
+    excludeFiles: ./**/*.test.js
+  bundle:
+    sourcemaps: true      # Enable source maps
+    caching: true         # Enable Webpack caching
+    stats: false          # Don't print out any Webpack output
+    linting: true         # Enable linting as a part of the build process
+    # copyFiles:            # Copy any additional files to the generated package
+    #   - from: 'public/*'    # Where the files are currently
+    #     to: './'            # Where in the package should they go
+  serverless-offline:
+    port: 4000
+  # customDomain:
+  #   createRoute53Record: true
+  #   certificateName: "*.igorjs.com"
+  #   endpointType: "edge"
+  #   domainName: "api.nonprod.cloud.igorjs.com"
+  #   basePath: api
+  #   stage: ${self:provider.stage}
+
+functions:
+  todosList:
+    name: ${self:service.name}-${self:provider.stage}-list
+    handler: functions/todos.list
+    events:
+      - http:
+          path: /v1/todos
+          method: get
+          cors: true
+
+  todosView:
+    name: ${self:service.name}-${self:provider.stage}-view
+    handler: functions/todos.view
+    events:
+      - http:
+          path: /v1/todos/{id}
+          method: get
+          cors: true
+
+  todosCreate:
+    name: ${self:service.name}-${self:provider.stage}-create
+    handler: functions/todos.create
+    events:
+      - http:
+          path: /v1/todos
+          method: post
+          cors: true
+
+  todosUpdate:
+    name: ${self:service.name}-${self:provider.stage}-update
+    handler: functions/todos.update
+    events:
+      - http:
+          path: /v1/todos/{id}
+          method: post
+          cors: true
+
+# resources:
+#   Resources:
+#     ApiDistribution:
+#       Type: AWS::CloudFront::Distribution
+#       Properties:
+#         DistributionConfig:
+#           Origins:
+#           - Id: ApiGateway
+#             DomainName:
+#               Fn::Join:
+#                 - "."
+#                 - - Ref: ApiGatewayRestApi
+#                 - execute-api
+#                 - - Ref: AWS::Region
+#                 - amazonaws.com
+#     ApiGatewayAuthorizer:
+#       DependsOn:
+#         - ApiGatewayRestApi
+#       Type: AWS::ApiGateway::Authorizer
+#       Properties:
+#         Name: cognito-authorizer
+#         IdentitySource: method.request.header.Authorization
+#         RestApiId:
+#           Ref: ApiGatewayRestApi
+#         Type: COGNITO_USER_POOLS
+#         ProviderARNs:
+#           - arn:aws:cognito-idp:ap-southeast-2:XXXXXXXXXXXX:userpool/ap-southeast-2_XXXXXXXXX

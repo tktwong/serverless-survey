@@ -1,0 +1,64 @@
+service: mux
+
+custom:
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+
+functions:
+  authorizeUser:
+    handler: functions/authorizeUser.handler
+    memorySize: 128
+    role: IamRoleEdgeLambdaExecution
+    timeout: 5
+
+  forwardImageRequest:
+    handler: functions/forwardImageRequest.handler
+    memorySize: 128
+    role: IamRoleEdgeLambdaExecution
+    timeout: 5
+
+  indexMovie:
+    environment:
+      CLOUDFRONT_URL:
+        Fn::GetAtt: [CloudFrontDistributionMovies, DomainName]
+    handler: functions/indexMovie.handler
+    iamRoleStatements:
+      - Action:
+          - s3:PutObject
+        Effect: Allow
+        Resource:
+          Fn::Join:
+            - ''
+            - - 'arn:aws:s3:::'
+              - Ref: S3BucketMovies
+              - /*
+    memorySize: 128
+    timeout: 60
+
+  resizeImage:
+    handler: functions/resizeImage.handler
+    role: ResizeImageIamRoleEdgeLambdaExecution
+    timeout: 5
+
+package:
+  individually: true
+
+plugins:
+  localPath: ./plugins
+  modules:
+    - serverless-iam-roles-per-function
+    - serverless-update-function-versions
+    - serverless-webpack
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs8.10
+  stage: prod
+
+resources:
+  - ${file(resources/aws/cloudfront.yml)}
+  - ${file(resources/aws/iam.yml)}
+  - ${file(resources/aws/s3.yml)}

@@ -1,0 +1,891 @@
+service:
+  name: managingexpense
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin # plugin for validation
+  - serverless-aws-documentation # pre requisite for validation plugin 
+
+provider:
+  tracing:
+    lambda: true
+    ApiGateway: true
+# tracing is used for x ray 
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region,'us-east-2'}
+
+  environment:
+    IS_OFFLINE: false
+    Income_Table: IncomeTable-${self:provider.stage}
+    Expense_Table: ExpenseTable-${self:provider.stage}
+    INCOME_ID_INDEX: IncomeUserIdIndex
+    EXPENSE_ID_INDEX: ExpenseUserIdIndex
+    Category_Table: categoryTable-${self:provider.stage}
+    CATEGORY_TYPE_INDEX : CategoryTypeINDEX
+    CATEGORY_USERID_INDEX: CategoryUserIdIndex
+    Account_Table: AccountTable-${self:provider.stage}
+    ACCOUNT_TYPE_INDEX : AccountTypeINDEX
+    ACCOUNT_USER_ID_INDEX : AccountUserIdINDEX
+    IMAGES_S3_BUCKET: imagesbucket-${self:provider.stage}
+    SIGNED_URL_EXPIRATION : 300
+
+
+  documentation:
+    models:
+      - name: createIncome
+        contentType: application/json
+        schema: ${file(models/create-income-request.json)}
+      - name: createExpense
+        contentType: application/json
+        schema: ${file(models/create-expense-request.json)}
+
+functions:
+  Auth:
+    handler: src/lambda/auth/authorization.handler
+
+  CreateIncome:
+    handler: src/lambda/http/Income/createIncome.handler
+    events:
+      - http:
+          method: post 
+          path: income
+          cors: 
+            origin: "*"
+            headers:
+              - userid
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new income
+            description: Create a new income
+            requestModels:
+              'application/json': createIncome
+    iamRoleStatements:
+      - Effect: "Allow"        
+        Action:
+          - dynamodb:PutItem        
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Income_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  GetIncomeByUserId:
+    handler: src/lambda/http/Income/getIncomeByUser.handler
+    events:
+      - http:
+          method: get 
+          path: incomeByUser
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth   
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+        - Dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Income_Table}/index/${self:provider.environment.INCOME_ID_INDEX}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+      
+  GetIncome:
+    handler: src/lambda/http/Income/getIncome.handler
+    events:
+      - http:
+          method: get 
+          path: income/{userId}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth   
+    iamRoleStatements:
+      - Effect: "Allow"        
+        Action:
+          - dynamodb:Query        
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Income_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  DeleteIncome:
+    handler: src/lambda/http/Income/deleteIncome.handler
+    events:
+      - http:
+          method: delete
+          path: income/{userId}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth      
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Income_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  UpdateIncome:
+    handler: src/lambda/http/Income/updateIncome.handler
+    events:
+      - http:
+          method: put 
+          path: income/{userId}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth    
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Income_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  CreateExpense:
+    handler: src/lambda/http/Expense/createExpense.handler
+    events:
+      - http:
+          method: post 
+          path: expense
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth   
+          documentation:
+            summary: Create a new income
+            description: Create a new income
+            requestModels:
+              'application/json': createExpense
+    iamRoleStatements:
+      - Effect: "Allow"        
+        Action:
+          - dynamodb:PutItem        
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Expense_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  GetExpenseByUserId:
+    handler: src/lambda/http/Expense/getExpenseByUser.handler
+    events:
+      - http:
+          method: get 
+          path: expenseByUser
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth     
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+        - Dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Expense_Table}/index/${self:provider.environment.EXPENSE_ID_INDEX}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+      
+  GetExpense:
+    handler: src/lambda/http/Expense/getExpense.handler
+    events:
+      - http:
+          method: get 
+          path: expense/{Id}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth     
+    iamRoleStatements:
+      - Effect: "Allow"        
+        Action:
+          - dynamodb:Query        
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Expense_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  DeleteExpense:
+    handler: src/lambda/http/Expense/deleteExpense.handler
+    events:
+      - http:
+          method: delete
+          path: expense/{Id}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth   
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Expense_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  UpdateExpense:
+    handler: src/lambda/http/Expense/updateExpense.handler
+    events:
+      - http:
+          method: put 
+          path: expense/{Id}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth   
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Expense_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  CreateCategory:
+    handler: src/lambda/http/Category/createCategory.handler
+    events:
+      - http:
+          method: post 
+          path: category
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth   
+    iamRoleStatements:
+      - Effect: "Allow"        
+        Action:
+          - dynamodb:PutItem        
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Category_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  # GetCategoryByCategoryType:
+  #   handler: src/lambda/http/Category/getCategoryByCategoryType.handler
+  #   events:
+  #     - http:
+  #         method: get 
+  #         path: categoryByType/{Id}
+  #         cors: true
+  #   iamRoleStatements:
+  #     - Effect: Allow
+  #       Action:
+  #       - Dynamodb:Query
+  #       Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Category_Table}/index/${self:provider.environment.CATEGORY_TYPE_INDEX}
+
+  GetCategoryByCategoryUserId:
+    handler: src/lambda/http/Category/getCategoryByCategoryUserId.handler
+    events:
+      - http:
+          method: get 
+          path: categoryByUserId
+          cors: true
+          headers:
+            - userid
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - Dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Category_Table}/index/${self:provider.environment.CATEGORY_USERID_INDEX}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  GetCategoryByCategoryId:
+    handler: src/lambda/http/Category/getCategoryByCategoryId.handler
+    events:
+      - http:
+          method: get 
+          path: categoryById/{Id}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth    
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - Dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Category_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+
+  DeleteCategory:
+    handler: src/lambda/http/Category/deleteCategory.handler
+    events:
+      - http:
+          method: delete
+          path: category/{Id}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth    
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Category_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  UpdateCategory:
+    handler: src/lambda/http/Category/updateCategory.handler
+    events:
+      - http:
+          method: put 
+          path: category/{Id}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth   
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Category_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+
+  CreateAccount:
+    handler: src/lambda/http/Account/createAccount.handler
+    events:
+      - http:
+          method: post 
+          path: account
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth   
+    iamRoleStatements:
+      - Effect: "Allow"        
+        Action:
+          - dynamodb:PutItem        
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Account_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  # GetAccountByAccountType:
+  #   handler: src/lambda/http/Account/getAccountByAccountType.handler
+  #   events:
+  #     - http:
+  #         method: get 
+  #         path: accountByType/{Id}
+  #         cors: true
+  #   iamRoleStatements:
+  #     - Effect: Allow
+  #       Action:
+  #       - Dynamodb:Query
+  #       Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Account_Table}/index/${self:provider.environment.ACCOUNT_TYPE_INDEX}
+  
+  GetAccountByAccountUserId:
+    handler: src/lambda/http/Account/getAccountByAccountUserId.handler
+    events:
+      - http:
+          method: get 
+          path: accountByUserId
+          cors:
+            origin: "*"
+            headers:
+              - userid
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              
+          authorizer: Auth   
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - Dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Account_Table}/index/${self:provider.environment.ACCOUNT_USER_ID_INDEX}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+      
+ 
+  GetAccountByAccountId:
+    handler: src/lambda/http/Account/getAccountByAccountId.handler
+    events:
+      - http:
+          method: get 
+          path: accountById/{Id}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth    
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - Dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Account_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+
+  DeleteAccount:
+    handler: src/lambda/http/Account/deleteAccount.handler
+    events:
+      - http:
+          method: delete
+          path: account/{Id}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth     
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Account_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  UpdateAccount:
+    handler: src/lambda/http/Account/updateAccount.handler
+    events:
+      - http:
+          method: put 
+          path: account/{Id}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth   
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.Account_Table}
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  PresignedUrlForIncomeExpense:
+    handler: src/lambda/http/PresignedUrl/getPresignedUrl.handler
+    events:
+      - http:
+          method: get
+          path: getPresignedUrl/{Id}
+          cors: 
+            origin: "*"
+            headers:
+                - userid
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              
+          authorizer: Auth     
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+      - Effect: Allow
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+    
+
+
+
+resources:
+  Resources:
+    IncomeDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: incomeId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: incomeId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.INCOME_ID_INDEX}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH 
+            Projection:
+              ProjectionType: ALL 
+        BillingMode: PAY_PER_REQUEST
+        TableName : ${self:provider.environment.Income_Table}
+
+    ExpenseDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: expenseId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: expenseId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.EXPENSE_ID_INDEX}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH 
+            Projection:
+              ProjectionType: ALL 
+        BillingMode: PAY_PER_REQUEST
+        TableName : ${self:provider.environment.Expense_Table}
+
+    CategoryDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: categoryId
+            AttributeType: S 
+          - AttributeName: categoryType
+            AttributeType: S
+          - AttributeName: categoryUserId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: categoryId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          # - IndexName:  ${self:provider.environment.CATEGORY_TYPE_INDEX}
+          #   KeySchema:
+          #     - AttributeName: categoryType
+          #       KeyType: HASH 
+          #   Projection:
+          #     ProjectionType: ALL
+          - IndexName:  ${self:provider.environment.CATEGORY_USERID_INDEX}
+            KeySchema:
+              - AttributeName: categoryUserId
+                KeyType: HASH 
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName:  ${self:provider.environment.Category_Table}
+
+    AccountDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: accountId
+            AttributeType: S 
+          - AttributeName: accountType
+            AttributeType: S
+          - AttributeName: accountUserId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: accountId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          # - IndexName:  ${self:provider.environment.ACCOUNT_TYPE_INDEX}
+          #   KeySchema:
+          #     - AttributeName: accountType
+          #       KeyType: HASH 
+          #   Projection:
+          #     ProjectionType: ALL
+          - IndexName:  ${self:provider.environment.ACCOUNT_USER_ID_INDEX}
+            KeySchema:
+              - AttributeName: accountUserId
+                KeyType: HASH 
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName:  ${self:provider.environment.Account_Table}
+          
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket 
+      Properties:
+        BucketName: ${self:provider.environment.IMAGES_S3_BUCKET}
+        #NotificationConfiguration:
+          # the commented code is used to notify a lambda function where as the topic configuartion is used to notify a topic
+          # LambdaConfigurations:
+          #- Event: s3:ObjectCreated:*
+          #  Function: !GetAtt SendUploadNotificationsLambdaFunction.Arn 
+          #TopicConfigurations:
+          #  - Event: s3:ObjectCreated:*
+          #    Topic: !Ref ImagesTopic
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET 
+                - PUT 
+                - POST 
+                - DELETE
+                - HEAD 
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket
+
+   # adding a code for the cors header as well as some other code for api gateway 
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Header: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,userid'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+      
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties: 
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+          
+          

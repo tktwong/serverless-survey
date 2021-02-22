@@ -1,0 +1,58 @@
+service: serverless-pdf-generator
+frameworkVersion: "1.60.5"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: prod
+  environment:
+    IS_OFFLINE: ${opt:offline}
+  apiGateway:
+    binaryMediaTypes:
+      - "application/pdf"
+plugins:
+  - serverless-webpack
+  - serverless-domain-manager
+  - serverless-offline
+
+layers:
+  HeadlessChrome:
+    name: HeadlessChrome
+    compatibleRuntimes:
+      - nodejs12.x
+    description: Headless Chrome
+    package:
+      artifact: layers/chrome_aws_lambda.zip
+custom:
+  webpack:
+    webpackConfig: webpack.config.js
+    includeModules:
+      forceExclude:
+        - chrome-aws-lambda
+    packager: "yarn"
+
+  serverless-offline:
+    location: .webpack/service
+
+  customDomain:
+    domainName: generator.idbi.pe
+    stage: ${self:provider.stage}
+    basePath: ''
+    certificateName: 'idbi.pe'
+    createRoute53Record: true
+    endpointType: 'edge'
+    securityPolicy: tls_1_2
+
+
+functions:
+  generate:
+#    provisionedConcurrency: 3
+    handler: functions/pdf.generate
+    layers:
+      - { Ref: HeadlessChromeLambdaLayer }
+    events:
+      - http:
+          path: ''
+          method: post
+          cors: true

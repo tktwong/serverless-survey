@@ -1,0 +1,68 @@
+frameworkVersion: "2"
+service: loaf-api
+
+provider:
+  name: aws
+  region: us-east-1
+  stage: ${opt:STAGE, "dev"}
+  memorySize: 256
+  runtime: nodejs12.x
+  apiGateway:
+    shouldStartNameWithService: true
+
+custom:
+  serverless-offline:
+    host: 0.0.0.0
+  webpack:
+    includeModules: true
+  AURORA:
+    VPC_CIDR: 10
+
+functions:
+  graphql:
+    handler: src/handler.graphqlHandler
+    vpc:
+      securityGroupIds:
+        - !Ref ServerlessSecurityGroup
+      subnetIds:
+        - !Ref ServerlessSubnetA
+        - !Ref ServerlessSubnetB
+        - !Ref ServerlessSubnetC
+    environment:
+      POSTGRES_HOST: !GetAtt AuroraRDSCluster.Endpoint.Address
+      POSTGRES_DB: ${env:POSTGRES_DB}
+      POSTGRES_USER: ${env:POSTGRES_USER}
+      POSTGRES_PASSWORD: ${env:POSTGRES_PASSWORD}
+      JWT_SECRET: ${env:JWT_SECRET}
+    events:
+      - http:
+          path: /graphql
+          method: post
+          cors: true
+      - http:
+          path: /graphql
+          method: get
+          cors: true
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-dotenv-plugin
+  - serverless-pseudo-parameters
+
+resources:
+  Resources:
+    ServerlessInternetGateway: ${file(./resource/ServerlessInternetGateway.yml)}
+    ServerlessVPC: ${file(./resource/ServerlessVPC.yml)}
+    ServerlessVPCGA: ${file(./resource/ServerlessVPCGA.yml)}
+    ServerlessSubnetA: ${file(./resource/ServerlessSubnetA.yml)}
+    ServerlessSubnetB: ${file(./resource/ServerlessSubnetB.yml)}
+    ServerlessSubnetC: ${file(./resource/ServerlessSubnetC.yml)}
+    ServerlessSubnetGroup: ${file(./resource/ServerlessSubnetGroup.yml)}
+    ServerlessSecurityGroup: ${file(./resource/ServerlessSecurityGroup.yml)}
+    RouteTablePublic: ${file(./resource/RouteTablePublic.yml)}
+    RoutePublic: ${file(./resource/RoutePublic.yml)}
+    RouteTableAssociationSubnetA: ${file(./resource/RouteTableAssociationSubnetA.yml)}
+    RouteTableAssociationSubnetB: ${file(./resource/RouteTableAssociationSubnetB.yml)}
+    RouteTableAssociationSubnetC: ${file(./resource/RouteTableAssociationSubnetC.yml)}
+    AuroraRDSCluster: ${file(./resource/AuroraRDSCluster.yml)}

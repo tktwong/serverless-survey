@@ -1,0 +1,70 @@
+service: onclo
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  region: ap-northeast-1
+  memorySize: 128
+
+functions:
+  setModeOpen:
+    handler: locker.setModeOpen
+    events:
+      - http:
+          path: locker/mode/actions/open
+          method: POST
+          cors: true
+  setModeClose:
+    handler: locker.setModeClose
+    events:
+      - http:
+          path: locker/mode/actions/close
+          method: POST
+          cors: true
+  getLockerMode:
+    handler: locker.getMode
+    events:
+      - http:
+          path: locker/mode
+          method: GET
+          cors: true
+
+resources:
+  Resources:
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${opt:stage,self:provider.stage}-locker
+        AttributeDefinitions:
+          - AttributeName: partition
+            AttributeType: S
+          - AttributeName: created
+            AttributeType: N
+        KeySchema:
+          - AttributeName: partition
+            KeyType: HASH
+          - AttributeName: created
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      DependsOn: DynamoDbTable
+      Properties:
+        PolicyName: lambda-dynamodb
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:DeleteItem
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:Query
+                - dynamodb:UpdateItem
+                - dynamodb:Scan
+                - dynamodb:DescribeTable
+              Resource: arn:aws:dynamodb:*:*:*
+        Roles:
+          - Ref: IamRoleLambdaExecution

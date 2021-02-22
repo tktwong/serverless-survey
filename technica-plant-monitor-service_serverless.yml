@@ -1,0 +1,79 @@
+service: technica-plant-monitor-service
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: ${self:custom.accounts.${opt:acct}.profile}
+  apiKeys:
+    - technicaPlantMonitor
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+  environment:
+    ACCOUNT_NAME: ${opt:acct}
+    DEBUG: ${self:custom.accounts.${opt:acct}.debug}
+    SERVERLESS_PROJECT: ${self:service}
+    SERVERLESS_STAGE: ${opt:stage}
+    SERVERLESS_REGION: ${opt:region}
+    SINGLE_TABLE_NAME: ${self:service}-${opt:stage}-table
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:DeleteItem
+      Resource:
+        - Fn::GetAtt: EntitiesTable.Arn
+package:
+  individually: true
+custom:
+  webpack:
+    includeModules: true
+  accounts:
+    dev:
+      debug: '*'
+      profile: bellamy-personal
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+functions:
+  graphql:
+    handler: src/graphql/index.handle
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+          private: true
+
+resources:
+  Resources:
+    EntitiesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.SINGLE_TABLE_NAME}
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: data
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true

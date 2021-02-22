@@ -1,0 +1,78 @@
+service: nomad-house-api
+
+plugins:
+  - serverless-plugin-typescript
+  - sync-env-ssm
+  - remove-service-bucket
+  - serverless-plugin-optimize
+
+custom:
+  sync-env-ssm:
+    REDIRECT_URL: "${ssm:/admin/oauth/REDIRECT_URL}"
+    OAUTH_ORIGIN: "${ssm:/admin/oauth/OAUTH_ORIGIN}"
+    OAUTH_CLIENT_ID: "${ssm:/admin/oauth/OAUTH_CLIENT_ID~true}"
+    OAUTH_CLIENT_SECRET: "${ssm:/admin/oauth/OAUTH_CLIENT_SECRET~true}"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${env:AWS_REGION, 'us-east-1'}
+  stage: ${opt:stage, env:NODE_ENV, 'development'}
+  stackName: ${self:service.name}-${self:provider.stage}
+  apiName: ${self:service.name}-${self:provider.stage}
+  logRetentionInDays: 7
+  deploymentPrefix: artifacts
+  deploymentBucket:
+    name: ${self:service.name}
+  environment:
+    # AWS_REGION: ${self:priovider.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ssm:DescribeParameters
+        - ssm:GetParameters
+      Resource: "arn:aws:ssm:${opt:region, self:provider.region}:*:parameter/admin/oauth/*"
+    - Effect: Allow
+      Action:
+        - kms:Decrypt
+      Resource: "arn:aws:kms:${opt:region, self:provider.region}:*:alias/aws/ssm"
+
+package:
+  individually: true
+  excludeDevDependencies: true
+
+functions:
+  auth:
+    handler: src/admin/authUri.handler
+    memorySize: 128
+    events:
+      - http:
+          path: /admin/auth
+          method: get
+          cors: true
+  callback:
+    handler: src/admin/authCallback.handler
+    memorySize: 128
+    events:
+      - http:
+          path: /admin/callback
+          method: get
+          cors: true
+  success:
+    handler: src/admin/authSuccess.handler
+    memorySize: 128
+    events:
+      - http:
+          path: /admin/success
+          method: get
+          cors: true
+  default:
+    handler: src/admin/authDefault.handler
+    memorySize: 128
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true
+
+resources:

@@ -1,0 +1,53 @@
+service: BaseConfig # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: python3.7
+  profile: hardis
+  stage: ${opt:stage, 'dev'}
+  stackTags:
+    Application: config-test
+  tags:
+    Application: config-test
+
+plugins:
+  - serverless-plugin-existing-s3
+
+custom:
+  delivery-bucket-name: config-test-beh
+  delivery-topic-email: benjamin.ehlers@hardis.fr
+  database-name: config_snapshot
+  table-name: config_snapshot
+
+functions:
+  rule1:
+    handler: rule1.lambda_handler
+    timeout: 5
+    memorySize: 128
+    role: Rule1Role
+    
+  athena-partitioner:
+    handler: athena.partitioner
+    timeout: 60
+    memorySize: 1024
+    role: AthenaPartitionerRole
+    environment:
+      DATABASE_NAME: ${self:custom.database-name}
+      TABLE_NAME: ${self:custom.table-name}
+    events:
+      - existingS3:
+          bucket: ${self:custom.delivery-bucket-name}
+          events:
+            - s3:ObjectCreated:*
+
+resources: ${file(resources/resources.yml):resources}
+
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

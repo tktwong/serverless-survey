@@ -1,0 +1,83 @@
+# Log AWS Console login events.
+
+service: serverless-aws-python3-intro
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+# you can overwrite defaults here
+# Override these via command line --stage and --region.
+#  stage: dev
+#  region: us-east-1
+
+  # Helpful for identifying resoruces. See also aws:cloudformation:stack-name
+  # which includes the stage name (STAGE tag) too.
+  stackTags:
+    serverless:service: ${self:service}
+
+# you can define service wide environment variables here
+  environment:
+    # If we end up having Python dependencies they'll be installed into
+    # vendored/ in this project directory.
+    PYTHONPATH: "/var/runtime:/var/task/vendored"
+    # This is referenced in handlers
+    LOG_LEVEL: INFO
+
+# You can add functions here
+functions:
+  write-event-to-s3:
+    handler: handlers/write-event-to-s3.handler
+    description: "Write login event to S3"
+    runtime: python3.6
+    memorySize: 128
+    timeout: 15
+    role: WriteEventToS3
+    events:
+      # http://docs.aws.amazon.com/AmazonCloudWatch/latest/events/EventTypes.html#console_event_type
+      - cloudwatchEvent:
+          event:
+            source:
+              - "aws.signin"
+    environment:
+      S3_BUCKET_NAME:
+        Ref: LoginEventS3Bucket
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    LoginEventS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: Private
+
+    WriteEventToS3:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /service-role/
+        RoleName: Service-${self:service}-WriteEventToS3-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        Policies:
+          - PolicyName: WriteToS3Bucket
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                  Resource:
+                    - Fn::Join:
+                      - '/'
+                      - - Fn::GetAtt:
+                          - LoginEventS3Bucket
+                          - Arn
+                        - '*'

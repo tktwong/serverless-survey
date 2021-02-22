@@ -1,0 +1,66 @@
+service: students
+
+provider:
+  name: aws
+  runtime: java8
+  profile: ${opt:profile, 'uvsy-dev'}
+  stage: ${opt:stage, 'dev2'}
+  region: ${opt:region, 'sa-east-1'}
+  deploymentBucket: ${self:provider.stage}.${self:provider.region}.universy.serverless.deploys
+  deploymentPrefix: ${self:provider.region}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+        - "lambda:InvokeFunction"
+      Resource: "*"
+  environment:
+    STAGE: ${self:provider.stage}
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-warmup
+  - serverless-domain-manager
+
+
+package:
+  artifact: build/distributions/${self:service}-1.0.zip
+
+
+custom:
+
+  warmup:
+    cleanFolder: true
+    memorySize: 256
+    prewarm: true
+    enabled: true
+    timeout: 30
+    name: ${self:provider.stage}-students-warmup-plugin
+    events:
+      - schedule: 'cron(0/5 18-00 ? * MON-FRI *)'
+
+  # Domain name configuration
+  customDomain:
+    domainName: students-api-${self:provider.stage}.compute.universy.app
+    stage: ${self:provider.stage}
+    endpointType: "regional"
+    hostedZoneId: ${ssm:/all/route53/zones/compute/id~true}
+    certificateArn: ${ssm:/all/acm/cert/compute/arn~true}
+    createRoute53Record: true
+    apiType: REST
+
+  # Prune
+  prune:
+    automatic: true
+    number: 3
+
+functions:
+  - ${file(./sls/functions/api.yml)}
+
+resources:
+  - ${file(./sls/resources/dynamodb/careers.yml)}
+  - ${file(./sls/resources/dynamodb/events.yml)}
+  - ${file(./sls/resources/dynamodb/notes.yml)}
+  - ${file(./sls/resources/dynamodb/profiles.yml)}
+  - ${file(./sls/resources/dynamodb/schedules.yml)}
+  - ${file(./sls/resources/dynamodb/subjects.yml)}

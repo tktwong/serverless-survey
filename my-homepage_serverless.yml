@@ -1,0 +1,141 @@
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-finch
+  - serverless-s3-local
+service: my-homepage
+provider:
+  stage: ${opt:stage}
+  region: eu-west-2
+  name: aws
+  apiGateway:
+    shouldStartNameWithService: true
+  environment:
+    PICTURES_BUCKET: ${self:custom.picture-bucket-name}
+    DYNAMO_TABLE: ${self:service}-storage
+    APP_SECRET: ${ssm:/${self:service}-api/APP_SECRET}
+    REACT_APP_API_URL: https://6lac5t2w1i.execute-api.eu-west-2.amazonaws.com/production/query
+    STAGE: ${self:provider.stage}
+  runtime: nodejs12.x
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+    - Effect: "Allow"
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_TABLE}"
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - "Ref" : "ServerlessDeploymentBucket"
+            - "/*"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - "Ref" : "photoStorage"
+            - "/*"
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource:  
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - "Ref" : "photoStorage"
+package:
+  exclude:
+    - ui/**
+    - api/node_modules/serverless-dynamodb-client/**
+    - api/node_modules/serverless-offline/**
+functions:
+  recipesAPI:
+    name: ${self:service}-recipesAPI
+    handler: api/boundary/handler.query
+    events:
+      - http:
+          path: query 
+          method: ANY
+          cors: true
+resources:
+  Resources:
+    MyStuffTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: Category
+            AttributeType: S
+          - AttributeName: Name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Category
+            KeyType: HASH
+          - AttributeName: Name
+            KeyType: RANGE
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMO_TABLE}
+    uiBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "emma-corbett.me.uk"
+    photoStorage:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "emmas-recipes-pictures"
+        # AccessControl: Private
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - PUT
+                - GET
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - '*'
+custom:
+  picture-bucket-name: "emmas-recipes-pictures"
+  serverless-offline:
+    stage:
+      - dev
+    httpPort: 5000
+  client:
+    bucketName: "emma-corbett.me.uk"
+    distributionFolder: ui/build
+    indexDocument: index.html
+    errorDocument: index.html
+  s3:
+    stage:
+      - dev
+    host: localhost
+    directory: /tmp
+    cors: ./local-s3-cors-config.xml
+    allowMismatchedSignatures: true
+  dynamodb:
+    stages: 
+      - dev
+    start:
+      port: 8000
+      migrate: true
+      seed: true
+    seed:
+      dev:
+        sources:
+          - table: my-homepage-storage 
+            rawsources: [./dev-db-seed.json]

@@ -1,0 +1,44 @@
+service: bl-aws-test
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "arn:aws:s3:::bltest-bucket/*"
+
+functions:
+  getComment:
+    handler: functions/get-comment.handler
+    events:
+      - http:
+          path: comments/{id}
+          method: get
+  commentParser:
+    handler: functions/comment-parser.handler
+
+resources:
+  Resources:
+    UploadBucket123:
+      DependsOn:
+        - CommentParserLambdaPermissionBltestBucketS3
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: bltest-bucket
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: "s3:ObjectCreated:*"
+              Function:
+                "Fn::GetAtt": [ CommentParserLambdaFunction, Arn ]
+    CommentParserLambdaPermissionBltestBucketS3: # jeez what a mess
+      DependsOn:
+        - CommentParserLambdaFunction
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          "Fn::GetAtt": [ CommentParserLambdaFunction, Arn ]
+        Action: "lambda:InvokeFunction"
+        Principal: "s3.amazonaws.com"
+        SourceArn: "arn:aws:s3:::bltest-bucket"

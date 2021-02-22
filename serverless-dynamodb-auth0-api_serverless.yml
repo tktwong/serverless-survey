@@ -1,0 +1,117 @@
+service: drone-api
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-northeast-2'}
+  environment:
+    AUTH0_CLIENT_ID: '${file(./secrets.json):AUTH0_CLIENT_ID}'
+    AUTH0_CLIENT_PUBLIC_KEY: '${file(./public_key.pem)}'
+    # 테이블 추가는 아래 변수와 db.js 에 추가.
+    # resources.Resources 에도 추가.
+    USERS_TABLE: '${file(db.js):db.users}'
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        # 테이블 추가할경우 추가
+        - { "Fn::GetAtt": ["usersTable", "Arn" ] }
+
+resources:
+  Resources:
+    usersTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: auth0Sub
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2
+        GlobalSecondaryIndexes:
+          - IndexName: auth0Sub
+            KeySchema:
+              - AttributeName: auth0Sub
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 2
+              WriteCapacityUnits: 2
+        TableName: ${self:provider.environment.USERS_TABLE}
+    # This response is needed for custom authorizer failures cors support ¯\_(ツ)_/¯
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+
+# npm run package
+package:
+  # excludes are added first
+  exclude:
+    - seed/**
+    - coverage/**
+    - .editorconfig
+    - .env
+    - .gitignore
+    - readme.md
+    - '*.{ts,js,json,yml}' # the rest of the configs
+
+  include:
+    - src/**
+    # exclude the tests and yml files from src
+    - '!src/**/*.spec.js'
+    - '!src/**/*.serverless.yml'
+
+functions:
+  - '${file(src/handlers/auth/auth.serverless.yml)}'
+  - '${file(src/handlers/users/users.serverless.yml)}'
+
+plugins:
+  - serverless-dynamodb-local # https://www.npmjs.com/package/serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    stages:
+      - ${opt:stage, 'dev'}
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+      # 시드가 필요한경우 아래 추가
+      users:
+        sources:
+          - table: ${self:provider.environment.USERS_TABLE}
+            sources: [./seed/users-seed-data.json]

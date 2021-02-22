@@ -1,0 +1,224 @@
+service: kahvilat-api
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${opt:region, 'eu-west-1'}
+  stage: ${opt:stage, 'local'}
+  environment:
+    FRONTEND_URL: ${opt:frontend-url, 'http://localhost:3000'}
+    GOOGLE_API_KEY: ${opt:google-api-key, ''}
+    REDIS_HOST: ${opt:redis-host, 'localhost'}
+    REDIS_PORT: ${opt:redis-port, '6380'}
+    STAGE: ${self:provider.stage}
+
+package:
+  excludeDevDependencies: false
+
+functions:
+  find-places:
+    handler: src/lambdas/find-places.handler
+    vpc:
+      securityGroupIds:
+        - 'Fn::GetAtt': ServerlessSecurityGroup.GroupId
+      subnetIds:
+        - Ref: PrivateSubnetA
+    events:
+      - http:
+          path: /find-places
+          method: get
+          cors: true
+    request:
+      parameters:
+        querystrings:
+          keyword: true
+          latitude: true
+          longitude: true
+          radius: true
+          types: true
+
+  find-address:
+    handler: src/lambdas/find-address.handler
+    vpc:
+      securityGroupIds:
+        - 'Fn::GetAtt': ServerlessSecurityGroup.GroupId
+      subnetIds:
+        - Ref: PrivateSubnetA
+    events:
+      - http:
+          path: /find-address
+          method: get
+          cors: true
+    request:
+      parameters:
+        querystrings:
+          latitude: true
+          longitude: true
+
+  find-coordinates:
+    handler: src/lambdas/find-coordinates.handler
+    vpc:
+      securityGroupIds:
+        - 'Fn::GetAtt': ServerlessSecurityGroup.GroupId
+      subnetIds:
+        - Ref: PrivateSubnetA
+    events:
+      - http:
+          path: /find-coordinates
+          method: get
+          cors: true
+    request:
+      parameters:
+        querystrings:
+          address: true
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+    GatewayResponseDefault5XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_5XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+    VPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: '10.0.0.0/16'
+    IP:
+      Type: AWS::EC2::EIP
+      Properties:
+        Domain: vpc
+    InternetGateway:
+      Type: AWS::EC2::InternetGateway
+    VPCGatewayAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        VpcId:
+          Ref: VPC
+        InternetGatewayId:
+          Ref: InternetGateway
+    NatGateway:
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId:
+          Fn::GetAtt:
+            - IP
+            - AllocationId
+        SubnetId:
+          Ref: PublicSubnetA
+    PrivateSubnetA:
+      DependsOn: VPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: VPC
+        AvailabilityZone: ${self:provider.region}a
+        CidrBlock: '10.0.1.0/24'
+    PublicSubnetA:
+      DependsOn: VPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: VPC
+        AvailabilityZone: ${self:provider.region}a
+        CidrBlock: '10.0.2.0/24'
+    PrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:
+          Ref: VPC
+    PrivateRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId:
+          Ref: PrivateRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        NatGatewayId:
+          Ref: NatGateway
+    PublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:
+          Ref: VPC
+    PublicRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId:
+          Ref: PublicRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId:
+          Ref: InternetGateway
+    SubnetRouteTableAssociationLambdaPrivateA:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: PrivateSubnetA
+        RouteTableId:
+          Ref: PrivateRouteTable
+    SubnetRouteTableAssociationLambdaPublicA:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: PublicSubnetA
+        RouteTableId:
+          Ref: PublicRouteTable
+    ServerlessSecurityGroup:
+      DependsOn: VPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SecurityGroup for Serverless Functions
+        VpcId:
+          Ref: VPC
+    ServerlessStorageSecurityGroup:
+      DependsOn: VPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Ingress for Redis Cluster
+        VpcId:
+          Ref: VPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: '6379'
+            ToPort: '6379'
+            SourceSecurityGroupId:
+              Ref: ServerlessSecurityGroup
+    ServerlessCacheSubnetGroup:
+      Type: AWS::ElastiCache::SubnetGroup
+      Properties:
+        Description: 'Cache Subnet Group'
+        SubnetIds:
+          - Ref: PrivateSubnetA
+    ElasticCacheCluster:
+      DependsOn: ServerlessStorageSecurityGroup
+      Type: AWS::ElastiCache::CacheCluster
+      Properties:
+        AutoMinorVersionUpgrade: true
+        Engine: redis
+        CacheNodeType: ${self:custom.config.CACHE_INSTANCE_SIZE}
+        NumCacheNodes: 1
+        VpcSecurityGroupIds:
+          - 'Fn::GetAtt': ServerlessStorageSecurityGroup.GroupId
+        CacheSubnetGroupName:
+          Ref: ServerlessCacheSubnetGroup
+
+custom:
+  config:
+    CACHE_INSTANCE_SIZE: cache.t2.micro
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline

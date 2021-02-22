@@ -1,0 +1,255 @@
+service:
+  name: html-to-pdf-converter
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-aws-documentation
+  - serverless-iam-roles-per-function
+  - serverless-plugin-tracing
+  - serverless-plugin-canary-deployments
+
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    PROJECT_NAME: html-to-pdf-converter
+    HTML_PDF_TABLE: HtmlPdf-${self:provider.stage}
+    HTML_PDF_S3_BUCKET: html-to-pdf-shahid-${self:provider.stage}
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+  
+  CreatePdf:
+    handler: src/lambda/http/createPdf.handler
+    memorySize: 1024 # optional, in MB, default is 1024
+    timeout: 30 # optional, in seconds, default is 6
+    events:
+      - http:
+          method: post
+          path: htmlpdf
+          cors: true
+          authorizer: Auth
+          request:
+            # Schema that will be used to validate incoming create requests
+            schema:
+              application/json: ${file(models/create-html-pdf-convert-request.json)}
+          documentation:
+            summary: Create a new pdf from requested URL
+            description: Create a new pdf from requested URL
+    iamRoleStatementsName: ${self:provider.environment.PROJECT_NAME}-create-html-pdf-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HTML_PDF_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.HTML_PDF_S3_BUCKET}/* 
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'    
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  GetHtmlPdfs:
+    handler: src/lambda/http/getHtmlPdfs.handler
+    events:
+      - http:
+          method: get
+          path: htmlpdf
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:provider.environment.PROJECT_NAME}-get-html-pdf-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HTML_PDF_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'    
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  GetHtmlPdfById:
+    handler: src/lambda/http/getHtmlPdf.handler
+    events:
+      - http:
+          method: get
+          path: htmlpdf/{htmlPdfId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:provider.environment.PROJECT_NAME}-get-html-pdf-by-id-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HTML_PDF_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'    
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  DeleteHtmlPdf:
+    handler: src/lambda/http/deleteHtmlPdf.handler
+    events:
+      - http:
+          method: delete
+          path: htmlpdf/{htmlPdfId}
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Delete existing HtmlPdf item function
+            description: Delete existing HtmlPdf item function
+    iamRoleStatementsName: ${self:provider.environment.PROJECT_NAME}-delete-html-pdf-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HTML_PDF_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'    
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  UpdateHtmlPdf:
+    handler: src/lambda/http/updateHtmlPdfMetadata.handler
+    events:
+      - http:
+          method: patch
+          path: htmlpdf/{htmlPdfId}          
+          cors: true
+          authorizer: Auth
+          request:
+            # Schema that will be used to validate incoming create requests
+            schema:
+              application/json: ${file(models/update-html-pdf-request.json)}
+          documentation:
+            summary: Update metadata of the generated pdf
+            description: Update metadata of the generated pdf
+    iamRoleStatementsName: ${self:provider.environment.PROJECT_NAME}-update-html-pdf-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.HTML_PDF_TABLE} 
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.HTML_PDF_S3_BUCKET}/* 
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'    
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+
+resources:
+  Resources:
+    # TODO: Add any necessary AWS resources
+
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    HtmlPdfDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: htmlPdfId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: htmlPdfId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.HTML_PDF_TABLE}
+
+    HtmlPdfBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.HTML_PDF_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - 
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.HTML_PDF_S3_BUCKET}/*'
+        Bucket: !Ref HtmlPdfBucket

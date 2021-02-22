@@ -1,0 +1,244 @@
+service: udacity-capstone-api
+app: udacity-serverless-blog
+
+plugins:
+  # define iam permissions at function level
+  - serverless-iam-roles-per-function
+  - serverless-webpack
+  # local testing
+  - serverless-offline
+  - serverless-dynamodb-local
+  # enable tracing
+  - serverless-plugin-tracing
+
+# referring to functions - gives more control for optimised deployments
+package:
+  individually: true
+
+# stage/region defaults set if not overridden when running serverless commands
+provider:
+  name: aws
+  runtime: nodejs12.x
+  frameworkVersion: '2.1.1'
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-2'}
+  profile: serverless-marco
+  tracing:
+    lambda: true
+    apiGateway: true
+  # overcome issue with basic execution role not being assigned when
+  # specifying iam policies on per-function-level
+  iamManagedPolicies:
+    - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  environment:
+    APP_NAME: udacity-serverless-blog
+    POSTS_TABLE: ${self:provider.stage}-posts
+    PROFILES_TABLE: ${self:provider.stage}-profiles
+    FILES_S3_BUCKET: ${self:provider.stage}-serverless-blog-files
+    SIGNED_URL_EXPIRATION: 300
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  CreatePost:
+    handler: src/lambda/http/createPost.handler
+    events:
+      - http:
+          path: /posts
+          method: post
+          cors: true
+          authorizer: Auth
+          request:
+            schema:
+              application/json: ${file(src/requestValidators/createPost.json)}
+    iamRoleStatementsName: ${self:provider.environment.APP_NAME}-create-post-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.POSTS_TABLE}
+      - Effect: Allow
+        Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+        Resource:
+          - '*'
+      - Effect: 'Allow'
+        Action:
+          - 'xray:PutTraceSegments'
+          - 'xray:PutTelemetryRecords'
+        Resource:
+          - '*'
+
+  GetPost:
+    handler: src/lambda/http/getPost.handler
+    events:
+      - http:
+          path: /posts/{userId}/{postId}
+          method: get
+          cors: true
+    iamRoleStatementsName: ${self:provider.environment.APP_NAME}-get-post-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.POSTS_TABLE}
+      - Effect: Allow
+        Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+        Resource:
+          - '*'
+      - Effect: 'Allow'
+        Action:
+          - 'xray:PutTraceSegments'
+          - 'xray:PutTelemetryRecords'
+        Resource:
+          - '*'
+  GetPosts:
+    handler: src/lambda/http/getPosts.handler
+    events:
+      - http:
+          path: /posts/{userId}
+          method: get
+          cors: true
+    iamRoleStatementsName: ${self:provider.environment.APP_NAME}-get-posts-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.POSTS_TABLE}
+      - Effect: Allow
+        Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+        Resource:
+          - '*'
+      - Effect: 'Allow'
+        Action:
+          - 'xray:PutTraceSegments'
+          - 'xray:PutTelemetryRecords'
+        Resource:
+          - '*'
+
+  UpdatePost:
+    handler: src/lambda/http/updatePost.handler
+    events:
+      - http:
+          path: /posts/{userId}/{postId}
+          method: put
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:provider.environment.APP_NAME}-update-post-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.POSTS_TABLE}
+      - Effect: Allow
+        Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+        Resource:
+          - '*'
+      - Effect: 'Allow'
+        Action:
+          - 'xray:PutTraceSegments'
+          - 'xray:PutTelemetryRecords'
+        Resource:
+          - '*'
+
+  DeletePost:
+    handler: src/lambda/http/deletePost.handler
+    events:
+      - http:
+          path: /posts/{userId}/{postId}
+          method: delete
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:provider.environment.APP_NAME}-delete-post-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.POSTS_TABLE}
+      - Effect: Allow
+        Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+        Resource:
+          - '*'
+      - Effect: 'Allow'
+        Action:
+          - 'xray:PutTraceSegments'
+          - 'xray:PutTelemetryRecords'
+        Resource:
+          - '*'
+
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          path: /posts/{userId}/{postId}/attachment
+          method: post
+          cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:provider.environment.APP_NAME}-post-attachment-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.FILES_S3_BUCKET}/*
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.POSTS_TABLE}
+      - Effect: Allow
+        Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+        Resource:
+          - '*'
+      - Effect: 'Allow'
+        Action:
+          - 'xray:PutTraceSegments'
+          - 'xray:PutTelemetryRecords'
+        Resource:
+          - '*'
+
+custom:
+  webpackIncludeModules:
+    forceExclude:
+      - aws-sdk
+  serverless-offline:
+    port: 3003
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+
+resources:
+  # API Gateway errors
+  - ${file(src/resources/api-gateway-errors.yml)}
+  # DynamoDB-Posts
+  - ${file(src/resources/dynamodb-posts-table.yml)}
+  # DynamoDB-Profiles
+  - ${file(src/resources/dynamodb-profiles-table.yml)}
+  # S3 - monolithic bucket will do for demo purposes
+  - ${file(src/resources/s3-bucket.yml)}

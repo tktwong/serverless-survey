@@ -1,0 +1,150 @@
+service: threatstack-aws-s3-publisher
+
+plugins:
+  - serverless-python-requirements
+  - serverless-cloudformation-parameter-setter
+  - serverless-sam
+
+custom:
+  stage: "${opt:stage, env:SLS_STAGE, 'dev'}"
+  profile: "${opt:aws-profile, env:AWS_PROFILE, env:AWS_DEFAULT_PROFILE, 'default'}"
+  log_level: "${env:LOG_LEVEL, 'INFO'}"
+
+  ts_sns_publisher_stack: "${env:TS_AWS_SNS_PUBLISHER_STACK, 'threatstack-aws-sns-publisher-${self:custom.stage}'}"
+
+  # This is for in case you renamed the CFN stack.
+  cf-parameters:
+    ThreatStackAwsSnsPublisherStack: "${self:custom.ts_sns_publisher_stack}"
+
+  # Ensure consistent build environment; also avoid issue deploying from Mac
+  # with Homebrew Python.
+  pythonRequirements:
+    dockerizePip: true
+
+provider:
+  name: aws
+  profile: ${self:custom.profile}
+  stage: ${self:custom.stage}
+  runtime: python3.6
+
+functions:
+  ThreatStackAwsS3Publisher:
+    description: "Store Threat Stack alert data in S3."
+    handler: handlers/threatstack-aws-s3-publisher.handler
+    memorySize: 128
+    timeout: 15
+    role: ThreatStackAwsS3PublisherIamRole
+    environment:
+      AWS_S3_BUCKET_NAME:
+        Ref: AlertS3Bucket
+      LOG_LEVEL: "${self:custom.log_level}"
+
+resources:
+  Parameters:
+    ThreatStackAwsSnsPublisherStack:
+      Type: String
+      Description: "Stack name of Threat Stack AWS SNS Publisher"
+      NoEcho: true
+
+  Resources:
+    AlertS3Bucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        # Overriding this for ease by outsiders
+        # FIXME: Need AccountId below
+        BucketName:
+          Fn::Join:
+            - "-"
+            - - Ref: "AWS::AccountId"
+              - "${self:service}"
+              - "${self:provider.stage}"
+        AccessControl: "Private"
+
+    ThreatStackAwsS3PublisherIamRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-${self:provider.stage}-${self:provider.region}-lambdaRole
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          # NOTE: This role lacks the resource restrictions SLS creates by
+          # default when managing the role.
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - Fn::ImportValue:
+              Fn::Join:
+                - "-"
+                - - Ref: ThreatStackAwsSnsPublisherStack
+                  - "SnsConfirmSubscriptionIamManagedPolicyArn"
+        Policies:
+          - PolicyName: ${self:provider.stage}-${self:service}-lambda
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                  Resource:
+                    - Fn::Join:
+                      - '/'
+                      - - Fn::GetAtt:
+                          - AlertS3Bucket
+                          - Arn
+                        - '*'
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                  Resource:
+                    - Fn::Join:
+                      - '/'
+                      - - Fn::GetAtt:
+                          - AlertS3Bucket
+                          - Arn
+
+    # Needed because we're not setting the SNS event in the function section.
+    ThreatStackAwsS3PublisherLambdaPermission:
+      Type: 'AWS::Lambda::Permission'
+      Properties:
+        Action: "lambda:InvokeFunction"
+        FunctionName:
+          Ref: ThreatStackAwsS3PublisherLambdaFunction
+        Principal: 'sns.amazonaws.com'
+        SourceArn:
+          Fn::ImportValue:
+            Fn::Join:
+              - '-'
+              - - Ref: ThreatStackAwsSnsPublisherStack
+                - "SnsTopicArn"
+
+
+    SnsSubscription:
+      Type: 'AWS::SNS::Subscription'
+      Properties:
+        TopicArn:
+          Fn::ImportValue:
+            Fn::Join:
+              - '-'
+              - - Ref: ThreatStackAwsSnsPublisherStack
+                - "SnsTopicArn"
+        Protocol: lambda
+        Endpoint:
+          Fn::GetAtt:
+            - ThreatStackAwsS3PublisherLambdaFunction
+            - Arn
+
+  Outputs:
+    AlertS3BucketName:
+      Description: "S3 bucket where alerts are stored."
+      Value:
+        Ref: "AlertS3Bucket"
+      Export:
+        Name:
+          Fn::Join:
+            - "-"
+            - - Ref: "AWS::StackName"
+              - "AlertS3Bucket"
+
+

@@ -1,0 +1,145 @@
+service: kmv3
+
+plugins:
+  - serverless-webpack
+  - serverless-layers
+
+custom:
+  serverless-layers:
+    layersDeploymentBucket: kmv3-dev-lambda-layers
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage,"dev"}
+  region: ap-northeast-1
+  apiGateway:
+    shouldStartNameWithService: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - execute-api:Invoke
+      Resource:
+        - { "Fn::Join" : ["", ["arn:aws:execute-api:",{"Ref":"AWS::Region"},":",{"Ref":"AWS::AccountId"},":*"]] }
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource:
+        - { "Fn::Join" : ["",["arn:aws:lambda:",{"Ref":"AWS::Region"},":",{"Ref":"AWS::AccountId"},":*"]] }
+    - Effect: Allow
+      Action:
+        - cognito-idp:ListUsers
+      Resource:
+        - { "Fn::Join" : ["",["arn:aws:cognito-idp:",{"Ref":"AWS::Region"},":",{"Ref":"AWS::AccountId"},":*"]] }
+    - Effect: Allow
+      Action:
+        - s3:ListAllMyBuckets
+        - s3:ListBucket
+        - s3:GetBucketLocation
+        - s3:CreateBucket
+        - s3:GetBucketAcl
+        - s3:PutBucketAcl
+        - s3:GetObject
+        - s3:PutObject
+        - s3:GetObjectAcl
+        - s3:PutObjectAcl
+      Resource:
+        - arn:aws:s3:::*
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource:
+        - { "Fn::Join" : ["",["arn:aws:logs:",{"Ref":"AWS::Region"},":",{"Ref":"AWS::AccountId"},":*"]] }
+
+functions:
+  getWithAuth:
+    handler: src/handler.withAuth
+    events:
+      - http:
+          method: get
+          path: /withauth
+          cors: true
+          integration: lambda
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref Kmv3Authorizer
+  getWithoutAuth:
+    handler: src/handler.withoutAuth
+    events:
+      - http:
+          method: get
+          path: /withoutauth
+          cors: true
+
+resources:
+  Resources:
+    Kmv3CongnitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        AccountRecoverySetting: # パスワード忘れの際の復帰方法
+          RecoveryMechanisms:
+            - Name: 'verified_email'
+              Priority: 1
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: false # 管理者権限を持つLambdaでのみユーザー作成を実行するので有効にする(ユーザー自身がSDKでサインアップする際はfalseにすること)
+          InviteMessageTemplate:
+            EmailMessage: 'Your username is {username} and temporary password is {####}.'
+            EmailSubject: 'Your temporary password'
+            SMSMessage: 'Your username is {username} and temporary password is {####}.'
+        AliasAttributes:
+          - email
+          - preferred_username # 独自のユーザー名称でログインできる仕様なので入れておく
+        AutoVerifiedAttributes:
+          - email # emailは自動的に検証し、保有を検証するうようにしておく
+        DeviceConfiguration: # デバイスはいったん記憶させない、今後MFA認証を実装する場合に有効にするのを検討
+          ChallengeRequiredOnNewDevice: false
+          DeviceOnlyRememberedOnUserPrompt: false
+        EmailConfiguration:
+          EmailSendingAccount: COGNITO_DEFAULT
+        EmailVerificationMessage: 'Your verification code is {####}.'
+        EmailVerificationSubject: 'Your verification code'
+        MfaConfiguration: "OFF"
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireSymbols: false
+            RequireNumbers: true
+            RequireUppercase: false
+            TemporaryPasswordValidityDays: 365
+        UserPoolName: ${self:provider.stage}-CognitoUserPool
+        UsernameConfiguration:
+          CaseSensitive: true
+
+    Kmv3UserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:service}-${self:provider.stage}-user-pool-client
+        ExplicitAuthFlows:
+          - ALLOW_ADMIN_USER_PASSWORD_AUTH
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        # GenerateSecret: true
+        PreventUserExistenceErrors: ENABLED
+        ReadAttributes:
+          - email
+          - preferred_username
+        RefreshTokenValidity: 30 # リフレッシュトークンの生存日数
+        SupportedIdentityProviders:
+          - COGNITO
+        UserPoolId:
+          Ref: Kmv3CongnitoUserPool
+
+    Kmv3Authorizer:
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: Kmv3Authorizer
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        IdentitySource: method.request.header.Authorization
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - { Fn::GetAtt: [Kmv3CongnitoUserPool, Arn] }

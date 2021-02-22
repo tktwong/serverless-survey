@@ -1,0 +1,82 @@
+service: pickles-dashboard
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${self:custom.stage}
+  region: ${file(./config/${self:provider.stage}.json):region}
+  apiKeys:
+    - dashboardKey
+  environment:
+    PICKLES_BUCKET_NAME: ${self:custom.pickles.bucketName}
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pickles:
+    bucketName: ${opt:bucket-name}
+  stage: ${opt:stage, 'default'}
+  pythonRequirements:
+    dockerizePip: true
+    usePipenv: true
+    slim: true
+    noDeploy:  # This option omits all Python packages that are available from AWS runtime
+      - boto3
+      - botocore
+      - docutils
+      - jmespath
+      - pip
+      - python-dateutil
+      - s3transfer
+      - setuptools
+      - six
+
+package:
+  individually: true
+  exclude:
+    - venv/**
+    - node_modules/**
+    - package.json
+    - package-lock.json
+    - resources/**
+    - tests/**
+    - Pipfile
+    - config/**
+    - Pipfile.lock
+    - requirements.txt
+    - README.md
+    - frontend/**
+
+functions:
+  pickles-api:
+    handler: api/handler.handle
+    role: !GetAtt [PicklesApiFunctionRole, 'Arn']
+    memorySize: 128
+    reservedConcurrency: 10
+    events:
+      - http:
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+          path: data
+          method: get
+  example-widget-job:
+    handler: jobs/example-job/handler.do_something
+    memorySize: 128
+    reservedConcurrency: 1
+    role: !GetAtt [ExamplePicklesFunctionRole, 'Arn']
+    events:
+      - schedule: rate(10 minutes)
+
+
+resources:
+  - ${file(./resources/common/base.yml)}
+  - ${file(./api/resources/iam.yml)}
+  - ${file(./jobs/example-job/resources/iam.yml)}

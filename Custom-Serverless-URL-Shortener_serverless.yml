@@ -1,0 +1,251 @@
+service: custom-serverless-url-shortener
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-typescript
+  - serverless-iam-roles-per-function
+  - serverless-plugin-tracing
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  tracing: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource:
+        - "*"
+
+  environment:
+    PROJECT_NAME: serverless-url-shortener
+    SHORT_URL_TABLE: ${self:provider.environment.PROJECT_NAME}-short-url-table-${self:provider.stage}
+    SHORT_URL_ID_INDEX: UrlIdIndex
+    CONFIG_TABLE: ${self:provider.environment.PROJECT_NAME}-config-table-${self:provider.stage}
+    # Used to setup security settings like CORS
+    FRONTEND_URL: http://localhost:4200
+    # Used to remove resource name from calling url to determine host for short url
+    SHORT_URL_RESOURCE_NAME: 'shortUrls'
+
+functions:
+
+  shortUrlRedirect:
+    handler: src/lambda/http/redirectShortUrls.handler
+    events:
+      - http:
+          method: get
+          cors: true
+          path: /{shortUrlId}
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: !Join
+          - ''
+          - - !GetAtt UrlTable.Arn
+            - '/index/'
+            - ${self:provider.environment.SHORT_URL_ID_INDEX}
+
+  getShortUrls:
+    handler: src/lambda/http/getShortUrls.handler
+    events:
+      - http:
+          method: get
+          cors: true
+          path: shortUrls
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref ApiGatewayAuthorizer
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: !GetAtt UrlTable.Arn
+
+  createShortUrl:
+    handler: src/lambda/http/createShortUrl.handler
+    events:
+      - http:
+          method: post
+          cors: true
+          path: shortUrls
+          request:
+            schema:
+              application/json: ${file(models/create-short-url-request.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref ApiGatewayAuthorizer
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: !GetAtt UrlTable.Arn
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: !GetAtt ConfigTable.Arn
+
+  updateShortUrl:
+    handler: src/lambda/http/updateShortUrl.handler
+    events:
+      - http:
+          method: patch
+          cors: true
+          path: shortUrls/{shortUrlId}
+          request:
+            schema:
+              application/json: ${file(models/update-short-url-request.json)}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref ApiGatewayAuthorizer
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: !GetAtt UrlTable.Arn
+
+  deleteShortUrl:
+    handler: src/lambda/http/deleteShortUrl.handler
+    events:
+      - http:
+          method: delete
+          cors: true
+          path: shortUrls/{shortUrlId}
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref ApiGatewayAuthorizer
+    iamRoleStatementsInherit: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: !GetAtt UrlTable.Arn
+
+resources:
+  Resources:
+    UrlTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: urlId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: urlId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.SHORT_URL_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.SHORT_URL_ID_INDEX}
+            KeySchema:
+              - AttributeName: urlId
+                KeyType: HASH
+            Projection:
+              NonKeyAttributes:
+                - longUrl
+              ProjectionType: INCLUDE
+    ConfigTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: configKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: configKey
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.CONFIG_TABLE}
+
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:provider.environment.PROJECT_NAME}-${self:provider.stage}-user-pool
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:provider.environment.PROJECT_NAME}-${self:provider.stage}-user-pool-client
+        UserPoolId:
+          Ref: CognitoUserPool
+        ExplicitAuthFlows:
+          - ADMIN_NO_SRP_AUTH
+        AllowedOAuthFlowsUserPoolClient: true
+        AllowedOAuthFlows:
+          - code
+        AllowedOAuthScopes:
+          - email
+          - openid
+        GenerateSecret: false
+        CallbackURLs:
+          - ${self:provider.environment.FRONTEND_URL}
+        SupportedIdentityProviders:
+          - COGNITO
+
+    CognitoUserPoolDomain:
+      Type: AWS::Cognito::UserPoolDomain
+      Properties:
+        Domain: ${self:provider.environment.PROJECT_NAME}-${self:provider.stage}
+        UserPoolId: !Ref CognitoUserPool
+
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        AuthorizerResultTtlInSeconds: 300
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        Name: Authorizer
+        ProviderARNs:
+          - Fn::Join:
+              - ''
+              - - 'arn:aws:cognito-idp:'
+                - ${self:provider.region}
+                - ':'
+                - Ref: AWS::AccountId
+                - ':userpool/'
+                - Ref: CognitoUserPool
+
+    AuthorizerApiGatewayResponseDefault4XX:
+      Type: "AWS::ApiGateway::GatewayResponse"
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'${self:provider.environment.FRONTEND_URL}'"
+        ResponseType: DEFAULT_4XX
+        RestApiId: !Ref ApiGatewayRestApi
+
+  Outputs:
+    UserPoolId:
+      Value:
+        Ref: CognitoUserPool
+
+    UserPoolClientId:
+      Value:
+        Ref: CognitoUserPoolClient
+
+    UserPoolDomainEndpoint:
+      Value: !Join
+        - ''
+        - - 'https://'
+          - !Ref CognitoUserPoolDomain
+          - '.auth.'
+          - ${self:provider.region}
+          - '.amazoncognito.com'

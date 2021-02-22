@@ -1,0 +1,109 @@
+# Serverless.yml Reference
+# https://serverless.com/framework/docs/providers/aws/guide/serverless.yml/
+
+# Switch between credentials
+# https://serverless.com/framework/docs/providers/aws/guide/credentials/
+
+service: test-api
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-jest-plugin
+
+# Enable auto-packing of external modules
+custom:
+  webpackIncludeModules: true
+  jest:
+    collectCoverage: true
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: prod
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - cognito-idp:*
+      Resource: arn:aws:cognito-idp:*:*:*
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+        - s3:GetObject
+        - s3:GetObjectAcl
+      Resource: arn:aws:s3:::bucket*
+    - Effect: Allow
+      Action:
+        - sns:publish
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+      Resource: "*"
+
+functions:
+  auth:
+    handler: src/auth.handler
+    events:
+      - http:
+          path: auth
+          method: post
+          cors: true
+    environment:
+      UserPoolId: # Pool ID
+      ClientId: # Client ID
+
+  graphql:
+    handler: src/graphql.handler
+    events:
+      - http:
+          path: graphQL
+          method: post
+          cors: true
+          authorizer:
+            arn: # arn of authorizer (typically cognito user pool)
+    environment:
+      Region: # Region
+      UserPoolId: # UserPoolId
+      ClientId: # ClientId
+      ArangoDBName: # ArangoDBName 
+      ArangoURL: # ArangoURL
+      ArangoUser: # ArangoUser
+      ArangoPW: # ArangoPW
+      Bucket: # Bucket
+
+  triggers:
+    handler: src/auth-triggers.handler
+    environment:
+      AppUrl: # AppUrl
+      ChangePasswordRoute: # ChangePasswordRoute
+      ResetPasswordRoute: # ResetPasswordRoute
+      UserPoolId: # UserPoolId
+
+  define-auth-challenge:
+    handler: src/define-auth-challenge.handler
+
+  create-auth-challenge:
+    handler: src/create-auth-challenge.handler
+    environment:
+      AppUrl: # AppUrl
+
+  verify-auth-challenge:
+    handler: src/verify-auth-challenge.handler
+
+  files:
+    handler: src/files.handler
+    events:
+      - http:
+          path: files
+          method: get
+          cors: true
+          authorizer:
+            arn: arn of authorizer (typically cognito user pool)
+    environment:
+      Region: # Region
+      Bucket: # Bucket
+      UserPoolId: # UserPoolId

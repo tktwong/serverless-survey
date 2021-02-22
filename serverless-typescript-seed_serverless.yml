@@ -1,0 +1,122 @@
+service:
+  name: user-service
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-pseudo-parameters
+  - serverless-iam-roles-per-function # https://github.com/functionalone/serverless-iam-roles-per-function
+  # - serverless-cloudformation-parameter-setter # https://www.serverless.com/plugins/serverless-cloudformation-parameter-setter/
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules:
+      forceExclude:
+        - aws-sdk
+  cognito:
+    userPoolId: ${env:AWS_APP_COGNITO_USER_POOL_ID, 'unset-cognito-user-pool-id'}
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+  # destinations:
+  #   failureArn: arn:aws:sqs:ap-southeast-1:#{AWS::AccountId}:demoDestinations
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-southeast-1'}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  tracing:
+    apiGateway: true
+    lambda: true
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    REGION: ${self:provider.region}
+    USER_POOL_ID: ${self:custom.cognito.userPoolId}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - cognito-idp:AdminListGroupsForUser
+      Resource: "arn:aws:cognito-idp:${self:provider.region}:#{AWS::AccountId}:userpool/${self:custom.cognito.userPoolId}"
+
+functions:
+  ping:
+    handler: functions/ping.main
+    events:
+      - http:
+          method: get
+          path: ping
+
+  temp:
+    handler: functions/temp.main
+    destinations:
+      # onSuccess: arn:aws:sqs:${self:provider.region}:#{AWS::AccountId}:demoDestinations
+      onSuccess: arn:aws:sns:${self:provider.region}:#{AWS::AccountId}:demo-serverless-alarms
+      # onFailure: arn:aws:sqs:${self:provider.region}:#{AWS::AccountId}:demoDestinations
+      onFailure: arn:aws:sns:${self:provider.region}:#{AWS::AccountId}:demo-serverless-alarms
+
+  demo:
+    handler: functions/demo.main
+    events:
+      - http:
+          method: get
+          path: demo
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - events:PutEvents
+        Resource: arn:aws:events:${self:provider.region}:#{AWS::AccountId}:event-bus/custom-saas-events
+
+  myFunction:
+    handler: functions/myFunction.main
+    events:
+      - eventBridge:
+          eventBus: custom-saas-events
+          pattern:
+            source:
+              - saas.external
+
+  user:
+    handler: functions/user.main
+    events:
+      - http:
+          method: get
+          path: user/{userName} # single user
+          cors: true
+          authorizer: aws_iam
+      - http:
+          method: get
+          path: user # all users
+          cors: true
+          authorizer: aws_iam
+    # iamRoleStatementsInherit: true # default is set to inherit for this service
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - cognito-idp:ListUsers
+          - cognito-idp:AdminGetUser
+        Resource: "arn:aws:cognito-idp:${self:provider.region}:#{AWS::AccountId}:userpool/${self:custom.cognito.userPoolId}"
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # Alarms Parameters
+  # - ${file(resources/cloudwatch-alarms-parameters.yml)}
+  # Alarms
+  # - ${file(resources/sar-cloudwatch-alarms-macro.yml)}

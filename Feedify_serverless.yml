@@ -1,0 +1,76 @@
+service: ${self:custom.config.service_name, 'feedify'}
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  stage: ${self:custom.computedVariables.stage}
+  region: ${self:custom.config.region, 'us-east-1'}
+  runtime: nodejs6.10
+  environment:
+    BUCKET_NAME: ${self:custom.computedVariables.stage}-${self:custom.config.service_name}-bucket
+    MERCURY_API_KEY: ${self:custom.config.mercury_api_key, ''}
+    GA_TRACKING_ID: ${self:custom.config.ga_tracking_id, ''}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - ${self:custom.computedVariables.stage}-${self:custom.config.service_name}-bucket/*
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+
+functions:
+  index:
+    handler: src/handlers/index.handler
+    memorySize: 128
+    timeout: 10
+    runtime: nodejs6.10
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true
+  feed:
+    handler: src/handlers/feed.handler
+    memorySize: 1536
+    timeout: 180
+    runtime: nodejs6.10
+    events:
+      - http:
+          path: feed
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                source: true
+                type: false
+                limit: false
+
+resources:
+  Resources:
+    Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.computedVariables.stage}-${self:custom.config.service_name}-bucket
+
+custom:
+  webpackIncludeModules: true
+
+  config: ${file(./config.yml)}
+
+  computedVariables:
+    givenStage: ${opt:stage, self:custom.config.stage}
+    stage: ${self:custom.computedVariables.givenStage, 'dev'}

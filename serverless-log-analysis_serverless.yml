@@ -1,0 +1,88 @@
+service: serverless-log-analysis
+
+plugins:
+  - serverless-plugin-warmup
+  - serverless-prune-plugin
+  - serverless-s3-remover
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ap-northeast-1
+  stage: ${env:DEPLOY_STAGE}
+  logRetentionInDays: 30
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'athena:*'
+        - 'glue:*'
+        - firehose:DeleteDeliveryStream
+        - firehose:PutRecord
+        - firehose:PutRecordBatch
+        - firehose:UpdateDestination
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+        - 's3:*'
+      Resource: '*'
+  environment:
+    DEPLOY_STAGE: ${env:DEPLOY_STAGE}
+
+package:
+  exclude:
+    - .git/**
+    - .nyc_output/**
+    - coverage/**
+    - .idea/**
+    - src/**
+    - node_modules/.bin/**
+    - node_modules/.cache/**
+
+custom:
+  warmup:
+    prewarm: true
+  prune:
+    automatic: true
+    number: 3
+  remover:
+    buckets:
+      - serverless-log-analysis-logs-${env:DEPLOY_STAGE}
+      - serverless-log-analysis-athena-query-results-${env:DEPLOY_STAGE}
+
+functions:
+  convertToHiveFormat:
+    handler: dist/src/app/function/s3.convertToHiveFormat
+    warmup: true
+    events:
+      - s3:
+          bucket: serverless-log-analysis-logs-${env:DEPLOY_STAGE}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: raw/
+  createDatabase:
+    handler: dist/src/app/function/athena.createDatabase
+    warmup: true
+    timeout: 30
+  createAllDatabase:
+    handler: dist/src/app/function/athena.createAllDatabase
+    warmup: true
+    timeout: 30
+  createTable:
+    handler: dist/src/app/function/athena.createTable
+    warmup: true
+    timeout: 30
+  createAllTable:
+    handler: dist/src/app/function/athena.createAllTable
+    warmup: true
+    timeout: 30
+  addPartition:
+    handler: dist/src/app/function/athena.addPartition
+    warmup: true
+    timeout: 30
+  athenaAllTablePartitionAdd:
+    handler: dist/src/app/function/schedule.athenaAllTablePartitionAdd
+    events:
+      - schedule: cron(0 16 * * ? *)
+    timeout: 30
+
+resources: ${file(resources.yml)}

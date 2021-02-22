@@ -1,0 +1,54 @@
+# serverless.yml
+
+service: avshare
+
+provider:
+  variableSyntax: "\\${{([ ~:a-zA-Z0-9._\\'\",\\-\\/\\(\\)]+?)}}" # notice the double quotes for yaml to ignore the escape characters!
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: ${{env:AWS_REGION, 'ap-northeast-1'}}
+  memorySize: 512
+  timeout: 30
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource:
+        - arn:aws:s3:::jp-live-bruin-iwai-audio-video/*
+    - Effect: "Allow"
+      Action:
+        - "ssm:GetParameter"
+      Resource: "arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/*"
+    - Effect: "Allow"
+      Action:
+        - "secretsmanager:GetSecretValue"
+      Resource: "arn:aws:secretsmanager:#{AWS::Region}:#{AWS::AccountId}:secret:*"
+  deploymentBucket:
+    blockPublicAccess: true
+  tracing:
+    apiGateway: true
+    lambda: true
+  logRetentionInDays: 14
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-include-dependencies
+  - serverless-pseudo-parameters
+
+package:
+  individually: true
+  exclude:
+    - ./**
+
+functions:
+  app:
+    handler: index.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+    environment:
+      MY_FAVORITES_DOMAIN: d2ri4pj87do1tj.cloudfront.net
+      OLD_PROGRAMS_DOMAIN: d1fbdzhz2ci06b.cloudfront.net
+      BUCKET_NAME: jp-live-bruin-iwai-audio-video
+      DEBUG: 'my:*'

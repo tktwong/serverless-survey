@@ -1,0 +1,62 @@
+service: sls-apig-domain-resources
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, env:SLS_STAGE, 'dev'}
+  region: ${opt:region, env:SLS_REGION, 'us-east-1'}
+  stackName: ${self:provider.stage}-${self:service}
+  disableRollback: true
+  apiName: ${self:provider.stackName}
+  profile: ${opt:aws-profile, env:AWS_PROFILE, env:AWS_DEFAULT_PROFILE, 'default'}
+  memorySize: 128
+  timeout: 10
+  logRetentionInDays: 14
+  deploymentBucket:
+    name: ${self:provider.region}-${self:service}-deploys
+    serverSideEncryption: AES256
+  environment:
+    tableName: ${file(../database/serverless.yml):custom.tableName}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - Fn::ImportValue: ${self:provider.stage}-ResourcesTableArn
+
+functions:
+  get:
+    handler: handler.main
+    events:
+      - http: GET resources
+        cors: true
+        authorizer: aws_iam
+
+resources:
+  Outputs:
+    ApiGatewayRestApiId:
+      Value: '#{ApiGatewayRestApi}'
+      Export:
+        Name: ${self:provider.stage}-ApiGatewayRestApiId
+    ApiGatewayRestApiRootResourceId:
+      Value: '#{ApiGatewayRestApi.RootResourceId}'
+      Export:
+        Name: ${self:provider.stage}-ApiGatewayRestApiRootResourceId
+
+plugins:
+  # https://github.com/MikeSouza/serverless-deployment-bucket
+  - serverless-deployment-bucket
+  # https://github.com/dherault/serverless-offline
+  - serverless-offline
+  # https://github.com/dougmoscrop/serverless-plugin-common-excludes
+  - serverless-plugin-common-excludes
+  # https://github.com/yonomi/serverless-plugin-encode-env-var-objects
+  - serverless-plugin-encode-env-var-objects
+  # https://github.com/svdgraaf/serverless-pseudo-parameters
+  - serverless-pseudo-parameters

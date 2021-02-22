@@ -1,0 +1,90 @@
+service: raven
+app: raven
+org: qwerqy
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: ap-southeast-1
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    AWS_ACCOUNT_ID: ""
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - sns:Publish
+        - sns:Subscribe
+      Resource:
+        - "arn:aws:sns:${opt:region, self:provider.region}:*:processPayment"
+    - Effect: Allow
+      Action:
+        - sns:Publish
+        - sns:Subscribe
+      Resource:
+        - "arn:aws:sns:${opt:region, self:provider.region}:*:processDelivery"
+    - Effect: Allow
+      Action:
+        - sns:Publish
+        - sns:Subscribe
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/stream/2020-07-07T08:44:05.725"
+functions:
+  createOrder:
+    handler: dist/order.create
+    events:
+      - http:
+          path: order/create
+          method: post
+          cors: true
+  cancelOrder:
+    handler: dist/order.cancel
+    events:
+      - http:
+          path: order/cancel
+          method: put
+          cors: true
+  getOrderStatus:
+    handler: dist/order.status
+    events:
+      - http:
+          path: order/status
+          method: get
+          cors: true
+  processPayment:
+    handler: dist/payment.processPayment
+    events:
+      - sns: processPayment
+  deliverOrder:
+    handler: dist/order.deliver
+    events:
+      - sns: processDelivery
+resources:
+  Resources:
+    OrdersDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

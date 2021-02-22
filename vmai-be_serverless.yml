@@ -1,0 +1,142 @@
+service: vmai-be
+provider:
+    name: aws
+    runtime: nodejs12.x
+    region: eu-west-1
+    environment:
+        DYNAMODB_CONTACTS_TABLE: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-collections
+        S3_BUCKET: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-media
+        ALLOW_ORIGIN_HEADER: '*'
+        JWT_SECRET: dummysecret
+    iamRoleStatements:
+        - Effect: Allow
+          Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:Scan
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+          Resource: arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_CONTACTS_TABLE}
+
+        - Effect: 'Allow'
+          Action:
+              - 'ses:SendEmail'
+          Resource: ['*']
+
+        - Effect: 'Allow'
+          Action:
+              - 's3:PutObject'
+              - 's3:PutObjectAcl'
+          Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*
+
+functions:
+    auth:
+        handler: handlers/auth.handler
+    login:
+        handler: handlers/login.handler
+        events:
+            - http:
+                  path: auth/login
+                  method: post
+                  cors: true
+    contact:
+        handler: handlers/contact.handler
+        events:
+            - http:
+                  path: contact
+                  method: post
+                  cors: true
+    requestMediaURL:
+        handler: handlers/requestMediaURL.handler
+        events:
+            - http:
+                  path: admin/request-media-url
+                  #   authorizer: auth
+                  method: post
+                  cors: true
+    createCollection:
+        handler: handlers/createCollection.handler
+        events:
+            - http:
+                  path: admin/collections
+                  #   authorizer: auth
+                  method: post
+                  cors: true
+    updateCollection:
+        handler: handlers/updateCollection.handler
+        events:
+            - http:
+                  path: admin/collections/{id}
+                  method: put
+                  cors: true
+                  request:
+                      parameters:
+                          paths:
+                              id: true
+    reorderCollections:
+        handler: handlers/reorderCollections.handler
+        events:
+            - http:
+                  path: admin/collections/reorder
+                  #   authorizer: auth
+                  method: post
+                  cors: true
+
+    deleteCollection:
+        handler: handlers/deleteCollection.handler
+        events:
+            - http:
+                  path: admin/collections/{id}
+                  #   authorizer: auth
+                  method: delete
+                  cors: true
+                  request:
+                      parameters:
+                          paths:
+                              id: true
+    getAllCollections:
+        handler: handlers/getAllCollections.handler
+        events:
+            - http:
+                  path: admin/collections
+                  #   authorizer: auth
+                  method: get
+                  cors: true
+    getPublishedCollections:
+        handler: handlers/getPublishedCollections.handler
+        events:
+            - http:
+                  path: collections
+                  method: get
+                  cors: true
+resources:
+    Resources:
+        collectionsDB:
+            Type: AWS::DynamoDB::Table
+            Properties:
+                TableName: ${self:provider.environment.DYNAMODB_CONTACTS_TABLE}
+                AttributeDefinitions:
+                    - AttributeName: collectionID
+                      AttributeType: S
+                KeySchema:
+                    - AttributeName: collectionID
+                      KeyType: HASH
+                ProvisionedThroughput:
+                    ReadCapacityUnits: 1
+                    WriteCapacityUnits: 1
+        fileUpload:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:provider.environment.S3_BUCKET}
+                AccessControl: PublicRead
+                CorsConfiguration:
+                    CorsRules:
+                        - AllowedMethods:
+                              - GET
+                              - PUT
+                              - POST
+                              - HEAD
+                          AllowedOrigins:
+                              - '*'
+                          AllowedHeaders:
+                              - '*'

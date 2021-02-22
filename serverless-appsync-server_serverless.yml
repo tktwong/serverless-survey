@@ -1,0 +1,44 @@
+service:
+  name: serverless-appsync-server
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${file(./serverless.env.yml):${opt:stage}.REGION}
+  environment: ${file(./serverless.env.yml):${opt:stage}}
+
+plugins:
+  - serverless-appsync-plugin
+  
+functions:
+  graphql:
+    handler: handler.graphql
+
+custom:
+  accountId: ${file(./serverless.env.yml):${opt:stage}.ACCT_ID}
+  appSync:
+    name: ${self:service.name}
+    authenticationType: API_KEY
+    mappingTemplatesLocation: ./src/mapping-templates
+    mappingTemplates:
+      - dataSource: Lambda_Greet
+        type: Query
+        field: hello
+        request: "query/greet_hello.txt"
+        response: "response.txt"
+      - dataSource: Lambda_Greet
+        field: hi
+        type: Mutation
+        request: "mutation/greet_hi.txt"
+        response: "response.txt"
+    schema: ${file(./schema.js)}
+    serviceRole: "${self:service.name}-service-role"
+    dataSources:
+      - type: AWS_LAMBDA
+        name: Lambda_Greet
+        description: 'Lambda DataSource'
+        config:
+          functionName: graphql
+          serviceRoleArn: { Fn::GetAtt: [AppSyncLambdaUIServiceRole, Arn] }
+
+resources: ${file(./serverless.resources.yml)}

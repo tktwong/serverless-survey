@@ -1,0 +1,103 @@
+service:
+  name: kkesley
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-southeast-2'}
+  profile: vo
+
+custom:
+  HOSTED_ZONE: kkesley.com.
+  DOMAIN_NAME:
+    dev: dev.kkesley.com
+    prod: kkesley.com
+  FULL_DOMAIN_NAME:
+    dev: www-dev.kkesley.com
+    prod: www.kkesley.com
+  CERTIFICATE_ARN: arn:aws:acm:us-east-1:344260392803:certificate/6e6ea77e-f76d-4d54-b400-86ac67bbf5d7
+resources:
+  Resources:
+    FrontPageWebsiteBucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: 404.html
+    FrontPageWebsiteBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref FrontPageWebsiteBucket
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Join [/, [!GetAtt FrontPageWebsiteBucket.Arn, '*']]
+              Principal:
+                CanonicalUser: !GetAtt FrontPageWebsiteOriginAccessIdentity.S3CanonicalUserId
+    FrontPageWebsiteOriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: ${self:custom.DOMAIN_NAME.${self:provider.stage}} Origin Access Identity to Access Website Bucket
+    FrontPageCloudFront:
+      Type: "AWS::CloudFront::Distribution"
+      DependsOn:
+        - FrontPageWebsiteBucket
+      Properties:
+        DistributionConfig: 
+          Origins:
+            - DomainName: !GetAtt FrontPageWebsiteBucket.DomainName
+              Id: S3Origin
+              S3OriginConfig:
+                OriginAccessIdentity: !Join [/, [origin-access-identity, cloudfront, !Ref FrontPageWebsiteOriginAccessIdentity]]
+          CustomErrorResponses:
+            - ErrorCachingMinTTL: 0
+              ErrorCode: 403
+              ResponseCode: 200
+              ResponsePagePath: "/index.html"
+          Aliases:
+            - ${self:custom.DOMAIN_NAME.${self:provider.stage}}
+            - ${self:custom.FULL_DOMAIN_NAME.${self:provider.stage}}
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: none
+            TargetOriginId: S3Origin
+            ViewerProtocolPolicy: redirect-to-https
+          Comment: Distribution of front page website. Need to replaced with the actual website.
+          DefaultRootObject: index.html
+          Enabled: true
+          HttpVersion: 'http2'
+          PriceClass: PriceClass_All
+          ViewerCertificate:
+            AcmCertificateArn: ${self:custom.CERTIFICATE_ARN}
+            MinimumProtocolVersion: TLSv1.1_2016
+            SslSupportMethod: sni-only
+    FrontPageDNSNameAlias:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneName: ${self:custom.HOSTED_ZONE}
+        RecordSets:
+          - Name: ${self:custom.FULL_DOMAIN_NAME.${self:provider.stage}}
+            Type: A
+            AliasTarget:
+              HostedZoneId: Z2FDTNDATAQYW2 #cloudfront hostedzone id
+              DNSName: !GetAtt [FrontPageCloudFront, DomainName]
+    FrontPageDNSName:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneName: ${self:custom.HOSTED_ZONE}
+        RecordSets:
+          - Name: ${self:custom.DOMAIN_NAME.${self:provider.stage}}
+            Type: A
+            AliasTarget:
+              HostedZoneId: Z2FDTNDATAQYW2 #cloudfront hostedzone id
+              DNSName: !GetAtt [FrontPageCloudFront, DomainName]
+    

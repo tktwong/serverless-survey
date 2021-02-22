@@ -1,0 +1,73 @@
+service: zemoga-service
+frameworkVersion: "2"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  environment:
+    PORTFOLIO_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - "dynamodb:UpdateItem"
+      Resource: "*"
+functions:
+  createProfile:
+    handler: api/profile.submit
+    memorySize: 128
+    description: Submit profile information .
+    events:
+      - http:
+          path: profile
+          method: post
+          resources:
+          cors: true
+  updateProfile:
+    handler: api/profile.update
+    memorySize: 128
+    description: update profile information.
+    events:
+      - http:
+          path: profile
+          method: put
+          resources:
+          cors: true
+  listProfiles:
+    handler: api/profile.list
+    memorySize: 128
+    description: List all profiles
+    events:
+      - http:
+          path: profile
+          method: get
+          cors: true
+  getProfile:
+    handler: api/profile.get
+    events:
+      - http:
+          path: profile/{id}
+          method: get
+          cors: true
+Resources:
+  ProfilesDynamoDbTable:
+    Type: "AWS::DynamoDB::Table"
+    DeletionPolicy: Retain
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "N"
+      KeySchema:
+        - AttributeName: "id"
+          KeyType: "NUMBER"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      StreamSpecification:
+        StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.PORTFOLIO_TABLE}

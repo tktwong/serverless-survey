@@ -1,0 +1,324 @@
+service:
+  name: ${self:custom.service}
+
+custom:
+  service: sls-dynamo-cognito
+  stage: dev
+  settings:
+    DYNAMODB_TABLE: ${self:custom.service}-things-table
+    BLOG_TABLE: ${self:custom.service}-blog-table
+    BLOG_TABLE_GSI_Inverted: "GSI_InvertedIndex"
+    BLOG_TABLE_GSI_Status: "GSI2_PubStatusIndex"
+    BLOG_TABLE_GSI3_PublishedPosts: "GSI3_PublishedPostsIndex"
+    COGNITO_USERPOOL: ${self:custom.service}-user-pool
+#    COGNITO_IDENTITYPOOL: ${self:custom.service}-identity-pool
+    COGNITO_USERPOOL_CLIENT: ${self:custom.service}-user-pool-client
+    AUTHORIZER: ${self:custom.service}-authorizer
+    USER_POOL_ID:
+      Ref: CognitoUserPool
+    APP_CLIENT_ID:
+      Ref: CognitoUserPoolClient
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: default
+  region: eu-west-1
+  stage: ${self:custom.stage}
+  environment: ${self:custom.settings}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:ListStreams"
+        - "dynamodb:Scan"
+        - "dynamodb:Query"
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.DYNAMODB_TABLE}/index/*"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.BLOG_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.BLOG_TABLE}/index/*"
+
+
+functions:
+  putUser:
+    handler: functions/blog.putUser
+    events:
+      - http:
+          path: blog/users
+          method: put
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getUserProfile:
+    handler: functions/blog.getUserProfile
+    events:
+      - http:
+          path: blog/users/{userId}
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getPostsByUser:
+    handler: functions/blog.getPostsByUser
+    events:
+      - http:
+          path: blog/users/{userId}/posts
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getUserPostsByStatus:
+    handler: functions/blog.getUserPostsByStatus
+    events:
+      - http:
+          path: blog/users/{userId}/posts/{status}/{date}
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getPostComments:
+    handler: functions/blog.getPostComments
+    events:
+      - http:
+          path: blog/posts/{postId}/comments
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getPublishedPosts:
+    handler: functions/blog.getPublishedPosts
+    events:
+      - http:
+          path: blog/posts/published
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  putPost:
+    handler: functions/blog.putPost
+    events:
+      - http:
+          path: blog/users/{userId}/posts
+          method: put
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  putComment:
+    handler: functions/blog.putComment
+    events:
+      - http:
+          path: blog/posts/{postId}
+          method: put
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  saveItem:
+    handler: items.saveItem
+    events:
+      - http:
+          path: items
+          method: post
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getItem:
+    handler: items.getItem
+    events:
+      - http:
+          path: items/{itemId}
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getItems:
+    handler: items.getItems
+    events:
+      - http:
+          path: items
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getAllItems:
+    handler: items.getAllItems
+    events:
+      - http:
+          path: items/all
+          method: get
+  deleteItem:
+    handler: items.deleteItem
+    events:
+      - http:
+          path: items/{itemId}
+          method: delete
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  updateItem:
+    handler: items.updateItem
+    events:
+      - http:
+          path: items/{itemId}
+          method: put
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  signIn:
+    handler: auth.signIn
+    events:
+      - http:
+          path: auth/signIn
+          method: post
+  signUp:
+    handler: auth.signUp
+    events:
+      - http:
+          path: auth/signUp
+          method: post
+  refreshToken:
+    handler: auth.refreshToken
+    events:
+      - http:
+          path: auth/refresh-token
+          method: post
+
+  preSignUp:
+    handler: auth.preSignUp
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.settings.COGNITO_USERPOOL}
+          trigger: PreSignUp
+          existing: true
+
+resources:
+  - ${file(resources/authorizer.yml)}
+  - ${file(resources/dynamodb/things-table.yml)}
+  - ${file(resources/dynamodb/blog-table.yml)}
+  - Resources:
+      CognitoUserPool:
+        Type: "AWS::Cognito::UserPool"
+        Properties:
+          MfaConfiguration: OFF
+          UserPoolName: ${self:custom.settings.COGNITO_USERPOOL}
+          UsernameAttributes:
+            - email
+          Policies:
+            PasswordPolicy:
+              MinimumLength: 6
+              RequireLowercase: True
+              RequireNumbers: True
+              RequireSymbols: False
+              RequireUppercase: True
+      CognitoUserPoolClient:
+        Type: "AWS::Cognito::UserPoolClient"
+        Properties:
+          ClientName: ${self:custom.settings.COGNITO_USERPOOL_CLIENT}
+          GenerateSecret: False
+          UserPoolId:
+            Ref: CognitoUserPool
+
+    # Next resources are not used in this service
+    # Identity pool: to specify access to AWS services
+#    CognitoIdentityPool:
+#      Type: "AWS::Cognito::IdentityPool"
+#      Properties:
+#        IdentityPoolName: ${self:custom.settings.COGNITO_IDENTITYPOOL}
+#        AllowUnauthenticatedIdentities: false
+#        CognitoIdentityProviders:
+#          - ClientId:
+#              Ref: CognitoUserPoolClient
+#            ProviderName:
+#              Fn::GetAtt: [CognitoUserPool, ProviderName]
+#    CognitoIdentityPoolRoles:
+#      Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+#      Properties:
+#        IdentityPoolId:
+#          Ref: CognitoIdentityPool
+#        Roles:
+#          authenticated:
+#            Fn::GetAtt: [CognitoAuthRole, Arn]
+#          unauthenticated:
+#            Fn::GetAtt: [CognitoUnauthRole, Arn]
+#    CognitoAuthRole:
+#      Type: "AWS::IAM::Role"
+#      Properties:
+#        RoleName: ${self:custom.service}-auth-role
+#        Path: /
+#        AssumeRolePolicyDocument:
+#          Version: "2012-10-17"
+#          Statement:
+#            - Effect: "Allow"
+#              Principal:
+#                Federated: "cognito-identity.amazonaws.com"
+#              Action:
+#                - "sts:AssumeRoleWithWebIdentity"
+#              Condition:
+#                StringEquals:
+#                  "cognito-identity.amazonaws.com:aud":
+#                    Ref: CognitoIdentityPool
+#                "ForAnyValue:StringLike":
+#                  "cognito-identity.amazonaws.com:amr": authenticated
+#        Policies:
+#          - PolicyName: "CognitoAuthorizedPolicy"
+#            PolicyDocument:
+#              Version: "2012-10-17"
+#              Statement:
+#                - Effect: "Allow"
+#                  Action:
+#                    - "dynamodb:GetItem"
+#                    - "dynamodb:PutItem"
+#                    - "dynamodb:UpdateItem"
+#                    - "dynamodb:DeleteItem"
+#                    - "dynamodb:ListStreams"
+#                    - "dynamodb:Scan"
+#                    - "dynamodb:Query"
+#                  Resource:
+#                    - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.DYNAMODB_TABLE}"
+#                    - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.DYNAMODB_TABLE}/index/*"
+#    CognitoUnauthRole:
+#      Type: "AWS::IAM::Role"
+#      Properties:
+#        RoleName: ${self:custom.service}-unauth-role
+#        Path: /
+#        AssumeRolePolicyDocument:
+#          Version: "2012-10-17"
+#          Statement:
+#            - Effect: "Allow"
+#              Principal:
+#                Federated: "cognito-identity.amazonaws.com"
+#              Action:
+#                - "sts:AssumeRoleWithWebIdentity"
+#              Condition:
+#                StringEquals:
+#                  "cognito-identity.amazonaws.com:aud":
+#                    Ref: CognitoIdentityPool
+#                "ForAnyValue:StringLike":
+#                  "cognito-identity.amazonaws.com:amr": unauthenticated
+#        Policies:
+#          - PolicyName: "CognitoUnauthorizedPolicy"
+#            PolicyDocument:
+#              Version: "2012-10-17"
+#              Statement:
+#                - Effect: "Allow"
+#                  Action:
+#                    - "cognito-sync:*"
+#                    - "cognito-identity:*"
+#                  Resource: "*"

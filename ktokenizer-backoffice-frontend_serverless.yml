@@ -1,0 +1,55 @@
+# https://serverless.com/framework/docs/providers/aws/guide/serverless.yml/
+frameworkVersion: '>=1.26.0 <2.0.0'
+
+service:
+  name: ktokenizer-bo-fe
+
+plugins:
+  - serverless-s3-sync
+  - serverless-aws-helpers
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+custom:
+  bucketName: panel${self:provider.stage}.ktokenizer.com
+  s3Sync:
+    - bucketName: ${self:custom.bucketName}
+      localDir: dist
+
+resources:
+  Resources:
+    ############################################################################
+    # S3 Bucket to store the dist release
+    ############################################################################
+    BOFES3Bucket:
+      Type: 'AWS::S3::Bucket'
+      DeletionPolicy: Delete
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.bucketName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    BOFES3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: BOFES3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "BOFES3Bucket"
+                    },
+                    "/*"
+                  ]
+                ]

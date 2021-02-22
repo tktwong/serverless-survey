@@ -1,0 +1,116 @@
+service: shop-reporter-cloudfront
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ${self:custom.deployment.myRegion.${self:custom.deployment.myStage}}
+  profile: ${self:custom.deployment.myProfile.${self:custom.deployment.myStage}}
+  
+custom:
+  deployment: ${file(config/deployment.yml):deployment}
+  rootDomainName: shopreporter.mateuszholowieszko.com
+  domain:
+    dev:  dev.${self:custom.rootDomainName}
+    test: test.${self:custom.rootDomainName}
+    prod: ${self:custom.rootDomainName}
+
+resources:
+  Resources:
+    WebsiteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.domain.${self:custom.deployment.myStage}}
+        AccessControl: 'Private'
+        VersioningConfiguration:
+          Status: Suspended
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+
+    WebsiteOriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: 'Access S3 bucket content only through CloudFront'
+
+    WebsiteBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Metadata:
+        Comment: "Bucket policy that allows cloudfront to access data from the S3 bucket"
+      Properties:
+        Bucket: !Ref WebsiteBucket
+        PolicyDocument:
+          Statement:
+            - Action:
+                - 's3:GetObject'
+              Effect: 'Allow'
+              Principal:
+                CanonicalUser: !GetAtt WebsiteOriginAccessIdentity.S3CanonicalUserId
+              Resource: !Join
+              - ''
+              - -  'arn:aws:s3:::'
+                -  !Ref WebsiteBucket
+                -  '/*'
+
+    WebsiteContentDeliverNetwork:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Comment: CDN for S3-backed website
+          Aliases:
+            - ${self:custom.domain.${self:custom.deployment.myStage}}
+          Enabled: true
+          HttpVersion: http2
+          IPV6Enabled: false
+          PriceClass: PriceClass_100
+          DefaultCacheBehavior:
+            Compress: true
+            ForwardedValues:
+              QueryString: true
+            MaxTTL: 120
+            MinTTL: 0
+            DefaultTTL: 120
+            TargetOriginId: !Sub 'S3-${self:custom.domain.${self:custom.deployment.myStage}}.s3.amazonaws.com'
+            ViewerProtocolPolicy: redirect-to-https
+          DefaultRootObject: index.html
+          ViewerCertificate:
+            AcmCertificateArn: !Ref WebsiteCertificate
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2019
+          Origins:
+            - DomainName: !Sub '${self:custom.domain.${self:custom.deployment.myStage}}.s3.amazonaws.com'
+              Id: !Sub 'S3-${self:custom.domain.${self:custom.deployment.myStage}}.s3.amazonaws.com'
+              OriginPath: ''
+              S3OriginConfig:
+                OriginAccessIdentity: !Join
+                - ''
+                - -  'origin-access-identity/cloudfront/'
+                  -  !Ref WebsiteOriginAccessIdentity
+      
+    WebsiteCertificate:
+      Type: AWS::CertificateManager::Certificate
+      Properties:
+        DomainName: ${self:custom.domain.${self:custom.deployment.myStage}}
+        DomainValidationOptions:
+          - DomainName: ${self:custom.domain.${self:custom.deployment.myStage}}
+            ValidationDomain: ${self:custom.domain.prod}
+        ValidationMethod: DNS
+    
+    WebsiteDNSRecord:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        AliasTarget:
+          DNSName: !GetAtt WebsiteContentDeliverNetwork.DomainName
+          HostedZoneId: Z2FDTNDATAQYW2
+        HostedZoneId: ${self:custom.deployment.hostedZoneId}
+        Comment: Alias record to CloudFront distribution
+        Name: ${self:custom.domain.${self:custom.deployment.myStage}}
+        Type: A
+
+  Outputs:
+    WebsiteContentDeliverNetworkId:
+      Description: WebsiteContentDeliverNetwork ID
+      Value: !Ref WebsiteContentDeliverNetwork
+      Export:
+        Name: ${self:custom.deployment.myStage}WebsiteContentDeliverNetwork

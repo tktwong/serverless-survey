@@ -1,0 +1,61 @@
+service: dictionary-api
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  stage: ${self:provider.stage}
+  dictionaryTable:
+    name: ${self:custom.stage}-dictionary
+    throughputs:
+      prod: 5
+      default: 1
+    throughput: ${self:custom.dictionaryTable.throughputs.${self:custom.stage}, self:custom.dictionaryTable.throughputs.default}
+  termsTable:
+    name: ${self:custom.stage}-terms
+    throughputs:
+      prod: 5
+      default: 1
+    throughput: ${self:custom.termsTable.throughputs.${self:custom.stage}, self:custom.termsTable.throughputs.default}
+  path:
+    dictionary: 'src/handlers/dictionary'
+    term: 'src/handlers/term'
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-1
+  environment:
+    region: ${self:provider.region}
+    dictionaryTableName: ${self:custom.dictionaryTable.name}
+    termTableName: ${self:custom.termsTable.name}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        - 'Fn::GetAtt': [ DictionaryTable, Arn ]
+        - 'Fn::GetAtt': [ TermsTable, Arn ]
+
+functions:
+  - ${file(./src/handlers/dictionary/functions.yml)}
+  - ${file(./src/handlers/term/functions.yml)}

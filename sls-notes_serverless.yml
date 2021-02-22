@@ -1,0 +1,123 @@
+service: api
+
+# Create an optimized package for our functions
+# package:
+#   individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+  - serverless-iam-roles-per-function
+  - serverless-plugin-tracing
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    NOTES_TABLE: SlsNotes-${self:provider.stage}
+    NOTES_UPLOADS_S3_BUCKET: sls-notes-uploads-bucket-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300 # seconds = 5 mins
+
+  tracing:
+    lambda: true
+    apiGateway: true
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+functions:
+  CreateNote:
+    handler: src/createNote.main
+    events:
+      - http:
+          method: post
+          path: notes
+          cors: true
+          authorizer: aws_iam
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}
+  GetNote:
+    handler: src/getNote.main
+    events:
+      - http:
+          method: get
+          path: notes/{noteId}
+          cors: true
+          authorizer: aws_iam
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}
+
+  GetNotes:
+    handler: src/getNotes.main
+    events:
+      - http:
+          method: get
+          path: notes
+          cors: true
+          authorizer: aws_iam
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}
+
+  UpdateNote:
+    handler: src/updateNote.main
+    events:
+      - http:
+          method: put
+          path: notes/{noteId}
+          cors: true
+          authorizer: aws_iam
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}
+
+  DeleteNote:
+    handler: src/deleteNote.main
+    events:
+      - http:
+          method: delete
+          path: notes/{noteId}
+          cors: true
+          authorizer: aws_iam
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.NOTES_TABLE}
+
+  Billing:
+    environment:
+      STRIPE_SECRET_KEY: ${env:STRIPE_SECRET_KEY}
+    handler: src/billing.main
+    events:
+      - http:
+          method: post
+          path: billing
+          cors: true
+          authorizer: aws_iam
+    # TODO: Add iam Role for charges table
+
+resources:
+  - ${file(resources/api-gateway-errors.yml)}
+  - ${file(resources/notes-dynamodb-table.yml)}
+  - ${file(resources/note-uploads-s3-bucket.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

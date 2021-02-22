@@ -1,0 +1,104 @@
+service: discovery
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-discovery-plugin
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  stackName: service-discovery-${self:provider.stage}
+  tags:
+    Repository: serverless-discovery-service-aws
+    'Stack Name': ${self:provider.stackName}
+  stackTags: ${self:provider.tags}
+  region: us-east-1
+  memorySize: 128
+  timeout: 30
+
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:CreateTable
+        - dynamodb:DeleteItem
+        - dynamodb:DeleteTable
+        - dynamodb:DescribeTable
+        - dynamodb:GetItem
+        - dynamodb:GetRecords
+        - dynamodb:ListTables
+        - dynamodb:PutItem
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:UpdateItem
+        - dynamodb:UpdateTable
+      Resource: [
+        "arn:aws:dynamodb:us-east-1:*:table/*-ServiceCatalog*",
+        "arn:aws:dynamodb:us-east-1:*:table/*-ServiceCatalog/*" # Global secondary indexes
+      ]
+
+functions:
+  db-provision:
+    handler: source/provision.main
+    timeout: 60
+    # For pipeline use only; Not exposed via API Gateway
+
+  db-deprovision:
+    handler: source/deprovision.main
+    timeout: 60
+    # For pipeline use only; Not exposed via API Gateway
+
+  service-create:
+    handler: source/catalog/service-create.main
+    events:
+      - http:
+          method: post
+          path: catalog/service
+          cors:
+            origin: "*"
+            allowCredentials: true
+          authorizer: aws_iam
+
+  service-get:
+    handler: source/catalog/service-get.main
+    events:
+      - http:
+          method: get
+          path: catalog/service/{id}
+          cors:
+            origin: "*"
+            allowCredentials: true
+          authorizer: aws_iam
+
+  service-delete:
+    handler: source/catalog/service-delete.main
+    events:
+      - http:
+          method: delete
+          path: catalog/service/{id}
+          cors:
+            origin: "*"
+            allowCredentials: true
+          authorizer: aws_iam
+
+  service-lookup:
+    handler: source/catalog/service-lookup.main
+    events:
+      - http:
+          method: get
+          path: catalog/service
+          cors:
+            origin: "*"
+            allowCredentials: false
+          request:
+            parameters:
+              ServiceName: true
+              StageName: false
+
+custom:
+  discovery:
+    file: test/system/lib/outputs.json
+    deployHandler: pipeline/serverless-db-provision.deploy
+    removeHandler: pipeline/serverless-db-provision.remove

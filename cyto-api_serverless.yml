@@ -1,0 +1,93 @@
+#-------- Serverless API for NodeJS Functions -------------
+# NOTE: update this with your service name
+service: blueprint-mockupgen-api
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: us-east-1
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName: mockupgenerator
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /scandata
+  # - method: POST request
+  
+  createMockup:
+    handler: createMockup.main
+    events:
+      - http:
+          path: mockupgenerator
+          method: post
+          cors: true
+          authorizer: aws_iam
+  
+  getMockup:
+    handler: getMockup.main
+    events:
+      - http:
+          path: mockupgenerator/{itemId}/{imprintId}
+          method: get
+          # cors: true
+          # authorizer: aws_iam
+    
+  listMockups:
+    handler: listMockups.main
+    events:
+      - http:
+          path: mockupgenerator
+          method: get
+          cors: true
+          authorizer: aws_iam
+  
+  updateMockup:
+    handler: updateMockup.main
+    events:
+      - http:
+          path: mockupgenerator/{itemId}/{imprintId}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  
+  deleteMockup:
+    handler: deleteMockup.main
+    events:
+      - http:
+          path: mockupgenerator/{itemId}/{imprintId}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+  
+        
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}

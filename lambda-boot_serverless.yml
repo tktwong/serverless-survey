@@ -1,0 +1,46 @@
+# serverless.yml
+
+service: BBGGR-LAMBDA-BOOT
+
+provider:
+  name: aws
+  region: ${opt:region, 'us-west-2'
+  stage: ${opt:stage, 'TEST'}
+  runtime: java8
+  memorySize: 256
+  timeout: 60
+  logRetentionInDays: 30
+  deploymentBucket:
+    name: iow-cloud-applications
+  stackTags:
+    "wma:applicationId": "Retriever Capture Loader"
+    "wma:contact": "Jim Kreft jkreft@usgs.gov"
+    "wma:environment": ${self:provider.stage}
+
+custom:
+  localstack:
+    stages:
+      - local
+    host: http://localhost
+    endpointFile: localstack_endpoints.json
+  db:
+    host: ${ssm:/iow/wqp/${self:provider.stage}/database/host}
+    user: ${ssm:/iow/wqp/${self:provider.stage}/database/user}
+    password: ${ssm:/aws/reference/secretsmanager/WQP_DB_READ_ONLY_PASSWORD-${self:provider.stage}~true}
+    name: ${ssm:/iow/wqp/${self:provider.stage}/database/name}
+
+functions:
+  echoObject:
+    handler: org.bbggr.EchoObjectHandler
+    environment:
+      FUNCTION_NAME: echoObject
+      WQP_DATABASE_ADDRESS: ${self:custom.db.host}
+      WQP_DATABASE_NAME: ${self:custom.db.name}
+      WQP_DB_READ_ONLY_USERNAME: ${self:custom.db.user}
+      WQP_DB_READ_ONLY_PASSWORD: ${self:custom.db.password}
+
+package:
+  artifact: target/lambda-boot-0.0.0-SNAPSHOT-aws.jar
+
+plugins:
+  - serverless-localstack

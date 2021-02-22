@@ -1,0 +1,93 @@
+service: token
+
+# use the stage from the cli if provided, otherwise fallback to the one in provider
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  tableName: ${self:service}_${self:custom.stage}_tokens
+
+  # tokens expire after 30 days
+  tokenExpiry: 2592000
+
+  # configure read and write capacity
+  rcu: 25
+  wcu: 25
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  memorySize: 128
+  iamRoleStatements:
+    - Effect: Allow
+      Action: # Gives permission on the DynamoDB table
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:custom.region}:*:table/${self:custom.tableName}"
+  environment:
+    TABLE_NAME: ${self:custom.tableName}
+    TOKEN_EXPIRY: ${self:custom.tokenExpiry}
+
+  stage: dev
+  region: eu-west-2
+
+package:
+  exclude:
+    - .idea/**
+    - .npmignore
+    - package.json
+    - node_modules/**
+    - tests/**
+    - docs/**
+    - README.md
+    - tools/**
+
+functions:
+  add:
+    handler: functions/add.handler
+    events:
+      - http:
+          path: /tokens/{id}
+          method: put
+  get:
+    handler: functions/get.handler
+    events:
+      - http:
+          path: /tokens/{id}
+          method: get
+  patch:
+    handler: functions/patch.handler
+    events:
+      - http:
+          path: /tokens/{id}
+          method: patch
+  delete:
+    handler: functions/delete.handler
+    events:
+      - http:
+          path: /tokens/{id}
+          method: delete
+
+resources:
+  Resources:
+    tokenTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: ${self:custom.rcu}
+          WriteCapacityUnits: ${self:custom.wcu}

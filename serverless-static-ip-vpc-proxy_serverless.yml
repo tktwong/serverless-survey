@@ -1,0 +1,44 @@
+service:
+  name: serverless-static-ip-vpc-proxy
+
+plugins:
+  - serverless-webpack
+
+frameworkVersion: ">=1.40.0"
+
+custom:
+  stage: ${opt:stage, 'dev'}
+  baseUrl: ${opt:baseUrl, 'https://google.com'}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${self:custom.stage}
+  region: ${env:REGION, 'us-east-1'}
+  memorySize: 512
+  vpc:
+    securityGroupIds:
+      - Fn::GetAtt: [VPCStaticIP, DefaultSecurityGroup]
+    subnetIds:
+      - Ref: SubnetPrivate
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ec2:CreateNetworkInterface
+        - ec2:DeleteNetworkInterface
+        - ec2:DescribeNetworkInterfaces
+      Resource: "*"
+  environment:
+    BASE_URL: ${self:custom.baseUrl}
+
+functions:
+  proxy:
+    handler: src/proxy.handle
+    events:
+      - http:
+          path: /proxy/{any+}
+          method: ANY
+          cors: true
+
+resources:
+  - ${file(./vpc.yml)}

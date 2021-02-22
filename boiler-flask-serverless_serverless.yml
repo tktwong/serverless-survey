@@ -1,0 +1,66 @@
+service: flask-serverless-boiler
+
+custom:
+  STAGE: ${self:provider.stage}
+  DB_CONFIG: ${file(./configs/config.js):DATABASE_CONFIG}
+  wsgi:
+    app: main.my_app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: non-linux
+
+provider:
+  name: aws
+  iamRoleStatements: # permissions for all of your functions can be set here
+    - Effect: 'Allow'
+      Action:
+        - 's3:ListBucket'
+      # You can put CloudFormation syntax in here.  No one will judge you.
+      # Remember, this all gets translated to CloudFormation.
+      Resource: { 'Fn::Join': ['', ['arn:aws:s3:::', { 'Ref': 'ServerlessDeploymentBucket' }]] }
+    - Effect: 'Allow'
+      Action:
+        - 's3:PutObject'
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - 'Ref': 'ServerlessDeploymentBucket'
+            - '/*'
+    - Effect: 'Allow'
+      Action:
+        - "ec2:DescribeNetworkInterfaces"
+        - "ec2:CreateNetworkInterface"
+        - "ec2:DeleteNetworkInterface"
+        - "ec2:DescribeInstances"
+        - "ec2:AttachNetworkInterface"
+      Resource: "*"
+  stage: ${opt:stage, 'dev'}
+  runtime: python3.7
+  region: ap-northeast-2
+  
+  environment:
+    STAGE: ${self:provider.stage}
+    # custom 항목 중 DB_CONFIG를 읽어서 스테이지 별로 해당하는 값을 불러옴
+    DB_URL: ${self:custom.DB_CONFIG.${self:custom.STAGE}.DB_URL}
+    JWT_SECRET_KEY_A: ${self:custom.DB_CONFIG.${self:custom.STAGE}.JWT_SECRET_KEY_A}
+    JWT_SECRET_KEY_B: ${self:custom.DB_CONFIG.${self:custom.STAGE}.JWT_SECRET_KEY_B}
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+
+# needs more granular excluding in production as only the serverless provider npm
+# package should be excluded (and not the whole node_modules directory)
+package:
+  exclude:
+    - node_modules/**
+    - .gitignore
+    - .git/**
+
+functions:
+  app:
+    handler: wsgi_handler.handler
+    events:
+      - http: ANY /
+      - http: ANY {proxy+}

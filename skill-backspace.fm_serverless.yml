@@ -1,0 +1,63 @@
+service: skill-backspace-fm
+
+plugins:
+  - serverless-plugin-warmup
+  - serverless-plugin-tracing
+
+provider:
+  name: aws
+  region: ap-northeast-1
+  runtime: nodejs12.x
+  memorySize: 128
+  timeout: 30
+  environment:
+    PODCAST_FEED_CACHE_TABLE: backspace-fm-cache-${opt:stage, self:provider.stage}
+    PERSISTENT_STORE_TABLE: backspace-fm-user-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:CreateTable"
+        - "dynamodb:DeleteTable"
+        - "dynamodb:PutItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:GetItem"
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/*"
+    - Effect: "Allow"
+      Action:
+        - "lambda:InvokeFunction"
+      Resource:
+        - Fn::Join:
+          - ":"
+          -
+            - arn:aws:lambda
+            - Ref: AWS::Region
+            - Ref: AWS::AccountId
+            - function:${self:service}-${opt:stage, self:provider.stage}-*
+    - Effect: "Allow"
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource: "*"
+
+custom:
+  warmup:
+    memorySize: 128
+
+package:
+  include:
+    - node_modules/
+
+functions:
+  main:
+    warmup: true
+    tracing: true
+    handler: index.handler
+    events:
+      - alexaSkill:
+          appId: ${env:SKILL_ID}
+          enabled: true
+  cacheUpdator:
+    handler: cacheUpdator.handler
+    timeout: 60
+    events:
+      - schedule: rate(10 minutes)

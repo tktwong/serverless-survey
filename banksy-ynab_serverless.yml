@@ -1,0 +1,85 @@
+service:
+  name: banksy
+
+custom:
+  sqs: banksy-transactions-${opt:stage}
+  sns: banksy-transactions-${opt:stage}
+
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  runtime: nodejs12.x
+  region: ap-southeast-2
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    SENDGRID_API_KEY: ${env:SENDGRID_API_KEY}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource:
+        - '*'
+
+resources:
+  Resources:
+    SnsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: ${self:custom.sns}
+        TopicName: ${self:custom.sns}
+
+    SqsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.sqs}
+        VisibilityTimeout: 60
+        RedrivePolicy:
+          maxReceiveCount: 5
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - DeadLetterQueue
+              - Arn
+
+    DeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.sqs}-deadletter
+
+    SqsPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: SqsQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal: '*'
+              Action: sqs:SendMessage
+              Resource:
+                Fn::GetAtt: [SqsQueue, Arn]
+          
+    SnsSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        Endpoint: !GetAtt SqsQueue.Arn
+        TopicArn: !Ref SnsTopic
+
+functions:
+  ynab:
+    handler: src/handler.ynab
+    timeout: 60
+    memorySize: 256
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [SqsQueue, Arn]
+          batchSize: 1

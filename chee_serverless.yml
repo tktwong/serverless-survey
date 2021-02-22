@@ -1,0 +1,165 @@
+service:
+  name: chee
+  awsKmsKeyArn: arn:aws:kms:us-east-1:710390882138:key/bbbc300d-ac65-4e10-a4d8-4ae43008ae13
+
+package:
+  include:
+    - lib/**
+    - data/**
+    - conf/**
+    - node_modules/serverless-dynamodb-local/**
+
+  exclude:
+    - README.md
+    - Makefile
+    - LICENSE
+
+custom:
+  creds: ${file(./config.yml)}
+  bucket: chee
+  ccl_bucket: tds-slack
+  tables:
+    users: karma_users
+    scores: karma_scores
+  dynamodb:
+    start:
+      inMemory: true
+      migrate: true
+  serverless-offline:
+    port: 4000
+
+provider:
+  name: aws
+  memory: 128
+  runtime: nodejs6.10
+  timeout: 3
+  stage: dev
+  profile: serverless
+  environment:
+    SLACK_CLIENT_ID: ${self:custom.creds.slack_client_id}
+    SLACK_CLIENT_SECRET: ${self:custom.creds.slack_client_secret}
+    SLACK_VERIFICATION_TOKEN: ${self:custom.creds.slack_verification_token}
+    MASHAPE_API_KEY: ${self:custom.creds.mashape_api_key}
+    DYNAMODB_USER_TABLE: ${self:custom.tables.users}
+    DYNAMODB_SCORE_TABLE: ${self:custom.tables.scores}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource:
+        - "arn:aws:s3:::${self:custom.ccl_bucket}/*"
+        - "arn:aws:s3:::${self:custom.ccl_bucket}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/*"
+
+functions:
+  ccl:
+    handler: lib/ccl/get.do
+    name: ${self:provider.stage}-ccl
+    description: Too many ccliters gifs
+    events:
+        - http:
+            path: ccl
+            method: post
+  plus:
+    handler: lib/score/score.plus
+    name: ${self:provider.stage}-score-plus
+    description: ++ a thing
+    events:
+        - http:
+            path: score/plus
+            method: post
+  minus:
+    handler: lib/score/score.minus
+    name: ${self:provider.stage}-score-minus
+    description: -- a thing
+    events:
+        - http:
+            path: score/minus
+            method: post
+  top:
+    handler: lib/score/score.top
+    name: ${self:provider.stage}-score-top
+    description: Get top scorers
+    events:
+        - http:
+            path: score/top
+            method: post
+
+resources:
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tables.users}
+        AttributeDefinitions:
+          - AttributeName: team_id
+            AttributeType: S
+          - AttributeName: name
+            AttributeType: S
+          - AttributeName: score
+            AttributeType: N
+          - AttributeName: karma
+            AttributeType: N
+        KeySchema:
+          - AttributeName: team_id
+            KeyType: HASH
+          - AttributeName: name
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        LocalSecondaryIndexes:
+          - IndexName : users-team-score
+            KeySchema:
+              - AttributeName: team_id
+                KeyType: HASH
+              - AttributeName: score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+               - "karma"
+               - "id"
+               - "name"
+              ProjectionType: INCLUDE
+          - IndexName : users-team-karma
+            KeySchema:
+              - AttributeName: team_id
+                KeyType: HASH
+              - AttributeName: karma
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+               - "score"
+               - "id"
+               - "name"
+              ProjectionType: INCLUDE
+
+    scoresTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tables.scores}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: date
+            AttributeType: N
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: date
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline

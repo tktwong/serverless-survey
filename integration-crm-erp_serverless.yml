@@ -1,0 +1,59 @@
+service: integration-pipedrive-bling
+app: integration-pipedrive-bling
+org: vinholi
+
+frameworkVersion: '2'
+plugins: 
+  - serverless-offline
+  - serverless-offline-sns
+
+custom:
+  serverless-offline-sns:
+    port: 4002
+    debug: true
+  createOrderTopic:
+    Fn::Join:
+      - ":"
+      - - arn
+        - aws
+        - sns
+        - Ref: AWS::Region
+        - Ref: AWS::AccountId
+        - create-order
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    DATABASE_URL: #DATABASE URL HERE
+    ERP_URL: https://bling.com.br/Api/v2
+    ERP_API_KEY: # ERP API KEY HERE
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - "sns:Publish"
+      Resource:
+        - ${self:custom.createOrderTopic}
+
+functions:
+  get-orders:
+    name: function-get-orders
+    handler: src/handlers/get-orders.getOrders
+    events:
+      - http: 
+          path: orders
+          method: get
+  order-orchestrator:
+    name: function-order-orchestrator
+    handler: src/handlers/order-orchestrator.orderOrchestrator
+    events:
+      - http:
+          path: orders
+          method: post
+    environment:
+      CREATE_ORDER_TOPIC: ${self:custom.createOrderTopic}
+  create-order:
+    name: function-create-order
+    handler: src/handlers/create-order.createOrder
+    events: 
+      - sns: create-order

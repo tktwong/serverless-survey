@@ -1,0 +1,52 @@
+service: cognito-workflow-triggers
+
+package:
+  individually: true
+  exclude:
+    - venv/**
+    - .git/**
+    - node_modules/**
+    - .serverless/**
+    - .vscode/**
+    - src/venv/**
+    
+provider:
+  name: aws
+  region: ap-southeast-1
+  runtime: python3.6
+  stage: latest
+  versionFunctions: false
+  apiGateway:
+    restApiId:
+      'Fn::ImportValue': 'COGNITO-WORKFLOW-TRIGGERS-restApiId'
+    restApiRootResourceId:
+      'Fn::ImportValue': 'COGNITO-WORKFLOW-TRIGGERS-restApiRootResourceId'
+  deploymentBucket:
+    name: cdktoolkit-stagingbucket-tn88ytsk4d6y
+  tags:
+    project: '${self:service}.${self:provider.stage}'
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+
+functions:
+  health:
+    handler: health.main
+    module: src
+    name: '${self:service}-health'
+    events:
+      - http: 
+          path: '${self:service}/health'
+          method: get
+  customMessage:
+    handler: custom_message.main
+    module: src
+    events:
+      - cognitoUserPool:
+          pool: cognito-workflow-triggers
+          trigger: CustomMessage
+          existing: true

@@ -1,0 +1,158 @@
+service: timetableless
+
+package:
+  individually: true
+  exclude:
+    - handlers/**
+    - test/**
+    - README.md
+    - client/**
+
+plugins:
+  - serverless-offline
+  - serverless-dynamodb-local
+
+custom:
+  dynamodb:
+    stages: [dev]
+    start:
+      migrate: true
+      inMemory: true
+      port: 4321
+  client:
+    bucketName: timetableless-${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, "dev"}
+  region: eu-west-1
+  memorySize: 256
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: arn:aws:dynamodb:eu-west-1:*:table/*
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+        - "ses:SendRawEmail"
+      Resource: '*'
+  environment:
+    stage: ${self:provider.stage}
+    base_host: { "Fn::Join" : ["", [" https://", { "Ref" : "ApiGatewayRestApi" }, ".execute-api.eu-west-1.amazonaws.com/${self:provider.stage}" ] ]  }
+    frontend_host: http://timetableless-${self:provider.stage}.s3-website-eu-west-1.amazonaws.com
+
+functions:
+  updateDelays:
+    handler: ./handlers/updateDelays.handler
+    events:
+      - schedule: rate(2 minutes)
+    package:
+      include:
+        - handlers/updateDelays.js
+
+  addRegistration:
+    handler: ./handlers/addRegistration.handler
+    events:
+      - http:
+          path: /registration
+          method: POST
+          cors: true
+    package:
+      include:
+        - handlers/addRegistration.js
+
+  notifyDelays:
+    handler: ./handlers/notifyDelays.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [registrations, StreamArn]
+    package:
+      include:
+        - handlers/notifyDelays.js
+
+  deleteRegistration:
+    handler: ./handlers/deleteRegistration.handler
+    events:
+      - http:
+          path: /registration/delete/{token}
+          method: GET
+          cors: true
+          request:
+            parameters:
+              paths:
+                token: true
+    package:
+      include:
+        - handlers/deleteRegistration.js
+
+  autocompleteStation:
+    handler: ./handlers/autocompleteStation.handler
+    events:
+      - http:
+          path: /stations/autocomplete/{term}
+          method: GET
+          cors: true
+          request:
+            parameters:
+              paths:
+                term: true
+    package:
+      include:
+        - handlers/autocompleteStation.js
+
+resources:
+  Resources:
+    registrations:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: registrations-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: timeSlot
+            AttributeType: S
+          - AttributeName: trainNumber
+            AttributeType: S
+        KeySchema:
+          - AttributeName: timeSlot
+            KeyType: HASH
+          - AttributeName: trainNumber
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    FrontendBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.client.bucketName}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+                - HEAD
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+    FrontendBucketPolicy:
+      Type: 'AWS::S3::BucketPolicy'
+      Properties:
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - "s3:GetObject"
+              Resource:
+                Fn::Join: ['', [Fn::GetAtt: [ FrontendBucket, Arn ], '/*'] ]
+        Bucket:
+          Ref: FrontendBucket
+

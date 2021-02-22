@@ -1,0 +1,112 @@
+service: webpage-screenshot-processor
+
+plugins:
+  - serverless-offline
+  - serverless-domain-manager
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+
+custom:
+  s3Bucket: ${self:service.name}-images-${opt:stage}
+  width: 1200
+  height: 800
+  scroll_height: 200
+  customDomain:
+    domainName: apipagemelt-${opt:stage}.alexandermorton.co.uk
+    stage: ${opt:stage}
+    certificateName: 'alexandermorton.co.uk'
+    createRoute53Record: true
+    endpointType: 'edge'
+    apiType: rest
+    autoDomain: true
+    securityPolicy: tls_1_2
+
+provider:
+  name: aws
+  usagePlan:
+    quota:
+      limit: 10000
+      offset: 0
+      period: MONTH
+    throttle:
+      burstLimit: 10
+      rateLimit: 10
+  region: eu-west-2
+  versionFunctions: false
+  layers:
+    # https://github.com/shelfio/chrome-aws-lambda-layer
+    - arn:aws:lambda:${self:provider.region}:764866452798:layer:chrome-aws-lambda:20
+  # function parameters
+  runtime: nodejs12.x
+  memorySize: 512
+  timeout: 30
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+      Resource: arn:aws:s3:::${self:custom.s3Bucket}/*
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+      Resource: arn:aws:s3:::${self:custom.s3Bucket}/*
+functions:
+  screenshot:
+    events:
+      - http:
+          path: /
+          method: get
+          reqValidatorName: 'screenshotValidator'
+          request:
+            parameters:
+              querystrings:
+                url: true
+                vw: true
+                vh: true
+              headers: 
+                Origin: true
+    handler: handler.screenshot
+    reservedConcurrency: 10
+    environment:
+      S3_REGION: ${self:provider.region}
+      S3_BUCKET: ${self:custom.s3Bucket}
+      WIDTH: ${self:custom.width}
+      HEIGHT: ${self:custom.height}
+      SCROLL_HEIGHT: ${self:custom.scroll_height}
+
+resources:
+  Resources:
+    screenshotsBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Delete
+      Properties:
+        BucketName: ${self:custom.s3Bucket}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - 'https://pagemelt.alexandermorton.co.uk'
+              AllowedHeaders:
+                - 'Authorization'
+                - 'x-requested-with'
+                - 'origin'
+              AllowedMethods:
+                - GET
+              MaxAge: 3000
+        AccessControl: Private
+    screenshotValidator:  
+      Type: "AWS::ApiGateway::RequestValidator"
+      Properties:
+        Name: 'screenshot-validator'
+        RestApiId: 
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: false
+        ValidateRequestParameters: true
+    screenshotResponseDefault400:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        ResponseType: DEFAULT_4XX
+        StatusCode : "400"
+        ResponseTemplates:
+          application/json: "{\n\"message\": \" Missing information \",\n \"statusCode\": \"'400'\"\n}"

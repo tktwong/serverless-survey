@@ -1,0 +1,356 @@
+service:
+  name: bozza-app
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-offline
+  - serverless-dynamodb-local
+  - serverless-s3-local
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  environment:
+    VERSION: v1
+    USERS_PATH: users
+    ITEMS_PATH: items
+    USERS_TABLE: Users-${self:provider.stage}
+    ITEMS_TABLE: Items-${self:provider.stage}
+    ITEMS_UPDATED_AT_INDEX: updatedAtIndex
+    ITEMS_DUE_DATE_INDEX: dueDateIndex
+    ATTACHMENTS_S3_BUCKET: bozza-attachments-aisva-${self:provider.stage}
+    TOKEN_SECRET: ${opt:secret}
+    TOKEN_EXPIRATION_TIME: 7d
+    SIGNED_URL_EXPIRATION: 300
+    
+custom:
+  serverless-offline:
+    port: 3003
+
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    stages:
+      - dev
+
+  s3:
+    port: 8001
+    directory: .s3/
+    cors: src/storageLayer/resources/s3-cors.xml
+
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Bozza
+        description: Bozza app
+    models:
+      - name: CreateUserRequest
+        contentType: application/json
+        schema: ${file(models/create-user-request.json)}
+      - name: SignInUserRequest
+        contentType: application/json
+        schema: ${file(models/sign-in-user-request.json)}
+      - name: UpdateUserRequest
+        contentType: application/json
+        schema: ${file(models/update-user-request.json)}
+      - name: CreateItemRequest
+        contentType: application/json
+        schema: ${file(models/create-item-request.json)}
+      - name: UpdateItemRequest
+        contentType: application/json
+        schema: ${file(models/update-item-request.json)}
+
+functions:
+
+  # Auth
+  Auth:
+    handler: src/lambda/auth/authorizer.handler
+
+  # Users
+  CreateUser:
+    handler: src/lambda/http/user/createUser.handler
+    events:
+      - http:
+          method: post
+          path: ${self:provider.environment.VERSION}/${self:provider.environment.USERS_PATH}
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new user
+            description: Create a new user
+            requestModels:
+              'application/json': CreateUserRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+
+  SignInUser:
+    handler: src/lambda/http/user/signInUser.handler
+    events:
+      - http:
+          method: post
+          path: ${self:provider.environment.VERSION}/${self:provider.environment.USERS_PATH}/signin
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Sign a user in
+            description: Sign a user in
+            requestModels:
+              'application/json': SignInUserRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+
+  UpdateUser:
+    handler: src/lambda/http/user/updateUser.handler
+    events:
+      - http:
+          method: patch
+          path: ${self:provider.environment.VERSION}/${self:provider.environment.USERS_PATH}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a user
+            description: Update a user
+            requestModels:
+              'application/json': UpdateUserRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+
+  DeleteUser:
+    handler: src/lambda/http/user/deleteUser.handler
+    events:
+      - http:
+          method: delete
+          path: ${self:provider.environment.VERSION}/${self:provider.environment.USERS_PATH}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USERS_TABLE}
+
+  # Items
+  CreateItem:
+    handler: src/lambda/http/item/createItem.handler
+    events:
+      - http:
+          method: post
+          path: ${self:provider.environment.VERSION}/${self:provider.environment.ITEMS_PATH}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new item
+            description: Create a new item
+            requestModels:
+              'application/json': CreateItemRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}
+        
+  GetItems:
+    handler: src/lambda/http/item/getItems.handler
+    events:
+      - http:
+          method: get
+          path: ${self:provider.environment.VERSION}/${self:provider.environment.ITEMS_PATH}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}/index/${self:provider.environment.ITEMS_UPDATED_AT_INDEX}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}/index/${self:provider.environment.ITEMS_DUE_DATE_INDEX}
+
+  UpdateItem:
+    handler: src/lambda/http/item/updateItem.handler
+    events:
+      - http:
+          method: patch
+          path: ${self:provider.environment.VERSION}/${self:provider.environment.ITEMS_PATH}/{itemId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update an item
+            description: Update an item
+            requestModels:
+              'application/json': UpdateItemRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}
+
+  DeleteItem:
+    handler: src/lambda/http/item/deleteItem.handler
+    events:
+      - http:
+          method: delete
+          path: ${self:provider.environment.VERSION}/${self:provider.environment.ITEMS_PATH}/{itemId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}
+
+  GenerateAttachmentUrls:
+    handler: src/lambda/http/item/generateAttachmentUrls.handler
+    events:
+      - http:
+          method: post
+          path: ${self:provider.environment.VERSION}/${self:provider.environment.ITEMS_PATH}/{itemId}/attachment
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.ATTACHMENTS_S3_BUCKET}/*
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.USERS_TABLE}
+
+    ItemsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: itemId
+            AttributeType: S
+          - AttributeName: updatedAt
+            AttributeType: S
+          - AttributeName: dueDate
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: itemId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.ITEMS_TABLE}
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.ITEMS_UPDATED_AT_INDEX}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: updatedAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: ${self:provider.environment.ITEMS_DUE_DATE_INDEX}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: dueDate
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.ATTACHMENTS_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.ATTACHMENTS_S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket

@@ -1,0 +1,181 @@
+service: open-book
+app: open-book
+org: franklx2
+
+custom:
+  bucketOB: ${file(./env.yml):bucketOB}
+  bucketSPA: ${file(./env.yml):bucketSPA}
+  dynamoDB: open-book-pages-ddb
+  s3Sync:
+    - bucketName: ${self:custom.bucketSPA}
+      localDir: spa
+  filesToUpload:
+    - fileName: INITPAGE
+      localPath: ob-init/INITPAGE
+      s3Bucket: ${self:custom.bucketOB}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  timeout: 28
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "s3:*"
+      Resource: "arn:aws:s3:::${self:custom.bucketOB}/*"
+    - Effect: Allow
+      Action:
+        - "s3:PutObject"
+        - "s3:GetObject"
+      Resource: "arn:aws:s3:::${self:custom.bucketSPA}/*"
+    - Effect: Allow
+      Action: 
+        - dynamodb:Query
+        - dynamodb:PutItem
+      Resource: 'arn:aws:dynamodb:us-east-1:*:*'
+
+functions:
+  create:
+    handler: handler.create
+    environment:
+      bucketName: ${self:custom.bucketOB}
+    events:
+      - http:
+          path: create
+          method: post
+          cors: true
+  update:
+    handler: handler.update
+    environment:
+      bucketName: ${self:custom.bucketOB}
+    events:
+      - http:
+          path: update
+          method: post
+          cors: true
+  publish:
+    handler: handler.publish
+    environment:
+      dynamoDB: ${self:custom.dynamoDB}
+      bucketName: ${self:custom.bucketOB}
+    events:
+      - http:
+          path: publish
+          method: post
+          cors: true
+  get:
+    handler: handler.get
+    environment:
+      dynamoDB: ${self:custom.dynamoDB}
+    events:
+      - http:
+          path: get
+          method: post
+          cors: true
+resources:
+ Resources:
+    SPABucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketSPA}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+        # Set the CORS policy
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+    SPABucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: SPABucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "SPABucket"
+                    },
+                    "/*"
+                  ]
+                ]
+    PagesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketOB}
+        # Set the CORS policy
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+    OBPagesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.dynamoDB}
+        AttributeDefinitions:
+          - AttributeName: PAGE_NUM
+            AttributeType: N
+          - AttributeName: TEXT
+            AttributeType: S
+          - AttributeName: ID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PAGE_NUM
+            KeyType: HASH
+          - AttributeName: TEXT
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: '5'
+          WriteCapacityUnits: '5'
+        GlobalSecondaryIndexes:
+        - IndexName: OBGSI
+          KeySchema:
+          - AttributeName: ID
+            KeyType: HASH
+          - AttributeName: PAGE_NUM
+            KeyType: RANGE
+          Projection:
+            NonKeyAttributes:
+            - TEXT
+            ProjectionType: INCLUDE
+          ProvisionedThroughput:
+            ReadCapacityUnits: '5'
+            WriteCapacityUnits: '5'
+Outputs:
+  PagesBucket:
+    Description: "Description for the output"
+    Value: 
+      Ref: PagesBucket
+plugins:
+  - serverless-s3-sync
+  - serverless-plugin-upload-s3
+  - open-book-init-plugin

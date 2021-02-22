@@ -1,0 +1,67 @@
+service:
+  name: sls-ki-synapse-admin
+
+plugins:
+  - serverless-wsgi
+  - serverless-domain-manager
+  - serverless-python-requirements
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${opt:stage, "development"}
+  profile: ${self:custom.slsDeploy}.AWS_PROFILE}
+  region: ${self:custom.slsDeploy}.AWS_REGION}
+  timeout: 180 # NOTE: API Gateway has a hard limit of 29 seconds so API Gateway will kill the request but the Lambda will continue for 180 seconds.
+  environment:
+    SERVICE_NAME: ${self:service}
+    SERVICE_STAGE: ${self:provider.stage}
+    FLASK_ENV: ${self:provider.stage}
+    FLASK_DEBUG: ${self:custom.slsDeploy}.FLASK_DEBUG}
+  apiGateway:
+    binaryMediaTypes:
+      - '*/*'
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ssm:GetParameter"
+      Resource: { "Fn::Join": [ "", [ "arn:aws:ssm:${self:provider.region}:", { "Ref": "AWS::AccountId" }, ":parameter/${self:service}/${self:provider.stage}/*" ] ] }
+  iamManagedPolicies:
+    # TODO: Remove this policy when this is fixed:  https://github.com/serverless/serverless/issues/6241
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+
+functions:
+  www:
+    handler: wsgi_handler.handler
+    events:
+      - http: ANY /
+      - http: ANY {proxy+}
+
+custom:
+  slsDeploy: ${file(./private.sls.deploy.json):${self:provider.stage}
+  wsgi:
+    app: www/server.app
+    packRequirements: false
+    pythonBin: python3
+  pythonRequirements:
+    dockerizePip: non-linux
+    usePipenv: true
+    slim: true
+    noDeploy:
+      - pytest
+  customDomain:
+    enabled: ${self:custom.slsDeploy}.DOMAIN_ENABLED}
+    domainName: ${self:custom.slsDeploy}.DOMAIN_NAME}
+    basePath: ${self:custom.slsDeploy}.DOMAIN_BASE_PATH}
+    certificateName: ${self:custom.slsDeploy}.DOMAIN_CERTIFICATE_NAME}
+    createRoute53Record: ${self:custom.slsDeploy}.DOMAIN_CREATE_ROUTE_53_RECORD}
+    endpointType: ${self:custom.slsDeploy}.DOMAIN_ENDPOINT_TYPE}
+    securityPolicy: tls_1_2
+
+package:
+  individually: false
+  exclude:
+    - "**/**"
+    - "!www/**"
+    - "**/.pytest_cache/**"
+    - "**/__pycache__/**"

@@ -1,0 +1,96 @@
+# app and org for use with dashboard.serverless.com
+app: weco-edu-api
+org: wecoedudev
+
+service: api
+custom:
+  workspacePath: '../..'
+  stage: ${opt:stage, 'dev'}
+  config: ${file(${self:custom.workspacePath}/serverless/config/${self:custom.stage}.json)}
+  ACCOUNT_ID: ${self:custom.config.account_id}
+  serverless-offline:
+    host: 0.0.0.0
+    httpPort: 8080
+  nx:
+    apps:
+      - ${self:service}
+
+plugins:
+  localPath: "../../serverless/plugins"
+  modules:
+    - serverless-aws-latest-layer-version
+    - nx-workspace-builder
+    - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${self:custom.stage}
+  region: ${opt:region, "${self:custom.config.region}"}
+  deploymentBucket:
+    name: ${self:app}.sls.${self:provider.stage}.${self:provider.region}.deploys
+  environment: ${file(${self:custom.workspacePath}/serverless/environment.yml)}
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  api:
+    handler: main.handler
+    layers:
+      - arn:aws:lambda:${self:provider.region}:${self:custom.ACCOUNT_ID}:layer:${self:custom.config.baseService}-${self:provider.stage}-nodejs-common:$LATEST
+    events:
+      - http:
+         path: /api/{any+}
+         method: any
+         cors: true
+#      - websocket: $connect
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+#      - alb:
+#          listenerArn: arn:aws:elasticloadbalancing:us-east-1:XXXXXX:listener/app/my-load-balancer/50dc6c495c0c9188/
+#          priority: 1
+#          conditions:
+#            host: example.com
+#            path: /hello
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

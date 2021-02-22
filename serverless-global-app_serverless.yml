@@ -1,0 +1,52 @@
+service: global-app
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  endpointType: regional
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        Fn::GetAtt:
+            - KeyValuesDynamoDBTable
+            - Arn
+  environment:
+    TABLE_NAME:
+      Ref: KeyValuesDynamoDBTable
+
+functions:
+  getKey:
+    handler: handler.get
+    events:
+      - http:
+          path: /{key}
+          method: get
+          cors: true
+  setKey:
+    handler: handler.set
+    events:
+      - http:
+          path: /{key}
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    KeyValuesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: keyvalues
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification: # required for global table
+          StreamViewType: NEW_AND_OLD_IMAGES

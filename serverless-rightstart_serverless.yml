@@ -1,0 +1,129 @@
+service:
+  name: rightstart-serverless-backend
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-plugin-split-stacks
+  # - serverless-plugin-canary-deployments
+
+custom:
+  AWS_ACCOUNT: #YOUR-AWS-ACCOUNT-NUMBER
+  confirmLambdaName: arn:aws:lambda:${self:provider.region}:${self:custom.AWS_ACCOUNT}:function:${self:service}-${self:provider.stage}-confirmUser
+  splitStacks:
+    perType: true
+  values:
+    DATABASE_NAME: 'serverless_rightstart_db'
+    DATABASE_USER: 'admin'
+    DATABASE_PASSWORD: 'some_password' # to be integrated with secrets manager
+    DATABASE_HOST: 
+      Fn::GetAtt: ["RightstartDb","Endpoint.Address"]
+    STAGE_NAME: 'dev'
+    REGION: 'us-east-1'
+    CODE_COMMIT_REPO_NAME: 'aws-serverless-rightstart'
+    CODE_COMMIT_REPO_URL: https://git-codecommit.us-east-1.amazonaws.com/v1/repos/${self:custom.values.CODE_COMMIT_REPO_NAME}
+    VPC_CIDR_BLOCK: 182.0.0.0/20
+    COGNITO_USER_POOL_NAME: serverless-rightstart-userpool
+    CIDR_BLOCKS: !Cidr [ !GetAtt RightstartVPC.CidrBlock, 4, 8 ]
+
+    # DATABASE_NAME: 'rightstart_serverless'
+    # DATABASE_USER: 'root'
+    # DATABASE_PASSWORD: '' # to be integrated with secrets manager
+    # DATABASE_HOST: localhost
+      
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${self:custom.values.STAGE_NAME}
+  region: ${self:custom.values.REGION}
+  vpc:
+    securityGroupIds:
+      - !Ref LambdaSG
+    subnetIds:
+      - !Ref LambdaPrivateSubnet
+  timeout: 30
+  
+  environment:
+    COGNITO_USER_POOL_ID: !Ref CognitoUserPool
+    COGNITO_CLIENT_ID: !Ref CognitoUserPoolClient
+    DATABASE_NAME: ${self:custom.values.DATABASE_NAME}
+    DATABASE_USER: ${self:custom.values.DATABASE_USER}
+    DATABASE_PASSWORD: ${self:custom.values.DATABASE_PASSWORD}
+    DATABASE_HOST: ${self:custom.values.DATABASE_HOST}
+
+functions:
+  # hello:
+  #   handler: handler.hello
+  #   events:
+  #     - http:
+  #         method: get
+  #         path: hello
+    # deploymentSettings:
+    #   type: Linear10PercentEvery10Minutes
+    #   alias: Live
+  
+  registerUser:
+    handler: Api/MemberApi.registerMember
+    events:
+      - http:
+          method: post
+          path: api/user/register
+          integration: lambda
+
+  loginUser:
+    handler: Api/MemberApi.login
+    events:
+      - http:
+          method: post
+          path: api/user/login
+          integration: lambda
+
+  insertData:
+    handler: Api/WishListApi.insertData
+    events:
+      - http:
+          method: post
+          path: api/insert
+          integration: lambda
+          authorizer: 
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  updateData:
+    handler: Api/WishListApi.updateData
+    events:
+      - http:
+          method: post
+          path: api/update
+          integration: lambda
+          authorizer: 
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  getUserInfo:
+    handler: Api/WishListApi.getUserInfo
+    events:
+      - http:
+          method: get
+          path: api/{userId}
+          integration: lambda
+
+  confirmUser:
+    handler: Api/MemberApi.confirmUser
+
+    # the below cannot be done. since the pool was creating a new user pool. Could not map existing userpool from resources
+    # events:
+    #   - cognitoUserPool:
+    #       pool: ${self:resources.Resources.CognitoUserPool}
+    #       trigger: PreSignUp
+          
+resources:
+  - ${file(./Infra/base.yml)}
+  - ${file(./Infra/cognito_auth.yml)}
+
+
+
+  

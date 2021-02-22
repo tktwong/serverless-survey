@@ -1,0 +1,680 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: c19-daily-stats
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${opt:stage, 'prod'}
+  region: ap-southeast-2
+  apiGateway:
+    shouldStartNameWithService: true
+  #    usagePlan:
+  #      quota:
+  #        limit: 8928 # 31x24x12 = 8928
+  #        offset: 100 # Not ideal just in case
+  #        period: MONTH
+  #      throttle:
+  #        burstLimit: 5
+  #        rateLimit: 2
+
+  iamRoleStatements:
+    - Sid: AllowAccessToRunGlueCrawler
+      Effect: "Allow"
+      Action:
+        - "glue:GetCrawler"
+        - "glue:StartCrawler"
+      Resource:
+        - ${self:custom.crawler_arn.${self:provider.stage}}
+
+    - Sid: AllowPersonalDetailsTableOperations
+      Effect: Allow
+      Action:
+        - "dynamodb:DescribeTable"
+      Resource:
+        - ${self:custom.ddb_personal_details_table_arn.${self:provider.stage}}
+
+    - Sid: AllowDailyStatusTableOperations
+      Effect: Allow
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - ${self:custom.ddb_daily_stats_table_arn.${self:provider.stage}}
+        - ${self:custom.ddb_daily_stats_nzdt_table_arn.${self:provider.stage}}
+        - ${self:custom.ddb_diary_devices_table_arn.${self:provider.stage}}
+        - ${self:custom.ddb_diary_devices_table_arn.${self:provider.stage}}/index/diary-devices-by-utc-date
+
+    - Sid: AllowSESAccess
+      Effect: Allow
+      Action:
+        - "ses:SendRawEmail"
+      Resource:
+        - ${self:custom.ses_identity_arn.${self:provider.stage}}
+
+    - Sid: AllowAccessToAthena
+      Effect: Allow
+      Action:
+        - "athena:*"
+        - "glue:*"
+      Resource: [
+          "*"
+      ]
+
+    - Sid: AllowAccessToKMSKey
+      Effect: Allow
+      Action:
+        - "kms:Encrypt"
+        - "kms:Decrypt"
+        - "kms:ReEncrypt*"
+        - "kms:GenerateDataKey*"
+        - "kms:DescribeKey"
+      Resource:
+        - ${self:custom.personal_details_table_kms_keys.${self:provider.stage}}
+        - ${self:custom.athena_results.s3_kms_arn.${self:provider.stage}}
+        - ${self:custom.athena_source.s3_kms_arn.${self:provider.stage}}
+
+    - Sid: AllowS3WriteAccess
+      Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        - ${self:custom.athena_results.s3_bucket.${self:provider.stage}}
+        - ${self:custom.athena_results.s3_bucket.${self:provider.stage}}/*
+        - ${self:custom.athena_source.s3_bucket.${self:provider.stage}}
+        - ${self:custom.athena_source.s3_bucket.${self:provider.stage}}/*
+
+    - Sid: AllowAccessToCloudWatchLogs
+      Effect: "Allow"
+      Action:
+        - "logs:GetQueryResults"
+        - "logs:StartQuery"
+      Resource:
+        - ${self:custom.bluetooth_log_group_arn.${self:provider.stage}}
+        - ${self:custom.all_log_group_arn.${self:provider.stage}}
+
+resources:
+  Resources:
+    DiaryDevicesNZDTTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: diary-devices-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: date_nzdt
+            AttributeType: S
+          - AttributeName: date_utc
+            AttributeType: S
+          - AttributeName: last_updated
+            AttributeType: S
+        KeySchema:
+          - AttributeName: date_nzdt
+            KeyType: HASH
+          - AttributeName: last_updated
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        GlobalSecondaryIndexes:
+          - IndexName: diary-devices-by-utc-date
+            KeySchema:
+              - AttributeName: date_utc
+                KeyType: HASH
+              - AttributeName: last_updated
+                KeyType: RANGE
+            Projection:
+              ProjectionType: INCLUDE
+              NonKeyAttributes:
+                - client_ids
+
+    DailyStatsNZDTTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: daily-stats-nzdt-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: date_nzdt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: date_nzdt
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+functions:
+  run-crawler-lambda:
+    handler: run_crawler.lambda_handler
+    module: crawler_runner
+    description: Runs the Glue crawler every 5 minutes to sync the athena database.
+    timeout: 900
+    memorySize: 256
+    environment:
+      REGION: ${self:provider.region}
+      CRAWLER_NAME: ${self:custom.crawler_name.${self:provider.stage}}
+    events:
+      - schedule:
+          name: c19-cloudwatch-run-glue-crawler-event
+          rate: cron(40 20 * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+      # Done as a response for SiteRep updates.
+      - schedule:
+          name: c19-cloudwatch-run-glue-crawler-siterep-update-event
+          rate: cron(40 19 * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+    package:
+      individually: true
+      include:
+        - '!./**'
+        - 'crawler_runner/*.py'
+
+      exclude:
+        - '**'
+    vendor: ./common
+
+  stats-updater-lambda:
+    handler: main.lambda_handler
+    module: stats_updater
+    description: Updates daily stats numbers for the last 30 days.
+    timeout: 900
+    memorySize: 512
+    environment:
+      REGION: ${self:provider.region}
+      REPORT_RUN_PERIOD: 30
+      BOX_FOLDER_ID: '124370179582'
+      BEARER_TOKEN: 'IxYbyTkf7uqADKGiGLgzF7xuNqAkCORq'
+      ATHENA_DB_NAME: ${self:custom.athena_db.${self:provider.stage}}
+      ATHENA_TABLE_NAME: ${self:custom.athena_table.${self:provider.stage}}
+      ATHENA_CATALOG: ${self:custom.athena_catelog.${self:provider.stage}}
+
+      S3_SINK_LOCATION: ${self:custom.athena_results.s3_bucket_url.${self:provider.stage}}
+      S3_SINK_ENCRYPTION_METHOD: SSE_KMS
+      S3_SINK_ENCRYPTION_KEY_ARN: ${self:custom.athena_results.s3_kms_arn.${self:provider.stage}}
+
+      DDB_PERSONAL_DETAILS_TABLE_NAME: ${self:custom.ddb_personal_details_table.${self:provider.stage}}
+      DDB_DAILY_STATS_TABLE_NAME: ${self:custom.ddb_daily_stats_table.${self:provider.stage}}
+      DDB_DAILY_STATS_NZDT_TABLE_NAME: ${self:custom.ddb_daily_stats_nzdt_table.${self:provider.stage}}
+      ENF_LOG_GROUP_NAME: ${self:custom.bluetooth_log_group_name.${self:provider.stage}}
+
+    package:
+      individually: true
+      include:
+        - '!./**'
+        - 'stats_updater/*.py'
+
+      exclude:
+        - '**'
+    vendor: ./common
+
+    events:
+      - schedule:
+          name: c19-cloudwatch-daily-status-update-event
+          rate: cron(50 20 * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+      - schedule:
+          name: c19-cloudwatch-daily-status-siterep-update-event
+          rate: cron(50 19 * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+  stats-emailer:
+    handler: gen_report.lambda_handler
+    module: stats_emailer
+    description: Sends daily stats email.
+    timeout: 900
+    memorySize: 256
+    environment:
+      REGION: ${self:provider.region}
+      DDB_DAILY_STATS_TABLE_NAME: ${self:custom.ddb_daily_stats_table.${self:provider.stage}}
+      DDB_DAILY_STATS_NZDT_TABLE_NAME: ${self:custom.ddb_daily_stats_nzdt_table.${self:provider.stage}}
+
+      SENDER: ${self:custom.sender.${self:provider.stage}}
+      SUBJECT: 'Daily report - AM'
+      EMAIL_FOOTER: ${self:custom.email_footer}
+
+      GITHUB_TOKEN: ${file(github.json):github.${self:provider.stage}.token}
+      REPO_NAME: ${file(github.json):github.${self:provider.stage}.repo}
+      BRANCH_NAME: ${file(github.json):github.${self:provider.stage}.branch}
+      PATH: ${file(github.json):github.${self:provider.stage}.path}
+
+    events:
+      - schedule:
+          name: c19-cloudwatch-daily-stats-email-event
+          rate: cron(00 21 * * ? *)
+          input:
+            RECIPIENTS: ${self:custom.daily_recipients_event.${self:provider.stage}}
+          enabled: true
+
+      - schedule:
+          name: c19-cloudwatch-daily-stats-siterep-email-event
+          rate: cron(00 20 * * ? *)
+          input:
+            RECIPIENTS: ${self:custom.siterep_recipients_event.${self:provider.stage}}
+          enabled: true
+
+    package:
+      individually: true
+      include:
+        - '!./**'
+        - 'stats_emailer/*'
+      exclude:
+        - '**'
+    vendor: ./common
+
+  kfh-ddb-writer:
+    handler: ddb_writer.lambda_handler
+    module: kfh_ddb_writer
+    description: Persist pinpoint event in Dynamo DB.
+    timeout: 300
+    memorySize: 1024
+    environment:
+      REGION: ${self:provider.region}
+      DDB_DAILY_STATS_TABLE_NAME: ${self:custom.ddb_daily_stats_table.${self:provider.stage}}
+      DDB_DAILY_STATS_NZDT_TABLE_NAME: ${self:custom.ddb_daily_stats_nzdt_table.${self:provider.stage}}
+      DDB_DIARY_DEVICES_TABLE_NAME: ${self:custom.ddb_diary_devices_table.${self:provider.stage}}
+
+    package:
+      individually: true
+      include:
+        - '!./**'
+        - 'kfh_ddb_writer/*'
+      exclude:
+        - '**'
+    vendor: ./common
+
+  device-ids-updater-lambda:
+    handler: updater.lambda_handler
+    module: device_ids_updater
+    description: Update unique devices count every 5 mins
+    timeout: 900
+    memorySize: 1024
+    environment:
+      REGION: ${self:provider.region}
+      DDB_DAILY_STATS_TABLE_NAME: ${self:custom.ddb_daily_stats_table.${self:provider.stage}}
+      DDB_DAILY_STATS_NZDT_TABLE_NAME: ${self:custom.ddb_daily_stats_nzdt_table.${self:provider.stage}}
+      DDB_DIARY_DEVICES_TABLE_NAME: ${self:custom.ddb_diary_devices_table.${self:provider.stage}}
+
+    package:
+      individually: true
+      include:
+        - '!./**'
+        - 'device_ids_updater/*.py'
+      exclude:
+        - '**'
+    vendor: ./common
+
+    events:
+      - schedule:
+          name: c19-cloudwatch-unique-device-ids-update-event
+          rate: cron(0/5 * * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+  bluetooth-devices-updater-lambda:
+    handler: updater.lambda_handler
+    module: bluetooth_numbers_updater
+    description: Update bluetooth devices count every 1 hour
+    timeout: 900
+    memorySize: 256
+    environment:
+      REGION: ${self:provider.region}
+      DDB_DAILY_STATS_TABLE_NAME: ${self:custom.ddb_daily_stats_table.${self:provider.stage}}
+      DDB_DAILY_STATS_NZDT_TABLE_NAME: ${self:custom.ddb_daily_stats_nzdt_table.${self:provider.stage}}
+      ENF_LOG_GROUP_NAME: ${self:custom.bluetooth_log_group_name.${self:provider.stage}}
+
+    package:
+      individually: true
+      include:
+        - '!./**'
+        - 'bluetooth_numbers_updater/*.py'
+      exclude:
+        - '**'
+    vendor: ./common
+
+    events:
+      - schedule:
+          name: c19-cloudwatch-bluetooth-active-devices-update-event
+          rate: cron(0 * ? * * *)
+          input:
+            key1: value1
+          enabled: true
+
+      - schedule:
+          name: c19-cloudwatch-bt-devices-update-event-daily-stats-update
+          rate: cron(55 20 * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+      - schedule:
+          name: c19-cloudwatch-bt-devices-event-daily-stats-siterep-update
+          rate: cron(55 19 * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+  mbie-numbers-updater-lambda:
+    handler: updater.lambda_handler
+    module: mbie_numbers_updater
+    description: Update QR codes total and NZBN registered businesses total every day at 10AM
+    timeout: 900
+    memorySize: 256
+    environment:
+      REGION: ${self:provider.region}
+      DDB_DAILY_STATS_TABLE_NAME: ${self:custom.ddb_daily_stats_table.${self:provider.stage}}
+      DDB_DAILY_STATS_NZDT_TABLE_NAME: ${self:custom.ddb_daily_stats_nzdt_table.${self:provider.stage}}
+      BOX_FOLDER_ID: '124370179582'
+      BEARER_TOKEN: 'IxYbyTkf7uqADKGiGLgzF7xuNqAkCORq'
+
+    package:
+      individually: true
+      include:
+        - '!./**'
+        - 'mbie_numbers_updater/*.py'
+      exclude:
+        - '**'
+    vendor: ./common
+
+    events:
+      - schedule:
+          name: c19-cloudwatch-qr-nzbn-total-numbers-update-event
+          rate: cron(1 * ? * * *)
+          input:
+            key1: value1
+          enabled: true
+
+      - schedule:
+          name: c19-cloudwatch-qr-nzbn-total-numbers-event-daily-stats-update
+          rate: cron(55 20 * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+      - schedule:
+          name: c19-qr-nzbn-total-numbers-siterep-event-daily-stats-update
+          rate: cron(55 19 * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+  registerations-updater-lambda:
+    handler: updater.lambda_handler
+    module: registrations_updater
+    description: Update total registerations total count every one hour
+    timeout: 900
+    memorySize: 256
+    environment:
+      REGION: ${self:provider.region}
+      DDB_DAILY_STATS_TABLE_NAME: ${self:custom.ddb_daily_stats_table.${self:provider.stage}}
+      DDB_DAILY_STATS_NZDT_TABLE_NAME: ${self:custom.ddb_daily_stats_nzdt_table.${self:provider.stage}}
+      DDB_PERSONAL_DETAILS_TABLE_NAME: ${self:custom.ddb_personal_details_table.${self:provider.stage}}
+
+    package:
+      individually: true
+      include:
+        - '!./**'
+        - 'registrations_updater/*.py'
+      exclude:
+        - '**'
+    vendor: ./common
+
+    events:
+      - schedule:
+          name: c19-cloudwatch-registerations-update-event
+          rate: cron(0 * ? * * *)
+          input:
+            key1: value1
+          enabled: true
+
+      - schedule:
+          name: c19-cloudwatch-registerations-update-event-daily-stats-update
+          rate: cron(55 20 * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+      - schedule:
+          name: c19-registerations-siterep-update-event-daily-stats-update
+          rate: cron(55 19 * * ? *)
+          input:
+            key1: value1
+          enabled: true
+
+  api-endpoint-lambda:
+    handler: api_endpoint.lambda_handler
+    module: stats_report_api
+    description: Real time stats reporting endpoint.
+    timeout: 30
+    memorySize: 256
+    environment:
+      REGION: ${self:provider.region}
+      DDB_DAILY_STATS_TABLE_NAME: ${self:custom.ddb_daily_stats_table.${self:provider.stage}}
+      DDB_DAILY_STATS_NZDT_TABLE_NAME: ${self:custom.ddb_daily_stats_nzdt_table.${self:provider.stage}}
+      DDB_PERSONAL_DETAILS_TABLE_NAME: ${self:custom.ddb_personal_details_table.${self:provider.stage}}
+
+    package:
+      individually: true
+      include:
+        - '!./**'
+        - 'stats_report_api/*.py'
+      exclude:
+        - '**'
+    vendor: ./common
+
+    events:
+      - http:
+          path: /stats/{date}
+          method: get
+          cors: true
+          operationId: getStatsByDate
+
+package:
+  individually: true
+
+custom:
+  pythonRequirements:
+    slim: true
+    useStaticCache: false
+    noDeploy:
+      - boto3
+
+  crawler_arn:
+    uat: arn:aws:glue:ap-southeast-2:933828750435:crawler/PinpointC19Crawler-Test
+    prod: arn:aws:glue:ap-southeast-2:567945669912:crawler/PinpointC19Crawler-Prod
+
+  crawler_name:
+    uat: PinpointC19Crawler-Test
+    prod: PinpointC19Crawler-Prod
+
+  athena_catelog_arn:
+    uat: "arn:aws:athena:ap-southeast-2:933828750435:datacatalog/AwsDataCatalog"
+    prod: "arn:aws:athena:ap-southeast-2:567945669912:datacatalog/AwsDataCatalog"
+
+  athena_catelog:
+    uat: AwsDataCatalog
+    prod: AwsDataCatalog
+
+  athena_db:
+    uat: pinpointeventstream-test
+    prod: pinpointeventstream-prod
+
+  athena_table:
+    uat: pinpoint_kfh_contact_tracing_app_uat
+    prod: pinpoint_kfh_contact_tracing_app_prod
+
+  athena_results:
+    s3_bucket:
+      uat: arn:aws:s3:::pinpoint-c19app-event-stream-athena-results-uat
+      prod: arn:aws:s3:::pinpoint-contact-tracing-app-athena-query-results-prod
+    s3_bucket_url:
+      uat: 's3://pinpoint-c19app-event-stream-athena-results-uat/'
+      prod: 's3://pinpoint-contact-tracing-app-athena-query-results-prod/'
+    s3_kms_arn:
+      uat: arn:aws:kms:ap-southeast-2:933828750435:key/cd8891f1-cad9-435f-b7f7-5e6ce1f28afe
+      prod: arn:aws:kms:ap-southeast-2:567945669912:key/62acc00d-abd7-44ca-a1ae-d282987904ba
+
+  athena_source:
+    s3_bucket:
+      uat: arn:aws:s3:::pinpoint-kfh-contact-tracing-app-uat
+      prod: arn:aws:s3:::pinpoint-kfh-contact-tracing-app-prod
+    s3_kms_arn:
+      uat: arn:aws:kms:ap-southeast-2:933828750435:key/c314c9a1-e4ef-4119-91dd-5a6070b810f5
+      prod: arn:aws:kms:ap-southeast-2:567945669912:key/62acc00d-abd7-44ca-a1ae-d282987904ba
+
+  s3_sink_location:
+    uat: 's3://pinpoint-c19app-event-stream-athena-results-uat/'
+    prod: 's3://pinpoint-contact-tracing-app-athena-query-results-prod/'
+
+  athena_results_s3_sink_location:
+    uat: arn:aws:s3:::pinpoint-c19app-event-stream-athena-results-uat
+    prod: arn:aws:s3:::pinpoint-contact-tracing-app-athena-query-results-prod
+
+  s3_sink_encrption_key:
+    uat: 'arn:aws:kms:ap-southeast-2:933828750435:key/cd8891f1-cad9-435f-b7f7-5e6ce1f28afe'
+    prod: 'arn:aws:kms:ap-southeast-2:567945669912:key/62acc00d-abd7-44ca-a1ae-d282987904ba'
+
+  s3_sink_encryption:
+    uat: 'SSE_KMS'
+    prod: 'SSE_KMS'
+
+  ddb_personal_details_table:
+    uat: 'personal-details-uat'
+    prod: 'personal-details-prod'
+
+  ddb_personal_details_table_arn:
+    uat: arn:aws:dynamodb:ap-southeast-2:933828750435:table/personal-details-uat
+    prod: arn:aws:dynamodb:ap-southeast-2:567945669912:table/personal-details-prod
+
+  ddb_daily_stats_table:
+    uat: 'daily-stats-uat'
+    prod: 'daily-stats-prod'
+
+  ddb_daily_stats_nzdt_table:
+    uat: 'daily-stats-nzdt-uat'
+    prod: 'daily-stats-nzdt-prod'
+
+  ddb_diary_devices_table:
+    uat: 'diary-devices-uat'
+    prod: 'diary-devices-prod'
+
+  ddb_daily_stats_table_arn:
+    uat: arn:aws:dynamodb:ap-southeast-2:933828750435:table/daily-stats-uat
+    prod: arn:aws:dynamodb:ap-southeast-2:567945669912:table/daily-stats-prod
+
+  ddb_daily_stats_nzdt_table_arn:
+    uat: arn:aws:dynamodb:ap-southeast-2:933828750435:table/daily-stats-nzdt-uat
+    prod: arn:aws:dynamodb:ap-southeast-2:567945669912:table/daily-stats-nzdt-prod
+
+  ddb_realtime_stats_table_arn:
+    uat: arn:aws:dynamodb:ap-southeast-2:933828750435:table/daily-stats-realtime-uat
+    prod: arn:aws:dynamodb:ap-southeast-2:567945669912:table/daily-stats-realtime-prod
+
+  ddb_diary_devices_table_arn:
+    uat: arn:aws:dynamodb:ap-southeast-2:933828750435:table/diary-devices-uat
+    prod: arn:aws:dynamodb:ap-southeast-2:567945669912:table/diary-devices-prod
+
+  bluetooth_log_group_name:
+    uat: /aws/lambda/enf-uat-StatsLambda-EPQBRJM9KB1O
+    prod: /aws/lambda/enf-prod-StatsLambda-BEL6VO7EYUOA
+
+  bluetooth_log_group_arn:
+    uat: arn:aws:logs:ap-southeast-2:933828750435:log-group:/aws/lambda/enf-uat-StatsLambda-EPQBRJM9KB1O:*
+    prod: arn:aws:logs:ap-southeast-2:567945669912:log-group:/aws/lambda/enf-prod-StatsLambda-BEL6VO7EYUOA:*
+
+  all_log_group_arn:
+    uat: arn:aws:logs:ap-southeast-2:933828750435:log-group::log-stream:*
+    prod: arn:aws:logs:ap-southeast-2:567945669912:log-group::log-stream:*
+
+  personal_details_table_kms_keys:
+    uat: arn:aws:kms:ap-southeast-2:933828750435:key/66ec4bd4-3537-47d4-9877-ad3ad8d251d6
+    prod: arn:aws:kms:ap-southeast-2:567945669912:key/2b6a93a1-0974-43f6-afa5-a8e84f92f9fe
+
+  ses_identity_arn:
+    uat: arn:aws:ses:ap-southeast-2:933828750435:identity/craigar+noreply@amazon.com
+    prod: arn:aws:ses:ap-southeast-2:567945669912:identity/tracing.min.health.nz
+
+  sender:
+    uat: 'CovidApp Stats <craigar+noreply@amazon.com>'
+    prod: 'CovidApp Stats <noreply@tracing.min.health.nz>'
+
+  email_footer: 'Thanks & Regards <br><br>Jane McTaggart<br>+64 27 4434736 | Jane.McTaggart@health.govt.nz <br>Covid App Support Team | Data and Digital <br>133 Molesworth Street, Thorndon, Wellington <br>'
+  siterep_recipients_event:
+    uat:
+      - Palanisamy.Vediyappan@solnet.co.nz
+    prod:
+      - Palanisamy.Vediyappan@solnet.co.nz
+      - COVID-19PublichealthIntelligence@health.govt.nz
+
+  daily_recipients_event:
+    uat:
+      - Palanisamy.Vediyappan@solnet.co.nz
+    prod:
+      - Merrin.Macleod@health.govt.nz
+      - Patrick.Hindmarsh@health.govt.nz
+      - Jane.McTaggart@health.govt.nz
+      - Amanda.Parson@health.govt.nz
+      - Palanisamy.Vediyappan@health.govt.nz
+      - Palanisamy.Vediyappan@solnet.co.nz
+      - Jo.Styles@health.govt.nz
+      - media@health.govt.nz
+      - Simon.Ross@health.govt.nz
+      - Shayne.Hunter@health.govt.nz
+      - Charlotte.Gendall@health.govt.nz
+      - Dan.Jackson@health.govt.nz
+      - Aimee.Gulliver@health.govt.nz
+      - covidcomms@dpmc.govt.nz
+      - Shiree.Hart@health.govt.nz
+      - Darren.Douglass@health.govt.nz
+      - Jon.Herries@health.govt.nz
+      - Michael.Dreyer@health.govt.nz
+      - Gautam.Mangar@health.govt.nz
+      - Geneva.Ruppert-Wise@health.govt.nz
+      - Antony.Byers.health.govt.nz@mohgovtnz.onmicrosoft.com
+      - Melanie.Power@health.govt.nz
+      - Sanne.Storm@health.govt.nz
+      - COVID-19PublichealthIntelligence@health.govt.nz
+      - Amy.Rountree@health.govt.nz
+      - Lisa.Gray@health.govt.nz
+      - Colin.Kingi2@police.govt.nz
+      - Peter.Mason-Smith2@police.govt.nz
+      - COVID-19insights@dpmc.govt.nz
+      - Covid19Media@dpmc.govt.nz
+      - Nick.Brown@dpmc.govt.nz
+      - Heather.Peacocke@dpmc.govt.nz
+      - Cushla.Managh@health.govt.nz
+      - Sija.Robertson-Stone@dpmc.govt.nz
+      - Kendra.Simmons@health.govt.nz
+      - Janelle.Anselmi@health.govt.nz
+      - Peter.Coleman@dpmc.govt.nz
+      - Tamara.Lovett@dpmc.govt.nz
+      - Priscilla.Rasmussen@dpmc.govt.nz
+      - chloe@rushdigital.co.nz
+      - webteam@health.govt.nz
+      - Charles.Mabbett@dpmc.govt.nz
+      - George.Whitworth@dpmc.govt.nz
+      - Andrew.Dames@health.govt.nz
+      - Simon.Clarke@health.govt.nz
+      - Gordana.Brkljaca@health.govt.nz
+      - Laura.Miller@health.govt.nz
+      - Maria.Borshevsky@health.govt.nz
+      - Christal.Anderson@health.govt.nz
+
+plugins:
+  - serverless-python-requirements

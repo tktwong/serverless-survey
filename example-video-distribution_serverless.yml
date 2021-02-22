@@ -1,0 +1,111 @@
+service: video-distribution
+frameworkVersion: ">=1.60.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ap-northeast-1
+  memorySize: 128
+  timeout: 10
+  logRetentionInDays: 30
+  deploymentBucket:
+    name: hyiromori
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: Allow
+      # https://docs.aws.amazon.com/ja_jp/IAM/latest/UserGuide/list_amazons3.html
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:ListBucket
+      Resource:
+        - "arn:aws:s3:::${self:custom.s3_bucket}"
+        - "arn:aws:s3:::${self:custom.s3_bucket}/*"
+    - Effect: Allow
+      # https://docs.aws.amazon.com/ja_jp/IAM/latest/UserGuide/list_awselementalmediaconvert.html
+      Action:
+        - mediaconvert:CreateJob
+        - mediaconvert:GetJob
+      Resource:
+        - "arn:aws:mediaconvert:${self:provider.region}:#{AWS::AccountId}:jobs/*"
+        - "arn:aws:mediaconvert:${self:provider.region}:#{AWS::AccountId}:queues/Default"
+        - "arn:aws:mediaconvert:${self:provider.region}:#{AWS::AccountId}:jobTemplates/HLS_Template"
+    - Effect: Allow
+      Action:
+        - iam:PassRole
+      Resource: "arn:aws:iam::#{AWS::AccountId}:role/MediaConvertRole"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:#{AWS::AccountId}:table/${self:custom.dynamodb_table}"
+
+  environment:
+    SERVERLESS_STAGE: ${self:provider.stage}
+    S3_BUCKET: ${self:custom.s3_bucket}
+    S3_UPLOAD_PREFIX: "_source"
+    CLOUDFRONT_DOMAIN: "d1wfkbka4um3up.cloudfront.net"
+    DYNAMODB_TABLE: ${self:custom.dynamodb_table}
+    MEDIACONVERT_ENDPOINT: ${self:custom.mediaconvert_endpoint}
+
+resources:
+  Resources:
+    DynamoDB:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.dynamodb_table}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 1
+          # BillingMode: PAY_PER_REQUEST
+
+plugins:
+  - serverless-offline
+  - serverless-pseudo-parameters
+
+custom:
+  s3_bucket: "example-video-distribution-${self:provider.stage}"
+  mediaconvert_endpoint: "https://mpazqbhuc.mediaconvert.ap-northeast-1.amazonaws.com"
+  dynamodb_table: "video-distribution-${self:provider.stage}"
+  serverless-offline:
+    port: 4000
+
+functions:
+  index:
+    handler: handler/api/index.handler
+    events:
+      - http:
+          method: GET
+          path: ''
+
+  prepare:
+    handler: handler/api/prepare.handler
+    events:
+      - http:
+          method: GET
+          path: 'prepare'
+
+  convert_request:
+    handler: handler/api/convert.handler
+    events:
+      - http:
+          method: PUT
+          path: 'convert/{id}'
+
+  info:
+    handler: handler/api/info.handler
+    events:
+      - http:
+          method: GET
+          path: 'info/{id}'

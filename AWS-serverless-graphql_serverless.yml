@@ -1,0 +1,152 @@
+service: workshop-serverless-graphql
+app: workshop-serverless-graphql
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-webpack
+  - serverless-offline-sqs
+  - serverless-offline
+  - serverless-dynamodb-local
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+
+  region: ${opt:region, 'eu-west-1'}
+  stage: ${opt:stage, 'dev'}
+  environment:
+    STAGE: ${self:provider.stage}
+    REGION: ${self:provider.region}
+    QUEUE_NAME: ${self:custom.ingestQueue}
+    ENDPOINT: ${self:custom.serverless-offline-sqs.endpoint}
+    QUEUE: !Ref IngestQueue
+    DATA_TABLE: ${self:custom.dataTableName}
+    REMOTE_UID: !Ref "ApiGatewayRestApi"
+    REMOTE_URL: {
+      "Fn::Join" :
+        [
+          "",
+          [" https://",
+           { "Ref" : "ApiGatewayRestApi" },
+           ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}/"
+          ]
+        ]
+    }
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:*
+      Resource:
+        Fn::GetAtt: [ IngestQueue, Arn ]
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - Fn::GetAtt: [ DataTable, Arn ]
+        - Fn::Join:
+            - "/"
+            - - { "Fn::GetAtt": [ DataTable, Arn ] }
+              - "index/*"
+
+custom:
+  dataTableName: data-${self:provider.stage}
+  ingestQueue: ${self:service}-ingest-${self:provider.stage}
+  serverless-offline-sqs:
+    autoCreate: true
+    apiVersion: '2012-11-05'
+    endpoint: http://0.0.0.0:9324
+    region: eu-west-1
+    accessKeyId: root
+    secretAccessKey: root
+    skipCacheInvalidation: false
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+
+functions:
+  pull-data:
+    handler: src/functions/pull-data.handler
+    events:
+      - schedule: rate(1 hour)
+      - http:
+          path: pull-data
+          method: get
+          cors: true
+  ingest:
+    handler: src/functions/ingest.handler
+    events:
+      - http:
+          path: ingest
+          method: post
+          cors: true
+  process:
+    handler: src/functions/process.handler
+    events:
+      - sqs:
+          queueName: IngestQueue
+          arn:
+            Fn::GetAtt:
+              - IngestQueue
+              - Arn
+  expose:
+    handler: src/functions/expose.handler
+    events:
+      - http:
+          path: expose
+          method: get
+          cors: true
+  graphql:
+    handler: src/functions/graphql.handler
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+      - http:
+          path: graphql
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    IngestQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.ingestQueue}
+    DataTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.dataTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: N
+          - AttributeName: type
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: typeGSI
+            KeySchema:
+              - AttributeName: type
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

@@ -1,0 +1,73 @@
+service: my-app
+provider:
+  name: aws
+  runtime: nodejs10.x
+  environment:
+    MYAPP_TOPIC_ARN:
+      Ref: myappTopic
+    MYAPP_DYNAMO_NAME:
+      Ref: myappDynamoTable
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action: 
+        - "sns:Publish"
+      Resource:
+        - Ref: myappTopic  
+    - Effect: 'Allow'
+      Action:
+        - "dynabldb:PutItem"
+      Resource:
+        Fn::GetAtt:
+          - myappDynamoTable
+          - Arn    
+
+package:
+  exclude:
+    - node_modules/**
+functions:
+  submitContactForm:
+    handler: handler.submitContactForm
+    events:
+      - http:
+          path: submitContactForm
+          method: post
+          cors: true
+  saveContactMessage:
+    handler: handler.saveContactMessage
+    events:
+      - sns:
+          arn: 
+            Ref: myappTopic
+          topicName: myapp-${self:provider.stage}
+
+
+plugins:
+  - serverless-finch
+
+custom:
+  client:
+    bucketName: aclud-guru-vgp-lambda-example
+    distributionFolder: build/  
+
+resources:
+  Resources:
+    myappTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: "Myapp contact form"
+        TopicName: myapp-${self:provider.stage}
+    myappDynamoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1      

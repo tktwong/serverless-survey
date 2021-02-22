@@ -1,0 +1,82 @@
+# NOTE: update this with your service name
+service: stripe-event
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-localstack
+  - serverless-offline-aws-eventbridge
+
+custom:
+  localstack:
+    host: 'http://localhost'
+    stages:
+      - local
+    region: us-east-1
+    endpointFile: localstack_endpoints.json
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  environment:
+    LOCALSTACK_HOSTNAME: localhost
+    HASURA_ADMIN_SECRET: myadminsecretkey
+    GRAPHQL_API_URL: 'http://localhost:3001/v1/graphql'
+    STRIPE_API_KEY: sk_test_51GxIRlE8hHKqEw8LMuVCSbA9OapYX7beCPDmg2xxzMGmRmH2KL6K03URWrp67rnSKmKfy3Y0SzzpfvfB55s4q9bo00ktTUnEOT
+    STRIPE_SIGNING_SECRET: StripeWebhookSigningSecret
+  apiGateway:
+    minimumCompressionSize: 1024,
+    shouldStartNameWithService: true
+    
+functions:
+  stripeEventHandler: 
+    handler: handlers/stripeEventHandler.handler
+    description: REST webhook to ingest stripe events
+    events:
+      - http:
+          method: post
+          path: stripe-event
+  eventSourceHandler:
+    handler: handlers/eventSourceHandler.handler
+    description: Records all stripe events
+    events:
+      - eventBridge:
+          eventBus: default
+          pattern:
+            source:
+              - stripe
+  balanceHandler:
+    handler: handlers/balanceHandler.handler
+    description: Processes balance events from stripe
+    events:
+      - eventBridge:
+          eventBus: default
+          pattern:
+            source:
+              - stripe
+            detail-type:
+              - balance.available
+  authorizationHandler:
+    handler: handlers/authorizationHandler.handler
+    description: Processes authorization events from stripe
+    events:
+      - eventBridge:
+          eventBus: default
+          pattern:
+            source:
+              - stripe
+            detail-type:
+              - issuing_authorization.request
+              - issuing_authorization.updated
+  transactionHandler:
+    handler: handlers/transactionHandler.handler
+    description: Processes transaction events from stripe
+    events:
+      - eventBridge:
+          eventBus: default
+          pattern:
+            source:
+              - stripe
+            detail-type:
+              - issuing_transaction.created
+              - issuing_transaction.updated

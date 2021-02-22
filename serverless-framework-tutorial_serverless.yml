@@ -1,0 +1,73 @@
+service: thumbnail-generator
+
+custom:
+  bucket: image-store-1892379018
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-southeast-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource:
+        - "arn:aws:s3:::${self:custom.bucket}/*"
+        - "arn:aws:s3:::${self:custom.bucket}"
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-offline
+
+functions:
+  getUploadUrl:
+    handler: getUploadUrl.handler
+    events:
+      - http:
+          method: GET
+          path: /upload-url
+  listImages:
+    handler: listImages.handler
+    events:
+      - http:
+          method: GET
+          path: /images
+  resizeImage:
+    handler: resizeImage.handler
+    memorySize: 512
+    timeout: 60
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:Put
+          rules:
+            - prefix: full-size/
+            - suffix: .jpg
+          existing: true
+
+resources:
+  Resources:
+    imageStore:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucket}
+        CorsConfiguration:
+          CorsRules:
+          - AllowedMethods:
+            - GET
+            - PUT
+            AllowedOrigins:
+            - "*"
+            AllowedHeaders:
+            - '*'
+    imageStoreBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: ${self:custom.bucket}
+        PolicyDocument:
+          Statement:
+            - Action:
+                - 's3:GetObject'
+              Effect: Allow
+              Resource: arn:aws:s3:::${self:custom.bucket}/*
+              Principal: '*'

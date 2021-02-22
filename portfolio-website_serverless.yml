@@ -1,0 +1,128 @@
+service: portfolio-website
+provider:
+  name: aws
+  region: ap-southeast-2
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'personal'}
+
+custom:
+  domain: sammurphy.dev
+  aliases:
+    - www.${self:custom.domain}
+    - ${self:custom.domain}
+  allowedOrigins:
+    - https://www.${self:custom.domain}
+    - https://${self:custom.domain}
+  certificateId: ${ssm:/TargetCertificateId}
+
+resources:
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.domain}
+        AccessControl: Private
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ${self:custom.allowedOrigins}
+              AllowedMethods:
+                - GET
+              AllowedHeaders:
+                - '*'
+
+    StaticSiteOriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: ${self:custom.domain}
+
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      DependsOn:
+        - StaticSiteOriginAccessIdentity
+      Properties:
+        Bucket: !Ref StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: RestrictAccessToCloudFront
+              Effect: Allow
+              Principal:
+                CanonicalUser: !GetAtt StaticSiteOriginAccessIdentity.S3CanonicalUserId
+              Action:
+                - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.domain}/*
+
+    StaticSiteCdn:
+      Type: AWS::CloudFront::Distribution
+      DependsOn:
+        - StaticSiteOriginAccessIdentity
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          Aliases: ${self:custom.aliases}
+          Origins:
+            - DomainName: !GetAtt StaticSite.DomainName
+              Id: PortfolioWebsite
+              S3OriginConfig:
+                OriginAccessIdentity:
+                  !Join [
+                    '',
+                    [
+                      'origin-access-identity/cloudfront/',
+                      !Ref StaticSiteOriginAccessIdentity,
+                    ],
+                  ]
+          HttpVersion: http2
+          IPV6Enabled: true
+          PriceClass: PriceClass_All
+          ViewerCertificate:
+            AcmCertificateArn: arn:aws:acm:us-east-1:#{AWS::AccountId}:certificate/${self:custom.certificateId}
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2018
+          DefaultRootObject: index.html
+          DefaultCacheBehavior:
+            MinTTL: 86400 # 1 day
+            MaxTTL: 31536000 # 1 year
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            TargetOriginId: PortfolioWebsite
+            ForwardedValues:
+              QueryString: false
+              Headers:
+                - Access-Control-Request-Headers
+                - Access-Control-Request-Method
+                - Origin
+            TrustedSigners:
+              - self
+            ViewerProtocolPolicy: redirect-to-https
+
+    PublicAliasRecord:
+      Type: AWS::Route53::RecordSet
+      DependsOn:
+        - StaticSiteCdn
+      Properties:
+        AliasTarget:
+          DNSName: !GetAtt StaticSiteCdn.DomainName
+          EvaluateTargetHealth: false
+          HostedZoneId: Z2FDTNDATAQYW2 # Cloudfront Hosted Zone Id
+        Type: A
+        Name: ${self:custom.domain}
+        HostedZoneName: ${self:custom.domain}.
+
+    PublicWwwAliasRecord:
+      Type: AWS::Route53::RecordSet
+      DependsOn:
+        - StaticSiteCdn
+      Properties:
+        AliasTarget:
+          DNSName: !GetAtt StaticSiteCdn.DomainName
+          EvaluateTargetHealth: false
+          HostedZoneId: Z2FDTNDATAQYW2 # Cloudfront Hosted Zone Id
+        Type: A
+        Name: www.${self:custom.domain}
+        HostedZoneName: ${self:custom.domain}.
+
+plugins:
+  - serverless-pseudo-parameters

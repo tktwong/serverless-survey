@@ -1,0 +1,124 @@
+service: sumoaws
+
+provider:
+
+  name: aws
+  runtime: nodejs8.10
+  profile: sumo
+  region: eu-west-3
+  memorySize: 128
+  # 128 is the minimum
+
+  environment:
+    # sumodb.sumogames.de => Rikishi list : Active, By Highest rank desc
+    SUMODB_HOST: "http://sumodb.sumogames.de"
+    RIKISHIS_PATH: "/Rikishi.aspx?shikona=&heya=-1&shusshin=-1&b=-1&high=-1&hd=-1&entry=-1&intai=999999&sort=5"
+    IMAGES_PATH: "/pics/"
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}-RIKISHIS
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+      - "dynamodb:Query"
+      - "dynamodb:Scan"
+      - "dynamodb:GetItem"
+      - "dynamodb:PutItem"
+      - "dynamodb:UpdateItem"
+      - "dynamodb:DeleteItem"
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: "Allow"
+      Action:
+      - "sns:*"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+      - s3:PutObject
+      - s3:PutObjectAcl
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+
+custom:
+  dev:
+    deletion_policy: Delete
+  prod:
+    deletion_policy: Retain
+  bucket:
+    sumoapp-rikishis-pictures
+
+functions:
+
+  scraprikishis:
+    handler: src/handlers/handlerrikishis.startscrap
+    description: On schedule, will parse riskishis main list and emit a SNS for each Rikishi
+    timeout: 30 # sec
+    events:
+      - cron(0 0 * * ? *) # mn 0, hour 0, any day of month, whatever the day, any year)
+
+  scraprikishi:
+    handler: src/handlers/handlerrikishi.scraprikishi
+    description: When trigger by SNS message containing url, will scrap one rikishi and stores into DynamoDB
+    environment:
+      BUCKET: ${self:custom.bucket}
+    events:
+      - sns: scraprikishi
+
+  list:
+    handler: src/handlers/listrikishis.get
+    description: Returns a list of all Rikishis (Warning 1MB max size from DynamoDB)
+    events:
+      - http:
+          path: rikishis
+          method: get
+    cors: true
+
+  divisions:
+    handler: src/handlers/divisions.getDivisions
+    description: Returns the list of supported Divisions
+    events:
+      - http:
+          path: divisions
+          method: get
+          cors: true
+
+  division:
+    handler: src/handlers/divisions.getDivision
+    description: Returns the content of a division (a list of Rikishis)
+    events:
+      - http:
+          path: divisions/{division}
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    RikishisDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: ${self:custom.${opt:stage, self:provider.stage}.deletion_policy}
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: N
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+    S3BucketRikishis:
+        Type:  'AWS::S3::Bucket'
+        DeletionPolicy: ${self:custom.${opt:stage, self:provider.stage}.deletion_policy}
+        Properties:
+          BucketName: ${self:custom.bucket}
+          AccessControl: 'PublicRead'
+
+package:
+  exclude:
+    - _site/**
+    - _tests_/**
+    - .env
+    - etc/**
+    - coverage/**
+    - .editorconfig
+    - .gitattributes
+    - README.md
+    - SumoAWS.iml

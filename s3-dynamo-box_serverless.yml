@@ -1,0 +1,99 @@
+# Welcome to Serverless!
+
+service: upload-to-s3-and-postprocess 
+
+
+provider:
+
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-2
+  
+  iamRoleStatements:
+    
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+      Resource: "arn:aws:s3:::myminidropbox/*"
+    
+    - Effect: "Allow"
+      Action:
+        - "s3:DeleteObject"
+      Resource: "arn:aws:s3:::myminidropbox/*"
+    
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-2:907712413554:table/mytablebox"
+
+
+
+functions:
+  
+   postprocess:
+      handler: handler.postprocess
+      events:
+        - s3:
+          bucket: myminidropbox
+            events: s3:ObjectCreated:*
+             - rules:
+                - suffix: .jpg
+             - http:
+                path: objects
+                method: get
+                cors: true
+          
+            events: s3:ObjectRemoved:*
+              rules:
+              - suffix: .jpg
+              - http:
+                path: objects
+                method: get
+                cors: true
+          
+  
+    notification:
+      handler:handler.notification
+    
+  
+
+resources:
+  Resources:
+    ResourceActivityTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: mytablebox
+        AttributeDefinitions:
+          - AttributeName: filename
+            AttributeType: S
+        KeySchema:
+          - AttributeName: filename
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    
+    
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: myminidropbox
+        AccessControl: PublicRead
+        CorsConfiguration:
+          CorsRules:
+          -AllowedMethods:
+          - GET
+          - PUT
+          - POST
+          
+         
+    
+
+ 

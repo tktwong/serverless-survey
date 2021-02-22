@@ -1,0 +1,133 @@
+service: fss-portal-api
+provider:
+  name: aws
+  runtime: dotnetcore3.1
+  timeout: 15
+  vpc: ${self:custom.vpc.${opt:stage}}
+  stage: ${opt:stage}
+  region: eu-west-2
+
+package:
+  artifact: ./bin/release/netcoreapp3.1/fss-portal-api.zip
+functions:
+  LBHFSSPortalAPI:
+    name: ${self:service}-${self:provider.stage}
+    handler: LBHFSSPortalAPI::LBHFSSPortalAPI.LambdaEntryPoint::FunctionHandlerAsync
+    role: lambdaExecutionRole
+    environment:
+      CONNECTION_STRING: Host=${ssm:/fss-public-api/${self:provider.stage}/postgres-hostname};Port=${ssm:/fss-public-api/${self:provider.stage}/postgres-port};Database=${ssm:/fss-public-api/${self:provider.stage}/postgres-database};Username=${ssm:/fss-public-api/${self:provider.stage}/postgres-username};Password=${ssm:/fss-public-api/${self:provider.stage}/postgres-password}
+      COGNITO_USER: ${ssm:/fss-portal-api/${self:provider.stage}/cognito-user}
+      COGNITO_KEY: ${ssm:/fss-portal-api/${self:provider.stage}/cognito-key}
+      CLIENT_ID: ${ssm:/fss-portal-api/${self:provider.stage}/cognito-client-id}
+      POOL_ID: ${ssm:/fss-portal-api/${self:provider.stage}/cognito-pool-id}
+      NOTIFY_KEY: ${ssm:/fss-portal-api/${self:provider.stage}/notify-key}
+      REMINDER_TEMPLATE: ${ssm:/fss-portal-api/${self:provider.stage}/reminder-template}
+      STATUS_TEMPLATE: ${ssm:/fss-portal-api/${self:provider.stage}/status-template}
+      ADMIN_NOTIFICATION_TEMPLATE: ${ssm:/fss-portal-api/${self:provider.stage}/admin-notification-template}
+      NOT_REVERIFIED_TEMPLATE: ${ssm:/fss-portal-api/${self:provider.stage}/not-reverified-template}
+      NOT_APPROVED_TEMPLATE: ${ssm:/fss-portal-api/${self:provider.stage}/not-approved-template}
+      ALLOWED_ORIGINS: ${ssm:/fss-portal-api/${self:provider.stage}/allowed-origins}
+      ADDRESS_URL: ${ssm:/fss-portal-api/${self:provider.stage}/address-url}
+      ADDRESS_KEY: ${ssm:/fss-portal-api/${self:provider.stage}/address-key}
+      ADDRESS_API_TOKEN: ${ssm:/fss-common-api/${self:provider.stage}/addresses-api-token}
+      REPOSITORY_BUCKET: ${ssm:/fss-portal-api/${self:provider.stage}/repository-bucket}
+      IMAGES_BASE_URL: ${ssm:/fss-common-api/${self:provider.stage}/images-base-url}
+      SESSION_DURATION: ${ssm:/fss-portal-api/${self:provider.stage}/session-duration}
+      ADDRESS_XREF_API_TOKEN: ${ssm:/fss-common-api/${self:provider.stage}/addresses-xref-api-token}
+      IMAGES_FOLDER: ${ssm:/fss-common-api/${self:provider.stage}/images-folder}
+      ADDRESS_XREF_NHS_CODE: ${ssm:/fss-common-api/${self:provider.stage}/address-xref-nhs-code}
+    events:
+      - http:
+          path: /{proxy+}
+          method: ANY
+          private: true
+resources:
+  Resources:
+    lambdaExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /${self:service}/${self:provider.stage}/
+        RoleName: ${self:service}-lambdaExecutionRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+          - arn:aws:iam::aws:policy/AmazonCognitoPowerUser
+        Policies:
+          - PolicyName: manageLogs
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                        - ':'
+                        - - 'arn:aws:logs'
+                          - Ref: 'AWS::Region'
+                          - Ref: 'AWS::AccountId'
+                          - 'log-group:/aws/lambda/*:*:*'
+                - Effect: "Allow"
+                  Action:
+                    - "s3:PutObject"
+                    - "s3:GetObject"
+                  Resource:
+                    Fn::Join:
+                      - ""
+                      - - "arn:aws:s3:::"
+                        - "Ref": "ServerlessDeploymentBucket"
+          - PolicyName: lambdaInvocation
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "lambda:InvokeFunction"
+                  Resource: "*"
+          - PolicyName: fss-imagestore-access
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:GetObject
+                    - s3:ListBucket
+                    - s3:DeleteObject
+                  Resource:
+                    - "arn:aws:s3:::${self:custom.s3.${opt:stage}}"
+                    - "arn:aws:s3:::${self:custom.s3.${opt:stage}}/*"
+                    - "arn:aws:s3:::${self:custom.s3.${opt:stage}}/"
+custom:
+  s3:
+    development: fss-imagestore-development
+    staging: fss-imagestore-staging
+    production: fss-imagestore-live
+  vpc:
+    development:
+      securityGroupIds:
+        - sg-033babc9f5ce30345
+      subnetIds:
+        - subnet-0deabb5d8fb9c3446
+        - subnet-000b89c249f12a8ad
+    staging:
+      securityGroupIds:
+        - sg-04c73000bf97eae7e
+      subnetIds:
+        - subnet-06d3de1bd9181b0d7
+        - subnet-0ed7d7713d1127656
+    production:
+      securityGroupIds:
+        - sg-060458cddaaa2742a
+      subnetIds:
+        - subnet-01d3657f97a243261
+        - subnet-0b7b8fea07efabf34

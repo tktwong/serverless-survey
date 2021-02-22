@@ -1,0 +1,67 @@
+service: server-face-rekognition
+
+frameworkVersion: "=1.30.3"
+
+plugins:
+  - serverless-webpack # Must be first, see https://github.com/99xt/serverless-dynamodb-local#using-with-serverless-offline-and-serverless-webpack-plugin
+#  - serverless-sentry # https://github.com/arabold/serverless-sentry-plugin
+  - '@jimdo/serverless-dotenv' # See https://github.com/Jimdo/serverless-dotenv
+#  - serverless-plugin-aws-alerts # See https://github.com/ACloudGuru/serverless-plugin-aws-alerts
+#  - serverless-dynamodb-local # Must be before serverless-offline, see https://github.com/99xt/serverless-dynamodb-local#using-with-serverless-offline-plugin
+  - serverless-offline # See https://github.com/dherault/serverless-offline
+#  - serverless-domain-manager # See https://github.com/amplify-education/serverless-domain-manager
+#  - serverless-plugin-dynamodb-autoscaling # See https://github.com/medikoo/serverless-plugin-dynamodb-autoscaling
+
+custom:
+  env: ${env:ENV, 'development'} # Defaults to "development" if not provided (see package.json scripts)
+  envs:
+    development:
+      memorySize: 128
+    staging:
+      memorySize: 128
+    production:
+      memorySize: 128
+  serverless-offline:
+    port: 5000
+  webpack:
+    packager: 'yarn'
+    webpackConfig: ./webpack.config.js
+    includeModules: true # serverless-webpack configuration - Enable auto-packing of external modules
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  versionFunctions: false
+  stage: ${self:custom.env} # XXX The stage directly depends on the environment, it's the same thing
+  region: ${opt:region, 'eu-west-1'} # Ireland by default, must always be Ireland
+  memorySize: ${self:custom.envs.${self:provider.stage}.memorySize, '128'}
+  timeout: 30
+  environment:
+    NODE_ENV: ${self:custom.env} # XXX Necessary to provide this because sometimes some packages rely on the NODE_ENV
+#  profile: ${self:custom.envs.${self:custom.env}.profile}
+  deploymentBucket:
+    serverSideEncryption: AES256
+
+functions:
+#  status:
+#    handler: src/status.handler
+#    events:
+#      - http:
+#          path: status
+#          method: get
+
+  index-post:
+    handler: src/api.handler
+    events:
+      - http:
+          path: /
+          method: post
+          cors: true
+
+  index-get:
+    handler: src/api.handler
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true

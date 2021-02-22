@@ -1,0 +1,96 @@
+service: serverless-epg-api
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+    stages:
+      - ${self:provider.stage}
+
+package:
+  exclude:
+    - coverage/**
+    - .circleci/**
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-2
+  stackName: serverless-epg-api-${self:provider.stage}
+  deploymentBucket:
+    name: api.pencheza.com
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  hello:
+    handler: src/handler.hello
+    events:
+      - http:
+          method: get
+          path: hello
+          cors: true
+  hi:
+    handler: src/handler.hi
+    events:
+      - http:
+          method: get
+          path: hi
+          cors: true
+  create-channel:
+    handler: src/handler.createChannel
+    events:
+      - http:
+          method: post
+          path: create-channel
+          cors: true
+  create-programmes:
+    handler: src/handler.createProgrammes
+    events:
+      - http:
+          method: post
+          path: create-programmes
+          cors: true
+  channels:
+    handler: src/handler.getChannels
+    events:
+      - http:
+          method: get
+          path: channels
+          cors: true
+
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

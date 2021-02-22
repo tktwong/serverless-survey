@@ -1,0 +1,71 @@
+service:
+  name: serverless-dynamo
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-pseudo-parameters
+
+package:
+  individually: true
+  exclude:
+    - ./**
+    - '!node_modules/**'
+    - '!package.json'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage}
+  stackName: ${self:service}-${self:provider.stage}
+  region: ${opt:region, 'eu-west-1'}
+  memorySize: 128
+  timeOut: 10
+  logRetentionInDays: 14
+  apiName: ${self:service}-${self:provider.stage}
+
+functions:
+  dynamoGetItem:
+    handler: functions/lambda-integration.handler
+    name: ${self:service}-${self:provider.stage}
+    description: Template lambda hit a dynamo endpoint
+    environment:
+      DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+    iamRoleStatementsName: ${self:service}-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:Query
+        Resource: "arn:aws:dynamodb:${self:provider.region}:#{AWS::AccountId}:table/${self:service}-${self:provider.stage}"
+    events:
+      - httpApi:
+          method: POST
+          path: /orderId
+    package:
+      include:
+        - ./functions/lambda*.js
+
+resources:
+  Description: Sample template for a simple dynamodb get call from a lambda
+
+  Resources:
+    DynamoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    DynamoGetItemIamRoleLambdaExecution:
+      Properties:
+        PermissionsBoundary: !Sub "arn:aws:iam::#{AWS::AccountId}:policy/serverless-deployer-boundary"
+    IamRoleLambdaExecution:
+      Properties:
+        PermissionsBoundary: !Sub "arn:aws:iam::#{AWS::AccountId}:policy/serverless-deployer-boundary"
+
+  # Add any number of resources in cloudformation format

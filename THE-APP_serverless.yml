@@ -1,0 +1,265 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service:
+  name: flux-api-2
+
+plugins:
+  - serverless-webpack
+  - serverless-domain-manager
+#  - serverless-dynamodb-local
+  - serverless-iam-roles-per-function
+  - serverless-plugin-aws-alerts
+  - serverless-plugin-tracing
+  - serverless-offline  # keep this last
+
+package:
+  exclude:
+    - dev-mongo-data/**
+    - flux-ts/**
+    - bin/**
+    - .dynamodb/**
+  include:
+    - flux/tmpl/**
+  individually: false
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  prodYes: { prod: true }
+  # by default functions with custom iamRoles will inherit the global role
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+  stage: ${file(./sls-custom.yml):stage}
+  statsS3Bucket: ${file(./sls-params-${self:provider.stage}.yml):statsS3Bucket}
+  openCageApiKey: ${file(./sls-custom.yml):openCageApiKey}
+  # region: ${file(./sls-custom.yml):region}
+  customDomain: ${file(./sls-${self:provider.stage}-domain.yml)}
+#  iam: ${file(./sls-iam-${self:provider.stage}.yml)}
+  iam:
+    # todo: figure out how to disable for dev, keep permissions tight
+    requestLoginToken:
+    - Effect: "Allow"
+      Action:
+      - "ses:SendRawEmail"
+      Resource:
+      - "arn:aws:ses:us-east-1:076866892044:identity/login@flux.party"
+  alerts: ${file(./sls-alerts.yaml):alerts}
+  # this is separated out because the structure changed; better to put it here
+  handlers: "flux/handlers"
+  scheduled: "flux/scheduled"
+  emptyList: []
+  webpack:
+    webpackConfig: 'webpack.config.js'   # Name of webpack configuration file
+    includeModules: false   # Node modules configuration for packaging
+#    includeModules:
+#      forceExclude:
+#        - aws-sdk
+#      forceInclude:
+#        - email-templates
+#        - mongodb
+#        - flux-lib
+    packager: ${file(../../lerna.json):npmClient}   # Packager that will be used to package your external modules
+
+
+provider:
+  name: aws
+  # region should be ap-southeast-2 for prod
+  region: ap-southeast-2
+  runtime: nodejs8.10
+  # profile: ${self:custom.profile}
+  stage: ${opt:stage, self:custom.stage}
+  memorySize: 128
+  environment:
+    MONGODB_URI: ${ssm:${self:provider.stage}MongoDbUri, 'mongodb://localhost:53799/flux'}
+    STAGE: ${self:provider.stage}
+    OPENCAGE_API: ${ssm:${self:provider.stage}OpenCageApiKey, self:custom.openCageApiKey}
+    STATS_S3_BUCKET: ${self:custom.statsS3Bucket}
+    # USER_POOL_ID: ${self:custom.cognito.poolId}
+    # CLIENT_ID: ${self:custom.cognito.clientId}
+  tracing: true
+  iamRoleStatements:
+    - Effect: "Allow" # xray permissions (required)
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+    - Effect: Allow
+      Action:
+        - "s3:PutObject"
+        - "s3:PutObjectAcl"
+      Resource:
+        - "arn:aws:s3:::${self:custom.statsS3Bucket}/*"
+    - Effect: Allow
+      Action:
+        - "s3:DeleteObject"
+      Resource:
+        - "arn:aws:s3:::${self:custom.statsS3Bucket}/latest/*"
+
+
+
+functions:
+  ## NEST APP
+  #nest-app:
+    #handler: ${self:custom.handlers}/main-nest.nest
+    #timeout: 60
+    #events:
+      #- http:
+          #path: /v3
+          #method:
+            #- post
+            #- get
+          #cors: true
+    #iamRoleStatements: ${self:custom.iam.requestLoginToken}
+  # stats
+#  genStatsGetinfo:
+#    handler: ${self:custom.scheduled}/stats.genStatsGetinfo
+#    timeout: 60
+#    events:
+#      - schedule: rate(2 minutes)
+#  genStatsPublic:
+#    handler: ${self:custom.scheduled}/stats.genStatsPublic
+#    timeout: 120
+#    events:
+#      - schedule: rate(5 minutes)
+  genS3StatsDaily:
+    handler: ${self:custom.scheduled}/stats.genS3StatsDaily
+    timeout: 120
+    events:
+      - schedule: rate(1 day)
+
+  updateIndexesDBV1:
+    handler: ${self:custom.scheduled}/indexes.updateIndexesDBV1
+    timeout: 60
+    events:
+      - schedule: rate(1 day)
+  # login requests
+  requestLoginToken:
+    handler: ${self:custom.handlers}/login.requestLoginToken
+    events:
+      - http:
+          path: /v2/login/requestLoginToken
+          method: post
+          cors: true
+    iamRoleStatements: ${self:custom.iam.requestLoginToken}
+  # user requests
+  getRoles:
+    handler: ${self:custom.handlers}/user.getRoles
+    events:
+      - http:
+          path: /v2/user/getRoles
+          method: post
+          cors: true
+  # volunteer requests
+  ndaGetStatus:
+    handler: ${self:custom.handlers}/vols.getStatus
+    events:
+      - http:
+          path: /v2/volunteers/nda/getStatus
+          method: post
+          cors: true
+  ndaSubmitForReview:
+    handler: ${self:custom.handlers}/vols.submitForReview
+    events:
+      - http:
+          path: /v2/volunteers/nda/submitPdfAndSig
+          method: post
+          cors: true
+  ndaGenerateDraft:
+    handler: ${self:custom.handlers}/vols.generateDraft
+    events:
+      - http:
+          path: /v2/volunteers/nda/generateDraft
+          method: post
+          cors: true
+  # admin/finance requests
+  getDonations:
+    handler: ${self:custom.handlers}/admin-finance.getDonations
+    events:
+      - http:
+          path: /v2/finance/getDonations
+          method: post
+          cors: true
+  addNewDonation:
+    handler: ${self:custom.handlers}/admin-finance.addNewDonation
+    events:
+      - http:
+          path: /v2/finance/addNewDonation
+          method: post
+          cors: true
+  donationAutoComplete:
+    handler: ${self:custom.handlers}/admin-finance.donationAutoComplete
+    events:
+      - http:
+          path: /v2/finance/donationAutoComplete
+          method: post
+          cors: true
+  # admin/role requests
+  getRoleAudit:
+    handler: ${self:custom.handlers}/admin-roles.getRoleAudit
+    events:
+      - http:
+          path: /v2/admin/getRoleAudit
+          method: post
+          cors: true
+  # admin/other requests
+  # nothing yet
+
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

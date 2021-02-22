@@ -1,0 +1,168 @@
+service: market-project
+
+custom:
+  prefixName: myMarket
+  itemTableName: ${self:custom.prefixName}-itemTable
+  transTableName: ${self:custom.prefixName}-transTable
+  analyzeTableName: ${self:custom.prefixName}-analyzeTable
+  topicName: SendClosedTrans
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-tracing
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-3
+  stage: ${opt:stage, 'dev'}
+  tracing: false
+  environment:
+    itemTableName: ${self:custom.itemTableName}
+    transTableName: ${self:custom.transTableName}
+    analyzeTableName: ${self:custom.analyzeTableName}
+    snsCloseTrans: !Ref SnsCloseTrans
+    # _X_AMZN_TRACE_ID: 0
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - sns:*
+      Resource:
+        - !Ref SnsCloseTrans
+    - Effect: 'Allow'
+      Action:
+        - 'xray:PutTraceSegments'
+        - 'xray:PutTelemetryRecords'
+      Resource:
+        - '*'
+
+functions:
+  getItem:
+    handler: src/handlers/getItem.handler
+    events:
+      - http:
+          path: /item/{id}
+          method: get
+  putItem:
+    handler: src/handlers/putItem.handler
+    events:
+      - http:
+          path: /item
+          method: post
+  loadItems:
+    handler: src/handlers/loadItems.handler
+    events:
+      - http:
+          path: /item/load
+          method: post
+  createTrans:
+    handler: src/handlers/createTrans.handler
+    events:
+      - http:
+          path: /trans/create/{cname}
+          method: post
+  progressTrans:
+    handler: src/handlers/progressTrans.handler
+    events:
+      - http:
+          path: /trans/{transId}
+          method: post
+  closeTrans:
+    handler: src/handlers/closeTrans.handler
+    events:
+      - http:
+          path: /trans/close/{transId}
+          method: post
+  sendEmail:
+    handler: src/handlers/sendEmail.handler
+    events:
+      - sns:
+          arn: !Ref SnsCloseTrans
+          topicName: ${self:custom.topicName}
+  analyzeTrans:
+    handler: src/handlers/analyzeTrans.handler
+    events:
+      - sqs: arn:aws:sqs:eu-west-3:161829540768:QueueAnalyzeTrans
+  analyzeStats:
+    handler: src/handlers/analyzeStats.handler
+    events:
+      - http:
+          path: /trans/stats
+          method: get
+
+resources:
+  Resources:
+    QueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - https://sqs.eu-west-3.amazonaws.com/161829540768/QueueAnalyzeTrans
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Action:
+                - SQS:SendMessage
+                - SQS:ReceiveMessage
+              Resource: '*'
+              Principal:
+                AWS: '*'
+    SnsCloseTrans:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.topicName}
+        Subscription:
+          - Endpoint: arn:aws:sqs:eu-west-3:161829540768:QueueAnalyzeTrans
+            Protocol: sqs
+    SqsCloseTrans:
+      Type: AWS::SQS::Queue
+      Properties:
+        ReceiveMessageWaitTimeSeconds: 20
+        QueueName: QueueAnalyzeTrans
+    ItemTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.itemTableName}
+        AttributeDefinitions:
+          - AttributeName: itemId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: itemId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 10
+    TransTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.transTableName}
+        AttributeDefinitions:
+          - AttributeName: transId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: transId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    AnalyzeTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.analyzeTableName}
+        AttributeDefinitions:
+          - AttributeName: analyzeId
+            AttributeType: S
+          - AttributeName: creationId
+            AttributeType: N
+        KeySchema:
+          - AttributeName: analyzeId
+            KeyType: HASH
+          - AttributeName: creationId
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

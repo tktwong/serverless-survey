@@ -1,0 +1,39 @@
+service: download-service
+
+plugins:
+  - serverless-kms-secrets
+
+custom:
+  bucket: books-downloads
+  kmsSecrets: ${file(kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-west-2
+  stackTags:
+    app: books
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+    - Effect: Allow
+      Action:
+      - KMS:Decrypt
+      Resource: ${self:custom.kmsSecrets.keyArn}
+
+functions:
+  download:
+    handler: books.download
+    events:
+      - http:
+          path: /download
+          method: get
+    environment:
+      BOOKS_BUCKET: ${self:custom.bucket}
+      JWT_SECRET: ${self:custom.kmsSecrets.secrets.JWT_SECRET}
+    # Misc 
+    tags:
+      app: books

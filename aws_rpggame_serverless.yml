@@ -1,0 +1,164 @@
+service: sascraft-fight-aggr-service # NOTE: update this with your service name
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: us-east-2
+  stage: dev
+  websocketApiName: ${self:service}-{$opt:stage, self:provider.stage}
+  websocketApiRouteSelectionExpression: $request.body.action
+  environment:
+    APIG_ENDPOINT:
+      Fn::Join:
+        - ''
+        - - Ref: WebsocketsApi
+          - .execute-api.
+          - Ref: AWS::Region
+          - .amazonaws.com/
+          - ${opt:stage, self:provider.stage}
+    FIGHT_CONN_TABLE_NAME: ${self:service}-FIGHT_CONNECTIONS-${opt:stage, self:provider.stage}
+    GET_CHAR_SERVICE: sascraft-character-service-${opt:stage, self:provider.stage}-get
+    CHAR_ADD_ITEM_SERVICE: sascraft-character-service-${opt:stage, self:provider.stage}-add_item
+    ADD_XP_SERVICE: sascraft-character-service-${opt:stage, self:provider.stage}-add_xp
+    GET_ENEMY_SERVICE: sascraft-enemy-service-${opt:stage, self:provider.stage}-get
+    CREATE_ENEMY_SERVICE: sascraft-enemy-service-${opt:stage, self:provider.stage}-create
+    CREATE_FIGHT_SERVICE: sascraft-fight-service-${opt:stage, self:provider.stage}-create
+    ATTACK_SERVICE: sascraft-fight-service-${opt:stage, self:provider.stage}-attack
+    ENEMY_ATTACK_SERVICE: sascraft-fight-service-${opt:stage, self:provider.stage}-enemyAttacks
+    GET_FIGHT_SERVICE: sascraft-fight-service-${opt:stage, self:provider.stage}-get
+    LIST_ITEM_SERVICE: sascraft-item-service-${opt:stage, self:provider.stage}-list
+    GET_ITEM_SERVICE: sascraft-item-service-${opt:stage, self:provider.stage}-get
+    CREATE_LOOT_SERVICE: sascraft-fight-service-${opt:stage, self:provider.stage}-createloot
+    CLAIM_LOOT_SERVICE: sascraft-fight-service-${opt:stage, self:provider.stage}-claimloot
+
+    ENEMY_FIGHT_SERVICE: sascraft-fight-aggr-service-${opt:stage, self:provider.stage}-enemyFightHandler
+    REGION: ${self:provider.region}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - lambda:InvokeFunction
+      Resource:
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-character-service-${opt:stage, self:provider.stage}-get'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-character-service-${opt:stage, self:provider.stage}-add_xp'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-character-service-${opt:stage, self:provider.stage}-add_item'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-enemy-service-${opt:stage, self:provider.stage}-create'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-fight-service-${opt:stage, self:provider.stage}-create'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-fight-service-${opt:stage, self:provider.stage}-createloot'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-fight-service-${opt:stage, self:provider.stage}-claimloot'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-fight-service-${opt:stage, self:provider.stage}-attack'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-fight-service-${opt:stage, self:provider.stage}-get'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-enemy-service-${opt:stage, self:provider.stage}-get'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-item-service-${opt:stage, self:provider.stage}-list'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-item-service-${opt:stage, self:provider.stage}-get'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-fight-aggr-service-${opt:stage, self:provider.stage}-enemyFightHandler'
+        - 'arn:aws:lambda:${opt:region, self:provider.region}:*:function:sascraft-fight-service-${opt:stage, self:provider.stage}-enemyAttacks'
+    - Effect: Allow
+      Action:
+        - 'execute-api:ManageConnections'
+      Resource:
+        - 'arn:aws:execute-api:*:*:**/@connections/*'
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource:
+        - 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.FIGHT_CONN_TABLE_NAME}'
+        - 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.FIGHT_CONN_TABLE_NAME}/index/*'
+
+functions:
+  start:
+    handler: fights/prototype.start
+    events:
+      - http:
+          path: fights/start
+          method: post
+          cors: true
+  attack:
+    handler: fights/pattack.attack
+    events:
+      - http:
+          path: fights/attack
+          method: post
+          cors: true
+
+  get:
+    handler: fights/get.get
+    events:
+      - http:
+          path: fights/{id}
+          method: get
+          cors: true
+  # websocket
+  connectionManager:
+    handler: fights/ws_fight.connection_manager
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+  start_fight:
+    handler: fights/ws_fight.start_fight
+    events:
+      - websocket:
+          route: startFight
+  player_attack:
+    handler: fights/ws_fight.player_attack
+    events:
+      - websocket:
+          route: playerAttack
+  ws_claim_loot:
+    handler: fights/ws_fight.claim_loot
+    events:
+      - websocket:
+          route: claimLoot
+  enemyFightHandler:
+    handler: fights/ws_fight.enemy_attacks
+    timeout: 360
+
+  claim_loot:
+    handler: fights/claim_loot.handler
+    events:
+      - http:
+          path: fights/{id}/claim_loot
+          method: put
+          cors: true
+
+resources:
+  Resources:
+    FightConnectionsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: connection_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: connection_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.environment.FIGHT_CONN_TABLE_NAME}
+
+package:
+  exclude:
+    - env/**
+    - node_modules/**
+    - secrets.yml
+    - .gitignore
+
+plugins:
+  - serverless-python-requirements
+  - serverless-pseudo-parameters
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  secrets: ${file(secrets.yml):${self:custom.stage}}
+  pythonRequirements:
+    dockerizePip: false
+    noDeploy: []

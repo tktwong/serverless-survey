@@ -1,0 +1,122 @@
+service: web-app-storage
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, env:AWS_DEFAULT_REGION, 'us-east-1'}
+
+custom: ${file(../../serverless.common.yml):custom} ## Imports all serverless.common variables
+
+resources:
+  Resources:
+
+    WebAppS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.webAppBucketName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html 
+    BucketPolicyWebApp:
+      Type: "AWS::S3::BucketPolicy"
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - "s3:GetObject"
+              Resource: arn:aws:s3:::${self:custom.webAppBucketName}/*
+              Condition:
+                StringLike:
+                  aws:Referer:
+                    - ${env:CLOUDFRONT_SECRET} # Ensure a unique value is set in your pipeline for this to work
+        Bucket:
+          Ref: WebAppS3Bucket
+
+    ## Specifying the CloudFront Distribution to server your Web Application
+    WebAppCloudfrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName:
+                Fn::Join:
+                  - ""
+                  - - ${self:custom.webAppBucketName}
+                    - ".s3-website-"
+                    - ${opt:region, self:provider.region}
+                    - ".amazonaws.com"
+              # OriginPath:
+              #   Fn::Join:
+              #     - ""
+              #     - - "/version/"
+              #       - ${env:DEPLOYMENT_VERSION}
+              ## An identifier for the origin which must be unique within the distribution
+              Id: webAppBucketName
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: http-only
+              ## In case you want to restrict the bucket access use S3OriginConfig and remove CustomOriginConfig
+              # S3OriginConfig:
+              #   OriginAccessIdentity:
+              #     Fn::Join:
+              #       - ''
+              #       - - 'origin-access-identity/cloudfront/'
+              #         - Ref: ConsumerWebsiteOriginAccessIdentity
+              OriginCustomHeaders:
+                - HeaderName: Referer
+                  HeaderValue: ${env:CLOUDFRONT_SECRET}
+          Enabled: "true"
+          ## Uncomment the following section in case you are using a custom domain
+          # Aliases:
+          # - mysite.example.com
+          DefaultRootObject: index.html
+          HttpVersion: http2
+          ## Since the Single Page App is taking care of the routing we need to make sure ever path is served with index.html
+          ## The only exception are files that actually exist e.h. app.js, reset.css
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            Compress: true
+            AllowedMethods:
+              - GET
+              - HEAD
+            ## The origin id defined above
+            TargetOriginId: webAppBucketName
+            ## Defining if and how the QueryString and Cookies are forwarded to the origin which in this case is S3
+            ForwardedValues:
+              QueryString: "false"
+              Cookies:
+                Forward: none
+            ## The protocol that users can use to access the files in the origin. To allow HTTP use `allow-all`
+            ViewerProtocolPolicy: redirect-to-https
+          ## The certificate to use when viewers use HTTPS to request objects.
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: "true"
+          ## Uncomment the following section in case you want to enable logging for CloudFront requests
+          # Logging:
+          #   IncludeCookies: 'false'
+          #   Bucket: mylogs.s3.amazonaws.com
+          #   Prefix: myprefix
+
+  # Outputs from the deployment
+  Outputs:
+    WebAppS3BucketArn:
+      Value:
+        Fn::GetAtt:
+          - WebAppS3Bucket
+          - Arn
+      Export:
+        Name: ${self:provider.stage}-webAppS3BucketArn
+
+    WebAppCloudFrontDomainName:
+      Value:
+        "Fn::GetAtt": [WebAppCloudfrontDistribution, DomainName]
+      Export:
+        Name: ${self:provider.stage}-webAppCloudFrontDomainName

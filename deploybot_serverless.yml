@@ -1,0 +1,108 @@
+service: deploybot
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+package:
+  exclude:
+    - ./**
+  include:
+    - vendored/**
+    - common/**
+    - circleci/**
+    - github/**
+    - slack/**
+
+provider:
+  name: aws
+  profile: deploybot
+  runtime: python3.7
+  stage: ${opt:stage, env:STAGE, 'prod'}
+  region: ${opt:region, env:SLS_AWS_REGION}
+  environment:
+    COMMAND: ${env:COMMAND, '/cimon'}
+    FUNCTION_PREFIX: ${self:service}-${self:provider.stage}
+    SLS_AWS_REGION: ${self:provider.region}
+    DYNAMODB_TABLE_PROJECT: ${env:DYNAMODB_TABLE_PROJECT}
+    DYNAMODB_TABLE_USER: ${env:DYNAMODB_TABLE_USER}
+    DYNAMODB_TABLE_DEPLOYMENT: ${env:DYNAMODB_TABLE_DEPLOYMENT}
+    DYNAMODB_TABLE_DEPLOYMENT_BYCOMMIT: repository-commit-index
+    DYNAMODB_TABLE_DEPLOYMENT_BYBUILDNUM: repository-build_number-index
+    SLACK_WEBHOOK_URL: ${env:SLACK_WEBHOOK_URL}
+    SLACK_CHANNEL: ${env:SLACK_CHANNEL}
+    SLACK_SIGNING_SECRET: ${env:SLACK_SIGNING_SECRET}
+    SLACK_TEAM_ID: ${env:SLACK_TEAM_ID}
+    GITHUB_APP_PK: ${env:GITHUB_APP_PK}
+    GITHUB_APP_ID: ${env:GITHUB_APP_ID}
+    GITHUB_APP_INSTALLATIONID: ${env:GITHUB_APP_INSTALLATIONID}
+    CIRCLECI_API_TOKEN: ${env:CIRCLECI_API_TOKEN}
+    PYTHONPATH: "/var/runtime:/var/task/vendored"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_PROJECT}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_USER}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_DEPLOYMENT}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_DEPLOYMENT}/*"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*"
+
+functions:
+  circleci_event:
+    handler: circleci/webhook.receive
+    events:
+      - http:
+          path: circleci/webhook
+          method: post
+          cors: true
+  circleci_trigger:
+    handler: circleci/trigger.send
+
+  github_collaborators:
+    handler: github/collaborators.get
+  github_deployment_create:
+    handler: github/deployment.create
+  github_deployment_create_status:
+    handler: github/deployment.create_status
+  github_event:
+    handler: github/webhook.receive
+    events:
+      - http:
+          path: github/webhook
+          method: post
+          cors: true
+
+  slack_command:
+    handler: slack/command.receive
+    events:
+      - http:
+          path: slack/command
+          method: post
+          cors: true
+  slack_interactive:
+    handler: slack/interactive.receive
+    events:
+      - http:
+          path: slack/interactive
+          method: post
+          cors: true
+  slack_message:
+    handler: slack/message.send
+# plugins:
+#   - serverless-offline
+#   - serverless-python-requirements
+
+# custom:
+#   pythonRequirements:
+#     dockerizePip: "non-linux"
+#     # pythonBin: $(which python3)
+#     # useDownloadCache: true
+#     # useStaticCache: true

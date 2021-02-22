@@ -1,0 +1,196 @@
+## notes to my future self on the usage of this template in other projects
+## 1. Buy domain
+## 2. Setup hosted zone on route53 for the domain and point to aws NS servers in domain provider panel
+## 3. Create certificate by running 'sls create-cert --aws-profile [profile]'
+## it needs to be run before sls deploy (for the first time)
+service: sawka-promo-website
+
+plugins:
+  - serverless-certificate-creator
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+custom:
+  subdomain: "www"
+  name: "sawka"
+  tld: "promo"
+  domain: "${self:custom.name}.${self:custom.tld}"
+  url: "${self:custom.subdomain}.${self:custom.domain}"
+  prefix: "${self:custom.subdomain}-${self:custom.name}-${self:custom.tld}"
+  region: "us-east-1"
+  stage: "prod"
+  customCertificate:
+    certificateName: "${self:custom.domain}"
+    idempotencyToken: "sawka_promo_prod"
+    hostedZoneNames: "${self:custom.domain}."
+    subjectAlternativeNames:
+      - "${self:custom.url}"
+    tags:
+      Name: "${self:custom.domain}"
+      Environment: "prod"
+    rewriteRecords: true
+
+
+resources:
+  Resources:
+    DomainZone:
+      Type: "AWS::Route53::HostedZone"
+      Properties:
+        Name: "${self:custom.domain}"
+        HostedZoneConfig:
+          Comment: "sawka.promo domain zone"
+#
+#    ExistingDNSRecords:
+#      Type: AWS::Route53::RecordSetGroup
+#      Properties:
+#        HostedZoneId:
+#          Ref: DomainZone
+#        RecordSets:
+#          - Name: "${self:custom.domain}."
+#            Type: 'MX'
+#            ResourceRecords:
+#              - "1 mx1.mail.ovh.net."
+#              - "5 mx2.mail.ovh.net."
+#              - "100 mx3.mail.ovh.net."
+#            TTL: "300"
+
+    # WEBSITE, CDN, HTTP > HTTPS REDIRECT, DNS RECORD
+    WebsiteBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: "${self:custom.url}"
+        AccessControl: Private
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: error.html
+
+    BucketPolicyWebsiteBucket:
+      Type: 'AWS::S3::BucketPolicy'
+      Properties:
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: '*'
+              Action:
+                - 's3:GetObject'
+              Resource: arn:aws:s3:::${self:custom.url}/*
+        Bucket:
+          Ref: WebsiteBucket
+    # NAKED DOMAIN REDIRECT
+    RedirectBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: "${self:custom.domain}"
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          RedirectAllRequestsTo:
+            HostName: "${self:custom.url}"
+            Protocol: "https"
+    WebsiteDistribution:
+      Type: "AWS::CloudFront::Distribution"
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - "${self:custom.url}"
+          DefaultCacheBehavior:
+            TargetOriginId: WebsiteOriginBucket
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: true
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+          DefaultRootObject: index.html
+          Enabled: true
+          HttpVersion: http2
+          ViewerCertificate:
+            AcmCertificateArn: ${certificate:${self:custom.customCertificate.certificateName}:CertificateArn}
+            SslSupportMethod: "sni-only"
+          Origins:
+            - Id: WebsiteOriginBucket
+              DomainName:
+                !Select [2, !Split ["/", !GetAtt [WebsiteBucket, WebsiteURL]]]
+              CustomOriginConfig:
+                OriginProtocolPolicy: "http-only"
+          CustomErrorResponses:
+            - ErrorCode: "403"
+              ErrorCachingMinTTL: 1
+              ResponseCode: 403
+              ResponsePagePath: "/index.html"
+            - ErrorCode: "404"
+              ErrorCachingMinTTL: 1
+              ResponseCode: 404
+              ResponsePagePath: "/index.html"
+            - ErrorCode: "500"
+              ErrorCachingMinTTL: 1
+              ResponseCode: 500
+              ResponsePagePath: "/index.html"
+            - ErrorCode: "502"
+              ErrorCachingMinTTL: 1
+              ResponseCode: 502
+              ResponsePagePath: "/index.html"
+            - ErrorCode: "503"
+              ErrorCachingMinTTL: 1
+              ResponseCode: 503
+              ResponsePagePath: "/index.html"
+            - ErrorCode: "504"
+              ErrorCachingMinTTL: 1
+              ResponseCode: 504
+              ResponsePagePath: "/index.html"
+    RedirectDistribution:
+      Type: "AWS::CloudFront::Distribution"
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - "${self:custom.domain}"
+          DefaultCacheBehavior:
+            TargetOriginId: RedirectOriginBucket
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: true
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+          Enabled: true
+          HttpVersion: http2
+          ViewerCertificate:
+            AcmCertificateArn: ${certificate:${self:custom.customCertificate.certificateName}:CertificateArn}
+            SslSupportMethod: "sni-only"
+          Origins:
+            - Id: RedirectOriginBucket
+              DomainName:
+                "Fn::Select":
+                  [
+                      2,
+                      "Fn::Split":
+                        ["/", "Fn::GetAtt": ["RedirectBucket", "WebsiteURL"]],
+                  ]
+              CustomOriginConfig:
+                OriginProtocolPolicy: "http-only"
+    WebsiteDNSRecords:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneId:
+          Ref: DomainZone
+        RecordSets:
+          - Name: "${self:custom.url}."
+            Type: A
+            AliasTarget:
+              HostedZoneId: Z2FDTNDATAQYW2
+              DNSName:
+                Fn::GetAtt: [WebsiteDistribution, DomainName]
+    RedirectDNSRecords:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneId:
+          Ref: DomainZone
+        RecordSets:
+          - Name: "${self:custom.domain}."
+            Type: A
+            AliasTarget:
+              HostedZoneId: Z2FDTNDATAQYW2
+              DNSName:
+                Fn::GetAtt: [RedirectDistribution, DomainName]

@@ -1,0 +1,210 @@
+---
+
+service: rt-analytics
+
+package:
+  individually: true
+
+plugins: 
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  tracing:
+    apiGateway: true
+    lambda: true
+  environment:
+    analyticsStream: ${self:service}-analyticsevents-${self:custom.stage}
+    analyticsBucket: ${self:service}-analyticsevents-${self:custom.stage}
+    firehoseStreamName: ${self:service}-firehose-${self:custom.stage}
+    userprofileStream: ${self:service}-userprofileEvents-${self:custom.stage}
+    tableName: ${self:service}-userprofile-${self:custom.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 
+        - kinesis:PutRecords         
+        - kinesis:PutRecord
+      Resource: 
+        - !GetAtt AnalyticsStream.Arn
+        - !GetAtt UserProfileStream.Arn
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - !GetAtt DynamoDB.Arn
+    - Effect: Allow
+      Action: 
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: '*'
+
+ 
+custom:
+  stage: ${opt:stage, self:provider.stage}    
+
+resources:
+
+  Resources:
+    DynamoDB:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.tableName}
+        AttributeDefinitions:
+          - AttributeName: appId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+        KeySchema:
+          - AttributeName: appId
+            KeyType: HASH
+          - AttributeName: userId
+            KeyType: RANGE
+
+
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.analyticsBucket}
+        VersioningConfiguration:
+          Status: Enabled
+
+    FirehoseRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: ''
+              Effect: Allow
+              Principal:
+                Service: firehose.amazonaws.com
+              Action: 'sts:AssumeRole'
+              Condition:
+                StringEquals:
+                  'sts:ExternalId': !Ref 'AWS::AccountId'
+              
+    AnalyticsS3Policy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: 'FirehoseS3Policy'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 's3:AbortMultipartUpload'
+                - 's3:GetBucketLocation'
+                - 's3:GetObject'
+                - 's3:ListBucket'
+                - 's3:ListBucketMultipartUploads'
+                - 's3:PutObject'
+              Resource:
+                - !GetAtt S3Bucket.Arn
+                - !Sub 'arn:aws:s3:::${self:provider.environment.analyticsBucket}*'
+
+        Roles:
+          - !Ref FirehoseRole
+
+    KinesisPolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: 'FirehoseKinesisPolicy'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: 
+                - 'kinesis:Get*'
+                - 'kinesis:DescribeStream'
+              Resource:
+                - !GetAtt AnalyticsStream.Arn
+        Roles:
+          - !Ref FirehoseRole
+
+    AnalyticsStream:
+      Type: AWS::Kinesis::Stream
+      Properties: 
+        Name: ${self:provider.environment.analyticsStream}
+        ShardCount: 1
+      
+    UserProfileStream:
+      Type: AWS::Kinesis::Stream
+      Properties: 
+        Name: ${self:provider.environment.userprofileStream}
+        ShardCount: 1
+
+    DeliveryStream:
+      Type: AWS::KinesisFirehose::DeliveryStream
+      Properties:
+        DeliveryStreamName: ${self:provider.environment.firehoseStreamName}
+        DeliveryStreamType: KinesisStreamAsSource
+        KinesisStreamSourceConfiguration:
+          KinesisStreamARN: !GetAtt AnalyticsStream.Arn
+          RoleARN: !GetAtt FirehoseRole.Arn
+        S3DestinationConfiguration:
+          BucketARN: !GetAtt S3Bucket.Arn
+          BufferingHints:
+            IntervalInSeconds: 60
+            SizeInMBs: 50
+          CompressionFormat: UNCOMPRESSED
+          Prefix: analytics/
+          RoleARN: !GetAtt FirehoseRole.Arn
+      DependsOn:
+          - KinesisPolicy
+          - AnalyticsS3Policy
+
+
+functions:
+  track:
+    handler: ./services/analytics/analytics.handler
+    events:
+      - http:
+          path: track
+          method: post
+          cors: true
+          authorizer: aws_iam
+          request:
+            schema:
+              application/json: ${file(./models/analyticsReqModel.json)}
+
+  engage:
+    handler: ./services/analytics/engage.handler
+    events:
+      - http:
+          path: engage
+          method: post
+          cors: true
+          authorizer: aws_iam
+          request:
+            schema:
+              application/json: ${file(./models/userProfileReqModel.json)}
+
+  saveUserProfile:
+    handler: ./services/userprofile/save.handler
+    events:
+      - stream:
+          type: kinesis
+          arn: !GetAtt UserProfileStream.Arn
+          startingPosition: LATEST
+          batchWindow: 300
+          batchSize: 3
+  
+  # getUserProfile:
+  #   handler: ./services/userprofile/get.handler
+  #   events:
+  #     - http:
+  #         method: get
+  #         path: users/{id}
+  #         cors: true

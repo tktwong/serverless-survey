@@ -1,0 +1,72 @@
+service: todos-rest-api
+
+custom:
+  todosTableName: 'java-todos-${self:provider.stage}'
+
+provider:
+  name: aws
+  runtime: java8
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["TodosDynamoDBTable", "Arn" ] }
+  environment:
+    TODOS_TABLE_NAME: ${self:custom.todosTableName}
+
+package:
+  artifact: 'target/${self:service}-${self:provider.stage}.jar'
+
+functions:
+  listTodos:
+    handler: com.serverless.ListTodosHandler
+    events:
+      - http:
+          path: /todos
+          method: get
+  getTodo:
+    handler: com.serverless.GetTodoHandler
+    events:
+      - http:
+          path: /todos/{id}
+          method: get
+  createTodo:
+    handler: com.serverless.CreateTodoHandler
+    events:
+      - http:
+          path: /todos
+          method: post
+  deleteTodo:
+    handler: com.serverless.DeleteTodoHandler
+    events:
+      - http:
+          path: /todos/{id}
+          method: delete
+
+resources:
+  Resources:
+    TodosDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.todosTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: name
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

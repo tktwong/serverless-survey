@@ -1,0 +1,149 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: dcm-activity
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  memorySize: 512
+  environment:
+    ACTIVITY_TABLE: dcm_activity_${opt:stage, self:provider.stage}
+    ACTIVITY_CONFIG_TABLE: dcm_activity_config_${opt:stage, self:provider.stage}
+    REGISTERED_CLAN_TOPIC: arn:aws:sns:us-east-1:410919218872:registered_clan_${opt:stage, self:provider.stage}
+    BUNGIE_BASE_URL: https://www.bungie.net/Platform
+    BUNGIE_API_KEY: b5cf1e00bfe644f9bf294f31fe3ea71d
+    CLAN_MEMBER_TOPIC: arn:aws:sns:us-east-1:410919218872:clan_member_${opt:stage, self:provider.stage}
+    GARBAGE_COLLECTION_TOPIC: arn:aws:sns:us-east-1:410919218872:garbage_collection_${opt:stage, self:provider.stage}
+    REGISTRY_BASE_URL: #{REGISTRY_BASE_URL}#
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.ACTIVITY_TABLE}'
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.ACTIVITY_CONFIG_TABLE}'
+
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource: ${self:provider.environment.REGISTERED_CLAN_TOPIC}
+
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource: ${self:provider.environment.CLAN_MEMBER_TOPIC}
+
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource: ${self:provider.environment.GARBAGE_COLLECTION_TOPIC}
+
+# The `functions` block defines what code to deploy
+functions:
+  registryWorker:
+    handler: src/handler.getRegisteredClans
+    events:
+      - schedule: rate(6 hours)
+
+  garbageCollector:
+    handler: src/handler.cleanUp
+    events:
+      - sns: registered_clan_${opt:stage, self:provider.stage}
+      - sns: garbage_collection_${opt:stage, self:provider.stage}
+
+  rosterWorker:
+    handler: src/handler.getClanRoster
+    events:
+      - sns: registered_clan_${opt:stage, self:provider.stage}
+
+  profileWorker:
+    handler: src/handler.getMemberActivityProfile
+    events:
+      - sns: clan_member_${opt:stage, self:provider.stage}
+
+  startActivityReport:
+    handler: src/handler.startActivityReport
+    events:
+      - http:
+          path: inactive-members/
+          method: post
+
+  getInactiveMembers:
+    handler: src/handler.getInactiveMembers
+    events:
+      - http:
+          path: inactive-members/{clanId}
+          method: get
+          request:
+            parameters:
+              paths:
+                clanId: true
+
+  startGarbageCollection:
+    handler: src/handler.startGarbageCollection
+    events:
+      - http:
+          path: inactive-members/{clanId}/clean-up
+          method: post
+          request:
+            parameters:
+              paths:
+                clanId: true
+
+resources:
+  Resources:
+    DestinyClanManagerActivityTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: clanId
+            AttributeType: S
+          - AttributeName: membershipId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: clanId
+            KeyType: HASH
+          - AttributeName: membershipId
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.ACTIVITY_TABLE}
+
+    DestinyClanManagerActivityConfigurationTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: clanId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: clanId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.ACTIVITY_CONFIG_TABLE}

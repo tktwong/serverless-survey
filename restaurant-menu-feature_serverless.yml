@@ -1,0 +1,402 @@
+service:
+  name: restaurant-menu-feature
+# app and org for use with dashboard.serverless.com
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  
+  dynamodb:
+    stages:
+      - dev
+      - test
+    start:
+      port: 8888
+      inMemory: true
+      migrate: true
+  
+  serverless-offline:
+    httpPort: 3333
+
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-dynamodb-local
+  - serverless-iam-roles-per-function
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    APP_REGION: ${self:provider.region}
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    DYNAMODB_CATEGORIES_TABLE_NAME: Categories-${self:provider.stage}
+    DYNAMODB_CATEGORIES_TABLE_INDEX: category-idx
+    DYNAMODB_ITEMS_TABLE_NAME: Items-${self:provider.stage}
+    DYNAMODB_ITEMS_TABLE_INDEX: items-idx
+    DYNAMODB_BILLING_MODE: PAY_PER_REQUEST
+    S3_BUCKET_IMAGES: bennun-imgs-restaurant-${self:provider.stage}
+    S3_SIGNED_URL_EXPIRATION_SECONDS: 120
+
+  iamRoleStatements:
+    -
+      Effect: Allow
+      Action:
+        - s3:PutObject
+      Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+
+functions:
+
+  RS256Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  createCategories:
+    handler: src/lambda/http/createCategory.handler
+    events:
+      -
+        http:
+          method: post
+          path: /categories
+          cors: true
+          authorizer: RS256Auth
+    iamRoleStatements:
+      -
+        Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+      -
+        Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_CATEGORIES_TABLE_NAME}
+      
+  getCategories:
+    handler: src/lambda/http/getCategories.handler
+    events:
+      - 
+        http:
+          method: get
+          path: /categories
+          cors: true
+    iamRoleStatements:
+      -
+        Effect: Allow
+        Action: 
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+      -
+        Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_CATEGORIES_TABLE_NAME}
+
+  getSingleCategory:
+    handler: src/lambda/http/getSingleCategory.handler
+    events:
+      -
+        http:
+          method: get
+          path: /categories/{categoryId}
+          cors: true
+    iamRoleStatements:
+      - 
+        Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+      -
+        Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_CATEGORIES_TABLE_NAME}
+
+  updateCategory:
+    handler: src/lambda/http/updateCategory.handler
+    events:
+      -
+        http:
+          method: patch
+          path: /categories/{categoryId}
+          cors: true
+          authorizer: RS256Auth
+    iamRoleStatements:
+      -
+        Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+      -
+        Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_CATEGORIES_TABLE_NAME}
+
+  deleteCategory:
+    handler: src/lambda/http/deleteCategory.handler
+    events:
+      -
+        http:
+          method: delete
+          path: /categories/{categoryId}
+          cors: true
+          authorizer: RS256Auth
+    iamRoleStatements:
+      -
+        Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_CATEGORIES_TABLE_NAME}
+      -
+        Effect: Allow
+        Action:
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+  
+  createItem:
+    handler: src/lambda/http/createItem.handler
+    events:
+      -
+        http:
+          method: post
+          path: /items
+          cors: true
+          authorizer: RS256Auth
+    iamRoleStatements:
+      -
+        Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+      -
+        Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_ITEMS_TABLE_NAME}
+
+  getItems:
+    handler: src/lambda/http/getItems.handler
+    events:
+      -
+        http:
+          method: get
+          path: /items
+          cors: true
+    iamRoleStatements:
+      -
+        Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+      -
+        Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_ITEMS_TABLE_NAME}
+
+  getSingleItem:
+    handler: src/lambda/http/getSingleItem.handler
+    events:
+      -
+        http:
+          method: get
+          path: /items/{itemId}
+          cors: true
+    iamRoleStatements:
+      -
+        Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+      -
+        Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_ITEMS_TABLE_NAME}
+
+  updateItem:
+    handler: src/lambda/http/updateItem.handler
+    events:
+      -
+        http:
+          method: patch
+          path: /items/{itemId}
+          cors: true
+          authorizer: RS256Auth
+    iamRoleStatements:
+      -
+        Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+      -
+        Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_ITEMS_TABLE_NAME}
+  
+  deleteItem:
+    handler: src/lambda/http/deleteItem.handler
+    events:
+      -
+        http:
+          method: delete
+          path: /items/{itemId}
+          cors: true
+          authorizer: RS256Auth
+    iamRoleStatements:
+      -
+        Effect: Allow
+        Action:
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+      -
+        Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_ITEMS_TABLE_NAME}
+
+  getSignedUrl:
+    handler: src/lambda/s3/getSignedUrl.handler
+    events:
+      -
+        http:
+          method: post
+          path: /items/{itemId}/attachment
+          cors: true
+          authorizer: RS256Auth
+    iamStatementRoles:
+      -
+        Effect: Allow
+        Action: 
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*
+
+
+
+resources:
+  Resources:
+    DynamoDBTableCategories:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_CATEGORIES_TABLE_NAME}
+        BillingMode: ${self:provider.environment.DYNAMODB_BILLING_MODE}
+        AttributeDefinitions:
+          -
+            AttributeName: restaurantId
+            AttributeType: S
+          -
+            AttributeName: categoryId
+            AttributeType: S
+          - 
+            AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: restaurantId
+            KeyType: HASH
+          -
+            AttributeName: createdAt
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          -
+            IndexName: ${self:provider.environment.DYNAMODB_CATEGORIES_TABLE_INDEX}
+            Projection:
+              ProjectionType: ALL
+            KeySchema:        
+            - 
+              AttributeName: restaurantId
+              KeyType: HASH
+            -
+              AttributeName: categoryId
+              KeyType: RANGE
+
+    DynamoDBTableItems:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_ITEMS_TABLE_NAME}
+        BillingMode: ${self:provider.environment.DYNAMODB_BILLING_MODE}
+        AttributeDefinitions:
+          -
+            AttributeName: restaurantId
+            AttributeType: S
+          -
+            AttributeName: itemId
+            AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - 
+            AttributeName: restaurantId
+            KeyType: HASH
+          -
+            AttributeName: createdAt
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          -
+            IndexName: ${self:provider.environment.DYNAMODB_ITEMS_TABLE_INDEX}
+            Projection:
+              ProjectionType: ALL
+            KeySchema:
+              - 
+                AttributeName: restaurantId
+                KeyType: HASH
+
+              - AttributeName: itemId
+                KeyType: RANGE
+  
+    S3BucketImages:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET_IMAGES}
+        CorsConfiguration:
+          CorsRules:
+            - 
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - POST
+                - GET
+                - DELETE
+                - HEAD
+                - PUT
+              MaxAge: 100
+
+    S3BucketImagesPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref S3BucketImages
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            -
+              Sid: PublicReadForGetObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.S3_BUCKET_IMAGES}/*'

@@ -1,0 +1,88 @@
+service: serverless-octopus-graphql
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ap-southeast-2
+  stage: ${${opt:stage}, "dev"}
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-webpack
+  - serverless-pseudo-parameters
+  - serverless-appsync-plugin
+
+functions:
+  greeting:
+    handler: resolvers/queries/greeting.handler
+  project:
+    handler: resolvers/queries/project.handler
+
+package:
+  individually: true
+
+custom:
+  webpack:
+    webpackConfig: "webpack.config.js" # Name of webpack configuration file
+    includeModules: true # Node modules configuration for packaging
+    packager: "npm" # Packager that will be used to package your external modules
+  appSync:
+    name: ${self:service}-${self:provider.stage}
+    authenticationType: API_KEY
+    # logConfig:
+    #   loggingRoleArn: { Fn::GetAtt: [AppSyncLoggingServiceRole, Arn] } # Where AppSyncLoggingServiceRole is a role with CloudWatch Logs write access
+    #   level: ALL # Logging Level: NONE | ERROR | ALL
+    mappingTemplates:
+      - dataSource: lambda_query_greeting
+        type: Query #Query, Mutation, Subscription
+        field: greeting
+        request: query-greeting-request.vtl
+        response: query-greeting-response.vtl
+      - dataSource: lambda_query_project
+        type: Query #Query, Mutation, Subscription
+        field: project
+        request: query-project-request.vtl
+        response: query-project-response.vtl
+    schema: "schema.graphql"
+    serviceRole: "AppSyncServiceRole"
+    dataSources:
+      - type: AWS_LAMBDA
+        name: lambda_query_greeting
+        description: "Lambda DataSource"
+        config:
+          lambdaFunctionArn: { Fn::GetAtt: [GreetingLambdaFunction, Arn] }
+          serviceRoleArn: { Fn::GetAtt: [AppSyncLambdaServiceRole, Arn] }
+          functionName: greeting
+      - type: AWS_LAMBDA
+        name: lambda_query_project
+        description: "Lambda DataSource"
+        config:
+          lambdaFunctionArn: { Fn::GetAtt: [ProjectLambdaFunction, Arn] }
+          serviceRoleArn: { Fn::GetAtt: [AppSyncLambdaServiceRole, Arn] }
+          functionName: project
+
+resources:
+  Resources:
+    AppSyncLambdaServiceRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "${self:service}-${self:provider.stage}-Lambda-${self:custom.appSync.serviceRole}"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          - PolicyName: "${self:service}-${self:provider.stage}-Lambda-${self:custom.appSync.serviceRole}-Policy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "lambda:invokeFunction"
+                  Resource:
+                    - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:provider.stage}-*"

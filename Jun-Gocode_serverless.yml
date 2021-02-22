@@ -1,0 +1,47 @@
+service: cateraway-api
+
+frameworkVersion: '>=1.28.0 <2.0.0'
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: ${opt:stage, 'dev'}
+  region: ap-east-1
+  role: ${file(./env.yml):${opt:stage, self:provider.stage}.IAM}
+  vpc:
+    securityGroupIds:
+      - ${file(./env.yml):${opt:stage, self:provider.stage}.SG1}
+      - ${file(./env.yml):${opt:stage, self:provider.stage}.SG2}
+    subnetIds:
+      - ${file(./env.yml):${opt:stage, self:provider.stage}.SUBNET1}
+      - ${file(./env.yml):${opt:stage, self:provider.stage}.SUBNET2}
+  environment: ${file(./env.yml):${opt:stage, self:provider.stage}}
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+functions:
+  authorize:
+    handler: bin/auth
+  food:
+    handler: bin/food
+    events:
+      - http:
+          path: food
+          method: get
+          cors: true
+          integration: lambda-proxy
+  orders:
+    handler: bin/orders
+    events:
+      - http:
+          path: orders
+          method: get
+          cors: true
+          integration: lambda-proxy
+          authorizer:
+            name: authorize
+            resultTtlInSeconds: 0

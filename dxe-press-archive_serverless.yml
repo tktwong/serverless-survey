@@ -1,0 +1,104 @@
+
+service: dxe-press-archive
+
+frameworkVersion: "=1.63.0"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-west-2
+  stage: ${opt:stage, env:stage, 'dev'}
+
+resources:
+  Resources:
+
+    S3BucketWebApp:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: dxe-press-archive-${self:provider.stage}-ui
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          ErrorDocument: index.html
+          IndexDocument: index.html
+
+    S3PublicReadPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref S3BucketWebApp
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            Sid: PublicReadForGetBucketObjects
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref S3BucketWebApp
+                - /*
+
+    CloudFrontWebApp:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - ${file(./serverless-${self:provider.stage}.yml):cloudFrontAlias}
+          CustomErrorResponses:
+            - ErrorCachingMinTTL: 0
+              ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - HEAD
+              - GET
+            CachedMethods:
+              - HEAD
+              - GET
+            Compress: false
+            DefaultTTL: 3600
+            ForwardedValues:
+              Cookies:
+                Forward: none
+              QueryString: true
+            MaxTTL: 18000
+            MinTTL: 5
+            SmoothStreaming: false
+            TargetOriginId: !Ref S3BucketWebApp
+            ViewerProtocolPolicy: redirect-to-https
+          DefaultRootObject: index.html
+          Enabled: true
+          HttpVersion: http2
+          IPV6Enabled: true
+          Origins:
+            - CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginKeepaliveTimeout: 5
+                OriginProtocolPolicy: http-only
+                OriginReadTimeout: 30
+                OriginSSLProtocols:
+                  - TLSv1
+                  - TLSv1.1
+                  - TLSv1.2
+              DomainName: !GetAtt S3BucketWebApp.DomainName
+              Id: !Ref S3BucketWebApp
+          PriceClass: PriceClass_100
+          ViewerCertificate:
+            AcmCertificateArn: arn:aws:acm:us-east-1:863138142000:certificate/ad5d5bcc-f3fa-43da-ae35-1cce656db82a
+            MinimumProtocolVersion: TLSv1.2_2018
+            SslSupportMethod: sni-only
+
+    Route53RecordSetAlias:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        AliasTarget:
+          DNSName: !GetAtt CloudFrontWebApp.DomainName
+          EvaluateTargetHealth: false
+          # hosted zone for cloud formation
+          # https://docs.aws.amazon.com/general/latest/gr/rande.html#elb_region
+          HostedZoneId: Z2FDTNDATAQYW2
+        HostedZoneName: growme.fyi.
+        Name: ${file(./serverless-${self:provider.stage}.yml):cloudFrontAlias}
+        Type: 'A'

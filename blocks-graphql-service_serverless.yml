@@ -1,0 +1,70 @@
+service:
+  name: blocks-graphql-service
+
+plugins:
+  - serverless-webpack
+  - serverless-pseudo-parameters
+  - serverless-domain-manager
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  versionFunctions: false
+  memorySize: 512
+  region: us-east-1
+  tracing: false
+  environment:
+    stage: ${self:custom.stage}
+  iamRoleStatements:
+    ${file(roleStatements.yml)}
+
+custom:
+  name: ${self:custom.stage}-${self:service}
+  region: ${opt:region, self:provider.region}
+  stage: ${opt:stage, self:provider.stage}
+
+  dev:
+    domain: dev-api.blocks.directory
+    corsOrigins:
+      - 'http://localhost:8000'
+      - 'https://dev.blocks.directory'
+  prod:
+    domain: api.blocks.directory
+    corsOrigins:
+      - 'https://blocks.directory'
+  customDomain:
+    domainName: ${self:custom.${self:custom.stage}.domain}
+    stage: ${self:custom.stage}
+    basePath: graphql
+    certificateName: '*.blocks.directory'
+    createRoute53Record: true
+    endpointType: 'regional'
+
+functions:
+  graphql:
+    name: ${self:custom.name}-graphql
+    handler: src/handler.handler
+    timeout: 15
+    events:
+      - http:
+          path: playground
+          method: any
+          cors:
+            origins:
+              - '*'
+      - http:
+          path: ''
+          method: post
+          cors:
+            origins: ${self:custom.${self:custom.stage}.corsOrigins}
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: true

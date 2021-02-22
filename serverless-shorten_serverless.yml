@@ -1,0 +1,95 @@
+service: shorten
+frameworkVersion: ">=1.38.0 <2.0.0"
+
+package:
+  exclude:
+    - '.eslintrc.json'
+    - '.gitignore'
+    - '.node-version'
+    - '.buildspec.yml'
+    - './node_modules/aws-sdk/**'
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'prod'}
+  region: ap-northeast-1
+  memorySize: 128
+  timeout: 10
+  logRetentionInDays: 14
+  deploymentBucket:
+    name: hyiromori
+  versionFunctions: false
+  environment:
+    DYNAMODB_TABLE: serverless-shorten
+    NODE_ENV: production
+    SERVERLESS_STAGE: ${opt:stage, 'prod'}
+  apiGateway:
+    minimumCompressionSize: 1024
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:#{AWS::AccountId}:table/serverless-shorten"
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-domain-manager
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    port: 4000
+  customDomain:
+    domainName: s.hyiromori.com
+    basePath: ''
+    certificateName: "*.hyiromori.com"
+    createRoute53Record: true
+    endpointType: regional
+    securityPolicy: tls_1_2
+
+resources:
+  Resources:
+    ShortenTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: serverless-shorten
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 3
+          WriteCapacityUnits: 3
+
+functions:
+  index:
+    handler: handler/index.handler
+    events:
+      - http:
+          method: GET
+          path: ''
+          cors: true
+
+  post:
+    handler: handler/post.handler
+    events:
+      - http:
+          method: POST
+          path: ''
+          cors: true
+
+  get:
+    handler: handler/get.handler
+    events:
+      - http:
+          method: GET
+          path: '{key}'
+          cors: true

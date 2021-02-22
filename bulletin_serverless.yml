@@ -1,0 +1,49 @@
+service: bulletin
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+custom:
+  wsgi:
+    app: bulletin.wsgi.application
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: true
+    zip: true
+    noDeploy:
+      - pytest
+      - pytest-django
+package:
+  exclude:
+    - node_modules/**
+    - script/**
+    - venv/**
+provider:
+  name: aws
+  runtime: python3.7
+  timeout: 30
+  stage: develop
+  region: us-west-2
+  environment:
+    ENVIRONMENT: production
+    SECRET_KEY: ${ssm:BULLETIN_SECRET_KEY}
+    HOST:
+      Fn::Join:
+        - ""
+        - - Ref: "ApiGatewayRestApi"
+          - ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}/"
+    DATABASE_HOST: ${ssm:BULLETIN_DB_HOST}
+    DATABASE_USER: ${ssm:BULLETIN_DB_USERNAME}
+    DATABASE_PASS: ${ssm:BULLETIN_DB_PASSWORD}
+  vpc:
+    securityGroupIds:
+      - sg-a317ffc7
+    subnetIds:
+      - subnet-644dcf13
+      - subnet-567d1133
+      - subnet-5214b20b
+functions:
+  app:
+    handler: wsgi_handler.handler
+    events:
+      - http: ANY /
+      - http: ANY {proxy+}

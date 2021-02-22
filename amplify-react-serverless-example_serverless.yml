@@ -1,0 +1,47 @@
+service: ampl-sls-example-backend
+
+provider:
+  name: aws
+  stage: ${opt:stage, "dev"}
+  region: eu-west-1
+  runtime: python3.8
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+  - aws-amplify-serverless-plugin
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+  wsgi:
+    app: app.app
+    packRequirements: false
+  amplify:
+    # this can be anything, as long as the frontend project includes it
+    - filename: src/aws-exports.js
+      type: javascript
+      appClient: CognitoUserPoolClient
+
+package:
+  exclude:
+    - node_modules/**
+    - amplify/**
+    - public/**
+    - src/**
+    - yarn.lock
+
+functions:
+  app:
+    handler: wsgi_handler.handler
+    events:
+      - http:
+          path: /test
+          method: any
+          cors: true
+          authorizer: aws_iam
+
+resources:
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}
+  - ${file(resources/api-gateway-errors.yml)}

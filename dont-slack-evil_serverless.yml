@@ -1,0 +1,84 @@
+service: dont-slack-evil
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: dev
+  profile: dont-slack-evil-hackaton
+
+  environment:
+    DYNAMODB_TABLE_PREFIX: ${self:service}-${opt:stage, self:provider.stage}-
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:CreateTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_PREFIX}*"
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+    - ./data/**
+
+custom:
+  secrets: ${file(secrets.${opt:stage, self:provider.stage}.yml)}
+
+functions:
+  hello:
+    handler: bin/hello
+    events:
+      - http:
+          path: hello
+          method: get
+    environment:
+      PD_API_URL: ${self:custom.secrets.PD_API_URL}
+      PD_API_KEY: ${self:custom.secrets.PD_API_KEY}
+  messages:
+    handler: bin/messages
+    events:
+      - http:
+          path: messages
+          method: post
+    environment:
+      PD_API_URL: ${self:custom.secrets.PD_API_URL}
+      PD_API_KEY: ${self:custom.secrets.PD_API_KEY}
+      SLACK_VERIFICATION_TOKEN: ${self:custom.secrets.SLACK_VERIFICATION_TOKEN}
+  interactive:
+    handler: bin/interactive
+    events:
+      - http:
+          path: interactive
+          method: post
+    environment:
+      PD_API_URL: ${self:custom.secrets.PD_API_URL}
+      PD_API_KEY: ${self:custom.secrets.PD_API_KEY}
+      SLACK_VERIFICATION_TOKEN: ${self:custom.secrets.SLACK_VERIFICATION_TOKEN}
+  notifications:
+    handler: bin/notifications
+    events:
+      - http:
+          path: notifications
+          method: get
+  leaderboard:
+    handler: bin/leaderboard
+    events:
+      - http:
+          path: leaderboard
+          method: get
+      - schedule: rate(7 days)
+  redirectUrl:
+    handler: bin/redirectUrl
+    events:
+      - http:
+          path: redirect-url
+          method: get
+    environment:
+      CLIENT_ID: ${self:custom.secrets.CLIENT_ID}
+      CLIENT_SECRET: ${self:custom.secrets.CLIENT_SECRET}

@@ -1,0 +1,392 @@
+service: outlook-google-sync
+
+custom:
+  host_zone: ''
+  custom_domain: ''
+  certificate_arn: ''
+  outlook_redirect_path: 'outlook/authorize'
+  google_redirect_path: 'google/authorize'
+  outlook_login_path: 'outlook/login'
+  google_login_path: 'google/login'
+  outlook_scope: 'openid,offline_access,Calendars.Read'
+  google_scope: 'https://www.googleapis.com/auth/calendar'
+  outlook_client_key: 'config/users/=USER=/client/outlook.json'
+  outlook_token_key: 'config/users/=USER=/token/outlook.json'
+  google_client_key: 'config/users/=USER=/client/google.json'
+  google_token_key: 'config/users/=USER=/token/google.json'
+  user_info_key: 'config/users/=USER=/info.json'
+  attendees_key: 'config/attendees.json'
+  processed_events_key: 'cache/events.json'
+  user_home_key: 'config/users/'
+  sync_days: 14
+  home_bucket: 'outlook-google-sync-stg'
+  outlook_client_id: ''
+  outlook_client_secret: ''
+  google_client_id: ''
+  google_client_secret: ''
+  token_key: ''
+  email_address: ''
+  email_password: ''
+  stageVariables:
+    home_bucket: ${self:custom.home_bucket}
+    attendees_key: ${self:custom.attendees_key}
+    user_info_key: ${self:custom.user_info_key}
+    google_client_key: ${self:custom.google_client_key}
+    google_token_key: ${self:custom.google_token_key}
+    outlook_client_key: ${self:custom.outlook_client_key}
+    outlook_token_key: ${self:custom.outlook_token_key}
+    user_home_key: ${self:custom.user_home_key}
+    outlook_login_path: ${self:custom.outlook_login_path}
+    google_login_path: ${self:custom.google_login_path}
+    token_key: ${self:custom.token_key}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: stg
+  region: ap-northeast-2
+  timeout: 30
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:Put*"
+        - "s3:GetObject"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "sqs:*"
+      Resource: "*"
+
+functions:
+  outlookLogin:
+    handler: app.login
+    timeout: 15
+    environment:
+      redirect_path: ${self:custom.outlook_redirect_path}
+      scope: ${self:custom.outlook_scope}
+      client_key: ${self:custom.outlook_client_key}
+    events:
+      - http:
+          path: ${self:custom.outlook_login_path}
+          method: get
+          cors:
+            origins:
+              - '*'
+            headers:
+              - email-token
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          private: false
+  outlookAuthorize:
+    handler: app.authorize
+    timeout: 15
+    environment:
+      redirect_path: ${self:custom.outlook_redirect_path}
+      scope: ${self:custom.outlook_scope}
+      client_key: ${self:custom.outlook_client_key}
+      token_key: ${self:custom.outlook_token_key}
+    events:
+      - http:
+          path: ${self:custom.outlook_redirect_path}
+          method: get
+          cors: true
+          private: false
+  googleLogin:
+    handler: app.login
+    timeout: 15
+    environment:
+      redirect_path: ${self:custom.google_redirect_path}
+      scope: ${self:custom.google_scope}
+      client_key: ${self:custom.google_client_key}
+    events:
+      - http:
+          path: ${self:custom.google_login_path}
+          method: get
+          cors:
+            origins:
+              - '*'
+            headers:
+              - email-token
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          private: false
+  googleAuthorize:
+    handler: app.authorize
+    timeout: 15
+    environment:
+      redirect_path: ${self:custom.google_redirect_path}
+      scope: ${self:custom.google_scope}
+      client_key: ${self:custom.google_client_key}
+      token_key: ${self:custom.google_token_key}
+    events:
+      - http:
+          path: ${self:custom.google_redirect_path}
+          method: get
+          cors: true
+          private: false
+  addAttendee:
+    handler: app.add_attendee
+    timeout: 15
+    events:
+      - http:
+          path: add/attendee
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - email-token
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          private: false
+  deleteAttendee:
+    handler: app.delete_attendee
+    timeout: 15
+    events:
+      - http:
+          path: delete/attendee
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - email-token
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          private: false
+  userLogin:
+    handler: app.login_user
+    timeout: 15
+    events:
+      - http:
+          path: user/login
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - email-token
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          private: false
+  getUserConfig:
+    handler: app.get_user_config
+    timeout: 15
+    events:
+      - http:
+          path: user/config
+          method: get
+          cors:
+            origins:
+              - '*'
+            headers:
+              - email-token
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          private: false
+  saveUserConfig:
+    handler: app.save_user_config
+    timeout: 15
+    events:
+      - http:
+          path: user/config
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - email-token
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          private: false
+  resetPassword:
+    handler: app.reset_password
+    timeout: 15
+    events:
+      - http:
+          path: user/password/reset
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - email-token
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          private: false
+  addUser:
+    handler: app.add_user
+    timeout: 15
+    environment:
+      outlook_client_id: ${self:custom.outlook_client_id}
+      outlook_client_secret: ${self:custom.outlook_client_secret}
+      google_client_id: ${self:custom.google_client_id}
+      google_client_secret: ${self:custom.google_client_secret}
+    events:
+      - http:
+          path: add/user
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - email-token
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          private: false
+  refreshOutlookToken:
+    handler: app.refresh_token 
+    environment:
+      home_bucket: ${self:custom.home_bucket}
+      user_home_key: ${self:custom.user_home_key}
+      client_key: ${self:custom.outlook_client_key}
+      token_key: ${self:custom.outlook_token_key}
+    events:
+      - schedule: rate(30 minutes)
+  refreshGoogleToken:
+    handler: app.refresh_token 
+    environment:
+      home_bucket: ${self:custom.home_bucket}
+      user_home_key: ${self:custom.user_home_key}
+      client_key: ${self:custom.google_client_key}
+      token_key: ${self:custom.google_token_key}
+    events:
+      - schedule: rate(30 minutes)
+  syncEvents:
+    handler: app.sync_events
+    environment:
+      home_bucket: ${self:custom.home_bucket}
+      processed_events_key: ${self:custom.processed_events_key}
+      user_home_key: ${self:custom.user_home_key}
+      user_info_key: ${self:custom.user_info_key}
+      src_token_key: ${self:custom.outlook_token_key}
+      tgt_token_key: ${self:custom.google_token_key}
+      attendees_key: ${self:custom.attendees_key}
+      sync_days: ${self:custom.sync_days}
+      email_address: ${self:custom.email_address}
+      email_password: ${self:custom.email_password}
+    events:
+      - schedule: rate(60 minutes)
+resources:
+  Resources:
+    OutlookLoginLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    OutlookAuthorizeLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    GoogleLoginLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    GoogleAuthorizeLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    AddAttendeeLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    DeleteAttendeeLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    UserLoginLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    GetUserConfigLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    SaveUserConfigLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    ResetPasswordLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    AddUserLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    RefreshOutlookTokenLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    RefreshGoogleTokenLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    SyncEventsLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    HomeS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.home_bucket}
+    myDomainName:
+      Type: AWS::ApiGateway::DomainName
+      Properties:
+        CertificateArn: ${self:custom.certificate_arn}
+        DomainName: ${self:custom.custom_domain}
+    myMapping:
+      Type: AWS::ApiGateway::BasePathMapping
+      Properties:
+        BasePath: ${self:provider.stage}
+        DomainName:
+          Ref: myDomainName
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Stage: ${self:provider.stage}
+    myDNSRecord:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        HostedZoneName: ${self:custom.host_zone}
+        Comment: DNS name for ebot.
+        Name: ${self:custom.custom_domain}
+        Type: CNAME
+        TTL: 300
+        ResourceRecords:
+          - Fn::GetAtt:
+            - myDomainName
+            - DistributionDomainName
+plugins:
+  - serverless-webpack
+  - serverless-plugin-stage-variables

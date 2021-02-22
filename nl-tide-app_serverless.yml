@@ -1,0 +1,78 @@
+service: tide-api
+
+custom:
+  serverless-iam-roles-per-function:
+    defaultInherit: true # Each function will inherit the service level roles too.
+  prune: # automatically prune old lambda versions
+    automatic: true
+    number: 3
+  webpack:
+    webpackConfig: ./webpack.config.js
+    # needed to let the compilation tree-shake the modules
+    # see https://itnext.io/how-to-optimise-your-serverless-typescript-webpack-eslint-setup-for-performance-86d052284505 for further references
+    includeModules: true
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-prune-plugin
+
+package:
+  individually: true
+  excludeDevDependencies: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: eu-central-1
+  memorySize: 256 # default 1024 is way to much for nodejs
+  logRetentionInDays: 14 # long enough for my purposes
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  tracing:
+    lambda: true
+  stackTags:
+    GIT_SHA1: ${env:GITHUB_SHA, 'local-non-ci-build'}
+    GIT_BRANCH: ${env:GITHUB_REF, 'no-branch-ref-known'}
+    APP_VERSION: ${file(./package.json):version}
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - xray:PutTraceSegments
+      - xray:PutTelemetryRecords
+    Resource: "*"
+  - Effect: "Allow"
+    Action:
+      - dynamodb:Query
+      - dynamodb:Scan
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+      - dynamodb:UpdateItem
+      - dynamodb:DeleteItem
+    Resource:
+      Fn::GetAtt:
+        - TideInfoTable
+        - Arn
+
+functions:
+  getLocations: ${file(src/api/functions/getLocations/getLocations.yml)}
+  getTide: ${file(src/api/functions/getTide/getTide.yml)}
+  queueWorkerDownloadTideInfo: ${file(src/api/functions/queueWorkerDownloadTideInfo/queueWorkerDownloadTideInfo.yml)}
+
+resources:
+  Resources:
+    TideInfoTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: locationCodeYear
+            AttributeType: S
+        KeySchema:
+          # concatinated PK, we only access by locationCode + year anyway
+          - AttributeName: locationCodeYear
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: 'TideInfo'

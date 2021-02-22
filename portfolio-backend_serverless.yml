@@ -1,0 +1,123 @@
+service: portfolio-backend 
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: serverlessUser
+  region: sa-east-1
+  stage: dev
+  environment: 
+      tableName: ${self:custom.tableName}
+      imageUploadBucket: ${self:custom.imageUploadBucket}
+      messageSecretJWT: ${self:custom.messageSecretJWT}
+      region: ${self:provider.region}
+  iamRoleStatements:
+      - Effect: Allow
+        Action:
+            - dynamodb:*
+            - s3:* 
+            - ses:*
+        Resource: '*'
+  apiKeys:
+      - free:
+          -myFreeApiKey
+      - paid:
+          - value: myClientThirdValueOfMinLength20
+            description: This is explicitly provided api key 
+  usagePlan:
+      - free:
+          quota:
+              limit: 1000
+              period: MONTH
+          throttle:
+              rateLimit: 5
+              burstLimit: 20
+      - paid:
+          quota:
+              limit: 10000
+              period: MONTH
+          thorottle:
+              rateLimit: 50
+              burstLimit: 200
+
+functions: 
+    login:
+        handler: lambdas/endpoints/login.handler
+        events:
+            - http:
+                  path: login
+                  method: POST
+                  cors: true
+    getProjects:
+        handler: lambdas/endpoints/getProjects.handler
+        events:
+            - http:
+                  path: get-projects
+                  method: GET
+                  cors: true
+    createNewProject:
+        handler: lambdas/endpoints/createNewProject.handler
+        events:
+            - http:
+                  path: create-new-project/{ID}
+                  method: POST
+                  cors: true
+    sendEmail:
+        handler: lambdas/endpoints/sendEmail.handler
+        events:
+            - http:
+                  path: send-email
+                  method: POST
+                  cors: true
+    imageUpload:
+        handler: lambdas/endpoints/imageUpload.handler
+        events:
+            - http:
+                  path: image-upload
+                  method: POST
+                  cors: true
+
+plugins:  
+    - serverless-dynamodb-local
+    - serverless-offline
+
+package:
+    individually: true
+
+custom: 
+    messageSecretJWT: maca-coar-nha-2-1187por
+    imageUploadBucket: portfolio-images-upload-9983
+    tableName: projects-table
+    dynamodb:
+        start:
+            migrate: true
+
+resources:
+    Resources: 
+        ImageUploadBucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:custom.imageUploadBucket}
+                AccessControl: PublicRead
+        MyDynamoDbTable:
+            Type: AWS::DynamoDB::Table
+            Properties:
+                TableName: ${self:custom.tableName}
+                AttributeDefinitions:
+                    - AttributeName: ID
+                      AttributeType: S
+                    - AttributeName: project
+                      AttributeType: S
+                KeySchema:
+                    - AttributeName: ID
+                      KeyType: HASH
+                BillingMode: PAY_PER_REQUEST
+
+                GlobalSecondaryIndexes:
+                    - IndexName: project-index
+                      KeySchema:
+                          - AttributeName: project
+                            KeyType: HASH
+                      Projection:
+                          ProjectionType: ALL

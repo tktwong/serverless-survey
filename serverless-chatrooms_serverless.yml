@@ -1,0 +1,117 @@
+service: Webchat-api
+
+custom:
+  userTable: WebchatUserTable-${self:provider.stage}
+  messageTable: WebchatMessageTable-${self:provider.stage}
+  roomIndex: RoomIdIndex
+  fileBucket: webchat-file-bucket-${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ap-southeast-1
+  environment:
+    USER_TABLE: ${self:custom.userTable}
+    MESSAGE_TABLE: ${self:custom.messageTable}
+    ROOM_INDEX: ${self:custom.roomIndex}
+    FILE_BUCKET: ${self:custom.fileBucket}
+    WEBSOCKET_URL: !GetAtt WebsocketsApi.ApiEndpoint
+    STAGE: ${self:provider.stage}
+  stackName: serverless-chat
+  apiName: serverless-chat-file-api
+  websocketsApiName: serverless-chat-websocket-api
+  websocketsApiRouteSelectionExpression: $request.body.action
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:Query"
+      Resource:
+        - !GetAtt userTable.Arn
+        - !GetAtt messageTable.Arn
+        - !Join
+          - "/"
+          - - !GetAtt userTable.Arn
+            - "index/RoomIdIndex"
+
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        Fn::Join:
+          - ""
+          - - !GetAtt fileBucket.Arn
+            - "/*"
+
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle
+  - serverless-offline
+
+functions:
+  connectHandler:
+    handler: handler.connectHandler
+    events:
+      - websocket: $connect
+
+  disconnectHandler:
+    handler: handler.disconnectHandler
+    events:
+      - websocket: $disconnect
+
+  defaultHandler:
+    handler: handler.defaultHandler
+    events:
+      - websocket: $default
+
+  joinHandler:
+    handler: handler.joinHandler
+    events:
+      - websocket:
+          route: join
+
+  historyHandler:
+    handler: handler.historyHandler
+    events:
+      - websocket:
+          route: history
+
+  messageHandler:
+    handler: handler.messageHandler
+    events:
+      - websocket:
+          route: message
+
+  generateUploadUrl:
+    handler: handler.generateUploadUrl
+    events:
+      - http:
+          path: generateUploadUrl
+          method: post
+          cors: true
+
+  generateDownloadUrl:
+    handler: handler.generateDownloadUrl
+    events:
+      - http:
+          path: generateDownloadUrl
+          method: post
+          cors: true
+
+  fileHandler:
+    handler: handler.fileHandler
+    events:
+      - s3:
+          bucket: ${self:custom.fileBucket}
+          event: s3:ObjectCreated:*
+          existing: true
+
+resources:
+  - ${file(resources/dynamodb.yml)}
+  - ${file(resources/s3.yml)}

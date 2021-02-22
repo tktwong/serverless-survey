@@ -1,0 +1,141 @@
+service: cabinet
+provider:
+  name: aws
+  runtime: python3.8
+  region: eu-west-1
+  environment:
+    dbURL:
+      "Fn::Join": [":", ["Fn::GetAtt": [ServerlessRDSCluster, Endpoint.Address], "Fn::GetAtt": [ServerlessRDSCluster, Endpoint.Port]]]
+    dbName: cabinet_db
+    dbUser: ${env:dbUser}
+    dbPassword: ${env:dbPassword}
+    domainName: ${env:domainName}
+    API_GATEWAY_BASE_PATH: ""
+
+
+functions:
+  web:
+    handler: wsgi_handler.handler
+    timeout: 25
+    events:
+      - http: 'ANY /'
+      - http: 'ANY {proxy+}'
+    vpc:
+      securityGroupIds:
+        - "Fn::GetAtt": ServerlessSecurityGroup.GroupId
+      subnetIds:
+        - Ref: ServerlessSubnetA
+        - Ref: ServerlessSubnetB
+        - Ref: ServerlessSubnetC
+
+package:
+  exclude:
+    - node_modules/**
+    - client/**
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+  - serverless-domain-manager
+  - serverless-apig-s3
+
+custom:
+  wsgi:
+    app: cabinet.wsgi.application
+  pythonRequirements:
+    dockerizePip: true
+    slim: true
+    useStaticCache: false
+    invalidateCaches: true
+  apigs3:
+    dist: client/dist
+    resourceName: static
+    withIndex: false
+  customDomain:
+    domainName: "${env:domainName}"
+    # basePath: api
+    certificateArn: "${env:certificateArn}"
+    createRoute53Record: true
+    endpointType: 'edge'
+    hostedZoneId: "${env:hostedZoneId}"
+    hostedZonePrivate: false
+    securityPolicy: tls_1_2
+
+resources:
+  Resources:
+    ServerlessVPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: "10.0.0.0/16"
+    ServerlessSubnetA:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        AvailabilityZone: ${self:provider.region}a
+        CidrBlock: "10.0.0.0/24"
+    ServerlessSubnetB:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        AvailabilityZone: ${self:provider.region}b
+        CidrBlock: "10.0.1.0/24"
+    ServerlessSubnetC:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        AvailabilityZone: ${self:provider.region}c
+        CidrBlock: "10.0.2.0/24"
+    ServerlessSecurityGroup:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SecurityGroup for Serverless Functions
+        VpcId:
+          Ref: ServerlessVPC
+    ServerlessStorageSecurityGroup:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Ingress for RDS Instance
+        VpcId:
+          Ref: ServerlessVPC
+        SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '5432'
+          ToPort: '5432'
+          SourceSecurityGroupId:
+            Ref: ServerlessSecurityGroup
+    ServerlessRDSSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: "RDS Subnet Group"
+        SubnetIds:
+        - Ref: ServerlessSubnetA
+        - Ref: ServerlessSubnetB
+        - Ref: ServerlessSubnetC
+    ServerlessRDSCluster:
+      DependsOn: ServerlessStorageSecurityGroup
+      Type: AWS::RDS::DBCluster
+      Properties:
+        Engine: aurora-postgresql
+        EngineVersion: '10.7'
+        EngineMode: serverless
+        ScalingConfiguration:
+          AutoPause: true
+          MinCapacity: 2
+          MaxCapacity: 2
+          SecondsUntilAutoPause: 300
+
+        DatabaseName: cabinet_db
+        MasterUsername: ${env:dbUser}
+        MasterUserPassword: ${env:dbPassword}
+        VpcSecurityGroupIds:
+          - "Fn::GetAtt": ServerlessStorageSecurityGroup.GroupId
+        DBSubnetGroupName:
+          Ref: ServerlessRDSSubnetGroup

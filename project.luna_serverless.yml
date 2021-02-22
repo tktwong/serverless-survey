@@ -1,0 +1,176 @@
+service: ${file(./config/${self:provider.config_file}):APP_NAME}
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: ruby2.5
+  role: LambdaRole
+  region: ${opt:region}
+  stage: ${opt:stage, 'dev'}
+  config_file: config.${self:provider.stage}.yml
+  default_naming: ${file(./config/${self:provider.config_file}):DEFAULT_NAMING}
+  environment:
+    CONFIG_FILE: ${self:provider.config_file}
+    DEPLOYED_REGION: "#{AWS::Region}"
+    DEFAULT_LAMBDA_ARN_PREFIX: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:provider.default_naming}"
+
+plugins:
+  - serverless-ruby-package
+  - serverless-pseudo-parameters
+  - serverless-step-functions
+  - serverless-stage-manager
+  - serverless-certificate-creator
+  - serverless-domain-manager
+
+custom:
+  stages:
+    - dev
+    - prod
+  customDomain:
+    domainName: ${file(./config/${self:provider.config_file}):SUB_DOMAIN}.${file(./config/${self:provider.config_file}):ROOT_DOMAIN}
+    certificateName: ${file(./config/${self:provider.config_file}):SUB_DOMAIN}.${file(./config/${self:provider.config_file}):ROOT_DOMAIN}
+    hostedZoneId: ${file(./config/${self:provider.config_file}):HOSTED_ZONE_ID}
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  customCertificate:
+    certificateName: ${file(./config/${self:provider.config_file}):SUB_DOMAIN}.${file(./config/${self:provider.config_file}):ROOT_DOMAIN}
+    hostedZoneId: ${file(./config/${self:provider.config_file}):HOSTED_ZONE_ID}
+    region: ${self:provider.region}
+
+functions:
+  authentication:
+    name: ${self:provider.default_naming}-authentication
+    handler: src/step_functions/authentication.lambda_handler
+  deployment_callback:
+    name: ${self:provider.default_naming}-deployment-callback
+    handler: src/step_functions/deployment/callback.lambda_handler
+  deployment_perform:
+    name: ${self:provider.default_naming}-deployment-perform
+    handler: src/step_functions/deployment/perform.lambda_handler
+  deployment_request:
+    name: ${self:provider.default_naming}-deployment-request
+    handler: src/step_functions/deployment/request.lambda_handler
+  events:
+    name: ${self:provider.default_naming}-events
+    handler: src/step_functions/events.lambda_handler
+  healthCheck:
+    name: ${self:provider.default_naming}-health-check
+    handler: src/health_check.lambda_handler
+    events:
+    - http:
+        path: health-check
+        method: get
+  slack:
+    name: ${self:provider.default_naming}-slack
+    handler: src/step_functions/slack.lambda_handler
+  unlock:
+    name: ${self:provider.default_naming}-unlock
+    handler: src/step_functions/unlock.lambda_handler
+  version:
+    name: ${self:provider.default_naming}-version
+    handler: src/step_functions/version.lambda_handler
+
+stepFunctions:
+  stateMachines:
+    unlocklStateMachine:
+      name: ${self:provider.default_naming}-stateMachine-unlock
+      definition:
+        StartAt: Authentication
+        States:
+          Authentication:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-authentication
+            Next: Unlock
+          Unlock:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-unlock
+            Next: Slack
+          Slack:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-slack
+            End: true
+      events:
+        - http:
+            path: unlock
+            method: post
+    versionStateMachine:
+      name: ${self:provider.default_naming}-stateMachine-version
+      definition:
+        StartAt: Authentication
+        States:
+          Authentication:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-authentication
+            Next: Version
+          Version:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-version
+            Next: Slack
+          Slack:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-slack
+            End: true
+      events:
+        - http:
+            path: version
+            method: post
+    deploymentCallbackStateMachine:
+      name: ${self:provider.default_naming}-stateMachine-deployment-callback
+      definition:
+        StartAt: Authentication
+        States:
+          Authentication:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-authentication
+            Next: EntryChoice
+          EntryChoice:
+            Type: Choice
+            Choices:
+            - Variable: "$.body.request.type"
+              StringEquals: ""
+              Next: DeploymentRequest
+            - Variable: "$.body.request.type"
+              StringEquals: select
+              Next: DeploymentCallback
+            - And:
+              - Variable: "$.body.request.type"
+                StringEquals: button
+              - Variable: "$.body.request.name"
+                StringEquals: deploy
+              Next: DeploymentPerform
+            Default: Done
+          DeploymentRequest:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-deployment-request
+            Next: Slack
+          DeploymentCallback:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-deployment-callback
+            Next: Done
+          DeploymentPerform:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-deployment-perform
+            Next: Slack
+          Slack:
+            Type: Task
+            Resource: ${self:provider.environment.DEFAULT_LAMBDA_ARN_PREFIX}-slack
+            Next: Done
+          Done:
+            Type: Succeed
+      events:
+        - http:
+            path: deployment/callback
+            method: post
+        - http:
+            path: deployment/new
+            method: post
+
+resources:
+  - ${file(resources.yml)}
+
+package:
+  include:
+    - src/**
+    - config/**

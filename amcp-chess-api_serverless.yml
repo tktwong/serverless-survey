@@ -1,0 +1,265 @@
+# NOTE: update this with your service name
+service: amcp-chess-api
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-central-1
+
+  environment:
+    UsersTableName: Users-${self:custom.stage}
+    QuickPairingTableName: QuickPairing-${self:custom.stage}
+    GamesArchiveTableName: GamesArchive-${self:custom.stage}
+    RoomsTableName: Rooms-${self:custom.stage}
+    WebSocketConnectionsTableName: WebSocketConnections-${self:custom.stage}
+    ProblemsTableName: Problems-${self:custom.stage}
+    SolvedProblemsTableName: SolvedProblems-${self:custom.stage}
+  # To load environment variables externally
+  # rename env.example to .env and uncomment
+  # the following line. Also, make sure to not
+  # commit your .env.
+  #
+  #environment:
+  #  sampleEnvVar: ${env:SAMPLE_ENV_VAR}
+  iamManagedPolicies:
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - cloudwatch:*
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - "Fn::GetAtt": [ Users, Arn ]
+        - "Fn::GetAtt": [ GamesArchive, Arn ]
+        - "Fn::GetAtt": [ Rooms, Arn ]
+        - "Fn::GetAtt": [ WebSocketConnections, Arn ]
+        - "Fn::GetAtt": [ Problems, Arn ]
+        - "Fn::GetAtt": [ SolvedProblems, Arn ]
+
+
+
+functions:
+  WhiteWins:
+    handler: WhiteWins.main
+    events:
+      - http:
+          path: whitestat
+          method: get
+          cors: true
+          authorizer: aws_iam
+  blackWins:
+    handler: blackWins.main
+    events:
+      - http:
+          path: blackstat
+          method: get
+          cors: true
+          authorizer: aws_iam
+  add_newly_registered_user:
+    handler: addToUsers.main
+    events:
+      - http:
+          path: /signup
+          method: post
+          cors: true
+          authorizer: aws_iam
+  list-quick-pairing:
+    # Defines an HTTP API endpoint that calls the main function in list-quick-pairing.js
+    # - path: url path is /games/quick
+    # - method: GET request
+    handler: list-quick-pairing.main
+    events:
+      - http:
+          path: games/quick
+          method: get
+          cors: true
+          authorizer: aws_iam
+  add-quick-pairing:
+    # Defines an HTTP API endpoint that calls the main function in add-quick-pairing.js
+    # - path: url path is /games/quick
+    # - method: POST request
+    handler: add-quick-pairing.main
+    events:
+      - http:
+          path: games/quick
+          method: post
+          cors: true
+          authorizer: aws_iam
+  list-games:
+    # Defines an HTTP API endpoint that calls the main function in list-games.js
+    # - path: url path is /games
+    # - method: POST request
+    handler: list-games.main
+    events:
+      - http:
+          path: games
+          method: get
+          cors: true
+          authorizer: aws_iam
+  create-game:
+    # Defines an HTTP API endpoint that calls the main function in add-quick-pairing.js
+    # - path: url path is /games
+    # - method: POST request
+    handler: create-game.main
+    events:
+      - http:
+          path: games
+          method: post
+          cors: true
+          authorizer: aws_iam
+  list-user-parties:
+    handler: list-user-parties.main
+    events:
+      - http:
+          path: profile/parties
+          method: get
+          cors: true
+          authorizer: aws_iam
+  connect:
+    handler: websocket/connect.main
+    events:
+    - websocket: $connect
+  send-gameid:
+    handler: websocket/send-gameid.main
+    events:
+    - websocket:
+        route: send-gameid
+  propagateMessage:
+    handler: websocket/propagateMessage.main
+    events:
+    - websocket:
+        route: propagateMessage
+  makeMove:
+    handler: chess/makeMove.main
+    events:
+    - websocket:
+        route: makeMove
+  problem_check:
+    handler: chess/problem_check.main
+  disconnect:
+    handler: websocket/disconnect.main
+    events:
+    # - websocket: $disconnect
+    - http:
+        path: games/{id}
+        method: delete
+        cors: true
+        authorizer: aws_iam
+  disconnect-ws:
+    handler: websocket/disconnect-ws.main
+    events:
+    - websocket: $disconnect
+  genUsers:
+    handler: generators/UsGen.main
+    events:
+    - http:
+        path: test/generateUsers
+        method: post
+        cors: true
+        authorizer: aws_iam
+  genConnections:
+    handler: generators/genConnections.main
+    events:
+    - http:
+        path: test/genConnections
+        method: post
+        cors: true
+        authorizer: aws_iam
+  genParties:
+    handler: generators/generateParties.main
+    events:
+    - http:
+        path: test/genParties
+        method: post
+        cors: true
+        authorizer: aws_iam
+  genRooms:
+    handler: generators/generateRooms.main
+    events:
+    - http:
+        path: test/genRooms
+        method: post
+        cors: true
+        authorizer: aws_iam
+  # getConnectionId:
+  #   handler: websocket/get-connectionid.js
+  #   events:
+  #   - websocket:
+  #       route: getConnectionId
+  sendIdentity:
+    handler: sendIdentity.main
+    events:
+    - http:
+        path: games/{id}
+        method: post
+        cors: true
+        authorizer: aws_iam
+  createProblemRoom:
+    handler: createProblemRoom.main
+    events:
+    - http:
+        path: problems/create
+        method: post
+        cors: true
+        authorizer: aws_iam
+  listProblems:
+    handler: listProblems.main
+    events:
+    - http:
+        path: problems
+        method: get
+        cors: true
+        authorizer: aws_iam
+  addProblem:
+    handler: addProblem.main
+    events:
+    - http:
+        path: problems
+        method: post
+        cors: true
+        authorizer: aws_iam
+  checkProblem:
+    handler: chess/problem_check.main
+    events:
+    - http:
+        path: problems/{id}
+        method: post
+        cors: true
+        authorizer: aws_iam
+
+
+
+resources:
+  # API Gateway Errors
+  # - ${file(resources/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(resources/dynamodb-tables.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

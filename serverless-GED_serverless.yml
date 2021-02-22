@@ -1,0 +1,72 @@
+
+service: serverless-ged
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: serverless-GED-user
+  region: eu-west-3
+  environment:
+    bucketName: ${self:custom.bucketName}
+    tableName: ${self:custom.tableName}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+          - dynamodb:*
+          - s3:*
+      Resource: '*'
+
+plugins:
+  - serverless-webpack
+
+package:
+  individually: true
+
+custom:
+  bucketName: lamarl-serverless-project-file-upload-2020
+  tableName: serverless-GED-files-2020
+  s3Sync:
+    - bucketName: ${self:custom.bucketName}
+      localDir: dist
+
+functions:
+  getDocumentByUUID:
+    handler: lambdas/endpoints/getDocumentByUUID.handler
+    events:
+      - http:
+            path: documents/{uuid}
+            method: GET
+            cors: true
+  getDocuments:
+    handler: lambdas/endpoints/getDocuments.handler
+    events:
+      - http:
+            path: documents/
+            method: GET
+            cors: true
+  postDocument:
+    handler: lambdas/endpoints/postDocument.handler
+    events:
+      - http:
+            path: documents
+            method: POST
+            cors: true
+
+resources:
+  Resources:
+    FileGEDBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketName}
+        AccessControl: PublicRead
+    DynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: UUID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: UUID
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST

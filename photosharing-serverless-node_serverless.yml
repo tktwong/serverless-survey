@@ -1,0 +1,377 @@
+service: photosharing
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-central-1
+  profile: default
+  iamManagedPolicies:
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 's3:ListBucket'
+        - 's3:PutObject'
+        - 's3:PutObjectAcl'
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - Ref: photoUploadsBucket
+            - '/*'
+    - Effect: Allow
+      Action:
+        - '*'
+      Resource: 'arn:aws:dynamodb:*:*:table/*'
+    - Effect: Allow
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource: 'arn:aws:lambda:*:*:function:*'
+
+functions:
+  createPost:
+    handler: post/handler/post-handler.create
+    events:
+      - http:
+          path: posts
+          method: post
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  getSinglePost:
+    handler: post/handler/post-handler.getSingle
+    events:
+      - http:
+          path: posts/{id}
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+          request:
+            parameters:
+              path:
+                id: true
+
+  vote:
+    handler: post/handler/post-handler.vote
+    events:
+      - http:
+          path: posts/vote
+          method: post
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  addComment:
+    handler: comment/handler/comment-handler.add
+    events:
+      - http:
+          path: comments
+          method: post
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  getCommentsByPost:
+    handler: comment/handler/comment-handler.get
+    events:
+      - http:
+          path: comments
+          method: get
+
+  updateProfile:
+    handler: profile/handler/profile-handler.update
+    events:
+      - http:
+          path: profile
+          method: post
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  getProfile:
+    handler: profile/handler/profile-handler.get
+    events:
+      - http:
+          path: profile
+          method: get
+
+  getProfilesBatch:
+    handler: profile/handler/profile-handler.batchGet
+    events:
+      - http:
+          path: profile/batch
+          method: get
+
+  getFeed:
+    handler: feed/feed-service-handler.get
+    vpc:
+      securityGroupIds:
+        - "sg-817dc1e4"
+      subnetIds:
+        - "subnet-7c2a8816"
+    events:
+      - http:
+          path: feed
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+  createIndex:
+    handler: feed/feed-service-handler.createIndex
+    vpc:
+      securityGroupIds:
+        - "sg-817dc1e4"
+      subnetIds:
+        - "subnet-7c2a8816"
+    events:
+      - http:
+          path: feed/create-index
+          method: post
+
+  getIndex:
+    handler: feed/feed-service-handler.getIndex
+    vpc:
+      securityGroupIds:
+        - "sg-817dc1e4"
+      subnetIds:
+        - "subnet-7c2a8816"
+    events:
+      - http:
+          path: feed/index
+          method: get
+
+  publishEventDebug:
+    handler: eventbus/handler/eventbus-handler.publishDebug
+    events:
+      - http:
+          path: eventbus/publish
+          method: post
+#
+#  confirmEventDebug:
+#    handler: eventbus/handler/eventbus-handler.confirmDebug
+#    events:
+#      - http:
+#          path: eventbus/confirm
+#          method: post
+
+  publishEvent:
+    handler: eventbus/handler/eventbus-handler.publish
+    name: publishEvent
+
+  dispatchEvent:
+    handler: eventbus/handler/eventbus-handler.dispatch
+    name: dispatchEvent
+
+  confirmEvent:
+    handler: eventbus/handler/eventbus-handler.confirm
+    name: confirmEvent
+
+  redispatchEvents:
+    handler: eventbus/handler/eventbus-handler.scheduledRedispatch
+    name: scheduledRedispatch
+    events:
+        - http:
+            path: eventbus/redispatch
+            method: post
+
+  demoSubscriber:
+    handler: demo-subscriber/demo-subscriber-handler.handler
+    name: demoSubscriber
+
+  postServiceEventHandler:
+    handler: post/handler/post-service-event-handler.handler
+    name: postServiceEventHandler
+
+  feedServiceEventHandler:
+    handler: feed/feed-service-event-handler.handler
+    name: feedServiceEventHandler
+    vpc:
+      securityGroupIds:
+        - "sg-817dc1e4"
+      subnetIds:
+        - "subnet-7c2a8816"
+
+  getEvents:
+    handler: eventbus/handler/eventbus-handler.getDebug
+    events:
+      - http:
+          path: eventbus/recent
+          method: get
+
+  generateStats:
+    handler: testing-utils/statgen.generateStats
+    events:
+      - http:
+          path: testing/stats
+          method: post
+
+
+# Cloudformation resources
+resources:
+
+  Parameters:
+    CognitoArn:
+      Type: String
+      Default: arn:aws:cognito-idp:eu-central-1:961937510560:userpool/eu-central-1_wRe0jKDuSs
+
+  Resources:
+    photoUploadsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: photosharing-uploads-dev
+        AccessControl: Private
+        PublicAccessBlockConfiguration:
+          IgnorePublicAcls: FALSE
+          BlockPublicAcls: FALSE
+          RestrictPublicBuckets: TRUE
+          BlockPublicPolicy: TRUE
+
+    postsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: postsTable
+#        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2
+
+    commentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: commentsTable
+#        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: postId
+            AttributeType: S
+          - AttributeName: timestamp_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: postId
+            KeyType: HASH
+          - AttributeName: timestamp_id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2
+
+    eventsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: eventsTable
+#        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: destination
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: destination
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2
+
+    eventsDeadLetterTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: eventsDeadLetterTable
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: destination
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: destination
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    profilesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: profilesTable
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        AuthorizerResultTtlInSeconds: 300
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        Name: Authorizer
+        ProviderARNs:
+          - Ref: CognitoArn
+
+    ElasticsearchDomain:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        ElasticsearchVersion: "7.1"
+        ElasticsearchClusterConfig:
+          DedicatedMasterEnabled: "false"
+          InstanceCount: "1"
+          InstanceType: "t2.small.elasticsearch"
+        EBSOptions:
+          EBSEnabled: true
+          VolumeType: "gp2"
+          VolumeSize: 10
+        VPCOptions:
+          SubnetIds:
+            - "subnet-7c2a8816"
+          SecurityGroupIds:
+            - "sg-817dc1e4"
+        AccessPolicies:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                AWS: "*"
+              Action:
+                "es:*"
+              Resource: "arn:aws:es:*:*:domain/*/*"
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      migrate: true
+      dbPath: "./"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-dynamodb-local
+  - serverless-offline

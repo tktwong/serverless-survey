@@ -1,0 +1,80 @@
+service: NotificationService
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: python2.7
+
+  stage: dev
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "SNS:Publish"
+      Resource: "arn:aws:sns:us-west-2:034770057997:Notification"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": [ "NotificationDynamoTable", "Arn" ] }
+    - Effect: Allow
+      Action:
+        - sqs:DeleteMessage
+        - sqs:GetQueueAttributes
+        - sqs:ReceiveMessage
+      Resource:
+        - {"Fn::GetAtt": [ "MyQueue", "Arn" ] }
+  apiGateway: {
+    shouldStartNameWithService: true
+    }
+
+  environment:
+    authorizationKey: testvalue
+    snsarn: arn:aws:sns:us-west-2:034770057997:Notification
+    Notification_Table : ${self:custom.tableName}
+custom:
+  tableName: 'NotificationService-table-${self:provider.stage}'
+
+functions:
+  api_notify:
+    handler: handler.api_notify
+    events:
+      - http:
+          path: NotiicationAPI/api_notify
+          method: get
+
+  sns_notify:
+    handler: handler.sqs_notify
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - MyQueue
+              - Arn
+resources:
+  Resources:
+    MyQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "MyQueue"
+
+    NotificationDynamoTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: JobId
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: JobId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

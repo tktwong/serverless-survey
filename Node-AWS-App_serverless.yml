@@ -1,0 +1,107 @@
+service: import-service
+
+custom:
+  # Variables not exposed to the application.
+  authorizerName: authorization-service-dev-basicAuthorizer
+  sqsQueueName: catalogItemsQueue
+
+provider:
+  name: aws
+  region: eu-central-1
+  runtime: nodejs12.x
+  profile: danila_loginov
+
+  environment:
+    # Variables exposed to the application.
+    SQS_QUEUE_URL:
+      Ref: SqsQueue
+
+  iamRoleStatements:
+    - Action:
+        - s3:ListBucket
+      Effect: Allow
+      Resource:
+        - arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}
+    - Action:
+        - s3:*
+      Effect: Allow
+      Resource:
+        - arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*
+    - Action:
+        - sqs:*
+      Effect: Allow
+      Resource:
+        - !GetAtt SqsQueue.Arn
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-plugin-webpack
+
+resources:
+  Resources:
+    # @see https://github.com/serverless/serverless/issues/3896
+    # @see https://docs.aws.amazon.com/apigateway/latest/developerguide/supported-gateway-response-types.html
+    UnauthorizedGatewayResponse:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: ApiGatewayRestApi
+    AccessDeniedGatewayResponse:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: ACCESS_DENIED
+        RestApiId:
+          Ref: ApiGatewayRestApi
+    Default4XXGatewayResponse:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+    SqsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.sqsQueueName}
+  Outputs:
+    SqsQueueArn:
+      Value: !GetAtt SqsQueue.Arn
+      Export:
+        Name: ${self:custom.sqsQueueName}Arn
+
+functions:
+  importFileParser:
+    handler: handler.importFileParser
+    events:
+      - s3:
+          bucket: ${self:provider.environment.S3_BUCKET_NAME}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: ${self:provider.environment.S3_UPLOADED_PREFIX}
+          existing: true
+  importProductsFile:
+    handler: handler.importProductsFile
+    events:
+      - http:
+          path: import
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                name: true
+          authorizer:
+            name: basicAuthorizer
+            arn: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${self:custom.authorizerName}
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: token

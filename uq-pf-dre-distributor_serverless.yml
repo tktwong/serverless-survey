@@ -1,0 +1,69 @@
+service: pf-dre-distributor
+
+plugins:
+  - serverless-pseudo-parameters
+
+package:
+  exclude:
+    - .idea/**
+    - .editorconfig
+    - .env
+    - .env.example
+    - README.md
+    - build.sh
+    - deploy.sh
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+
+  region: ap-southeast-2
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:GetObjectTagging
+        - s3:PutObject
+        - s3:PutObjectTagging
+        - s3:DeleteObject
+        - s3:DeleteObjectTagging
+      Resource: arn:aws:s3:::pf-dre-collector/*
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+      Resource: [
+        {
+          "Fn::Sub": "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/pf-dre-collector"
+        }
+      ]
+
+functions:
+  processFile:
+    handler: handler.processFile
+    events:
+      - s3:
+          bucket: pf-dre-collector
+          event: s3:ObjectCreated:Put
+          rules:
+            - prefix: new/
+            - suffix: .json
+          existing: true
+    environment:
+      bucket: pf-dre-collector
+      table: pf-dre-collector
+
+resources:
+  Resources:
+    pfDreCollector:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: pf-dre-collector
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        BillingMode: PAY_PER_REQUEST

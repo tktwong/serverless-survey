@@ -1,0 +1,104 @@
+service: telly
+
+provider:
+  name: aws
+  cfnRole: "arn:aws:iam::${opt:account}:role/cloudformation/deployer/cloudformation-deployer"
+  deploymentBucket:
+    name: ${opt:bucket}
+    serverSideEncryption: "AES256"
+  runtime: nodejs10.x
+  region: us-west-2
+  logRetentionInDays: 7
+  timeout: 10.0
+  stackTags:
+    Creator: serverless
+    Environment: ${opt:stage}
+    Project: ${self:service}
+    Team: growth
+    Visibility: internal
+  environment:
+    NOTIFY_QUEUE: !Ref TellyNotifyHandlerQueue
+    ENVIRONMENT: ${opt:stage}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - "sqs:SendMessage"
+        - "sqs:GetQueueUrl"
+      Resource:
+        - !GetAtt TellyNotifyHandlerQueue.Arn
+    - Effect: "Allow"
+      Action:
+        - kms:Decrypt
+      Resource:
+        Fn::GetAtt: [EncryptionKey, Arn]
+
+functions:
+  webhook:
+    handler: source/webhook.handler
+    timeout: 10
+    events:
+      - http:
+          path: slack/webhook
+          method: post
+          cors: true
+  codecommit:
+    handler: source/codecommit.handler
+    events:
+      - sns:
+          arn: arn:aws:sns:us-west-2:799546647898:codecommit-notifications
+  invoke:
+    handler: source/invoke.handler
+  messenger:
+    handler: messenger.handler
+    timeout: 30
+    events:
+      - sqs: 
+          arn:
+            Fn::GetAtt:
+              - TellyNotifyHandlerQueue
+              - Arn
+
+resources:
+  Description: Lambda functions for interfacing with Slack
+  Resources:
+    TellyNotifyHandlerQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "${opt:stage}-TellyNotifyHandlerQueue"
+    EncryptionKey:
+      Type: AWS::KMS::Key
+      Properties:
+        KeyPolicy:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: 'Allow root access'
+              Effect: 'Allow'
+              Principal:
+                AWS:
+                  !Join
+                  - ''
+                  - - "arn:aws:iam::"
+                    - !Ref 'AWS::AccountId'
+                    - ":root"
+              Action: 'kms:*'
+              Resource: '*'
+            - Sid: 'Allow DataEncrypter to encrypt'
+              Effect: 'Allow'
+              Principal:
+                AWS:
+                  !Join
+                  - ''
+                  - - "arn:aws:iam::"
+                    - !Ref 'AWS::AccountId'
+                    - ":role/DataEncrypter"
+              Action:
+                - 'kms:Encrypt'
+                - 'kms:ReEncrypt*'
+                - 'kms:DescribeKey'
+              Resource: '*'
+    EncryptionKeyAlias:
+      Type: AWS::KMS::Alias
+      Properties:
+        AliasName: alias/${self:service}-${opt:stage}-key
+        TargetKeyId:
+          Ref: EncryptionKey

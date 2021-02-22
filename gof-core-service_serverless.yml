@@ -1,0 +1,229 @@
+service: gof-core-service
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  environment:
+    bucketName: ${self:custom.bucketName}
+    usersTableName: ${self:custom.usersTableName}
+    coursesTableName: ${self:custom.coursesTableName}
+    classesTableName: ${self:custom.classesTableName}
+    connectionsTableName: ${self:custom.connectionsTableName}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+        - s3:*
+      Resource: '*'
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-dynamodb-local
+  - serverless-s3-local
+  - serverless-middleware
+
+package:
+  individually: true
+
+custom:
+  bucketName: gof-core-service-bucket
+  usersTableName: users-table
+  coursesTableName: courses-table
+  classesTableName: classes-table
+  connectionsTableName: connections-table
+  serverless-offline:
+    useChildProcesses: true
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+  s3:
+    host: localhost
+    directory: .local_bucket
+    port: 9000
+  middleware:
+    pre:
+      - src/middlewares/authorizer.authorize
+
+functions:
+  auth:
+    handler: src/handlers/auth.handler
+    timeout: 30
+    events:
+      - http:
+          path: auth
+          method: POST
+          cors: true
+  users:
+    handler: src/handlers/users.handler
+    timeout: 30
+    events:
+      - http:
+          path: users
+          method: GET
+          cors: true
+      - http:
+          path: users
+          method: POST
+          cors: true
+      - http:
+          path: users/{username}
+          method: GET
+          cors: true
+      - http:
+          path: users/{username}
+          method: PUT
+          cors: true
+      - http:
+          path: users/{username}
+          method: DELETE
+          cors: true
+  courses:
+    handler: src/handlers/courses.handler
+    timeout: 30
+    events:
+      - http:
+          path: courses
+          method: GET
+          cors: true
+      - http:
+          path: courses
+          method: POST
+          cors: true
+      - http:
+          path: courses/{id}
+          method: GET
+          cors: true
+      - http:
+          path: courses/rank/{top}
+          method: GET
+          cors: true
+      - http:
+          path: courses/{id}
+          method: PUT
+          cors: true
+      - http:
+          path: courses/{id}
+          method: DELETE
+          cors: true
+  connections:
+    handler: src/handlers/connections.handler
+    timeout: 30
+    events:
+      - http:
+          path: connections/total
+          method: GET
+          cors: true
+      - http:
+          path: connections/per-day-of-week
+          method: GET
+          cors: true
+      - http:
+          path: connections
+          method: POST
+          cors: true
+  classes:
+    handler: src/handlers/classes.handler
+    timeout: 30
+    events:
+      - http:
+          path: courses/{id}/classes
+          method: POST
+          cors: true
+      - http:
+          path: courses/{id}/classes/{classId}
+          method: GET
+          cors: true
+      - http:
+          path: courses/{id}/classes/{classId}
+          method: PUT
+          cors: true
+      - http:
+          path: courses/{id}/classes/{classId}
+          method: DELETE
+          cors: true
+  subscriptions:
+    handler: src/handlers/subscriptions.handler
+    timeout: 30
+    events:
+      - http:
+          path: subscriptions
+          method: POST
+          cors: true
+      - http:
+          path: subscriptions
+          method: DELETE
+          cors: true
+
+
+resources:
+  Resources:
+    GofCoreServiceBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketName}
+        AccessControl: PublicRead
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        VersioningConfiguration:
+          Status: Enabled
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [GET, PUT]
+              AllowedOrigins: ['*']
+              Id: CORSRuleId1
+              MaxAge: '3600'
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.usersTableName}
+        AttributeDefinitions:
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    CoursesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.coursesTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    ClassesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.classesTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    ConnectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.connectionsTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST

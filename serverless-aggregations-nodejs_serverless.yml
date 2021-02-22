@@ -1,0 +1,53 @@
+service:
+  name: serverless-aggregations
+  awsKmsKeyArn: ${env:LAMBDA_AWS_IAM_KMS_ARN}
+
+frameworkVersion: ">=1.21.0 <2.0.0"
+
+plugins:
+  - serverless-plugin-optimize
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ${env:AWS_REGION}
+  role: ${env:LAMBDA_AWS_IAM_ROLE}
+  stage: dev
+  memorySize: 128
+  timeout: 60
+
+  vpc:
+    securityGroupIds:
+      - ${env:VPC_SECUIRY_GROUP_ID}
+    subnetIds:
+      - ${env:VPC_SUBNET_FIRST_ID}
+      - ${env:VPC_SUBNET_SECOND_ID}
+
+  environment:
+    REDSHIFT_CREDENTIALS: ${env:REDSHIFT}
+    REDSHIFT_AWS_IAM_ROLE: ${env:REDSHIFT_AWS_IAM_ROLE}
+    REDSHIFT_TABLE: ${env:REDSHIFT_TABLE}
+
+functions:
+  import:
+    handler: import.main
+    events:
+      - s3:
+          bucket: ${env:BUCKET}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: input/
+            - suffix: .csv
+  aggregate:
+    handler: aggregate.main
+    events:
+      - schedule:
+          name: "serverless-demo-aggregation"
+          rate: "cron(33 1 ? * 6#2 *)"
+          # second Saturday every month at 1:33 am
+    environment:
+      REPORT_BUCKET: ${env:BUCKET}
+      REPORT_OBJECT: "output/report."

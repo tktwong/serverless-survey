@@ -1,0 +1,75 @@
+
+
+service: kinesis-completion-lambda-kinesis
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-west-1
+  memorySize: 256
+  timeout: 300
+
+  iamRoleStatements:
+   # Grant privilege read from work table dynamoDB stream
+   - Effect: Allow
+     Action:
+      - kinesis:GetRecords
+      - kinesis:GetShardIterator
+      - kinesis:DescribeStream
+      - kinesis:ListStreams
+      - kinesis:PutRecord
+      - kinesis:PutRecords
+     Resource:
+       Fn::GetAtt: 
+        - workStream
+        - Arn
+
+   # Grant privilege to write to results table 
+   - Effect: Allow
+     Action:
+      - dynamodb:PutItem
+     Resource:
+       Fn::GetAtt: 
+        - resultsTable
+        - Arn
+
+functions:
+  kinesisHandler:
+    handler: lambdaHandler.process
+
+# The "Resources" your "Functions" use.  Raw AWS CloudFormation goes in here.
+resources:
+  Resources:
+    workStream: 
+      Type: AWS::Kinesis::Stream
+      Properties: 
+        Name: kinesisWorkStream
+        ShardCount: 1
+
+    resultsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: kinesisResultsTable
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 100
+        
+    Event:
+      Type: AWS::Lambda::EventSourceMapping
+      Properties:
+        BatchSize: 50
+        EventSourceArn:
+          Fn::GetAtt:
+            - workStream
+            - Arn      
+        FunctionName:
+          Fn::GetAtt:
+            - KinesisHandlerLambdaFunction
+            - Arn
+        StartingPosition: TRIM_HORIZON

@@ -1,0 +1,172 @@
+service:
+  name: project-management-api
+
+# serverless-webpack and serverless-offline plugins
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+# serverless-webpack configuration
+# also enable autopacking of external modules
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  authorizer:
+    projects:
+      name: authorize-projects
+      type: TOKEN
+      identitySource: method.request.header.Authorization
+      identityValidationExpression: Bearer (.*)
+    default:
+      name: authorize-default
+      type: TOKEN
+      identitySource: method.request.header.Authorization
+      identityValidationExpression: Bearer (.*)
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:eu-west-2:*:*"
+    - Effect: Allow
+      Action:
+        - cognito-idp:*
+        - cognito-sync:*
+        - iam:*
+      Resource: "*"
+
+# API endpoints for the functions
+functions:
+  authorize-projects:
+    handler: authorizer-projects.main
+  authorize-default:
+    handler: authorizer-default.main
+  create:
+    handler: create.main
+    events:
+      - http:
+          method: post
+          path: projects
+          cors: true
+          authorizer: ${self:custom.authorizer.default}
+  get:
+    handler: get.main
+    events:
+      - http:
+          method: get
+          path: projects/{id}
+          cors: true
+          authorizer: ${self:custom.authorizer.default}
+  list:
+    handler: list-projects.main
+    events:
+      - http:
+          method: get
+          path: projects
+          cors: true
+          authorizer: ${self:custom.authorizer.default}
+  list-all:
+    handler: list-all-projects.main
+    events:
+      - http:
+          method: get
+          path: projects/all
+          cors: true
+          authorizer: ${self:custom.authorizer.projects}
+  delete:
+    handler: delete.main
+    events:
+      - http:
+          method: delete
+          path: projects/{id}
+          cors: true
+          authorizer: ${self:custom.authorizer.projects}
+  modify:
+    handler: modify.main
+    events:
+      - http:
+          method: put
+          path: projects/{id}
+          cors: true
+          authorizer: ${self:custom.authorizer.projects}
+  list-users:
+    handler: list-users.main
+    events:
+      - http:
+          method: get
+          path: users/list
+          cors: true
+          authorizer: ${self:custom.authorizer.default}
+  user-signup:
+    handler: user-signup.main
+    events:
+      - http:
+          method: post
+          path: register
+          cors: true
+  user-resend:
+    handler: user-resend-code.main
+    events:
+      - http:
+          method: post
+          path: register/resend
+          cors: true
+  user-refresh:
+    handler: user-refresh-tokens.main
+    events:
+      - http:
+          method: get
+          path: users/refresh
+          cors: true
+  user-confirm:
+    handler: user-confirm.main
+    events:
+      - http:
+          method: post
+          path: register/confirm
+          cors: true
+  user-signin:
+    handler: user-signin.main
+    events:
+      - http:
+          method: post
+          path: login
+          cors: true
+  user-signout:
+    handler: user-signout.main
+    events:
+      - http:
+          method: post
+          path: logout
+          cors: true
+          authorizer: ${self:custom.authorizer.default}
+  user-get:
+    handler: user-get.main
+    events:
+      - http:
+          method: get
+          path: users
+          request:
+            parameters:
+              querystrings:
+                AccessToken: true
+          cors: true
+          authorizer: ${self:custom.authorizer.default}
+  user-modify-attributes:
+    handler: user-modify-attributes.main
+    events:
+      - http:
+          method: put
+          path: users
+          cors: true
+          authorizer: ${self:custom.authorizer.default}

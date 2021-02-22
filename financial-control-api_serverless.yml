@@ -1,0 +1,117 @@
+service: ${env:SERVICE}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${env:STAGE}
+  region: ${env:REGION}
+#  apiKeys:
+#    - ${env:STAGE}-${env:SERVICE}Key
+  usagePlan:
+    quota:
+      limit: ${env:QUOTA_LIMIT}
+      offset: ${env:QUOTA_OFFSET}
+      period: ${env:QUOTA_PERIOD}
+    throttle:
+      burstLimit: ${env:THROTTLE_BURST_LIMIT}
+      rateLimit: ${env:THROTTLE_RATE_LIMIT}
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-dotenv-plugin
+  - serverless-iam-roles-per-function
+
+functions:
+  add-expense:
+    handler: src/handlers/add-expense.handler
+    description: Financial Control API - Add Expense
+    timeout: 300
+    events:
+      - stream:
+          arn: arn:aws:kinesis:${env:REGION}:#{AWS::AccountId}:stream/${env:EXPENSES_STREAM}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:query
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${env:REGION}:#{AWS::AccountId}:table/${env:EXPENSES_CATEGORIES_TABLE}
+
+  create-expense:
+    handler: src/handlers/create-expense.handler
+    description: Financial Control API - Create Expense
+    timeout: 30
+    events:
+      - http:
+         path: expenses
+         method: post
+    iamRoleStatements:
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource: arn:aws:kinesis:${env:REGION}:#{AWS::AccountId}:stream/${env:EXPENSES_STREAM}
+
+  get-categories:
+    handler: src/handlers/get-categories.handler
+    description: Financial Control API - Get All Categories
+    timeout: 30
+    events:
+      - http:
+         path: categories
+         method: get
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:scan
+        Resource: arn:aws:dynamodb:${env:REGION}:#{AWS::AccountId}:table/${env:EXPENSES_CATEGORIES_TABLE}
+
+  get-expenses:
+    handler: src/handlers/get-expenses.handler
+    description: Financial Control API - Get All Expenses
+    timeout: 30
+    events:
+      - http:
+         path: expenses
+         method: get
+
+  notify-expense:
+    handler: src/handlers/notify-expense.handler
+    description: Financial Control API - Notify Expense
+    timeout: 300
+    events:
+      - stream:
+          arn: arn:aws:kinesis:${env:REGION}:#{AWS::AccountId}:stream/${env:EXPENSES_STREAM}
+    environment:
+      EXPENSE_NOTIFICATION_TOPIC_ARN: arn:aws:sns:${env:REGION}:#{AWS::AccountId}:${env:EXPENSE_NOTIFICATION_TOPIC}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: kinesis:PutRecord
+        Resource: arn:aws:kinesis:${env:REGION}:#{AWS::AccountId}:stream/${env:EXPENSES_STREAM}
+      - Effect: Allow
+        Action: sns:Publish
+        Resource: arn:aws:sns:${env:REGION}:#{AWS::AccountId}:${env:EXPENSE_NOTIFICATION_TOPIC}
+
+#resources:
+#  Resources:
+#    expensesCategoriesTable:
+#      Type: AWS::DynamoDB::Table
+#      Properties:
+#        TableName: ${env:EXPENSES_CATEGORIES_TABLE}
+#        AttributeDefinitions:
+#          - AttributeName: name
+#            AttributeType: S
+#        KeySchema:
+#          - AttributeName: name
+#            KeyType: HASH
+#        ProvisionedThroughput:
+#          ReadCapacityUnits: 1
+#          WriteCapacityUnits: 1
+#
+#    expenseEventsStream:
+#      Type: AWS::Kinesis::Stream
+#      Properties:
+#        Name: ${env:EXPENSES_STREAM}
+#        ShardCount: 1
+#
+#    expenseNotificationTopic:
+#      Type: AWS::SNS::Topic
+#      Properties:
+#        DisplayName: ${env:EXPENSE_NOTIFICATION_TOPIC}
+#        TopicName: ${env:EXPENSE_NOTIFICATION_TOPIC}

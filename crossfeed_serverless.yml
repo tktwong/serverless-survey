@@ -1,0 +1,61 @@
+service: crossfeed
+
+custom:
+  webpack:
+    webpackConfig: 'webpack.backend.config.js'
+  customDomain:
+    domainName: ${file(./env.yml):${self:provider.stage}.DOMAIN, ''}
+    basePath: ''
+    certificateName: ${file(./env.yml):${self:provider.stage}.DOMAIN, ''}
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs12.x
+  timeout: 30
+  stage: ${opt:stage, 'dev'}
+  environment: ${file(env.yml):${self:provider.stage}}
+  vpc: ${file(env.yml):${self:provider.stage}-vpc, ''}
+  apiGateway:
+    binaryMediaTypes:
+      - 'image/*'
+      - 'font/*'
+  logs:
+    restApi: true
+  deploymentBucket:
+    serverSideEncryption: AES256
+  iamRoleStatements:
+    # TODO: make the resources more specific.
+    - Effect: Allow
+      Action:
+        - lambda:InvokeAsync
+        - lambda:InvokeFunction
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - ecs:RunTask
+        - ecs:ListTasks
+        - iam:PassRole
+        - logs:GetLogEvents
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - ses:SendRawEmail
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:GetObjectAcl
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource: '*'
+
+functions:
+  - ${file(./src/tasks/functions.yml)}
+  - ${file(./src/api/functions.yml)}
+
+plugins:
+  - serverless-domain-manager
+  - serverless-webpack

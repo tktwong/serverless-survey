@@ -1,0 +1,929 @@
+service: QuizApplication-dev
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+        - dynamodb:BatchWriteItem
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+      Resource: 
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblQuizApplication}-${self:provider.stage}
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblQuizApplication}-${self:provider.stage}/index/SortKey-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}        
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizAge-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizGender-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizFirstName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizLastName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizAgeGender-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizAgeFirstName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizAgeLastName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizGenderFirstName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizGenderLastName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizFirstNameLastName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizAgeGenderFirstName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizAgeGenderLastName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizAgeFirstNameLastName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizGenderFirstNameLastName-Score-index
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tblRespondents}-${self:provider.stage}/index/QuizAgeGenderFirstNameLastName-Score-index
+  environment:
+    DB: dynamodb
+    DB_TABLE_QUIZAPPLICATION: QuizApplication-dev
+    DB_TABLE_RESPONDENTS: Respondents-dev
+    DB_GETITEM_RECORD: Item
+    DB_QUERY_RECORD: Items
+    EVENT_BODY: body
+    EVENT_PATHPARAMETERS: pathParameters
+    EVENT_QUERYSTRINGPARAMETERS: queryStringParameters
+    RESPONSE_STATUSCODE: statusCode
+    RESPONSE_BODY: body
+    RESPONSE_HEADERS: headers
+    ACCESS_CONTROL_ALLOW_ORIGIN: Access-Control-Allow-Origin
+    ACCESS_CONTROL_ALLOW_CREDENTIALS: Access-Control-Allow-Credentials
+    STATUSCODE_200: 200
+    STATUSCODE_401: 401
+    STATUSCODE_404: 404
+    STATUSCODE_500: 500
+
+custom:
+  tblQuizApplication: QuizApplication
+  tblRespondents: Respondents
+
+functions:
+  handleRespondentStream:
+    handler: lib/aggregate.handleRespondentStream
+    events:
+      - stream: arn:aws:dynamodb:us-east-1:617721543543:table/Respondents-dev/stream/2020-10-27T01:57:19.266
+    environment:
+      ATTRIBUTE_RECORDS: Records
+      ATTRIBUTE_EVENTNAME: eventName
+      ATTRIBUTE_DYNAMODB: dynamodb
+      ATTRIBUTE_NEWIMAGE: NewImage
+      ATTRIBUTE_QUIZOWNER: QuizOwner
+      ATTRIBUTE_PARTITIONKEY: PartitionKey
+      ATTRIBUTE_SCORE: Score
+      ATTRIBUTE_AGE: Age
+      ATTRIBUTE_GENDER: Gender
+      EVENT_INSERT: INSERT
+      CONDITION_EXPRESSION: PartitionKey = :partitionKey AND SortKey = :sortKey
+  getQuizDetailsPxt:
+    handler: lib/participant.getQuizDetailsPxt
+    events:
+      - http:
+          path: participant/{quizID}/getQuizDetailsPxt
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                quizID: true
+    environment:
+      REQUEST_QUIZID: quizID
+      PROJECTION_EXPRESSION: Content, Title, Description, SortKey, IsDemographicSelected
+      INDEX: SortKey-index
+  validateLogin:
+    handler: lib/admin.validateLogin
+    events:
+      - http:
+          path: admin/validateLogin
+          method: post
+          cors: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_PASSWORD: password
+      CURRENT_VERSION: v0
+      PROJECTION_EXPRESSION: PartitionKey, Password
+      ATTRIBUTE_PARTITIONKEY: PartitionKey
+      ATTRIBUTE_PASSWORD: Password
+  getQuizzes:
+    handler: lib/admin.getQuizzes
+    events:
+      - http:
+          path: admin/{username}/getQuizzes
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+              querystrings:
+                isPublished: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_ISPUBLISHED: isPublished
+      PROJECTION_EXPRESSION: SortKey, Title
+      QUIZ_FILTER: QUIZ      
+  getQuizRespondents:
+    handler: lib/leaderboard.getQuizRespondents
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getQuizRespondents
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+    environment:
+      REQUEST_QUIZID: quizID
+      PROJECTION_EXPRESSION: FirstName, LastName, Gender, Age, Score
+      RESPONDENT_FILTER: RESPONDENT
+      STATUS_FILTER: Completed
+      JSONKEY_SCORE: Score
+      JSONVALUE_COUNT: Count
+  createQuiz:
+    handler: lib/admin.createQuiz
+    events:
+      - http:
+          path: admin/{username}/createQuiz
+          method: post
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_TITLE: title
+      REQUEST_DESCRIPTION: description
+      QUIZ_FILTER: QUIZ
+      RESPONSE_QUIZID: quizID
+  updateQuiz:
+    handler: lib/admin.updateQuiz
+    events:
+      - http:
+          path: admin/{username}/{quizID}/updateQuiz
+          method: post
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_QUIZID: quizID
+      REQUEST_TITLE: title
+      REQUEST_DESCRIPTION: description
+      REQUEST_CONTENT: content
+      UPDATE_EXPRESSION: SET Title = :title, Description = :description, Content = :content, IsDemographicSelected = :isDemographicSelected
+      CONDITION_EXPRESSION: PartitionKey = :partitionKey AND SortKey = :sortKey
+  getQuizDetails:
+    handler: lib/admin.getQuizDetails
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getQuizDetails
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                reportFilter: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_QUIZID: quizID
+      PROJECTION_EXPRESSION: SortKey, Title, Description, Content, IsDemographicSelected, TotalAttempt, TotalAttempt10Under, TotalAttempt1120, TotalAttempt2130, TotalAttempt3140, TotalAttempt4150, TotalAttempt5160, TotalAttempt61Over, TotalAttemptFemale, TotalAttemptMale, TotalAttemptOther, TotalScore, TotalScore10Under, TotalScore1120, TotalScore2130, TotalScore3140, TotalScore4150, TotalScore5160, TotalScore61Over, TotalScoreFemale, TotalScoreMale, TotalScoreOther
+      ATTRIBUTE_TITLE: Title
+  getQuestionDetails:
+    handler: lib/admin.getQuestionDetails
+    events:
+      - http:
+          path: adminQ/{quizID}/{questionID}/getQuestionDetails
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                quizID: true      
+                questionID: true
+              querystrings:
+                reportFilter: true
+  getQuizQuestions:
+    handler: lib/admin.getQuizQuestions
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getQuizQuestions
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_QUIZID: quizID
+      PROJECTION_EXPRESSION: SortKey, Title, Description, Content
+      ATTRIBUTE_TITLE: Title
+      ATTRIBUTE_CONTENT: Content
+  publishQuiz:
+    handler: lib/admin.publishQuiz
+    events:
+      - http:
+          path: admin/{username}/{quizID}/publishQuiz
+          method: post
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_QUIZID: quizID
+      PROJECTION_EXPRESSION: Content
+      ATTRIBUTE_CONTENT: Content
+      ATTRIBUTE_QUESTIONID: questionID
+      QUESTION_FILTER: QUESTION
+      UPDATE_EXPRESSION: SET Content = :content, AccessLink = :accessLink, IsPublished = :isPublished, TotalAttempt = :totalAttempt, TotalAttemptMale = :totalAttemptMale, TotalAttemptFemale = :totalAttemptFemale, TotalAttemptOther = :totalAttemptOther, TotalAttempt10Under = :totalAttempt10Under, TotalAttempt1120 = :totalAttempt1120, TotalAttempt2130 = :totalAttempt2130, TotalAttempt3140 = :totalAttempt3140, TotalAttempt4150 = :totalAttempt4150, TotalAttempt5160 = :totalAttempt5160, TotalAttempt61Over = :totalAttempt61Over, TotalScore = :totalScore, TotalScoreMale = :totalScoreMale, TotalScoreFemale = :totalScoreFemale, TotalScoreOther = :totalScoreOther, TotalScore10Under = :totalScore10Under, TotalScore1120 = :totalScore1120, TotalScore2130 = :totalScore2130, TotalScore3140 = :totalScore3140, TotalScore4150 = :totalScore4150, TotalScore5160 = :totalScore5160, TotalScore61Over = :totalScore61Over
+      CONDITION_EXPRESSION: PartitionKey = :partitionKey AND SortKey = :sortKey
+  submitQuizAttempt:
+    handler: lib/participant.submitQuizAttempt
+    events:
+      - http:
+          path: participant/submitQuizAttempt
+          method: post
+          cors: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_ATTEMPTDATA: attemptData
+      REQUEST_FIRSTNAME: firstName
+      REQUEST_LASTNAME: lastName
+      REQUEST_AGE: age
+      REQUEST_GENDER: gender
+      INDEX: SortKey-index
+      PROJECTION_EXPRESSION: PartitionKey, Content
+      ATTRIBUTE_CONTENT: Content
+      ATTRIBUTE_QUESTION: question
+      ATTRIBUTE_OPTIONS: options
+      ATTRIBUTE_ISCORRECT: isCorrect
+      ATTRIBUTE_ANSWERS: answers
+      ATTRIBUTE_VALUE: value
+      ATTRIBUTE_QUESTIONID: questionID
+      ATTRIBUTE_PARTITIONKEY: PartitionKey      
+      RESPONSE_SCORE: score
+      RESPONDENT_FILTER: RESPONDENT
+      STATUS_FILTER: Completed
+  getLeaderboardByAge:
+    handler: lib/leaderboard.getLeaderboardByAge
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByAge
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                age: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_AGE: age
+      INDEX: QuizAge-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByGender:
+    handler: lib/leaderboard.getLeaderboardByGender
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByGender
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                gender: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_GENDER: gender
+      INDEX: QuizGender-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByFirstName:
+    handler: lib/leaderboard.getLeaderboardByFirstName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByFirstName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                firstName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_FIRSTNAME: firstName
+      INDEX: QuizFirstName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByLastName:
+    handler: lib/leaderboard.getLeaderboardByLastName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByLastName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                lastName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_LASTNAME: lastName
+      INDEX: QuizLastName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByAgeGender:
+    handler: lib/leaderboard.getLeaderboardByAgeGender
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByAgeGender
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                age: true
+                gender: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_AGE: age
+      REQUEST_GENDER: gender
+      INDEX: QuizAgeGender-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByAgeFirstName:
+    handler: lib/leaderboard.getLeaderboardByAgeFirstName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByAgeFirstName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                age: true
+                firstName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_AGE: age
+      REQUEST_FIRSTNAME: firstName
+      INDEX: QuizAgeFirstName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByAgeLastName:
+    handler: lib/leaderboard.getLeaderboardByAgeLastName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByAgeLastName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                age: true
+                lastName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_AGE: age
+      REQUEST_LASTNAME: lastName
+      INDEX: QuizAgeLastName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByGenderFirstName:
+    handler: lib/leaderboard.getLeaderboardByGenderFirstName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByGenderFirstName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                gender: true
+                firstName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_GENDER: gender
+      REQUEST_FIRSTNAME: firstName
+      INDEX: QuizGenderFirstName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByGenderLastName:
+    handler: lib/leaderboard.getLeaderboardByGenderLastName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByGenderLastName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                age: true
+                lastName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_GENDER: gender
+      REQUEST_LASTNAME: lastName
+      INDEX: QuizGenderLastName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByFirstNameLastName:
+    handler: lib/leaderboard.getLeaderboardByFirstNameLastName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByFirstNameLastName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                firstName: true
+                lastName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_FIRSTNAME: firstName
+      REQUEST_LASTNAME: lastName
+      INDEX: QuizFirstNameLastName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByAgeGenderFirstName:
+    handler: lib/leaderboard.getLeaderboardByAgeGenderFirstName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByAgeGenderFirstName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                age: true
+                gender: true
+                firstName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_AGE: age
+      REQUEST_GENDER: gender
+      REQUEST_FIRSTNAME: firstName
+      INDEX: QuizAgeGenderFirstName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByAgeGenderLastName:
+    handler: lib/leaderboard.getLeaderboardByAgeGenderLastName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByAgeGenderLastName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                age: true
+                gender: true
+                lastName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_AGE: age
+      REQUEST_GENDER: gender
+      REQUEST_LASTNAME: lastName
+      INDEX: QuizAgeGenderLastName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByAgeFirstNameLastName:
+    handler: lib/leaderboard.getLeaderboardByAgeFirstNameLastName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByAgeFirstNameLastName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                age: true
+                firstName: true
+                lastName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_AGE: age
+      REQUEST_FIRSTNAME: firstName
+      REQUEST_LASTNAME: lastName
+      INDEX: QuizAgeFirstNameLastName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByGenderFirstNameLastName:
+    handler: lib/leaderboard.getLeaderboardByGenderFirstNameLastName
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByGenderFirstNameLastName
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                gender: true
+                firstName: true
+                lastName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_GENDER: gender
+      REQUEST_FIRSTNAME: firstName
+      REQUEST_LASTNAME: lastName
+      INDEX: QuizGenderFirstNameLastName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+  getLeaderboardByAgeGenderFirstNLastN:
+    handler: lib/leaderboard.getLeaderboardByAgeGenderFirstNLastN
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getLeaderboardByAgeGenderFirstNLastN
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+              querystrings:
+                age: true
+                gender: true
+                firstName: true
+                lastName: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_AGE: age
+      REQUEST_GENDER: gender
+      REQUEST_FIRSTNAME: firstName
+      REQUEST_LASTNAME: lastName
+      INDEX: QuizAgeGenderFirstNameLastName-Score-index
+      PROJECTION_EXPRESSION: FirstName, LastName, Score
+      STATUS_FILTER: Completed
+
+resources:
+  Resources:
+    QuizApplicationTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        #table structure and architecture        
+        AttributeDefinitions:
+          - AttributeName: PartitionKey
+            AttributeType: S
+          - AttributeName: SortKey
+            AttributeType: S          
+        KeySchema:
+          - AttributeName: PartitionKey
+            KeyType: HASH
+          - AttributeName: SortKey
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:custom.tblQuizApplication}-${self:provider.stage}
+        # StreamSpecification:
+        #   StreamViewType: NEW_AND_OLD_IMAGES
+        GlobalSecondaryIndexes:
+          - IndexName: SortKey-index
+            KeySchema:
+              - AttributeName: SortKey
+                KeyType: HASH              
+            Projection:
+              NonKeyAttributes:
+                - Content
+                - Title
+                - Description
+                - IsDemographicSelected
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+    RespondentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        #table structure and architecture        
+        AttributeDefinitions:
+          - AttributeName: PartitionKey
+            AttributeType: S
+          - AttributeName: SortKey
+            AttributeType: S
+          - AttributeName: Score
+            AttributeType: N
+          - AttributeName: QuizAge
+            AttributeType: S
+          - AttributeName: QuizGender
+            AttributeType: S
+          - AttributeName: QuizFirstName
+            AttributeType: S
+          - AttributeName: QuizLastName
+            AttributeType: S
+          - AttributeName: QuizAgeGender
+            AttributeType: S
+          - AttributeName: QuizAgeFirstName
+            AttributeType: S
+          - AttributeName: QuizAgeLastName
+            AttributeType: S
+          - AttributeName: QuizGenderFirstName
+            AttributeType: S
+          - AttributeName: QuizGenderLastName
+            AttributeType: S
+          - AttributeName: QuizFirstNameLastName
+            AttributeType: S
+          - AttributeName: QuizAgeGenderFirstName
+            AttributeType: S
+          - AttributeName: QuizAgeGenderLastName
+            AttributeType: S
+          - AttributeName: QuizAgeFirstNameLastName
+            AttributeType: S
+          - AttributeName: QuizGenderFirstNameLastName
+            AttributeType: S
+          - AttributeName: QuizAgeGenderFirstNameLastName
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PartitionKey
+            KeyType: HASH
+          - AttributeName: SortKey
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:custom.tblRespondents}-${self:provider.stage}
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        GlobalSecondaryIndexes:
+          - IndexName: QuizAge-Score-index
+            KeySchema:
+              - AttributeName: QuizAge
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizGender-Score-index
+            KeySchema:
+              - AttributeName: QuizGender
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizFirstName-Score-index
+            KeySchema:
+              - AttributeName: QuizFirstName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizLastName-Score-index
+            KeySchema:
+              - AttributeName: QuizLastName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizAgeGender-Score-index
+            KeySchema:
+              - AttributeName: QuizAgeGender
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizAgeFirstName-Score-index
+            KeySchema:
+              - AttributeName: QuizAgeFirstName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizAgeLastName-Score-index
+            KeySchema:
+              - AttributeName: QuizAgeLastName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizGenderFirstName-Score-index
+            KeySchema:
+              - AttributeName: QuizGenderFirstName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizGenderLastName-Score-index
+            KeySchema:
+              - AttributeName: QuizGenderLastName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizFirstNameLastName-Score-index
+            KeySchema:
+              - AttributeName: QuizFirstNameLastName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizAgeGenderFirstName-Score-index
+            KeySchema:
+              - AttributeName: QuizAgeGenderFirstName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizAgeGenderLastName-Score-index
+            KeySchema:
+              - AttributeName: QuizAgeGenderLastName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizAgeFirstNameLastName-Score-index
+            KeySchema:
+              - AttributeName: QuizAgeFirstNameLastName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizGenderFirstNameLastName-Score-index
+            KeySchema:
+              - AttributeName: QuizGenderFirstNameLastName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+          - IndexName: QuizAgeGenderFirstNameLastName-Score-index
+            KeySchema:
+              - AttributeName: QuizAgeGenderFirstNameLastName
+                KeyType: HASH
+              - AttributeName: Score
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - FirstName
+                - LastName
+                - Status
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5          

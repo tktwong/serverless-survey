@@ -1,0 +1,78 @@
+service: first-serverless
+
+package:
+  exclude:
+    - node_modules/**
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    DYNAMODB_CRUD_TABLE: userTable
+    DYNAMODB_CRON_TABLE: cronLogTable
+  region: eu-central-1
+  stage: test
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Scan
+        - dynamodb:UpdateItem
+        - dynamodb:PutItem
+      Resource:
+        - "arn:aws:dynamodb:*:*:table/${self:provider.environment.DYNAMODB_CRUD_TABLE}"
+        - "arn:aws:dynamodb:*:*:table/${self:provider.environment.DYNAMODB_CRON_TABLE}"
+
+
+functions:
+  create:
+    handler: backend/dist/crud.create
+    events:
+      - http:
+          path: create
+          method: post
+          cors: true
+### this function call infinity
+#  cron:
+#    handler: backend/cron.handler
+#    events:
+#      - schedule: rate(1 minute)
+
+
+plugins:
+ - serverless-finch # If you want to deploy the front-end uncomment this and the "custom" object below
+
+custom:
+  client:
+    bucketName: first-serverless-frontend # If you want to deploy the front-end, change this to a universally unique AWS S3 bucket name
+    distributionFolder: frontend/dist
+
+
+resources:
+  Resources:
+    userTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_CRUD_TABLE}
+        AttributeDefinitions:
+          - AttributeName: userName
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userName
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    cronLogTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_CRON_TABLE}
+        AttributeDefinitions:
+          - AttributeName: triggerDate
+            AttributeType: S
+        KeySchema:
+          - AttributeName: triggerDate
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

@@ -1,0 +1,84 @@
+service: why82-backend
+custom:
+  mysportsfeeds: ${file(.mysportsfeeds.yml)}
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource:
+        - Fn::Join:
+          - ':'
+          - - arn
+            - aws
+            - s3
+            - ''
+            - ''
+            - Ref: DataBucket
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource:
+        - Fn::Join:
+          - ':'
+          - - arn
+            - aws
+            - s3
+            - ''
+            - ''
+            - Fn::Join:
+              - '/'
+              - - Ref: DataBucket
+                - '*'
+  environment:
+    SEASON: 2019
+    MSF_USER: ${self:custom.mysportsfeeds.MSF_USER}
+    MSF_PASS: ${self:custom.mysportsfeeds.MSF_PASS}
+    DATA_BUCKET: ${self:service}-${opt:stage, self:provider.stage}
+functions:
+  save_stats:
+    handler: save_stats.save_stats
+    events:
+      # 10a UTC / 6a EDT / 5a EST / 3a PDT / 2a PST
+      - schedule: cron(0 10 17-31 OCT ? 2018)
+      - schedule: cron(0 10 * NOV,DEC ? 2018)
+      - schedule: cron(0 10 * JAN,FEB,MAR ? 2019)
+      - schedule: cron(0 10 1-10 APR ? 2019)
+  latest_schedule:
+    handler: latest.schedule
+    events:
+    - http:
+        path: '{season}/schedule'
+        method: GET
+        cors: true
+        request:
+          parameters:
+            paths:
+              name: true
+  latest_teams:
+    handler: latest.teams
+    events:
+    - http:
+        path: '{season}/teams'
+        method: GET
+        cors: true
+        request:
+          parameters:
+            paths:
+              name: true
+resources:
+  Resources:
+    DataBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-${opt:stage, self:provider.stage}
+  Outputs:
+    DataBucket:
+      Description: 'The bucket where stats will be stored'
+      Value:
+        Ref: DataBucket

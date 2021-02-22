@@ -1,0 +1,275 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: tcl-ses # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+plugins:
+  - aws-amplify-serverless-plugin
+  - serverless-plugin-existing-s3
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  stackTags:
+    Application: tcl
+  tags:
+    Application: tcl
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - ses:SendEmail
+        - ses:SendRawEmail
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:DeleteObject
+      Resource: arn:aws:s3:::${self:custom.tclBucketName}-${self:provider.stage}/*
+    - Effect: "Allow"
+      Action:
+        - rekognition:DetectText
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "sns:Publish"
+      Resource:
+        - !Ref ErrorSNS
+
+custom:
+  tclBucketName: tcl-invoices
+  invoicesFolder: invoices
+  tclCardObjectKey: CarteTCL.jpg
+  accountableEmail: benjamin.ehlers@hardis.fr
+  amplify:
+    - filename: ../Frontend/src/aws-exports.js
+      type: javascript
+      appClient: AppClient
+      s3bucket: disabled
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.py
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.py
+#    - exclude-me-dir/**
+
+functions:
+  buildSignedUrlUpload:
+    handler: buildSignedUrlUpload.buildSignedUrlUpload
+    events:
+      - http:
+          path: buildSignedUrlUpload
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                filename: true
+
+    environment:
+      bucketName: !Ref TclBucket
+      prefix: ${self:custom.invoicesFolder}
+      
+    role: buildSignedUrlUploadRole
+
+  sendTclInvoice:
+    handler: handler.sendTclInvoice
+    events:
+      - existingS3:
+          bucket: ${self:custom.tclBucketName}-${self:provider.stage}
+          events:
+            - s3:ObjectCreated:*
+          rules:
+            - prefix: ${self:custom.invoicesFolder}/
+            - suffix: .jpg
+
+#    Define function environment variables here
+    environment:
+      emailFrom:
+        Fn::FindInMap:
+        - envValues
+        - ${self:provider.stage}
+        - emailFrom
+      emailTo:
+        Fn::FindInMap:
+        - envValues
+        - ${self:provider.stage}
+        - emailTo
+      emailCc:
+        Fn::FindInMap:
+        - envValues
+        - ${self:provider.stage}
+        - emailCc
+      tclCardObjectKey: ${self:custom.tclCardObjectKey}
+      prefix: '/tmp/'
+      errorTopicArn: !Ref ErrorSNS
+      rekognitionThreshold: 92
+
+# you can add CloudFormation resource templates here
+resources:
+  Mappings:
+    envValues:
+      dev:
+        emailFrom: benjamin.ehlers@hardis.fr
+        emailTo: benjamin.ehlers@hardis.fr
+        emailCc: ehlers.benjamin@free.fr
+      prod:
+        emailFrom: benjamin.ehlers@hardis.fr
+        emailTo: rhpaie@hardis.fr
+        emailCc: benjamin.ehlers@hardis.fr
+  Resources:
+    TclBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.tclBucketName}-${self:provider.stage}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - PUT
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+    
+    buildSignedUrlUploadRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: buildSignedUrlUploadRole-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: myPolicyName
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: 
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                - Effect: Allow
+                  Action: # Gives permission to S3
+                    - s3:PutObject
+                  Resource: 
+                    - arn:aws:s3:::${self:custom.tclBucketName}-${self:provider.stage}
+                    - arn:aws:s3:::${self:custom.tclBucketName}-${self:provider.stage}/*
+
+    ErrorSNS:
+      Type: AWS::SNS::Topic
+      Properties: 
+        DisplayName: tclError
+        Subscription:
+        - Endpoint: ${self:custom.accountableEmail}
+          Protocol: email
+        TopicName: tclError-${self:provider.stage}
+
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [UserPool, Arn]
+
+    UserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        AdminCreateUserConfig: 
+          AllowAdminCreateUserOnly: true
+        UsernameAttributes: 
+          - email
+        UserPoolName: tcl-${self:provider.stage}
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 6
+            RequireLowercase: false
+            RequireNumbers: false
+            RequireSymbols: false
+            RequireUppercase: false
+    UserPoolUser:        
+      Type: AWS::Cognito::UserPoolUser
+      Properties:
+        DesiredDeliveryMediums: 
+          - EMAIL
+        UserAttributes: 
+          - Name: email
+            Value: benjamin.ehlers@hardis.fr
+        Username: benjamin.ehlers@hardis.fr
+        UserPoolId: !Ref UserPool
+
+    AppClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+          ClientName: tclApp
+          ExplicitAuthFlows:
+            - USER_PASSWORD_AUTH
+          GenerateSecret: false
+          UserPoolId: !Ref UserPool
+
+  Outputs:
+    ErrorSNSOut:
+      Description: SNS topic for error
+      Value: !Ref ErrorSNS

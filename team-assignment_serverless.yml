@@ -1,0 +1,124 @@
+# serverless.yml
+
+service: serverless-flask
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+
+custom:
+  tableName: 'Teams-${self:provider.stage}'
+  region: ${opt:region, self:provider.region}
+  wsgi:
+    app: app.app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: non-linux
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        - { "Fn::GetAtt": ["TeamDynamoDBTable", "Arn" ] }
+  environment:
+    DB_TABLE: ${self:custom.tableName}
+    ENDPOINT: { "Fn::Join" : ["", [" https://", { "Ref" : "ApiGatewayRestApi" }, ".execute-api.${self:custom.region}.amazonaws.com/${self:provider.stage}" ] ]  }
+  apiKeys:
+    - admin-key
+
+functions:
+  app:
+    handler: wsgi_handler.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+  addMember:
+    handler: wsgi_handler.handler
+    events:
+      - http: 'POST /member'
+  login:
+    handler: wsgi_handler.handler
+    events:
+      - http: 
+          path: login
+          method: any
+  logout:
+    handler: wsgi_handler.handler
+    events:
+      - http: 
+          path: logout
+          method: get
+  admin:
+    handler: wsgi_handler.handler
+    events:
+      - http: 
+          path: admin
+          method: get
+  list_teams:
+    handler: wsgi_handler.handler
+    events:
+      - http: 
+          path: list_teams
+          method: get
+  list_edit_teams:
+    handler: wsgi_handler.handler
+    events:
+      - http: 
+          path: list_edit_teams
+          method: get
+  deleteAll:
+    handler: wsgi_handler.handler
+    events:
+      - http: 
+          path: delete_all
+          method: get
+  updateRow:
+    handler: wsgi_handler.handler
+    events:
+      - http: 
+          path: update_row
+          method: post
+
+resources:
+  Resources:
+    TeamDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: row_number
+            AttributeType: N
+          - 
+            AttributeName: team_hash
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: row_number
+            KeyType: HASH
+          - 
+            AttributeName: team_hash
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 3
+          WriteCapacityUnits: 3
+        TableName: ${self:custom.tableName}
+
+package:
+  exclude:
+    - node_modules/**
+    - assign_team.py
+    - create_table.py
+    - hash.csv
+    - load_hashes.py

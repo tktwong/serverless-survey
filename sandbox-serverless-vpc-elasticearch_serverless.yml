@@ -1,0 +1,110 @@
+service: sandbox-elasticsearch
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 128
+  region: ap-northeast-1
+  environment:
+    HELLO: world
+    ELASTICSEARCH_DOMAIN_ENDPOINT:
+      Fn::GetAtt: MyElasticsearch.DomainEndpoint
+  vpc:
+    securityGroupIds:
+      - Ref: MySecurityGroup
+    subnetIds:
+      - Ref: MySubnet
+  tags:
+    stage: test
+
+package:
+  exclude:
+    - __test__
+    - .circleci/**
+    - .git/**
+    - bin/**
+    - .*
+    - jest*
+    - tsconfig.*
+    - package.json
+    - package-lock.json
+    - yarn.lock
+    - README.md
+
+resources:
+  Resources:
+    MyVPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: 10.0.0.0/16
+        EnableDnsSupport: true
+        Tags:
+          - Key: stage
+            Value: test
+
+    MySubnet:
+      Type: AWS::EC2::Subnet
+      Properties:
+        AvailabilityZone: ap-northeast-1a
+        VpcId:
+          Ref: MyVPC
+        CidrBlock: 10.0.0.0/24
+        Tags:
+          - Key: stage
+            Value: test
+
+    MySecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupName: my-security-group
+        GroupDescription: for test
+        VpcId:
+          Ref: MyVPC
+        Tags:
+          - Key: stage
+            Value: test
+
+    EsServiceLinkedRole:
+      Type: "AWS::IAM::ServiceLinkedRole"
+      Properties:
+        AWSServiceName: es.amazonaws.com
+        Description: "Service Linked Role for Amazon Elasticsearch Service"
+
+    MyElasticsearch:
+      Type: AWS::Elasticsearch::Domain
+      DependsOn: EsServiceLinkedRole
+      Properties:
+        DomainName: my-domain
+        ElasticsearchClusterConfig:
+          InstanceType: m4.large.elasticsearch
+        EBSOptions:
+          EBSEnabled: true
+          VolumeSize: 10
+        VPCOptions:
+          SecurityGroupIds:
+            - Ref: MySecurityGroup
+          SubnetIds:
+            - Ref: MySubnet
+
+functions:
+  createIndex:
+    handler: src/create-index.handler
+    events:
+      - http:
+          path: create-index
+          method: POST
+          integration: lambda-proxy
+  searchItem:
+    handler: src/search-item.handler
+    events:
+      - http:
+          path: create-index
+          method: GET
+          integration: lambda-proxy
+  putItem:
+    handler: src/put-item.handler
+    events:
+      - http:
+          path: create-index
+          method: POST
+          integration: lambda-proxy

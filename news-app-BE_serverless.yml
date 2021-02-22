@@ -1,0 +1,149 @@
+service: aws-node-rest-api-with-dynamodb-and-offline-news
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    DYNAMODB_TABLE_USER: ${self:service}-user-${opt:stage, self:provider.stage}
+    DYNAMODB_TABLE_PROFILE: ${self:service}-profile-${opt:stage, self:provider.stage}
+    DYNAMODB_TABLE_FAV: ${self:service}-fav-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_USER}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_PROFILE}"
+
+functions:
+  auth:
+    handler: src/services/auth.authorize
+  
+  signup:
+    handler: src/api/user.signup
+    events:
+      - http:
+          path: /v1/public/signup
+          method: post
+          cors: true
+          
+  login:
+    handler: src/api/user.login
+    events:
+      - http:
+          path: /v1/public/login
+          method: post
+          cors: true
+
+  updateProfile:
+    handler: src/api/profile.updateProfile
+    events:
+      - http:
+          path: /v1/profile
+          authorizer: auth
+          method: post
+          cors: true
+          
+  getProfile:
+    handler: src/api/profile.getProfile
+    events:
+      - http:
+          path: /v1/profile
+          authorizer: auth
+          method: get
+          cors: true
+
+  createFav:
+    handler: src/api/favourite.createFavorite
+    events:
+      - http:
+          path: /v1/favorite
+          authorizer: auth
+          method: post
+          cors: true
+
+  getAllFavByUser:
+    handler: src/api/favourite.getAllFavByUser
+    events:
+      - http:
+          path: /v1/favorite
+          authorizer: auth
+          method: get
+          cors: true
+          
+  deleteFavourite:
+    handler: src/api/favourite.deleteFavourite
+    events:
+      - http:
+          path: /v1/favorite
+          authorizer: auth
+          method: delete
+          cors: true
+
+resources:
+  Resources:
+    UserDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_USER}
+    
+    ProfileDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_PROFILE}
+
+    FavDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: username
+            AttributeType: S
+          - AttributeName: newsId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+          - AttributeName: newsId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_FAV}
+

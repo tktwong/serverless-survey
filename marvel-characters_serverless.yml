@@ -1,0 +1,119 @@
+service: marvel-characters-back
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  profile: ${opt:aws-profile, 'dev'}
+
+  environment:
+    DEBUG: '*'
+  role: true
+  # timeout: 60
+
+package:
+  individually: true
+  exclude:
+    - .git/**
+
+custom:
+  naming: ${self:service}-${self:provider.stage}
+  params: ${file(./serverless.params.yml):${self:provider.stage}}
+
+
+resources:
+  Resources:
+    ############################################################################
+    # IAM Roles and SG
+    ############################################################################
+    MarvelCharactersBackTaskRole: ${file(./deployment/iam/MarvelCharactersBackTaskRole.yml)}
+    ############################################################################
+    MarvelCharactersSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupName: ${self:custom.naming}-securityGroup
+        GroupDescription: 'SG for marvel characters'
+        SecurityGroupIngress:
+          -
+            IpProtocol: "tcp"
+            FromPort: 3005
+            ToPort: 3005
+            CidrIp: "0.0.0.0/0"
+        VpcId: ${self:custom.params.vpc}
+    ############################################################################
+    # ECS Cluster and Fargate Service
+    ############################################################################
+    MarvelCharactersCluster:
+      Type: AWS::ECS::Cluster
+      Properties:
+        ClusterName: ${self:custom.naming}
+    MarvelCharactersBackTask:
+      Type: AWS::ECS::TaskDefinition
+      Properties:
+        Family: ${self:custom.naming}-task
+        RequiresCompatibilities:
+          - FARGATE # use fargate
+        NetworkMode: awsvpc # network mode for fargate
+        ExecutionRoleArn:
+          Fn::GetAtt:
+            - MarvelCharactersBackTaskRole
+            - Arn
+        Cpu: ${self:custom.params.taskVCpu}
+        Memory: ${self:custom.params.taskMemory}
+        TaskRoleArn:
+          Fn::GetAtt:
+            - MarvelCharactersBackTaskRole
+            - Arn
+        ContainerDefinitions:
+          - Name: ${self:custom.naming}-container
+            Image: ${self:custom.params.dockerImage}
+            Cpu: ${self:custom.params.containerCpu}
+            Memory: ${self:custom.params.containerMemory}
+            Essential: true
+            Environment:
+              - Name: MARVEL_CHARACTERS_ENV
+                Value: ${self:provider.stage}
+              - Name: MARVEL_CHARACTERS_API_KEY
+                Value: ${self:custom.params.marvelApiKey}
+              - Name: MARVEL_CHARACTERS_API_SECRET
+                Value: ${self:custom.params.marvelApiSecret}
+            PortMappings:
+              - ContainerPort: 3005
+                HostPort: 3005
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: /aws/ecs/${self:custom.naming}
+                awslogs-region: ${self:provider.region}
+                awslogs-stream-prefix: ${self:custom.naming}-container
+
+    MarvelCharactersBackService:
+      Type: AWS::ECS::Service
+      Properties:
+        Cluster:
+          Ref: MarvelCharactersCluster
+        # DeploymentConfiguration:
+        #   DeploymentConfiguration
+        DesiredCount: ${self:custom.params.serviceTaskDesiredCount}
+        LaunchType: 'FARGATE'
+        NetworkConfiguration:
+          AwsvpcConfiguration:
+            AssignPublicIp: 'ENABLED'
+            SecurityGroups:
+               -
+                 Ref: MarvelCharactersSecurityGroup
+            Subnets:
+               - ${self:custom.params.vpcSubnet}
+        # Role: String
+        ServiceName: ${self:custom.naming}-service
+        TaskDefinition:
+          Ref: MarvelCharactersBackTask
+
+    ############################################################################
+    # CloudWatch
+    ############################################################################
+    PictorellaLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/ecs/${self:custom.naming}

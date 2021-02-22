@@ -1,0 +1,62 @@
+service: hello-world
+
+provider:
+  name: aws
+  runtime: ruby2.5
+  region: ${env:LAMBDA_REGION}
+  stage: ${env:LAMBDA_STAGE}
+  memorySize: 128
+  environment:
+    DATABASE_NAME: ${env:DATABASE_NAME}
+    DATABASE_REGION: ${env:DATABASE_REGION}
+    DATABASE_RESOURCE_ARN: ${env:DATABASE_RESOURCE_ARN}
+    DATABASE_SECRET_ARN: ${env:DATABASE_SECRET_ARN}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "rds-data:BeginTransaction"
+        - "rds-data:CommitTransaction"
+        - "rds-data:RollbackTransaction"
+        - "rds-data:ExecuteStatement"
+        - "rds-data:BatchExecuteStatement"
+      Resource:
+        - ${env:DATABASE_RESOURCE_ARN}
+    - Effect: "Allow"
+      Action:
+        - "secretsmanager:GetSecretValue"
+        - "secretsmanager:DescribeSecret"
+        - "secretsmanager:PutResourcePolicy"
+        - "secretsmanager:PutSecretValue"
+        - "secretsmanager:DeleteSecret"
+        - "secretsmanager:TagResource"
+      Resource:
+        - ${env:DATABASE_SECRET_ARN}
+
+package:
+  include:
+    - app/**
+    - vendor/**
+
+functions:
+  getHello:
+    handler: app/handler/hello.Handler::Hello.call
+    events:
+      - http:
+          path: hello
+          method: get
+  postUser:
+    handler: app/handler/user/post.Handler::User::Post.call
+    events:
+      - http:
+          path: users
+          method: post
+  getUser:
+    handler: app/handler/user/get.Handler::User::Get.call
+    events:
+      - http:
+          path: users/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true

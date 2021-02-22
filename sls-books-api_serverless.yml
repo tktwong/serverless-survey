@@ -1,0 +1,71 @@
+service: books-api
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  role: BookAPIRole
+  region: eu-west-2
+  environment:
+    LOCAL_AWS_ENDPOINT: 'http://dynamodb_book_api_localstack:8000'
+    LOCAL_AWS_REGION: 'eu-west-2'
+    LOCAL_AWS_ACCESS_KEY_ID: 'fake-key-id'
+    LOCAL_AWS_SECRET_ACCESS_KEY: 'fake-key'
+
+functions:
+  - '${file(src/api/books/books.serverless.yml)}'
+
+plugins:
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    host: 0.0.0.0
+resources:
+  Resources:
+    TenantTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: "books"
+    BookAPIRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: Book-API-Role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: Book-API-Policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "logs:CreateLogGroup"
+                    - "logs:CreateLogStream"
+                    - "logs:PutLogEvents"
+                  Resource: "arn:aws:logs:*:*:*"
+                - Effect: Allow
+                  Action:
+                    - "dynamodb:DeleteItem"
+                    - "dynamodb:GetItem"
+                    - "dynamodb:PutItem"
+                    - "dynamodb:UpdateItem"
+                    - "dynamodb:Query"
+                    - "dynamodb:Scan"
+                    - "dynamodb:DescribeTable"
+                  Resource: "*"

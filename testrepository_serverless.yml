@@ -1,0 +1,217 @@
+service: homexcloud-api
+description: HomexCloud APIs for Account administrator, Administrator can manage account, users and devices
+version: V1.0.0
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-west-2
+  environment:
+    USERS_TABLE: ${self:custom.table.userTable}
+    ACCOUNT_TABLE: ${self:custom.table.accountTable}
+    PANEL_TABLE: ${self:custom.table.panelTable}
+plugins:
+  - serverless-domain-manager
+  - serverless-aws-documentation
+  - serverless-offline
+  - serverless-sam
+
+custom:
+  tableThroughput: 5
+  table:
+    accountTable: 'account-demo'
+    userTable: 'user-demo'
+    panelTable: 'panel-demo'
+  customDomain:
+    domainName: 'api.homexcloud.com'
+    basePath: 'v2'
+    createRoute53Record: true
+
+functions:
+  verify-token:
+    handler: auth/authHandler.auth
+
+  verifyUser:
+    handler: handler.handler
+    events:
+      - http:
+          path: /verify
+          method: POST
+          cors: true
+
+  createaccount:
+    handler: handler.handler
+    events:
+      - http:
+          path: /account
+          method: POST
+          cors: true
+
+  listaccount:
+    handler: handler.handler
+    events:
+      - http:
+          path: /account/{id}
+          method: GET
+          cors: true
+          authorizer: verify-token
+
+  updateaccount:
+    handler: handler.handler
+    events:
+      - http:
+          path: /account/{id}
+          method: PUT
+          cors: true
+          authorizer: verify-token
+
+  createuser:
+    handler: handler.handler
+    events:
+      - http:
+          path: /user
+          method: POST
+          cors: true
+
+  isuserconfirmed:
+    handler: handler.handler
+    events:
+      - http:
+          path: /user/isconfirmed
+          method: POST
+          cors: true 
+
+  listuser:
+    handler: handler.handler
+    events:
+      - http:
+          path: /user/{username}
+          method: GET
+          cors: true
+          authorizer: verify-token
+
+  Updateuseremail:
+    handler: handler.handler
+    events:
+      - http:
+          path: /user/{username}
+          method: PUT
+          cors: true
+          authorizer: verify-token
+
+  refreshtoken:
+    handler: handler.handler
+    events:
+      - http:
+          path: /user/{username}/refreshtoken
+          method: GET
+          cors: true
+          authorizer: verify-token
+
+  listUserByAccount:
+    handler: handler.handler
+    events:
+      - http:
+          path: /account/{id}/user
+          method: GET
+          cors: true
+          authorizer: verify-token
+
+  login:
+    handler: handler.handler
+    events:
+      - http:
+          path: /login
+          method: POST
+          cors: true
+
+  resetpasswordcode:
+    handler: handler.handler
+    events:
+      - http:
+          path: /user/resetpasswordcode
+          method: POST
+          cors: true
+
+  resetPassword:
+    handler: handler.handler
+    events:
+      - http:
+          path: /user/resetpassword
+          method: POST
+          cors: true
+
+  resendConfirmation:
+    handler: handler.handler
+    events:
+      - http:
+          path: /user/resendconfirmation
+          method: POST
+          cors: true
+
+  homexcloudpanel:
+    handler: handler.handler
+    events:
+      - http:
+          path: /homexdevice
+          method: POST
+          cors: true
+          authorizer: verify-token
+
+resources:
+   Resources:
+    pathmapping:
+      Type: 'AWS::ApiGateway::BasePathMapping'
+      Properties:
+        BasePath: ${self:custom.customDomain.basePath}
+        DomainName: ${self:custom.customDomain.domainName}
+        Stage: ${self:provider.stage}
+    accountDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.table.accountTable}
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput: 
+            ReadCapacityUnits: ${self:custom.tableThroughput}
+            WriteCapacityUnits: ${self:custom.tableThroughput}
+    userDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.table.userTable}
+        AttributeDefinitions:
+          -
+            AttributeName: userName
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: userName
+            KeyType: HASH
+        ProvisionedThroughput: 
+            ReadCapacityUnits: ${self:custom.tableThroughput}
+            WriteCapacityUnits: ${self:custom.tableThroughput}
+    panelDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.table.panelTable}
+        AttributeDefinitions:
+          -
+            AttributeName: deviceSerialNumber
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: deviceSerialNumber
+            KeyType: HASH
+        ProvisionedThroughput: 
+            ReadCapacityUnits: ${self:custom.tableThroughput}
+            WriteCapacityUnits: ${self:custom.tableThroughput}

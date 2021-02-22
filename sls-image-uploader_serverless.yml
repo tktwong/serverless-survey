@@ -1,0 +1,42 @@
+service:
+  name: amipure-image-uploader
+
+plugins:
+  - serverless-plugin-typescript # tsc and copy node_modules(--production) to .build
+  - serverless-offline # for test
+  - serverless-deployment-bucket # for creating new bucket
+  - serverless-layers
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-northeast-2
+  stage: ${opt:stage, 'dev'}
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    PROD_MODE: ${self:provider.stage}
+    BUCKET: ${self:service}-bucket-${self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Resource: 'arn:aws:s3:::${self:service}-bucket-${self:provider.stage}/*'
+      Action:
+        - s3:*
+
+  deploymentBucket:
+    name: ${self:service}-bucket-${self:provider.stage}
+
+  apiGateway:
+    binaryMediaTypes:
+      - 'multipart/form-data'
+
+functions:
+  Image:
+    handler: src/ImageHandler.imageHandler
+    memorySize: 256
+    timeout: 20
+    events:
+      - http:
+          method: post
+          path: /images
+          cors: true

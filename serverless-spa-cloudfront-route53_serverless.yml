@@ -1,0 +1,150 @@
+service: serverless-spa-route53
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  memorySize: 128
+  timeout: 1
+
+functions:
+
+resources:
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.hostedZoneName}
+        WebsiteConfiguration:
+          ErrorDocument: index.html
+          IndexDocument: index.html
+
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "StaticSite"
+                    },
+                    "/*"
+                  ]
+                ]
+
+    StaticSiteCert:
+      Type: AWS::CertificateManager::Certificate
+      Properties:
+        DomainName: ${self:custom.hostedZoneName}
+        DomainValidationOptions:
+        - DomainName: ${self:custom.hostedZoneName}
+          ValidationDomain: ${self:custom.hostedZoneName}
+
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName:
+                Fn::Join: [
+                  "", [
+                    { "Ref": "StaticSite" },
+                    ".s3.amazonaws.com"
+                  ]
+                ]
+              Id:
+                Ref: StaticSite
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+          Enabled: 'true'
+          Aliases:
+            - ${self:custom.hostedZoneName}
+          DefaultRootObject: index.html
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+            TargetOriginId:
+              Ref: StaticSite
+            ForwardedValues:
+              QueryString: 'false'
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+          ViewerCertificate:
+            AcmCertificateArn:
+              Ref: StaticSiteCert
+            SslSupportMethod: sni-only
+          ## Uncomment the following section in case you want to enable logging for CloudFront requests
+          # Logging:
+          #  IncludeCookies: 'false'
+          #   Bucket: mylogs.s3.amazonaws.com
+          #   Prefix: myprefix
+      DependsOn:
+        - StaticSiteS3BucketPolicy
+
+    DnsRecord:
+      Type: "AWS::Route53::RecordSet"
+      Properties:
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt:
+              - CloudFrontDistribution
+              - DomainName
+          HostedZoneId: ${self:custom.hostedZoneId}
+        HostedZoneName: ${self:custom.hostedZoneName}.
+        Name: ${self:custom.hostedZoneName}.
+        Type: 'A'
+
+  Outputs:
+    StaticSiteS3BucketName:
+      Value:
+        'Ref': StaticSite
+    StaticSiteS3BucketDomainName:
+      Value:
+        Fn::GetAtt:
+          - StaticSite
+          - DomainName
+    StaticSiteS3BucketWebsiteURL:
+      Value:
+        Fn::GetAtt:
+          - StaticSite
+          - WebsiteURL
+    CloudFrontDistribution:
+      Value:
+        Fn::GetAtt:
+          - CloudFrontDistribution
+          - DomainName
+
+plugins:
+  - serverless-sync-s3buckets
+  - serverless-s3-remover
+
+custom:
+  syncS3Buckets:
+    - bucketRef: StaticSite
+      localDir: dist
+  hostedZoneName: mumbaimob.com
+  hostedZoneId: Z2FDTNDATAQYW2 # cloudfront https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-route53-aliastarget.html#cfn-route53-aliastarget-hostedzoneid
+  aliasDNSName: s3-website-us-east-1.amazonaws.com # this is based on s3 bucket url
+  remover:
+    buckets:
+      - ${self:custom.hostedZoneName}

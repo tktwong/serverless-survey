@@ -1,0 +1,199 @@
+service: refactor-graph
+
+plugins:
+  - aws-amplify-serverless-plugin
+  - serverless-appsync-plugin
+  - serverless-webpack
+
+provider:
+  deploymentBucket:
+    name: ${file(../../config.yml):s3DeploymentBucket, 'refactor-deployment'}
+  name: aws
+  runtime: nodejs12.x
+  region: ${opt:region, 'us-west-2'}
+
+package:
+  individually: true
+
+functions:
+  graphql:
+    handler: handler.graphqlHandler
+    name: ${self:service}-${self:custom.stage}-graphql
+    role: GraphResolverRole
+    environment:
+      LAMBDA_DELETE_FILES: refactor-media-${self:custom.stage}-delete_files
+      LAMBDA_THUMBNAILS: refactor-media-${self:custom.stage}-thumbnails
+      TABLE_ATOMICVARS: ${cf:refactor-db-${self:custom.stage}.DynamoTableAtomicVars}
+      TABLE_REFACTOR: ${cf:refactor-db-${self:custom.stage}.DynamoTableRefactor}
+      USER_POOL_ID: ${cf:refactor-auth-${self:custom.stage}.UserPool}
+      UPLOAD_BUCKET: ${cf:refactor-storage-${self:custom.stage}.UploadBucket}
+    timeout: 30
+
+custom:
+  stage: ${opt:stage}
+
+  amplify:
+    # Graph types
+    - filename: ./src/types/schema.ts
+      type: appsync
+      maxDepth: 4
+
+          # Mobile clients
+    - filename: ./.serverless/amplify-android-awsconfiguration.json
+      type: native
+    - filename: ./.serverless/amplify-ios-awsconfiguration.json
+      type: native
+    - filename: ./.serverless/amplify-operations.graphql
+      type: graphql
+      maxDepth: 4
+    - filename: ./.serverless/amplify-schema.graphql
+      type: schema.json
+      maxDepth: 4
+
+  appSync:
+    name: refactor-graph-${self:custom.stage}
+
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+
+    logConfig:
+      loggingRoleArn:
+        Fn::GetAtt:
+          - AppSyncCloudwatchRole
+          - Arn
+      level: ALL
+
+    userPoolConfig:
+      awsRegion:
+        Ref: AWS::Region
+      defaultAction: ALLOW
+      playgroundClientId: ${cf:refactor-auth-${self:custom.stage}.UserPoolClientPlayground}
+      userPoolId: ${cf:refactor-auth-${self:custom.stage}.UserPool}
+
+    additionalAuthenticationProviders:
+      - authenticationType: API_KEY
+
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: DynamoTableRefactor
+        config:
+          tableName: ${cf:refactor-db-${self:custom.stage}.DynamoTableRefactor}
+          serviceRoleArn:
+            Fn::GetAtt:
+              - AppSyncRole
+              - Arn
+      - type: AWS_LAMBDA
+        name: LambdaResolver
+        config:
+          lambdaFunctionArn:
+            Fn::Join:
+              - ':'
+              - - arn:aws:lambda
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - function:${self:service}-${self:custom.stage}-graphql
+          serviceRoleArn:
+            Fn::GetAtt:
+              - GraphResolverRole
+              - Arn
+      - type: NONE
+        name: EmptyResolver
+
+    mappingTemplates:
+      # Queries
+      - dataSource: LambdaResolver
+        type: Query
+        field: getHabit
+        request: getHabit-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Query
+        field: getHabits
+        request: getHabits-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Query
+        field: getTask
+        request: getTask-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Query
+        field: getTasks
+        request: getTasks-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Query
+        field: getUser
+        request: getUser-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Query
+        field: getUsers
+        request: getUsers-request.vtl
+        response: json-response.vtl
+
+      # Mutations
+      - dataSource: LambdaResolver
+        type: Mutation
+        field: createHabit
+        request: createHabit-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Mutation
+        field: createTask
+        request: createTask-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Mutation
+        field: deleteHabit
+        request: deleteHabit-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Mutation
+        field: deleteTask
+        request: deleteTask-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Mutation
+        field: deleteUser
+        request: deleteUser-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Mutation
+        field: updateHabit
+        request: updateHabit-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Mutation
+        field: updateTask
+        request: updateTask-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Mutation
+        field: updateUser
+        request: updateUser-request.vtl
+        response: json-response.vtl
+
+      # Nested Resolvers
+      - dataSource: LambdaResolver
+        type: Habit
+        field: tasks
+        request: getTasks-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Habit
+        field: user
+        request: getUser-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: Task
+        field: habit
+        request: getHabit-request.vtl
+        response: json-response.vtl
+      - dataSource: LambdaResolver
+        type: User
+        field: habits
+        request: getHabits-request.vtl
+        response: json-response.vtl
+
+resources:
+  - ${file(resources/iam.yml)}

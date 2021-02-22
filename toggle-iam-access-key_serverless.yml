@@ -1,0 +1,65 @@
+service: toggle-iam-access-key
+
+frameworkVersion: ">=1.47.0 <2.0.0"
+
+custom:
+  bucket: alis-toggle-iam-access-key-${opt:stage, 'dev'}
+  pythonRequirements:
+    dockerizePip: ${self:custom.isCI.${env:CI}}
+    layer: true
+  isCI:
+    true: false
+    false: true
+
+plugins:
+  - serverless-python-requirements
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${opt:stage, 'dev'}
+  region: ap-northeast-1
+  environment:
+    SLACK_ACCESS_TOKENS: ${env:SLACK_ACCESS_TOKENS}
+    ACCEPTED_SLACK_USERS: ${env:ACCEPTED_SLACK_USERS}
+    AWS_IAM_USER_NAME: ${env:AWS_IAM_USER_NAME}
+    AWS_IAM_ACCESS_KEY_ID: ${env:AWS_IAM_ACCESS_KEY_ID}
+  layers:
+    - {Ref: PythonRequirementsLambdaLayer}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "iam:*"
+      Resource:
+        - 'Fn::Join':
+            - ':'
+            - - 'arn:aws:iam:'
+              - Ref: 'AWS::AccountId'
+              - 'user/${env:AWS_IAM_USER_NAME}'
+
+package:
+  individually: true
+  exclude:
+    - .git/**
+    - venv/**
+    - tmp.*
+    - .envrc*
+    - deploy.sh
+    - .python-version
+    - .git*
+    - package.json
+    - README.md
+
+functions:
+  EnableIamAccessKey:
+    handler: handlers/enable_iam_access_key.handler
+    events:
+      - http:
+          path: circleci/deploymentkey/enable
+          method: post
+  DisableIamAccessKey:
+    handler: handlers/disable_iam_access_key.handler
+    events:
+      - http:
+          path: circleci/deploymentkey/disable
+          method: post

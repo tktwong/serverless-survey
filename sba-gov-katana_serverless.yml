@@ -1,0 +1,76 @@
+frameworkVersion: '2'
+
+service: katana-sls
+enableLocalInstallationFallback: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage}
+  region: ${opt:region, 'us-east-1'}
+  vpc:
+    subnetIds: ${ssm:/${self:custom.ssm_prefix}/network/private_subnet_ids}
+    #securityGroupIds: []
+  apiGateway:
+    restApiId: ${ssm:/${self:custom.ssm_prefix}/${self:custom.ssm_apigw_katana_path}/apigw_id}
+    restApiRootResourceId: ${ssm:/${self:custom.ssm_prefix}/${self:custom.ssm_apigw_katana_path}/apigw_root_resource_id}
+  role: ${ssm:/${self:custom.ssm_prefix}/katana/lambda_role_arn}
+  environment: # Service-wide environment variables
+    NODE_ENV: ${self:custom.env.node_env, self:provider.stage}
+    GOOGLE_MAPS_API_KEY: ${ssm:${self:custom.env.account_type_uppercase}_GOOGLE_MAPS_API_KEY}
+    CONTENT_URL: ${self:custom.env.content_url}
+
+package:
+  artifact: workspace/katana-lambda.zip
+  excludeDevDependencies: false
+
+functions:
+  katana:
+    name: ${self:provider.stage}-katana-serverless
+    handler: index.handler
+    events:
+      - http: "ANY /"
+      - http: "ANY {proxy+}"
+custom:
+  config:
+    default:
+      node_env: mintDev
+      ssm_prefix: mint
+      ssm_apigw_katana_path: katana-dev/${self:provider.stage}
+      account_type: lower
+      account_type_uppercase: LOWER
+      dynamo_table_suffix: Integration
+      content_url: mint.ussba.io
+    mint:
+      account_type: lower
+      account_type_uppercase: LOWER
+      dynamo_table_suffix: Integration
+      content_url: mint.ussba.io
+    qa:
+      account_type: lower
+      account_type_uppercase: LOWER
+      dynamo_table_suffix: QualityAssurance
+      content_url: qa.ussba.io
+    venus:
+      account_type: lower
+      account_type_uppercase: LOWER
+      dynamo_table_suffix: Venus
+      content_url: venus.ussba.io
+    demo:
+      account_type: lower
+      account_type_uppercase: LOWER
+      dynamo_table_suffix: Demo
+      content_url: demo.ussba.io
+    staging:
+      account_type: upper
+      account_type_uppercase: UPPER
+      dynamo_table_suffix: Staging
+      content_url: staging.sba.gov
+    production:
+      account_type: upper
+      account_type_uppercase: UPPER
+      dynamo_table_suffix: Production
+      content_url: www.sba.gov
+  env: ${self:custom.config.${self:provider.stage}, self:custom.config.default}
+  ssm_prefix: ${self:custom.env.ssm_prefix, self:provider.stage}
+  ssm_apigw_katana_path: ${self:custom.env.ssm_apigw_katana_path, "katana"}

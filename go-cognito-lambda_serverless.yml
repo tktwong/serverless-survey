@@ -1,0 +1,195 @@
+service: go-cognito-lambda
+
+frameworkVersion: '>=2.0.0 <3.0.0'
+
+plugins:
+  - serverless-prune-plugin
+  - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: ${env:DEPLOY_STAGE}
+  region: ${env:REGION}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  logRetentionInDays: 3
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - cognito-identity:*
+        - cognito-idp:*
+        - cognito-sync:*
+      Resource:
+        - "arn:aws:cognito-idp:*"
+  environment:
+    DEPLOY_STAGE: ${env:DEPLOY_STAGE}
+    TARGET_USER_POOL_ID: ${env:TARGET_USER_POOL_ID}
+    REGION: ${env:REGION}
+    API_DOMAIN_NAME: ${env:API_DOMAIN_NAME}
+    CERTIFICATE_ARN: ${env:CERTIFICATE_ARN}
+  httpApi:
+    cors: true
+    authorizers:
+      adminJwtAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl: https://cognito-idp.${env:REGION}.amazonaws.com/${env:TARGET_USER_POOL_ID}
+        audience:
+          - ${env:NEXT_IDAAS_SERVER_CLIENT_ID}
+
+custom:
+  defaultStage: dev
+  profiles:
+    dev: nekochans-dev
+  prune:
+    automatic: true
+    number: 3
+  customDomain:
+    domainName: ${self:provider.environment.API_DOMAIN_NAME}
+    stage: ${self:provider.stage}
+    basePath: ""
+    certificateArn: ${self:provider.environment.CERTIFICATE_ARN}
+    createRoute53Record: true
+    endpointType: "regional"
+    securityPolicy: tls_1_2
+    apiType: http
+    autoDomain: true
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+functions:
+  customMessage:
+    handler: bin/message
+    events:
+      - cognitoUserPool:
+          pool: ${env:TRIGGER_USER_POOL_NAME}
+          trigger: CustomMessage
+          existing: true
+  defineAuthChallenge:
+    handler: bin/defineauthchallenge
+    events:
+      - cognitoUserPool:
+          pool: ${env:TRIGGER_USER_POOL_NAME}
+          trigger: DefineAuthChallenge
+          existing: true
+  createAuthChallenge:
+    handler: bin/createauthchallenge
+    events:
+      - cognitoUserPool:
+          pool: ${env:TRIGGER_USER_POOL_NAME}
+          trigger: CreateAuthChallenge
+          existing: true
+  verifyAuthChallenge:
+    handler: bin/verifyauthchallenge
+    events:
+      - cognitoUserPool:
+          pool: ${env:TRIGGER_USER_POOL_NAME}
+          trigger: VerifyAuthChallengeResponse
+          existing: true
+  changePassword:
+    handler: bin/changepassword
+    events:
+      - httpApi:
+          method: PATCH
+          path: /users/passwords
+          authorizer:
+            name: adminJwtAuthorizer
+            scopes:
+              - ${env:DEPLOY_STAGE}-cognito-admin-api.keitakn.de/admin
+  fetchCognitoUser:
+    handler: bin/fetchcognitouser
+    events:
+      - httpApi:
+          method: GET
+          path: /users/{cognitoSub}
+  signUp:
+    handler: bin/signup
+    events:
+      - httpApi:
+          method: POST
+          path: /signup
+  signUpResend:
+    handler: bin/signupresend
+    events:
+      - httpApi:
+          method: PATCH
+          path: /signup/resend
+  signUpConfirm:
+    handler: bin/signupconfirm
+    events:
+      - httpApi:
+          method: PATCH
+          path: /signup/confirm
+  signInPassword:
+    handler: bin/signinpassword
+    events:
+      - httpApi:
+          method: POST
+          path: /signin/password
+  passwordReset:
+    handler: bin/passwordreset
+    events:
+      - httpApi:
+          method: POST
+          path: /password/reset
+  passwordResetConfirm:
+    handler: bin/passwordresetconfirm
+    events:
+      - httpApi:
+          method: PATCH
+          path: /password/reset/confirm
+
+resources:
+  Resources:
+    OnCognitoCustomMessageInvokeLambdaPermission:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        Action: "lambda:InvokeFunction"
+        FunctionName:
+          Fn::GetAtt: [ "CustomMessageLambdaFunction", "Arn"]
+        Principal: "cognito-idp.amazonaws.com"
+        SourceArn:
+          Fn::Join: [ "", [ "arn:aws:cognito-idp", ":", Ref: "AWS::Region", ":", Ref: "AWS::AccountId", ":", "userpool/", "${env:TARGET_USER_POOL_ID}" ] ]
+    OnCognitoDefineAuthChallengeInvokeLambdaPermission:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        Action: "lambda:InvokeFunction"
+        FunctionName:
+          Fn::GetAtt: [ "DefineAuthChallengeLambdaFunction", "Arn"]
+        Principal: "cognito-idp.amazonaws.com"
+        SourceArn:
+          Fn::Join: [ "", [ "arn:aws:cognito-idp", ":", Ref: "AWS::Region", ":", Ref: "AWS::AccountId", ":", "userpool/", "${env:TARGET_USER_POOL_ID}" ] ]
+    OnCognitoCreateAuthChallengeInvokeLambdaPermission:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        Action: "lambda:InvokeFunction"
+        FunctionName:
+          Fn::GetAtt: [ "CreateAuthChallengeLambdaFunction", "Arn"]
+        Principal: "cognito-idp.amazonaws.com"
+        SourceArn:
+          Fn::Join: [ "", [ "arn:aws:cognito-idp", ":", Ref: "AWS::Region", ":", Ref: "AWS::AccountId", ":", "userpool/", "${env:TARGET_USER_POOL_ID}" ] ]
+    OnCognitoVerifyAuthChallengeInvokeLambdaPermission:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        Action: "lambda:InvokeFunction"
+        FunctionName:
+          Fn::GetAtt: [ "VerifyAuthChallengeLambdaFunction", "Arn"]
+        Principal: "cognito-idp.amazonaws.com"
+        SourceArn:
+          Fn::Join: [ "", [ "arn:aws:cognito-idp", ":", Ref: "AWS::Region", ":", Ref: "AWS::AccountId", ":", "userpool/", "${env:TARGET_USER_POOL_ID}" ] ]

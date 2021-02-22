@@ -1,0 +1,179 @@
+service: worktrackerbackend
+app: worktrackerbackend-app
+
+custom:
+  secret: ${env:WORK_TRACKER_DB_SECRET:}
+  host: ${env:WORK_TRACKER_DB_HOST:}
+  user: ${env:WORK_TRACKER_DB_USER:}
+  poolArn: ${env:WORK_TRACKER_POOL_ARN:}
+  poolId: ${env:WORK_TRACKER_POOL_ID:}
+  clientId: ${env:WORK_TRACKER_CLIENT_ID:}
+  warmup:
+    prewarm: true
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  environment:
+    WORK_TRACKER_DB_SECRET: ${self:custom.secret}
+    WORK_TRACKER_DB_HOST: ${self:custom.host}
+    WORK_TRACKER_DB_USER: ${self:custom.user}
+    WT_COGNITO_POOL_ID: "${self:custom.poolId}"
+    WT_COGNITO_CLIENT_ID: "${self:custom.clientId}"
+    WT_COGNITO_POOL_ARN: "${self:custom.poolArn}"
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "lambda:InvokeFunction"
+        - "cognito-identity:*"
+        - "cognito-idp:*"
+        - "cognito-sync:*"
+        - "iam:ListRoles"
+        - "iam:ListOpenIdConnectProviders"
+        - "sns:ListPlatformApplications"
+        - "logs:PutLogEvents"
+        - "ec2:CreateNetworkInterface"
+        - "ec2:DescribeNetworkInterfaces"
+        - "ec2:DeleteNetworkInterface"
+      Resource: "*"
+  stage: dev
+  region: us-east-1
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-stage-variables
+  - serverless-plugin-warmup
+
+functions:
+  postConfirmation:
+    handler: api/users/triggers.postConfirmation
+    events:
+      - cognitoUserPool:
+        pool: ${self:custom.poolId}
+        trigger: PostConfirmation
+  addUserToCompany:
+    handler: api/users/handler.addToCompany
+    warmup: true
+    events:
+      - http:
+          method: post
+          cors: true
+          path: /users
+        request:
+          body:
+            user: true
+            company: true
+  recordsByUser:
+    handler: api/records/handler.byUser
+    warmup: true
+    events:
+      - http:
+          method: get
+          cors: true
+          path: /records
+          request:
+            parameters:
+              querystrings:
+                userId: true
+  recordsByCompany:
+    handler: api/records/handler.byCompany
+    warmup: true
+    events:
+      - http:
+          method: get
+          cors: true
+          path: /records/{companyId}
+  createRecord:
+    handler: api/records/handler.create
+    warmup: true
+    events:
+      - http:
+          method: post
+          cors: true
+          path: /records
+          request:
+            body:
+              id: true
+              user: true
+              activity: true
+              company: false
+              startTime: true
+              endTime: true
+  updateRecord:
+    handler: api/records/handler.create
+    warmup: true
+    events:
+      - http:
+          method: put
+          cors: true
+          path: /records/{recordId}
+          request:
+            body:
+              id: true
+              activity: true
+              company: false
+              startTime: true
+              endTime: true
+  deleteRecord:
+    handler: api/records/handler.deleteRecord
+    warmup: true
+    events:
+      - http:
+          method: delete
+          cors: true
+          path: /records/{recordId}
+  listCompanies:
+    handler: api/companies/handler.list
+    warmup: true
+    events:
+      - http:
+          method: get
+          cors: true
+          path: /companies
+  createCompany:
+    handler: api/companies/handler.create
+    warmup: true
+    events:
+      - http:
+          method: post
+          cors: true
+          path: /companies
+          request:
+            body:
+              id: true
+              name: true
+              logoUri: false
+  listActivities:
+    handler: api/activities/handler.list
+    warmup: true
+    events:
+      - http:
+          method: get
+          cors: true
+          path: /activities
+  activitiesByUser:
+    handler: api/activities/handler.byUser
+    warmup: true
+    events:
+      - http:
+          method: get
+          cors: true
+          path: /activities/{userId}
+  activitiesByCompany:
+    handler: api/activities/handler/byCompany
+    events:
+      - http:
+          method: get
+          cors: true
+          path: /activities/company/{companyId}
+  createActivity:
+    handler: api/activities/handler.create
+    events:
+      - http:
+          method: post
+          cors: true
+          path: /activities
+          request:
+            body:
+              id: true
+              name: true

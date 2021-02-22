@@ -1,0 +1,67 @@
+service: fish
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: 'dev'
+  region: eu-west-1
+  environment:
+    FISH_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+functions:
+  putFish:
+    handler: api/fish/handler.putFish
+    memorySize: 128
+    description: Add a fish to the database
+    events:
+      - http: 
+          path: fish
+          method: post
+          cors: true
+  getAllFish:
+    handler: api/fish/handler.getAllFish
+    memorySize: 128
+    description: Get a list of every fish from the database
+    events:
+      - http: 
+          path: fish
+          method: get
+          cors: true
+  getFishById:
+    handler: api/fish/handler.getFishById
+    memorySize: 128
+    description: Get a fish from the database by specifying it's id
+    events:
+      - http:
+          path: fish/{id}
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    FishDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.FISH_TABLE}

@@ -1,0 +1,61 @@
+service: wedding-app
+
+frameworkVersion: ">=1.2.0 <2.0.0"
+
+plugins:
+  - serverless-s3-sync
+
+custom:
+  defaultStage: local
+  commonResourceService: wedding-app-resources
+  s3Bucket: ${self:service}-${self:provider.stage}
+  s3Sync:
+    - bucketName: ${self:custom.s3Bucket}
+      localDir: dist/
+      params:
+        - "*.html":
+            CacheControl: 'no-cache, no-store'
+        - "*.png":
+            CacheControl: 'public, max-age=31536000'
+        - "*.svg":
+            CacheControl: 'public, max-age=31536000'
+        - "*.ico":
+            CacheControl: 'public, max-age=31536000'
+        - "*.js":
+            CacheControl: 'public, max-age=31536000'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: ap-northeast-1
+
+resources:
+  Resources:
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3Bucket}
+        AccessControl: Private
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    S3BucketPolicy:
+      DependsOn:
+        - S3Bucket
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref S3Bucket
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS:
+                  Fn::Join:
+                    - " "
+                    - - "arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity"
+                      - Fn::ImportValue:
+                          Fn::Sub: ${self:custom.commonResourceService}-${self:provider.stage}-cloudFront-origin-access-identity
+              Action:
+                - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.s3Bucket}/*

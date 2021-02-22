@@ -1,0 +1,52 @@
+service: testing
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+
+  region: us-east-1
+  profile: default
+  stage: development
+
+  environment:
+    VALUES_TABLE: ${self:service}-${opt:stage, self:provider.stage}-values
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+       - dynamodb:Query
+       - dynamodb:Scan
+       - dynamodb:PutItem
+       - dynamodb:GetItem
+       - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.VALUES_TABLE}"
+    - Effect: Allow
+      Action:
+      - kms:Decrypt
+      Resource: "*"
+
+functions:
+  DoMath:
+    handler: source/GetValue.handler
+    events:
+      - http:
+          path: v1/value/{id}
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    VALUESTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.VALUES_TABLE}
+        AttributeDefinitions:
+          - AttributeName: oid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: oid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+      DeletionPolicy: Retain

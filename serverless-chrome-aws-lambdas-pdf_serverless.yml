@@ -1,0 +1,82 @@
+service: adata
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: pdf-cluster
+  region: us-east-1
+  environment:
+    # DEBUG: "*"
+    PAGE_LOAD_TIMEOUT: 30000
+    LOGGING: true
+    HOME: /var/task
+    LAMBDANAME: adata-pdf-cluster-magic
+    BUCKETNAME: ${self:custom.bucket-name}
+  iamRoleStatements: # Iam role for both lambdas
+    - Effect: "Allow"
+      Action:
+        - lambda:InvokeFunction
+      Resource: "arn:aws:lambda:us-east-1:460254217273:*:*" #gives the access to invoke a lambda
+    - Effect: "Allow"
+      Action:
+        - "*"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - "Ref": "S3Bucket" # Refers here to the s3bucket that will be created
+            - "/*"
+
+plugins:
+  - serverless-plugin-chrome
+  - serverless-webpack
+
+custom:
+  chrome:
+    flags:
+      - --window-size=1280,1696 # Letter size
+      - --hide-scrollbars
+  stage: dev
+  dev-region: us-east-1
+  bucket-name: pdf-cluster-store
+
+functions:
+  pdf:
+    description: Headless Chrome Serverless-framework PDF example
+    memorySize: 512
+    timeout: 30
+    handler: src/handlers/pdf.default
+    events:
+      - http:
+          path: pdf
+          method: get
+      - http:
+          path: pdf
+          method: post
+
+  magic:
+    description: Custom function for magic purposes
+    memorySize: 3008
+    timeout: 60
+    handler: src/handlers/custom-page.default
+    events:
+      - http:
+          path: magic
+          method: get
+
+resources:
+  Resources:
+    ApiGatewayRestApi:
+      Properties:
+        BinaryMediaTypes:
+          - "*/*"
+
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucket-name}
+        AccessControl: PublicRead # Makes the bucket public
+        LifecycleConfiguration:
+          Rules:
+            - ExpirationInDays: "1" # 1 expiration day lifecycle
+              Status: Enabled

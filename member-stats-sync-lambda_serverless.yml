@@ -1,0 +1,132 @@
+service: member-stats-dynamodb-es-sync 
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  stackName: serverless-member-stats-sync
+
+# you can add packaging information here
+package:
+  include:
+   - README.md
+   - index.js
+   - utils/**
+   - package.json
+   - node_modules/**
+  exclude:
+   - test_data/**
+   - test/**
+   - package-*.json
+   - serverless.yml
+   - docs/media/**
+
+# following are used for local env
+# plugins:
+#   - serverless-dynamodb-local
+#   - serverless-plugin-offline-dynamodb-stream
+#   - serverless-offline
+
+
+# custom:
+#   serverless-offline:
+#     dontPrintOutput: false
+#   dynamodb:
+#     stages:
+#       - local
+#     start:
+#       host: localhost
+#       port: 8000
+#       migrate: true
+#       noStart: true
+#   dynamodbStream:
+#     host: localhost
+#     port: 8000
+#     streams:
+#       - table: MemberStats_Private
+#         functions:
+#           - syncPrivate
+#       - table: MemberStats
+#         functions:
+#           - sync
+
+functions:
+  syncPrivate:
+    handler: index.handleSync
+    role: ${file(./config/${self:provider.stage}.json):LAMBDA_ROLE}
+    description: Function to sync Dynamo DB member stats to Elastic Search # The description of your function
+    timeout: 30
+    events:
+     - stream:
+        arn: ${file(./config/${self:provider.stage}.json):DB_STATS_PRIVATE_STREAM}
+        batchSize: 100
+        startingPosition: LATEST
+        enabled: true
+    environment:
+      ES_ENDPOINT: ${file(./config/${self:provider.stage}.json):ES_ENDPOINT}
+      ES_VERSION: ${file(./config/${self:provider.stage}.json):ES_VERSION}
+      ES_REGION: ${file(./config/${self:provider.stage}.json):ES_REGION}
+      ES_STATS_INDEX: ${file(./config/${self:provider.stage}.json):ES_STATS_INDEX}
+      ES_STATS_MAPPING: ${file(./config/${self:provider.stage}.json):ES_STATS_MAPPING}
+      IS_PRIVATE: 'true'
+      DB_STATS_PRIVATE_STREAM: ${file(./config/${self:provider.stage}.json):DB_STATS_PRIVATE_STREAM}
+  sync:
+    handler: index.handleSync
+    role: ${file(./config/${self:provider.stage}.json):LAMBDA_ROLE}
+    description: Function to sync Dynamo DB member stats to Elastic Search # The description of your function
+    timeout: 30
+    events:
+     - stream:
+        arn: ${file(./config/${self:provider.stage}.json):DB_STATS_PUBLIC_STREAM}
+        batchSize: 100
+        startingPosition: LATEST
+        enabled: true
+    environment:
+      ES_ENDPOINT: ${file(./config/${self:provider.stage}.json):ES_ENDPOINT}
+      ES_VERSION: ${file(./config/${self:provider.stage}.json):ES_VERSION}
+      ES_REGION: ${file(./config/${self:provider.stage}.json):ES_REGION}
+      ES_STATS_INDEX: ${file(./config/${self:provider.stage}.json):ES_STATS_INDEX}
+      ES_STATS_MAPPING: ${file(./config/${self:provider.stage}.json):ES_STATS_MAPPING}
+      DB_STATS_PUBLIC_STREAM: ${file(./config/${self:provider.stage}.json):DB_STATS_PUBLIC_STREAM}
+      
+# following are used for local env
+# resources:
+#   Resources:
+#     MemberStatsTable:
+#       Type: 'AWS::DynamoDB::Table'
+#       Properties:
+#         AttributeDefinitions:
+#           - AttributeName: userId
+#             AttributeType: N
+#         KeySchema:
+#           - AttributeName: userId
+#             KeyType: HASH
+#         TableName: MemberStats
+#         ProvisionedThroughput:
+#           ReadCapacityUnits: 5
+#           WriteCapacityUnits: 6
+#         StreamSpecification:
+#           StreamEnabled: true
+#           StreamViewType: NEW_AND_OLD_IMAGES
+#     MemberStatsPrivateTable:
+#       Type: 'AWS::DynamoDB::Table'
+#       Properties:
+#         AttributeDefinitions:
+#           - AttributeName: userId
+#             AttributeType: N
+#           - AttributeName: groupId
+#             AttributeType: N
+#         KeySchema:
+#           - AttributeName: userId
+#             KeyType: HASH
+#           - AttributeName: groupId
+#             KeyType: RANGE
+#         TableName: MemberStats_Private
+#         ProvisionedThroughput:
+#           ReadCapacityUnits: 5
+#           WriteCapacityUnits: 6
+#         StreamSpecification:
+#           StreamEnabled: true
+#           StreamViewType: NEW_AND_OLD_IMAGES

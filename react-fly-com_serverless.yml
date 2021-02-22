@@ -1,0 +1,207 @@
+service: sis-flycomm
+
+plugins:
+#  - serverless-plugin-optimize
+custom:
+  enable_optimize:
+    local: false
+package:
+#  individually: true
+  exclude:
+    - node_modules/**
+    - client/**
+    - my-artifacts/**
+    - '!node_modules/uuid/**'
+    - '!node_modules/bluebird/**'
+    - '!node_modules/bson/**'
+    - '!node_modules/kareem/**'
+    - '!node_modules/require_optional/**'
+    - '!node_modules/mpath/**'
+    - '!node_modules/mquery/**'
+    - '!node_modules/ms/**'
+    - '!node_modules/sift/**'
+    - '!node_modules/safe-buffer/**'
+    - '!node_modules/regexp-clone/**'
+    - '!node_modules/sliced/**'
+    - '!node_modules/mongoose/**'
+    - '!node_modules/mongodb/**'
+    - '!node_modules/async/**'
+    - '!node_modules/semver/**'
+    - '!node_modules/resolve-from/**'
+    - '!node_modules/lodash/**'
+    - '!node_modules/buffer/**'
+    - '!node_modules/long/**'
+    - '!node_modules/debug/**'
+    - '!node_modules/saslprep/**'
+    - '!node_modules/mongodb-core/**'
+    - '!node_modules/mongoose-legacy-pluralize/**'
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-1
+  stage: ${opt:stage, 'dev'}
+  environment:
+    REGION: ${self:provider.region}
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    MONGODB_URI: mongodb+srv://database-admin:${file(./secret.json):mongo.password}@flycomm-sis-aske2.mongodb.net/flycomm-sis?retryWrites=true
+    MONGODB_TRANSLATIONS: translation
+    MONGODB_SITES: flycomm-sis
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: "Allow"
+      Action:
+      - "s3:*"
+      Resource: { "Fn::Join": ["", ["arn:aws:s3:::sis-flycomm-images", { "Ref": "ServerlessDeploymentBucket"} ] ] }
+
+functions:
+  site-create:
+    handler: sites/create.create
+    optimize: ${self:custom.enable_optimize.${opt:stage,'dev'}, 'true'}
+    events:
+      - http:
+         path: sites
+         method: post
+         cors: true
+#         authorizer:
+#           type: COGNITO_USER_POOLS
+#           authorizerId:
+#             Ref: ApiGatewayAuthorizer
+  site-list:
+    handler: sites/list.list
+    events:
+    - http:
+        path: sites
+        method: get
+        cors: true
+#        authorizer:
+#          type: COGNITO_USER_POOLS
+#          authorizerId:
+#            Ref: ApiGatewayAuthorizer
+    timeout: 60
+  locations-list:
+    handler: transformation/locations.list
+    events:
+    - http:
+        path: locations
+        method: get
+        cors: true
+#        authorizer:
+#          type: COGNITO_USER_POOLS
+#          authorizerId:
+#            Ref: ApiGatewayAuthorizer
+    timeout: 60
+  translations-list:
+    handler: transformation/translations.list
+    events:
+    - http:
+        path: translations
+        method: get
+        cors: true
+#        authorizer:
+#          type: COGNITO_USER_POOLS
+#          authorizerId:
+#            Ref: ApiGatewayAuthorizer
+    timeout: 60
+  report-create:
+    handler: reports/create.create
+    events:
+    - http:
+        path: sites/{id}/reports
+        method: post
+        cors: true
+#        authorizer:
+#          type: COGNITO_USER_POOLS
+#          authorizerId:
+#            Ref: ApiGatewayAuthorizer
+  report-list:
+    handler: reports/list.list
+    events:
+    - http:
+        path: reports
+        method: get
+        cors: true
+#        authorizer:
+#          type: COGNITO_USER_POOLS
+#          authorizerId:
+#            Ref: ApiGatewayAuthorizer
+  upload-image:
+    handler: images/image.site
+    optimize: ${self:custom.enable_optimize.${opt:stage,'dev'}, 'true'}
+    timeout: 60
+
+resources:
+  Resources:
+#    TodosDynamoDbTable:
+#      Type: 'AWS::DynamoDB::Table'
+#      DeletionPolicy: Retain
+#      Properties:
+#        AttributeDefinitions:
+#        -
+#          AttributeName: id
+#          AttributeType: S
+#        KeySchema:
+#        -
+#          AttributeName: id
+#          KeyType: HASH
+#        ProvisionedThroughput:
+#          ReadCapacityUnits: 1
+#          WriteCapacityUnits: 1
+#        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+#    GatewayResponseDefault4XX:
+#      Type: 'AWS::ApiGateway::GatewayResponse'
+#      Properties:
+#        ResponseParameters:
+#          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+#          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+#        ResponseType: DEFAULT_4XX
+#        RestApiId:
+#          Ref: 'ApiGatewayRestApi'
+    SisUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        MfaConfiguration: OFF
+        UserPoolName: flycomm-sis
+        UsernameAttributes:
+        - email
+        AutoVerifiedAttributes:
+        - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: False
+            RequireNumbers: True
+            RequireSymbols: False
+            RequireUppercase: True
+    SisUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: flycomm-sis-client
+        GenerateSecret: False
+        UserPoolId:
+          Ref: SisUserPool
+    ApiGatewayAuthorizer:
+      DependsOn:
+      - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: cognito-authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+        - Fn::GetAtt: [SisUserPool, Arn]

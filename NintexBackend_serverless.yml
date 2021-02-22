@@ -1,0 +1,617 @@
+service: nintex-service
+
+plugins:
+  - serverless-pseudo-parameters # Read the region and accout id
+  - serverless-iam-roles-per-function # Set up IAM role for each function
+  - serverless-plugin-tracing # Integrate the X-Ray
+  - serverless-plugin-canary-deployments
+  - serverless-plugin-aws-alerts # Automatically generate alerts (Could be used for stopping and rolling back a canary deployment)
+  - serverless-prune-plugin
+  - serverless-plugin-split-stacks # Split the resources to different CloudFormation to get ride of the 200 resources limitation
+
+custom: # stage and logLevel for log function
+  stage: ${opt:stage, self:provider.stage} # use stage or get if from the provider.stage. The second paramter is default
+  logLevel:
+    prod: WARN
+    default: DEBUG
+  serverless-iam-roles-per-function:
+    defaultInherit: true # All function will inherit from the provider's IAM role.
+  prune:
+    automatic: true
+    number: 10
+  splitStacks:
+    perFunction: false
+    perType: true
+  # Use the serverless-plugin-aws-alerts to generate alarms in order to tragge a roll back for a canary deployment
+  # alerts:
+  #   stages:
+  #     - production
+  #     - staging
+  #     - dev
+  # alarms:
+  #   - functionThrottles
+  #   - functionErrors
+  # dashboards: false
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-west-2
+  profile: nintex
+  tracing: true # Use the serverless-plugin-tracing plugin to enable the X-Ray
+  environment:
+    log_level: ${self:custom.logLevel.${self:custom.stage}, self:custom.logLevel.default} # The variable for the log function
+    STAGE: ${self:custom.stage} # For DEFAULT_CONTEXT in log.js
+    FUNCTION_SHIELD_TOKEN: ${ssm:/nintex/${self:custom.stage}/function_shield_token} # For using the Function Shield
+    NWC_AUTO_FETCH_IMPORT_KEY: ${ssm:/nintex/${self:custom.stage}/nwc_auto_fetch-import_key} # For using the import api
+    NWC_AUTO_MONITOR_IMPORT_KEY: ${ssm:/nintex/${self:custom.stage}/nwc_auto_monitor_import_key} # For using the import api
+    NWCWORKFLOW_TABLE: NWCWorkflow
+    OFFICEWORKFLOW_TABLE: OfficeWorkflow
+    WORKFLOWS_TABLE: Workflows
+    ACTIONS_TABLE: Actions
+    TAGS_TABLE: Tags
+    INSTANCES_TABLE: Instances
+    NWCKEYS_TABLE: NWCKeys
+    OFFICEKEYS_TABLE: OfficeKeys
+    NWC_BASE_URL: https://us.nintex.io/workflows/v1/designs/
+    NWC_IMPORT_URL: https://us.nintex.io/workflows/v1/designs/import
+  iamRoleStatements:
+    - Effect: Allow
+      Action: cloudwatch:PutMetricData
+      Resource: '*'
+    - Effect: Allow # Give the permission to operate the X-Ray 
+      Action: 
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: '*'
+    - Effect: Allow # Give the permission to deploy (For using canary deployment plugin)
+      Action:
+        - codedeploy:*
+      Resource:
+        - '*'
+    # Give the function permission to read paramters from the EC2 Parameter Store
+    - Effect: Allow
+      Action: ssm:GetParameters*
+      Resource: arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/nintex/${self:custom.stage}/*
+    
+    #  # Give the function permission to use layers (Do not really need it)
+    # - Effect: Allow
+    #   Action: lambda:GetLayerVersion
+    #   Resource: '*'
+
+package:
+  exclude:
+    - coverage/**
+    - __tests__/**
+    - build*
+    - Information.txt
+    - Database.sql
+    - README.md
+    - powershell/**
+
+functions:
+  # Did not follow the Rest rule to use a get request since the api could get
+  # several hundreds of 37 bytes long ids from the front end.
+  # The Lambda function has a limitation for any synchoronous call (6MB payload). But it should be large enough for this.
+  fetch-nwc-workflows:
+    handler: functions/fetch-nwc-workflows.handler
+    events:
+      - http:
+          path: /nwcworkflows
+          method: post
+          cors: true
+    memorySize: 256
+    environment:
+      async_metrics: true # Use this variable to control whether send the metrics to CloudWatch Async
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  add-nwc-workflows-score:
+    handler: functions/add-nwc-workflows-health-score.handler
+    events:
+      - http:
+          path: /nwcworkflow
+          method: post
+          cors: true
+    memorySize: 256
+    environment:
+      async_metrics: true
+      WORKFLOW_BATCH_NUM: 10
+      MESSAGE_DELAY_SECOND: 20
+      FETCH_HEALTH_SCORE_SF: arn:aws:states:#{AWS::Region}:#{AWS::AccountId}:stateMachine:Waitstate
+    iamRoleStatements:
+      # Give the function permission to start a step function
+      - Effect: Allow
+        Action: states:StartExecution
+        Resource: arn:aws:states:#{AWS::Region}:#{AWS::AccountId}:stateMachine:Waitstate
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-nwc-health-score:
+    handler: functions/fetch-nwc-health-score-sf.handler
+    memorySize: 256
+    timeout: 40
+    environment:
+      async_metrics: true
+      NWC_LIST_WORKFLOWS_API: https://us.nintex.io/workflows/v1/designs
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  add-office-workflows:
+    handler: functions/add-office-workflows.handler
+    events:
+      - http:
+          path: /officeworkflows
+          method: post
+          cors: true
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  update-department:
+    handler: functions/update-department.handler
+    events:
+      - http:
+          path: /department
+          method: put
+          cors: true
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  # Start functions for version 2
+  add-workflows:
+    handler: functions/add-workflows.handler
+    events:
+      - http:
+          path: /workflow
+          method: post
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    timeout: 20
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  add-instances:
+    handler: functions/add-instances.handler
+    events:
+      - http:
+          path: /instance
+          method: post
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    timeout: 20
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  add-actions:
+    handler: functions/add-actions.handler
+    events:
+      - http:
+          path: /action
+          method: post
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    timeout: 20
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-workflow-count:
+    handler: functions/fetch-workflow-count.handler
+    events:
+      - http:
+          path: /workflow/count
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-instance-count:
+    handler: functions/fetch-instance-count.handler
+    events:
+      - http:
+          path: /instance/count
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-action-publisher-count:
+    handler: functions/fetch-action-publisher-count.handler
+    events:
+      - http:
+          path: /action/publisher/count
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-instance-status:
+    handler: functions/fetch-instance-status.handler
+    events:
+      - http:
+          path: /instance/status
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-instance-status-bytime:
+    handler: functions/fetch-instance-status-bytime.handler
+    events:
+      - http:
+          path: /instance/status/time
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-workflow-location-count:
+    handler: functions/fetch-workflow-location-count.handler
+    events:
+      - http:
+          path: /workflow/location/count
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-top-publishers-count:
+    handler: functions/fetch-top-publishers-count.handler
+    events:
+      - http:
+          path: /action/topPublishers/count
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-action-use-count:
+    handler: functions/fetch-action-use-count.handler
+    events:
+      - http:
+          path: /action/use/count
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-action-name-count:
+    handler: functions/fetch-action-name-count.handler
+    events:
+      - http:
+          path: /action/name/count
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-workflows-by-user:
+    handler: functions/fetch-workflows-by-user.handler
+    events:
+      - http:
+          path: /workflow/byUser
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    timeout: 20
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  fetch-tags:
+    handler: functions/fetch-tags.handler
+    events:
+      - http:
+          path: /tag
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  update-workflow-tags:
+    handler: functions/update-workflow-tags.handler
+    events:
+      - http:
+          path: /workflow/tags
+          method: put
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+      
+  add-tag:
+    handler: functions/add-tag.handler
+    events:
+      - http:
+          path: /tag
+          method: post
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+      
+  fetch-nwckeys:
+    handler: functions/fetch-nwckeys.handler
+    events:
+      - http:
+          path: /nwckey
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  add-nwckey:
+    handler: functions/add-nwckey.handler
+    events:
+      - http:
+          path: /nwckey
+          method: post
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  delete-nwckey:
+    handler: functions/delete-nwckey.handler
+    events:
+      - http:
+          path: /nwckey
+          method: delete
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+      
+  fetch-officekeys:
+    handler: functions/fetch-officekeys.handler
+    events:
+      - http:
+          path: /officekey
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+  
+  add-officekey:
+    handler: functions/add-officekey.handler
+    events:
+      - http:
+          path: /officekey
+          method: post
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  delete-officekey:
+    handler: functions/delete-officekey.handler
+    events:
+      - http:
+          path: /officekey
+          method: delete
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  add-nwc-workflows:
+    handler: functions/add-nwc-workflows.handler
+    events:
+      - http:
+          path: /nwcworkflows
+          method: post
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    timeout: 180
+    environment:
+      async_metrics: true
+      EXPORT_IMPORT_SF: arn:aws:states:#{AWS::Region}:#{AWS::AccountId}:stateMachine:NWC_ExportDeactiveImportAddToDatabase
+      DELAY_SECOND: 20
+      LIMIT_BATCH_NUMBER: 10
+      BATCH_NUMBER: 10
+    iamRoleStatements:
+      - Effect: Allow
+        Action: states:StartExecution
+        Resource: arn:aws:states:#{AWS::Region}:#{AWS::AccountId}:stateMachine:NWC_ExportDeactiveImportAddToDatabase
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  add-nwc-workflows-sf:
+    handler: functions/add-nwc-workflows-sf.handler
+    memorySize: 256
+    timeout: 180
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  update-nwcworkflow-active:
+    handler: functions/update-nwcworkflow-active.handler
+    events:
+      - http:
+          path: /nwcworkflow/active
+          method: put
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  update-nwcworkflow-monitor:
+    handler: functions/update-nwcworkflow-monitor.handler
+    events:
+      - http:
+          path: /nwcworkflow/monitor
+          method: put
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  import-monitored-workflows:
+    handler: functions/import-monitored-workflows.handler
+    events:
+      - http:
+          path: /nwcworkflow/import
+          method: post
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    timeout: 30
+    environment:
+      async_metrics: true
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  email-notification:
+    handler: functions/email-notification.handler
+    events:
+      - http:
+          path: /emailNotification
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+    memorySize: 256
+    environment:
+      async_metrics: true
+      NOTIFICATION_EMAIL_ADDRESS: ${ssm:/nintex/${self:custom.stage}/notification_email_address}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: ses:SendEmail
+        Resource: '*'
+      - Effect: Allow
+        Action: ses:SendRawEmail
+        Resource: '*'
+    layers:
+      - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}
+
+  # add-nwc-workflows-expkeys:
+  #   handler: functions/add-nwc-workflows-expkeys.handler
+  #   events:
+  #     - http:
+  #         path: /nwcworkflows/exportedkeys
+  #         method: post
+  #         cors: true
+  #         authorizer:
+  #           arn: arn:aws:cognito-idp:#{AWS::Region}:#{AWS::AccountId}:userpool/${ssm:/nintex/${self:custom.stage}/cognito_user_pool_id}
+  #   memorySize: 256
+  #   timeout: 180
+  #   environment:
+  #     async_metrics: true
+  #   layers:
+  #     - ${cf:lambda-layers-dev.NintexDependenciesLayerExport}

@@ -1,0 +1,69 @@
+service: serverless-state-machine
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - states:startExecution
+      Resource: "*"
+
+
+functions:
+  StateMachineTrigger:
+    handler: handler.upload
+    events:
+      - s3:
+          bucket: ${self:service}-${self:provider.stage}-upload-bucket
+          event: s3:ObjectCreated:*
+    environment:
+      MY_STATE_MACHINE_ARN: ${self:resources.Outputs.ServerlessStateMachine.Value}          
+    iamRoleStatements:
+      - Effect: "Allow"        
+        Action:
+          - states:*
+        Resource: "*"
+
+stepFunctions:
+  stateMachines:
+    ServerlessStateMachine:
+      id: ServerlessStateMachine
+      definition:
+        StartAt: ValidateImage
+        States:
+          ValidateImage:
+            Type: Pass
+            Result: "Valid"
+            Next: GenerateThumbnail
+          GenerateThumbnail:
+            Type: Pass
+            Result: "Thumbnail created"
+            Next: NotifyUser
+          NotifyUser:
+            Type: Pass
+            Result: "Notification sent"
+            End: true
+
+resources:
+  Outputs:
+    ServerlessStateMachine:
+      Description: The ARN of the example state machine
+      Value:
+        Ref: ServerlessStateMachine            
+
+
+plugins:
+  - serverless-step-functions
+  - serverless-iam-roles-per-function
+
+package:
+  individually: true
+  exclude:
+    - '**/*'
+  include:
+    - handler.js

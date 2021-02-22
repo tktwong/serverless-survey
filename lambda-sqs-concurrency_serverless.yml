@@ -1,0 +1,48 @@
+service: lambda-sqs-concurrency
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+        - sqs:SendMessageBatch
+      Resource:
+        - !GetAtt MySqsQueue.Arn
+
+functions:
+  generator:
+    handler: handler.generate
+    timeout: 90
+    memorySize: 1024
+    environment:
+      QUEUE_URL: !Ref MySqsQueue
+  processor:
+    handler: handler.process
+    reservedConcurrency: 10
+    memorySize: 128
+    timeout: 5
+    events:
+      - sqs: 
+          arn: !GetAtt MySqsQueue.Arn
+          batchSize: 1
+
+
+resources:
+  Resources:
+    MySqsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-Queue
+        ReceiveMessageWaitTimeSeconds: 20
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+          maxReceiveCount: 3  # Times a failed message gets put back in queue before going to DLQ  
+        VisibilityTimeout: 60 # Ensure this is larger than function timeout
+    DeadLetterQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:service}-DLQ

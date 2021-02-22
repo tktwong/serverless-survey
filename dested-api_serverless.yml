@@ -1,0 +1,79 @@
+#org: iamdested
+#app: destedapi
+service: destedapi
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-domain-manager
+  - offline-invalidate
+
+custom:
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    includeModules: true
+    packager: 'yarn'
+  serverless-offline:
+    host: 0.0.0.0
+    noPrependStageInUrl: true
+    httpPort: 3803
+  customDomain:
+    rest:
+      domainName: api.dested.com
+      basePath: ''
+      stage: ${self:provider.stage}
+      createRoute53Record: true
+      endpointType: 'regional'
+      securityPolicy: tls_1_2
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 512
+  stage: ${opt:stage, 'dev'}
+  timeout: 29
+  region: us-west-2
+  logRetentionInDays: 7
+  environment:
+    ENV: ${opt:stage, 'dev'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+        - ec2:CreateNetworkInterface
+        - ec2:DescribeNetworkInterfaces
+        - ec2:DeleteNetworkInterface
+        - logs:CreateLogGroup
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - kms:Decrypt
+        - ssm:GetParameters
+        - logs:PutLogEvents
+        - ssm:GetParameter
+      Resource:
+        - arn:aws:logs:*:*:*
+        - arn:aws:execute-api:us-west-2:*:*/${opt:stage, 'dev'}/*
+        - arn:aws:ssm:us-west-2:*:parameter/kms-dested-${opt:stage, 'dev'}/*
+        - arn:aws:kms:us-west-2:*:key/56de06ae-1c8b-44bd-adb0-644e7404d2a2
+
+functions:
+  all:
+    handler: handler.api
+    events:
+      - http:
+          path: /
+          method: any
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - authorization
+      - http:
+          path: /{any+}
+          method: any
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - authorization

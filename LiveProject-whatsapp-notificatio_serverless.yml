@@ -1,0 +1,95 @@
+service: whatsapppush
+# stage is based on what is passed in
+custom:
+  stage: ${opt:stage, self.provider.stage}
+  templatesTableName: Templates
+  # set the table name here so we can use it while testing locally
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  versionFunctions: false # Disable function versioning, default true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [TemplatesTable, Arn]
+
+  # Define environment global to this service
+  environment:
+    DDB_TEMPLATES_TABLE_NAME: ${self:custom.templatesTableName}
+
+functions:
+  CreateTemplates:
+    handler: handlers/template.create
+    description: Function to handle business logic to create templates
+    # HTTP events to trigger CreateTemplates lambda function
+    events:
+      - http:
+          path: templates
+          method: post
+          cors: true
+  ListTemplates:
+    handler: handlers/template.list
+    description: Function to handle business logic to get all templates
+    # HTTP events to trigger ListTemplates lambda function
+    events:
+      - http:
+          path: templates/{user_id}
+          method: get
+          cors: true
+  UpdateTemplates:
+    handler: handlers/template.update
+    description: Function to handle business logic to update templates
+    # HTTP events to trigger UpdateTemplates lambda function
+    events:
+      - http:
+          path: templates/{user_id}/{template_id}
+          method: put
+          cors: true
+  DeleteTemplates:
+    handler: handlers/template.delete
+    description: Function to handle business logic to delete templates
+    # HTTP events to trigger DeleteTemplates lambda function
+    events:
+      - http:
+          path: templates/{user_id}/{template_id}
+          method: delete
+          cors: true
+  DetailsTemplates:
+    handler: handlers/template.details
+    description: Function to handle business logic to get template details
+    # HTTP events to trigger DetailsTemplates lambda function
+    events:
+      - http:
+          path: templates/{user_id}/{template_id}
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    TemplatesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.templatesTableName}
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: template_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+          - AttributeName: template_id
+            KeyType: RANGE
+        # Set the capacity to auto-scale
+        BillingMode: PAY_PER_REQUEST

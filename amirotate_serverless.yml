@@ -1,0 +1,51 @@
+service: amirotate
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ${env:AWS_REGION}
+  timeout: 300
+  memorySize: 256
+  environment:
+    tagKey: amirotate:default
+    sleepBeforeEach: "100"
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+    - ec2:CreateImage
+    - ec2:CreateTags
+    - ec2:DeleteSnapshot
+    - ec2:DeregisterImage
+    - ec2:DescribeImages
+    - ec2:DescribeInstances
+    - ec2:DescribeSnapshots
+    - ec2:DescribeTags
+    Resource: "*"
+plugins:
+- serverless-webpack
+custom:
+  webpackIncludeModules: true
+functions:
+  create:
+    handler: lambda/create.default
+    events:
+    - schedule:
+        rate: cron(0 0 ? * * *)
+        # input:
+        #   tagKey: amirotate:daily # You can override tag key here
+  delete:
+    handler: lambda/delete.default
+    events:
+    - schedule:
+        rate: cron(0 1 ? * * *)
+    environment:
+      sleepBeforeDeleteSnapshots: "500"
+resources:
+  Resources:
+    CreateLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "60"
+    DeleteLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "60"

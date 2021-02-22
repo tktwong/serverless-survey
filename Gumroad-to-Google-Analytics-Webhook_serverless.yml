@@ -1,0 +1,122 @@
+
+service: GR-Webhook
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: prod
+  region: us-west-1
+  logRetentionInDays: 120
+  versionFunctions: true
+  tags:
+    deployment: serverless.com
+    project: GR-Webhook
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+        - dynamodb:GetShardIterator
+        - dynamodb:GetRecords
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:${env:AWS_ACCOUNT_ID}:table/*"
+
+functions:
+  catch-GR-webhook:
+    handler: handlers/catch_GR_webhook.lambda_handler
+    timeout: 10
+    environment:
+      SECRET_KEY: ${env:SECRET_KEY}
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      GMT_ADJUSTMENT: ${env:GMT_ADJUSTMENT}
+      GA_VIEW_ID: ${env:GA_VIEW_ID}
+      GA_KEYS: ${env:GA_KEYS}
+    events:
+      - http:
+          path: /webhook
+          method: post
+    layers:
+      - arn:aws:lambda:us-west-1:${env:AWS_ACCOUNT_ID}:layer:Monitoring:1
+      - arn:aws:lambda:us-west-1:${env:AWS_ACCOUNT_ID}:layer:Requests-BS4:12
+
+
+resources:
+  Resources:
+    GRWebhookData:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: GRWebhookData
+        BillingMode: PAY_PER_REQUEST
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S  # String
+          - AttributeName: timestamp
+            AttributeType: N
+          - AttributeName: value
+            AttributeType: N
+          - AttributeName: offer_code
+            AttributeType: S
+          - AttributeName: country
+            AttributeType: S
+          - AttributeName: refunded
+            AttributeType: N
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH   # partition key
+          - AttributeName: timestamp
+            KeyType: RANGE   # sort key
+        GlobalSecondaryIndexes:
+        - IndexName: valueIndex
+          KeySchema:
+          - AttributeName: value
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+          Projection:
+           ProjectionType: "ALL"
+        - IndexName: couponIndex
+          KeySchema:
+          - AttributeName: offer_code
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+          Projection:
+           ProjectionType: "ALL"
+        - IndexName: locationIndex
+          KeySchema:
+          - AttributeName: country
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+          Projection:
+           ProjectionType: "ALL"
+        - IndexName: refundIndex
+          KeySchema:
+          - AttributeName: refunded
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+          Projection:
+            ProjectionType: "ALL"
+
+
+# Ensures env vars are set
+custom:
+  scripts:
+    commands:
+      hello: This breaks the deploy if env vars aren't set. ${env:GMT_ADJUSTMENT}, ${env:GA_VIEW_ID}, ${env:GA_KEYS}, ${env:SECRET_KEY}, ${env:SENTRY_DSN}
+
+package:
+  exclude:
+    - .git/**
+    - .terraform/**

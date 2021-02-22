@@ -1,0 +1,50 @@
+service: lambdaChromePuptr
+
+custom:
+  # AWS S3 bucket name where captured screen-shots will be uploaded. Must "MODIFY" this value
+  scrnshotsBucket: lambda.chrome.puptr.screenshots
+
+provider:
+  name: aws
+  region: us-east-1 # AWS region to be used
+  versionFunctions: false
+  runtime: nodejs12.x # Node.js version for Lambda
+  memorySize: 2048
+  timeout: 30
+  iamRoleStatements: # allow lambda to put in AWS S3
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource: arn:aws:s3:::${self:custom.scrnshotsBucket}/*
+  
+functions: 
+  takescreenshot: # lambda function name
+    handler: src/index.handler
+    # https://github.com/shelfio/chrome-aws-lambda-layer. Ensure "layer region" matches with your AWS region
+    layers:
+      - arn:aws:lambda:us-east-1:764866452798:layer:chrome-aws-lambda:10 
+    environment:
+      S3_REGION: ${self:provider.region}
+      S3_BUCKET: ${self:custom.scrnshotsBucket}
+
+resources:
+  Resources:
+    screenshotsBucket: # create S3 bucket
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Delete
+      Properties:
+        BucketName: ${self:custom.scrnshotsBucket}
+        AccessControl: Private
+    screenshotsBucketPolicy: # create policy and attach with S3 bucket
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Principal: "*"
+              Resource: arn:aws:s3:::${self:custom.scrnshotsBucket}/*
+        Bucket:
+          Ref: screenshotsBucket

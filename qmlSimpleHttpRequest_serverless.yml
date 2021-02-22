@@ -1,0 +1,96 @@
+# Welcome to Serverless!
+service: simple-httprequest
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+
+# you can overwrite defaults here
+  stage: dev
+  region: us-west-2
+  profile: serverless
+
+# Dynamodb IAM Role 
+  iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - dynamodb:Query
+         - dynamodb:Scan
+         - dynamodb:GetItem
+         - dynamodb:PutItem
+         - dynamodb:DeleteItem
+       Resource: "*"
+
+# environment variables
+  environment:
+    USERS_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+
+#functions
+functions:
+  usersSubmission:
+    handler: users-submit.submit
+    memorySize: 128
+    description: Submit users information.
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+
+  listuserss:
+    handler: users-listall.listall
+    memorySize: 128
+    description: List all users
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+
+  listusersbyid:
+    handler: users-listById.getuser
+    memorySize: 128
+    description: List one user by userid
+    events:
+      - http:
+          path: users/{id}
+          method: get
+          cors: true
+
+  deleteusersbyid:
+    handler: users-delete.deleteuser
+    memorySize: 128
+    description: Delete one users by usersid
+    events:
+      - http:
+          path: users/{id}
+          method: delete
+          cors: true
+
+# resource list
+resources:
+  Resources:
+    userssDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "userkey"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "userkey"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.USERS_TABLE}
+

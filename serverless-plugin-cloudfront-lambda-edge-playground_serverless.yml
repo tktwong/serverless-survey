@@ -1,0 +1,165 @@
+service: s3-cf-private-static-site-01
+
+custom:
+  defaultRegion: us-east-1
+  defaultEnvironmentGroup: dev
+  region: ${opt:region, self:custom.defaultRegion}
+  stage: ${opt:stage, "dev"}
+  objectPrefix: "${self:service}-${self:custom.stage}"
+  cloudFrontLogsBucketName: "${self:custom.objectPrefix}-cloudfront-logs"
+
+  scripts:
+    hooks:
+      "package:initialize": mkdir config; echo "${self:custom.objectPrefix}" > config/users-secret-name.txt
+
+  output:
+    # handler: scripts/output.handler # Same syntax as you already know
+    file: .build/stack.json # toml, yaml, yml, and json format is available
+
+plugins:
+  - "@silvermine/serverless-plugin-cloudfront-lambda-edge"
+  - serverless-pseudo-parameters
+  - serverless-stack-output
+  - serverless-plugin-scripts
+
+package:
+  exclude:
+    - "node_modules/**"
+    - "static-site/**"
+
+provider:
+  name: aws
+  runtime: nodejs8.10 # Because this runs on CloudFront (lambda@edge) it must be 8.10 or greater
+  region: ${self:custom.region}
+  stage: ${self:custom.stage}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "secretsmanager:GetSecretValue"
+      Resource: "arn:aws:secretsmanager:#{AWS::Region}:#{AWS::AccountId}:secret:${self:custom.objectPrefix}*"
+
+  # Note that Lambda@Edge does not actually support environment variables for lambda
+  # functions, but the plugin will strip the environment variables from any function
+  # that has edge configuration on it
+  environment:
+    SLS_SVC_NAME: ${self:service}
+    SLS_STAGE: ${self:custom.stage}
+
+functions:
+  cloudFrontViewerRequest:
+    name: "${self:custom.objectPrefix}-viewer-request"
+    handler: index.handler
+    memorySize: 128
+    timeout: 5
+    lambdaAtEdge:
+      distribution: "WebsiteDistribution"
+      eventType: "viewer-request"
+
+resources:
+  Resources:
+    UsersSecret:
+      Type: "AWS::SecretsManager::Secret"
+      Properties:
+        Name: "${self:custom.objectPrefix}"
+        Description: users credentials store
+        SecretString: ${file(users.js):users}
+
+    WebsiteBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: "${self:custom.objectPrefix}"
+        AccessControl: "Private"
+        WebsiteConfiguration:
+          IndexDocument: "index.html"
+          ErrorDocument: "404.html"
+
+    CloudFrontLogsBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: "${self:custom.cloudFrontLogsBucketName}"
+
+    WebsiteDistribution:
+      Type: "AWS::CloudFront::Distribution"
+      Properties:
+        DistributionConfig:
+          DefaultCacheBehavior:
+            TargetOriginId: "WebsiteBucketOrigin"
+            ViewerProtocolPolicy: "redirect-to-https"
+            DefaultTTL: 600 # ten minutes
+            MaxTTL: 600 # ten minutes
+            Compress: true
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: "none"
+          DefaultRootObject: "index.html"
+          Logging:
+            IncludeCookies: "false"
+            Bucket: !GetAtt CloudFrontLogsBucket.DomainName
+            Prefix: "${self:custom.objectPrefix}"
+          Enabled: true
+          PriceClass: "PriceClass_All"
+          HttpVersion: "http2"
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: true
+          Origins:
+            - Id: "WebsiteBucketOrigin"
+              DomainName: { "Fn::GetAtt": ["WebsiteBucket", "DomainName"] }
+              S3OriginConfig:
+                OriginAccessIdentity:
+                  Fn::Join:
+                    - ""
+                    - - "origin-access-identity/cloudfront/"
+                      - Ref: "CloudFrontOriginAccessIdentity"
+      DependsOn: CloudFrontLogsBucket
+
+    CloudFrontOriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: "${self:custom.objectPrefix}"
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref WebsiteBucket
+        PolicyDocument:
+          Statement:
+            - Action:
+                - s3:GetObject
+              Effect: Allow
+              Resource:
+                Fn::Join:
+                  - ""
+                  - - "arn:aws:s3:::"
+                    - Ref: "WebsiteBucket"
+                    - "/*"
+              Principal:
+                CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+
+  Outputs:
+    ServicePrefix:
+      Value: "${self:custom.objectPrefix}"
+      Export:
+        Name: "${self:custom.objectPrefix}-ServicePrefix"
+    CloudFrontDistributionDomainName:
+      Value:
+        "Fn::GetAtt": [WebsiteDistribution, DomainName]
+      Export:
+        Name: "${self:custom.objectPrefix}-CloudFrontDistributionDomainName"
+    CloudFrontDistributionId:
+      Value:
+        Ref: WebsiteDistribution
+      Export:
+        Name: "${self:custom.objectPrefix}-CloudFrontDistributionId"
+    WebsiteBucketName:
+      Value:
+        Ref: WebsiteBucket
+      Export:
+        Name: "${self:custom.objectPrefix}-WebsiteBucketName"
+    UsersSecretName:
+      Value:
+        Ref: UsersSecret
+      Export:
+        Name: "${self:custom.objectPrefix}-UsersSecretName"

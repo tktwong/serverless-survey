@@ -1,0 +1,362 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: botany-bay-api
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-dotenv-plugin
+  - serverless-dynamodb-local
+  - serverless-offline-dynamodb-streams
+  - serverless-offline-scheduler
+  - serverless-offline
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+
+  serverless-offline-dynamodb-streams:
+    apiVersion: '2013-12-02'
+    endpoint: http://0.0.0.0:8000
+    region: eu-west-1
+    accessKeyId: root
+    secretAccessKey: root
+    skipCacheInvalidation: false
+    readInterval: 500
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-west-2
+  logs:
+    websocket: true
+  environment:
+    LOCALE: en_US
+    APIKEY: ''
+    BASE_URL: https://us.api.blizzard.com
+    TABLE_WEB_HOOKS: ${self:service}-${opt:stage, self:provider.stage}-WebHookConnections
+    TABLE_RAID_TEAMS: ${self:service}-${opt:stage, self:provider.stage}-RaidTeams
+    TABLE_RAID_TEAM_MEMBERS: ${self:service}-${opt:stage, self:provider.stage}-RaidTeamMembers
+    TABLE_CHARACTER_METRICS: ${self:service}-${opt:stage, self:provider.stage}-CharacterMetricsV2
+    WEB_SOCKET_ENDPOINT_WS: !Join ['', ['wss://', !Ref WebsocketsApi, '.execute-api.', "${self:provider.region}", '.amazonaws.com/', "${self:provider.stage}"]]
+    WEB_SOCKET_ENDPOINT_HTTP: !Join ['', ['https://', !Ref WebsocketsApi, '.execute-api.', "${self:provider.region}", '.amazonaws.com/', "${self:provider.stage}/"]]
+  resourcePolicy:
+    - Effect: Allow
+      Principal: '*'
+      Action: execute-api:Invoke
+      Resource:
+        - execute-api:/*/*/*
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_WEB_HOOKS}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_WEB_HOOKS}/index/*"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_RAID_TEAMS}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_RAID_TEAMS}/index/*"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_CHARACTER_METRICS}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_CHARACTER_METRICS}/index/*"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLE_RAID_TEAM_MEMBERS}"
+    - Effect: Allow
+      Action:
+        - execute-api:Invoke
+        - execute-api:ManageConnections
+      Resource:
+        - "arn:aws:execute-api:*:*:*/*/*"
+
+# you can add packaging information here
+package:
+  include:
+    - handler.ts
+  exclude:
+    - node_modules/**
+    - '!node_modules/axios/**'
+    - '!node_modules/follow-redirects/**'
+    - '!node_modules/is-buffer/**'
+    - '!node_modules/debug/**'
+    - '!node_modules/ms/**'
+    - '!node_modules/blizzy-core/**'
+    - '!node_modules/uuid/**'
+    - '!node_modules/underscore/**'
+
+functions:
+    
+  refreshItemLevels:
+    handler: handlers/characterLookup/refreshItemLevel.handler
+    events:
+      - schedule: rate(30 minutes)
+
+  raidTeamChangedStreamHandler:
+    handler: handler.lookupCharacterStreamHandler
+    events:
+      - stream:
+          enabled: true
+          type: dynamodb
+          arn: !GetAtt RaidTeamMembersDynamoDbTable.StreamArn
+          batchSize: 10
+          startingPosition: TRIM_HORIZON
+  
+  createRaidTeam:
+    handler: handler.createRaidTeam
+    events:
+      - http:
+          path: raid-teams
+          method: post
+          cors: true
+
+  listRaidTeam:
+    handler: handler.listRaidTeams
+    events:
+      - http:
+          path: raid-teams
+          method: get
+          cors: true
+
+  listTeamMember:
+    handler: handler.listTeamMembers
+    events:
+      - http:
+          path: raid-teams/{raidTeamId}/team-members
+          method: get
+          cors: true
+
+  retrieveRaidTeam:
+    handler: handler.retrieveRaidTeam
+    events:
+      - http:
+          path: raid-teams/{raidTeamId}
+          method: get
+          cors: true
+
+  updateRaidTeam:
+    handler: handler.updateRaidTeam
+    events:
+      - http:
+          path: raid-teams/{raidTeamId}
+          method: put
+          cors: true
+
+  deleteRaidTeam:
+    handler: handler.deleteRaidTeam
+    events:
+      - http:
+          path: raid-teams/{raidTeamId}
+          method: delete
+          cors: true
+
+  createTeamMember:
+    handler: handler.createTeamMember
+    events:
+      - http:
+          path: raid-teams/{raidTeamId}/team-members
+          method: post
+          cors: true
+
+  listTeamMetrics:
+    handler: handlers/metrics/listTeam.handler
+    events:
+      - http:
+          path: raid-teams/{raidTeamId}/metrics
+          method: get
+          cors: true
+
+  listTeamMemberMetrics:
+    handler: handlers/metrics/list.handler
+    events:
+      - http:
+          path: raid-teams/{raidTeamId}/team-members/{id}/metrics
+          method: get
+          cors: true
+
+  retrieveTeamMember:
+    handler: handler.retrieveTeamMember
+    events:
+      - http:
+          path: raid-teams/{raidTeamId}/team-members/{id}
+          method: get
+          cors: true
+
+  updateTeamMember:
+    handler: handler.updateTeamMember
+    events:
+      - http:
+          path: raid-teams/{raidTeamId}/team-members/{id}
+          method: put
+          cors: true
+
+  deleteTeamMember:
+    handler: handler.deleteTeamMember
+    events:
+      - http:
+          path: raid-teams/{raidTeamId}/team-members/{id}
+          method: delete
+          cors: true
+
+  connectWebhook:
+    handler: handlers/webhooks/handlers.connect
+    events:
+      - websocket:
+          route: $connect
+
+  disconnectWebhook:
+    handler: handlers/webhooks/handlers.disconnect
+    events:
+      - websocket:
+          route: $disconnect
+
+  defaultWebhook:
+    handler: handlers/webhooks/handlers.default
+    events:
+      - websocket:
+          route: $default
+
+resources:
+  Resources:
+    WebHooksDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: connectionId
+            AttributeType: S
+          -
+            AttributeName: raidTeamId
+            AttributeType: S
+        KeySchema:
+          -  
+            AttributeName: connectionId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.TABLE_WEB_HOOKS}
+        GlobalSecondaryIndexes:
+          - IndexName: gsi_raid_team_id
+            KeySchema:
+            - AttributeName: raidTeamId
+              KeyType: HASH
+            Projection:
+              ProjectionType: KEYS_ONLY
+            ProvisionedThroughput:
+              ReadCapacityUnits: '5'
+              WriteCapacityUnits: '5'
+
+    RaidTeamsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          - 
+            AttributeName: friendlyId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.TABLE_RAID_TEAMS}
+        GlobalSecondaryIndexes:
+          - IndexName: gsi_friendly_id
+            KeySchema:
+            - AttributeName: friendlyId
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: '5'
+              WriteCapacityUnits: '5'
+
+    CharacterMetricsDynamoDbTableV2:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: raidTeamMemberId
+            AttributeType: S
+          -
+            AttributeName: raidTeamId
+            AttributeType: S
+          -
+            AttributeName: timestamp
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: raidTeamMemberId
+            KeyType: HASH
+          -
+            AttributeName: timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.TABLE_CHARACTER_METRICS}
+        GlobalSecondaryIndexes:
+          - IndexName: gsi_metrics_raid_team_id
+            KeySchema:
+            - AttributeName: raidTeamId
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: '1'
+              WriteCapacityUnits: '1'
+
+    RaidTeamMembersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: raidTeamId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: raidTeamId
+            KeyType: HASH
+          -
+            AttributeName: id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.TABLE_RAID_TEAM_MEMBERS}
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES 

@@ -1,0 +1,190 @@
+service: banking
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment: ${file(env.yml):${self:custom.stage}}
+  apiGateway:
+    shouldStartNameWithService: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${file(env.yml):${self:custom.stage}.USERS_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${file(env.yml):${self:custom.stage}.ACCOUNTS_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${file(env.yml):${self:custom.stage}.TRANSACTIONS_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${file(env.yml):${self:custom.stage}.PENDING_TRANSACTIONS_TABLE}"
+    - Effect: Allow
+      Action:
+        - "events:*"
+        - "lambda:AddPermission"
+      Resource: "*"
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-dynamodb-local
+
+functions:
+  createUser:
+    handler: src/PrivateHandlers.createUserHandler
+
+  createManyUsers:
+    handler: src/PrivateHandlers.createManyUsersHandler
+
+  fulfilTransaction:
+    handler: src/PrivateHandlers.fulfilTransactionHandler
+
+  postLogin:
+    handler: src/HttpHandlers.postLoginHandler
+    events:
+      - http:
+          path: login
+          method: post
+          cors: true
+  
+  getAccounts:
+    handler: src/HttpHandlers.getAccountsHandler
+    events:
+      - http:
+          path: accounts
+          method: get
+          cors: true
+  
+  postTransaction:
+    handler: src/HttpHandlers.postTransactionHandler
+    events:
+      - http:
+          path: transaction
+          method: post
+          cors: true
+
+  putTransaction:
+    handler: src/HttpHandlers.putTransactionHandler
+    events:
+      - http:
+          path: transaction
+          method: put
+          cors: true
+
+  deleteTransaction:
+    handler: src/HttpHandlers.deleteTransactionHandler
+    events:
+      - http:
+          path: transaction
+          method: delete
+          cors: true
+
+  getTransactions:
+    handler: src/HttpHandlers.getTransactionsHandler
+    events:
+      - http:
+          path: transactions/{iban}
+          method: post
+          cors: true
+
+  postCreateUser:
+    handler: src/HttpHandlers.postCreateUserHandler
+    events:
+      - http:
+          path: createUser
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    customersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(env.yml):${self:custom.stage}.USERS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    accountsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(env.yml):${self:custom.stage}.ACCOUNTS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: iban
+            AttributeType: S
+        KeySchema:
+          - AttributeName: iban
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    transactionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(env.yml):${self:custom.stage}.TRANSACTIONS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: iban
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: iban
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+    pendingTransactionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(env.yml):${self:custom.stage}.PENDING_TRANSACTIONS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: iban
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: iban
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  dynamodb:
+    stages:
+      - test

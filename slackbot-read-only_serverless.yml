@@ -1,0 +1,76 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: slackbot-read-only
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    SLACK_CLIENT_ID: ${env:SLACK_CLIENT_ID}
+    SLACK_CLIENT_SECRET: ${env:SLACK_CLIENT_SECRET}
+    SLACK_ACCESS_TOKEN_VARIABLE: ${self:custom.slack_access_token}
+    BASE_URL: { "Fn::Join" : ["", [" https://", { "Ref" : "ApiGatewayRestApi" }, ".execute-api.${self:custom.region}.amazonaws.com/${self:custom.stage}" ] ]  }
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action: 'ssm:Decrypt'
+      Resource:
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:ssm'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'parameter/${self:custom.slack_access_token}'
+    - Effect: 'Allow'
+      Action: 'ssm:GetParameter'
+      Resource:
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:ssm'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'parameter/${self:custom.slack_access_token}'
+    - Effect: 'Allow'
+      Action: 'ssm:PutParameter'
+      Resource:
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:ssm'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'parameter/${self:custom.slack_access_token}'
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  slack_access_token: "${self:custom.stage}_access_token"
+
+functions:
+  slack_webhook:
+    handler: handler.slackhooks
+    events:
+      - http: POST slack/hooks
+  slack_install:
+    handler: handler.slackinstall
+    events:
+      - http: GET slack/install
+  slack_activate:
+    handler: handler.slackactivate
+    events:
+      - http: GET slack/activate
+
+

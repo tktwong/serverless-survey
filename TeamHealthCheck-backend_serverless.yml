@@ -1,0 +1,144 @@
+service: HC-SocketsService
+frameworkVersion: ">=1.32.0 < 2.0.0"
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-plugin-optimize
+  - serverless-export-env
+
+custom:
+  environment:
+    PROFILES_TABLE: HC-${self:provider.stage}-ProfilesTable
+    CONNECTIONS_TABLE: HC-${self:provider.stage}-ConnectionsTable
+    TEAMS_TABLE: HC-${self:provider.stage}-TeamsTable
+    REGION: ${self:provider.region}
+    STAGE: ${self:provider.stage}
+    ACCESS_KEY_ID: ${ssm:/execute-api-access-key-id}
+    SECRET_ACCESS_KEY_ID: ${ssm:/execute-api-secret-access-key-id}
+    SERVICE: ${self:service}
+    SLACK_NOTIFY_URL: https://hooks.slack.com/services/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
+    WEBSOCKETS_API_ID: !Ref WebsocketsApi
+    ISS:
+      Fn::ImportValue: UserPool-ID-${self:provider.stage}
+  roleId:
+    Fn::ImportValue: IAMLambdaRole-ARN-${self:provider.stage}
+  callSocketTopicName: CallSocketTopic-${self:provider.stage}
+  notifyTeamTopicName: NotifyTeamTopic-${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: 'nodejs8.10'
+  region: ${opt:region, 'eu-west-2'}
+  memorySize: 128
+  stage: ${opt:stage, 'ws'}
+  websocketsApiName: HC-${self:provider.stage}-WebsocketsAPI
+
+package:
+  individually: true
+  exclude:
+    - package.json
+    - package-lock.json
+
+functions:
+  onConnect:
+    handler: handlers/on-connect/on-connect.handler
+    role: ${self:custom.roleId}
+    events:
+      - websocket:
+          route: $connect
+          authorizer:
+            name: authorizer
+            identitySource:
+              - route.request.querystring.Authorization
+    environment: ${self:custom.environment}
+
+  onDisconnect:
+    handler: handlers/on-disconnect/on-disconnect.handler
+    role: ${self:custom.roleId}
+    events:
+      - websocket:
+          route: $disconnect
+    environment: ${self:custom.environment}
+
+  authorizer:
+    handler: handlers/authorizer/authorizer.handler
+    role: ${self:custom.roleId}
+    environment: ${self:custom.environment}
+
+  callSocket:
+    handler: handlers/call-socket/call-socket.lambda
+    description: Calls a specified socket
+    role: ${self:custom.roleId}
+    environment: ${self:custom.environment}
+    events:
+      - sns:
+          arn: !Ref CallSocketTopic
+          topicName: ${self:custom.callSocketTopicName}
+
+  notifyTeam:
+    handler: handlers/notify-team/notify-team.lambda
+    description: Notify all team about an event provided as body property
+    role: ${self:custom.roleId}
+    environment: ${self:custom.environment}
+    events:
+      - sns:
+          arn: !Ref NotifyTeamTopic
+          topicName: ${self:custom.notifyTeamTopicName}
+
+  notifySlack:
+    handler: handlers/notify-slack/notify-slack.lambda
+    description: Notify slack channel about a team event
+    role: ${self:custom.roleId}
+    environment: ${self:custom.environment}
+    events:
+      - sns:
+          arn: !Ref NotifyTeamTopic
+          topicName: ${self:custom.notifyTeamTopicName}
+
+resources:
+  Resources:
+    ConnectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.environment.CONNECTIONS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: connection_id
+            AttributeType: S
+          - AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: connection_id
+            KeyType: HASH
+          - AttributeName: user_id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+    ConnectResponse:
+      Type: AWS::ApiGatewayV2::RouteResponse
+      Properties:
+        ApiId:
+          Ref: WebsocketsApi
+        RouteId:
+          Ref: SconnectWebsocketsRoute
+        RouteResponseKey: $default
+
+    CallSocketTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Call Socket Topic
+        TopicName: ${self:custom.callSocketTopicName}
+
+    NotifyTeamTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Notify all team by sending the update to sockets of its members
+        TopicName: ${self:custom.notifyTeamTopicName}
+
+  Outputs:
+    CallSocketTopicArn:
+      Value: !Ref CallSocketTopic
+      Export:
+        Name: CallSocketTopic-Arn-${self:provider.stage}
+    NotifyTeamTopicArn:
+      Value: !Ref NotifyTeamTopic
+      Export:
+        Name: NotifyTeamTopic-Arn-${self:provider.stage}

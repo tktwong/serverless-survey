@@ -1,0 +1,219 @@
+service: QuizApplication-dev
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+        - dynamodb:BatchWriteItem
+      Resource: 
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tableName}-${self:provider.stage}
+        - arn:aws:dynamodb:us-east-1:*:table/${self:custom.tableName}-${self:provider.stage}/index/SortKey-index
+  environment:
+    DB: dynamodb
+    DB_TABLE: QuizApplication-dev
+    DB_GETITEM_RECORD: Item
+    DB_QUERY_RECORD: Items
+    EVENT_BODY: body
+    EVENT_PATHPARAMETERS: pathParameters
+    EVENT_QUERYSTRINGPARAMETERS: queryStringParameters
+    RESPONSE_STATUSCODE: statusCode
+    RESPONSE_BODY: body
+    STATUSCODE_200: 200
+    STATUSCODE_401: 401
+    STATUSCODE_404: 404
+    STATUSCODE_500: 500
+
+custom:
+  tableName: QuizApplication
+
+functions:
+  validateLogin:
+    handler: lib/admin.validateLogin
+    events:
+      - http:
+          path: admin/validateLogin
+          method: post
+          cors: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_PASSWORD: password
+      CURRENT_VERSION: v0
+      PROJECTION_EXPRESSION: PartitionKey, Password
+      ATTRIBUTE_PASSWORD: Password
+  getQuizzes:
+    handler: lib/admin.getQuizzes
+    events:
+      - http:
+          path: admin/{username}/getQuizzes
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+              querystrings:
+                isPublished: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_ISPUBLISHED: isPublished
+      PROJECTION_EXPRESSION: SortKey, Title
+      QUIZ_FILTER: QUIZ      
+  getQuizRespondents:
+    handler: lib/admin.getQuizRespondents
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getQuizRespondents
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+    environment:
+      REQUEST_QUIZID: quizID
+      PROJECTION_EXPRESSION: Score
+      RESPONDENT_FILTER: RESPONDENT
+      STATUS_FILTER: Completed
+      JSONKEY_SCORE: Score
+      JSONVALUE_COUNT: Count
+  createQuiz:
+    handler: lib/admin.createQuiz
+    events:
+      - http:
+          path: admin/{username}/createQuiz
+          method: post
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_TITLE: title
+      REQUEST_DESCRIPTION: description
+      QUIZ_FILTER: QUIZ
+      RESPONSE_QUIZID: quizID
+  updateQuiz:
+    handler: lib/admin.updateQuiz
+    events:
+      - http:
+          path: admin/{username}/{quizID}/updateQuiz
+          method: post
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_QUIZID: quizID
+      REQUEST_TITLE: title
+      REQUEST_DESCRIPTION: description
+      REQUEST_CONTENT: content
+      UPDATE_EXPRESSION: SET Title = :title, Description = :description, Content = :content
+      CONDITION_EXPRESSION: PartitionKey = :partitionKey AND SortKey = :sortKey
+  getQuizDetails:
+    handler: lib/admin.getQuizDetails
+    events:
+      - http:
+          path: admin/{username}/{quizID}/getQuizDetails
+          method: get
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_QUIZID: quizID
+      PROJECTION_EXPRESSION: SortKey, Title, Description, Content
+      ATTRIBUTE_TITLE: Title
+  publishQuiz:
+    handler: lib/admin.publishQuiz
+    events:
+      - http:
+          path: admin/{username}/{quizID}/publishQuiz
+          method: post
+          cors: true
+          request: 
+            parameters:
+              paths:
+                username: true
+                quizID: true
+    environment:
+      REQUEST_USERNAME: username
+      REQUEST_QUIZID: quizID
+      PROJECTION_EXPRESSION: Content
+      ATTRIBUTE_CONTENT: Content
+      ATTRIBUTE_QUESTIONID: questionID
+      QUESTION_FILTER: QUESTION
+      UPDATE_EXPRESSION: SET Content = :content, AccessLink = :accessLink, IsPublished = :isPublished
+      CONDITION_EXPRESSION: PartitionKey = :partitionKey AND SortKey = :sortKey
+  submitQuizAttempt:
+    handler: lib/participant.submitQuizAttempt
+    events:
+      - http:
+          path: participant/submitQuizAttempt
+          method: post
+          cors: true
+    environment:
+      REQUEST_QUIZID: quizID
+      REQUEST_ATTEMPTDATA: attemptData
+      REQUEST_FIRSTNAME: firstName
+      REQUEST_LASTNAME: lastName
+      REQUEST_AGE: age
+      REQUEST_GENDER: gender
+      SORTKEY_INDEX: SortKey-index
+      PROJECTION_EXPRESSION: Content
+      ATTRIBUTE_CONTENT: Content
+      ATTRIBUTE_QUESTION: question
+      ATTRIBUTE_OPTIONS: options
+      ATTRIBUTE_ISCORRECT: isCorrect
+      ATTRIBUTE_ANSWERS: answers
+      ATTRIBUTE_VALUE: value
+      RESPONSE_SCORE: score
+      RESPONDENT_FILTER: RESPONDENT
+      STATUS_FILTER: Completed
+
+resources:
+  Resources:
+    QuizApplicationTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        #table structure and architecture        
+        AttributeDefinitions:
+          - AttributeName: PartitionKey
+            AttributeType: S
+          - AttributeName: SortKey
+            AttributeType: S 
+        KeySchema:
+          - AttributeName: PartitionKey
+            KeyType: HASH
+          - AttributeName: SortKey
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:custom.tableName}-${self:provider.stage}
+        GlobalSecondaryIndexes:
+          - IndexName: SortKey-index
+            KeySchema:
+              - AttributeName: SortKey
+                KeyType: HASH              
+            Projection:
+              NonKeyAttributes:
+                - Content
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5     

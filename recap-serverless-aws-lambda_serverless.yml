@@ -1,0 +1,148 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: serverless-recap
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ap-southeast-2
+  # Share the same S3 bucket for deployment of all Lambda functions
+  deploymentBucket: ${self:custom.deploymentBucket.${self:provider.stageGroup}}
+  stage: ${opt:stage, self:custom.defaultStage}
+  # Custom property to group environment configurations
+  stageGroup: ${opt:stage, self:custom.defaultStageGroup}
+  stackTags:
+    Cluster: serverless-recap-cluster
+    Creator: Serverless
+    Environment: ${self:custom.stageStackTags.${self:provider.stageGroup}.environment}
+    Expires: ${self:custom.stageStackTags.${self:provider.stageGroup}.expires}
+    Management: Marvin
+    Project: serverless-recap-project
+    Service: User Profile Service
+  profile: ${self:custom.profiles.${self:provider.stageGroup}}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+        - "s3:PutObject"
+      Resource:
+          - arn:aws:s3:::${self:custom.s3buckets.${self:provider.stageGroup}}/*
+
+custom:
+  # Environment variables to provide stage specific configurations to the function
+  writeEnvVars:
+    SERVERLESS_STAGE: ${self:provider.stage}
+    SERVERLESS_SERVICE_NAME: ${self:service}
+    ENVIRONMENT: ${self:provider.stageGroup}
+    S3_BUCKET_NAME: ${self:custom.s3buckets.${self:provider.stageGroup}}
+  # Add developer's username as a suffix so that each developer has a unique stack
+  # Other environments only have a single stack, so do not need a suffix
+  defaultStage: dev${env:USER, env:USERNAME}
+  defaultStageGroup: dev
+  stageStackTags:
+    dev:
+      environment: Development
+      # Development stacks shouldn't persist forever, but need to work out how to dynamically expire
+      expires: Never
+    devint:
+      environment: DevInt
+      expires: Never
+    staging:
+      environment: Staging
+      expires: Never
+    production:
+      environment: Production
+      expires: Never
+  profiles:
+    dev: aws_sandbox_serverless
+    devint: serverless1
+    staging: serverless1
+    production: serverless1
+  deploymentBucket:
+    dev: lambda-deployment-sandbox
+    devint: lambda-deployment
+    staging: lambda-deployment
+    production: lambda-deployment
+  s3buckets:
+      dev: s3-bucket-sandbox
+      devint: s3-bucket
+      staging: s3-bucket
+      production: s3-bucket
+
+
+
+# Package generation
+package:
+  # Exclude anything not required to execute in AWS
+  exclude:
+    # Remove ALL npm 'devDependencies' - just keep 'dependencies', which will be done by the plugin serverless-plugin-include-dependencies
+    - 'node_modules/**'
+
+    # Unit tests etc
+    - 'test/**'
+
+    # Hidden (dot) files - eslint config etc
+    # except for '.env', which is required to provide stage specific environment variables
+    - '.!(env)'
+
+    # Repo readmes etc
+    - 'README.md'
+    - 'LICENSE.md'
+    - 'contributors.txt'
+
+    # Git repo, hooks
+    - '.git/**'
+    - '.githooks/**'
+
+    # Local Serverless Files
+    - 'testEvent.json'
+
+    # IntelliJ Project Files
+    - '.idea/**'
+    - '*.iml'
+
+functions:
+  fetchUserProfile:
+      handler: handler.fetchUserProfile
+      description: 'Fetches the latest user profile'
+      # Memory allocation in MB
+      memorySize: 128
+      # TODO May need to increase this. Locally response times are above 2 seconds.
+      # Function timeout in seconds
+      timeout: 10
+      events:
+        - http:
+            path: v1/profile
+            method: get
+            cors: true
+
+plugins:
+  # Allow development without deploying to AWS
+  - serverless-offline
+  # Make stage specific environment variables available to the execution
+  - serverless-plugin-write-env-vars
+  # Add each modules the handler depends on individually to the exclude list
+  - serverless-plugin-include-dependencies
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

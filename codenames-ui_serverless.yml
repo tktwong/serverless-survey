@@ -1,0 +1,59 @@
+service:
+  name: codenames-ui
+
+plugins:
+  # - serverless-webpack
+  - serverless-plugin-iam-checker
+  - serverless-plugin-test-helper
+  - serverless-prune-versions
+  - serverless-cloudformation-resource-counter
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, env:STAGE, env:USER, 'local'}
+  logRetentionInDays: 14
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    LAMBDA_WRAPPER_LOG: true
+
+custom:
+  # Serverless plugin configurations
+  # https://github.com/manwaring/serverless-plugin-iam-checker
+  iamChecker:
+    resources:
+      allowWildcardOnly: true # Unfortunately need to allow wildcard only because CloudFront doesn't support resource ARNs in IAM
+  # https://github.com/manwaring/serverless-prune-versions
+  prune:
+    automatic: true
+    number: 2
+  # https://github.com/manwaring/serverless-plugin-test-helper
+  testHelper:
+    path: .serverless/stack-output/outputs.json
+  # https://github.com/drexler/serverless-cloudformation-resource-counter
+  warningThreshold: 100
+  # https://github.com/serverless-heaven/serverless-webpack
+  webpack:
+    includeModules: true
+    excludeFiles: src/**/*.test.[t|j]s
+
+resources:
+  Description: Codenames UI ${self:provider.stage} static site hosting
+
+  Resources:
+    SiteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+
+  Outputs:
+    SiteBucket:
+      Description: Bucket for hosting the site
+      Value: !Ref SiteBucket
+
+    BucketDomainName:
+      Description: Domain for the static site
+      Value: !GetAtt SiteBucket.WebsiteURL

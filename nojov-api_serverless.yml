@@ -1,0 +1,105 @@
+service: nojov-api
+
+custom:
+  prefix: nojov-api-${self:provider.stage}
+  resourcePolicyCondition:
+    dev:
+      IpAddress:
+        aws:SourceIp: ${file(secrets.yml):ipWhiteList}
+    prod: {}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+plugins:
+  - serverless-offline
+  - serverless-step-functions
+  - serverless-webpack
+
+provider:
+  name: aws
+  profile: default
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  runtime: nodejs12.x
+  apiName: ${self:custom.prefix}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 's3:GetObject'
+        - 's3:PutObject'
+        - 's3:ListBucket'
+      Resource: '*'
+  resourcePolicy:
+    - Effect: Allow
+      Principal: '*'
+      Action: 'execute-api:Invoke'
+      Resource: 'execute-api:/*/*/*'
+      Condition: ${self:custom.resourcePolicyCondition.${self:provider.stage}}
+  environment:
+    TZ: Asia/Tokyo
+    STAGE: ${self:provider.stage}
+    S3_BUCKET_FILES: ${self:custom.prefix}-files
+    SLACK_ACCESS_TOKEN: ${file(./secrets.yml):slackAccessToken}
+    SLACK_CHANNEL: ${self:custom.prefix}
+
+layers:
+  Libuuid:
+    name: ${self:custom.prefix}-libuuid
+    path: layers/libuuid
+
+functions:
+  crawl:
+    handler: ./src/handlers/jobs.crawl
+    timeout: 900
+    layers:
+      - Ref: LibuuidLambdaLayer
+  notifyJobs:
+    handler: ./src/handlers/notifications.notifyJobs
+    timeout: 60
+    layers:
+      - Ref: LibuuidLambdaLayer
+  notifyError:
+    handler: ./src/handlers/notifications.notifyError
+    timeout: 60
+    layers:
+      - Ref: LibuuidLambdaLayer
+  getLatest:
+    handler: ./src/handlers/jobs.getLatest
+    timeout: 10
+    layers:
+      - Ref: LibuuidLambdaLayer
+    events:
+      - http:
+          method: get
+          path: v1/jobs/latest
+          cors: true
+
+stepFunctions:
+  stateMachines:
+    crawlSteps:
+      events:
+        - schedule:
+            rate: cron(0 2,5,8,11,14,17,20,23 * * ? *) # UTC
+            enabled: true
+      definition:
+        StartAt: crawl
+        States:
+          crawl:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [crawl, Arn]
+            Catch:
+              - ErrorEquals: ['States.ALL']
+                Next: notifyError
+            Next: notifyJobs
+          notifyError:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [notifyError, Arn]
+            End: true
+          notifyJobs:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [notifyJobs, Arn]
+            End: true

@@ -1,0 +1,309 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: aws-integration
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+  
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  config_bucket: xledger-#{AWS::AccountId}-${opt:stage, 'dev'}
+  data_bucket: xledger-uploads-#{AWS::AccountId}-${opt:stage, 'dev'}
+  stage: ${opt:stage, 'dev'}
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - s3:PutObject
+      - s3:PutObjectAcl
+      - s3:GetObject
+      - s3:GetObjectAcl
+    Resource: "arn:aws:s3:::${self:custom.config_bucket}/*"
+
+  - Effect: Allow
+    Action:
+      - s3:PutObject
+      - s3:PutObjectAcl
+      - s3:GetObject
+      - s3:GetObjectAcl    
+    Resource: "arn:aws:s3:::${self:custom.data_bucket}/*"
+    
+  - Effect: Allow
+    Action:
+      - lambda:InvokeFunction
+    Resource: "*"
+
+  - Effect: Allow
+    Action:
+      - states:StartExecution
+    Resource: "*" 
+
+# you can overwrite defaults here
+stage: ${self:custom.stage}
+region: us-east-1
+
+resources:
+  # Resources: 
+  #   ConfigBucket: 
+  #     Type: AWS::S3::Bucket
+  #     Properties:
+  #       BucketName: ${self:custom.config_bucket}
+  #   DataBucket: 
+  #     Type: AWS::S3::Bucket
+  #     Properties:
+  #       BucketName: ${self:custom.data_bucket}
+
+  Outputs:
+    Proxy:
+      Description: The ARN of the provisioning state machine
+      Value: 
+        Ref: "OlapFetcher${self:custom.stage}"
+
+functions:
+  # reads config and initiates building of product mapping tables
+  invoke_mapping_update: 
+    handler: src/InvokeMappingUpdate.handler
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}
+      F_UPDATE_MAPPING: ${self:service}-${self:custom.stage}-update_product_mapping
+    events:  
+      # runs every day at 2:00am
+      - schedule: 
+          enabled: true
+          rate: cron(0 2 * * ? *)      
+          name: ${self:service}-daily-update-mapping
+          description: 'Fetch products & groups from iiko and save a mapping file'
+
+  # reads config and initiates export procedure
+  invoke_export: 
+    handler: src/InvokeExport.handler
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}
+      F_FETCH_ORDERS: ${self:service}-${self:custom.stage}-fetch_orders_from_iiko    
+    events:  
+    # runs every day at 3:00am
+      - schedule: 
+          enabled: false
+          rate: cron(0 3 * * ? *)      
+          name: ${self:service}-daily-export-orders
+          description: 'Export orders from previous day'
+  
+  # reads config and initiates sales export 
+  invoke_export_sales: 
+    handler: src/iikoFetchSales.invoke
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}
+      SM_OLAP_FETCHER: ${self:resources.Outputs.Proxy.Value}      
+    events:  
+    # runs every day at 4:00am
+      - schedule: 
+          enabled: false
+          rate: cron(0 4 * * ? *)      
+          name: ${self:service}-daily-export-sales
+          description: 'Export sales from previous day'    
+
+  # authenticates in XLedger and saves auth key
+  xl_auth: 
+    handler: src/XLedgerAuth.handler
+    environment: 
+      CONFIG_BUCKET: ${self:custom.config_bucket}
+    events:
+      # runs every day at 1:00am
+      - schedule: 
+          enabled: true
+          rate: cron(0 1 * * ? *)      
+          name: ${self:service}-daily-xl-auth
+          description: 'Update XLedger auth token'      
+
+  # fetches products and groups from iiko and stores mapping file to S3
+  update_product_mapping:
+    handler: src/UpdateProductMapping.handler
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}
+
+  # returns a table productId => groupName
+  # reads data from S3 (xledger/product_mapping), if not found, fetches from iiko and stores to S3   
+  read_product_mapping:
+    handler: src/ReadProductMapping.handler
+    environment: 
+      CONFIG_BUCKET: ${self:custom.config_bucket}
+
+  # gets orders from iiko and puts them into files
+  fetch_orders_from_iiko:
+    handler: src/FetchOrdersFromIiko.handler
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}
+      DATA_BUCKET: ${self:custom.data_bucket}
+
+  #watches S3 and triggers processing functions
+  s3_watcher: 
+    handler: src/S3Watcher.handler
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}
+      DATA_BUCKET: ${self:custom.data_bucket}
+      F_CONVERT: ${self:service}-${self:custom.stage}-convert_to_xml
+      F_UPLOAD: ${self:service}-${self:custom.stage}-xl_upload
+    events:
+      - s3:
+          bucket: ${self:custom.data_bucket}
+          event: s3:ObjectCreated:*
+          existing: true  
+  #Login
+  connect_to_iiko:
+    handler: src/iikoAuth.login
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}    
+  # Select Store
+  select_store: 
+    handler: src/iikoAuth.selectStore 
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}     
+  # Select report code
+  select_report: 
+    handler: src/iikoFetchSales.selectReport
+  # Init Olap
+  init_olap: 
+    handler: src/iikoFetchSales.init
+  # Check Olap building status
+  check_olap_status:
+    handler: src/iikoFetchSales.checkStatus
+  # Fetch and Store data for OLAP
+  fetch_olap_data: 
+    handler: src/iikoFetchSales.fetchData
+    environment:
+      DATA_BUCKET: ${self:custom.data_bucket}    
+  # Logout
+  disconnect_from_iiko:
+    handler: src/iikoAuth.logout
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}    
+
+  #converts a file in S3 to XLedger XML format
+  convert_to_xml: 
+    handler: src/ConvertToXml.handler
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}
+      DATA_BUCKET: ${self:custom.data_bucket}     
+      F_READ_MAPPING: ${self:service}-${self:custom.stage}-read_product_mapping
+
+  # grabs the converted file and uploads it to XLedger  
+  xl_upload:
+    handler: src/XLedgerUpload.handler
+    environment:
+      CONFIG_BUCKET: ${self:custom.config_bucket}
+      DATA_BUCKET: ${self:custom.data_bucket}
+
+stepFunctions:
+  stateMachines:
+    DataFetcherStateMachine:
+      name: "OlapFetcher${self:custom.stage}"
+      definition:
+        Comment: "OLAP fetching routine"
+        StartAt: Connect
+        States:
+          Connect: #connect and get connection cookie
+            Type: Task 
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:custom.stage}-connect_to_iiko"
+            Next: SelectNextStore      
+
+          SelectNextStore:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:custom.stage}-select_store"
+            Next: SelectOlap
+
+          SelectOlap:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:custom.stage}-select_report"
+            Next: Init
+
+          Init:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:custom.stage}-init_olap"
+            Next: Wait
+
+          Wait: 
+            Type: Wait
+            Seconds: 10
+            Next: GetStatus
+
+          GetStatus:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:custom.stage}-check_olap_status"
+            ResultPath: "$"
+            Next: CheckStatus
+
+          CheckStatus:
+            Type: Choice
+            Choices: 
+              - Variable: "$.result"
+                BooleanEquals: true
+                Next: "Fetch"
+            Default: CheckAttempts
+
+          CheckAttempts:
+            Type: Choice
+            Choices: 
+              - Variable: "$.index"
+                NumericEquals: 10
+                Next: Timeout
+            Default: Wait
+
+          Fetch:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:custom.stage}-fetch_olap_data"
+            ResultPath: "$"
+            Next: CheckIfLastReport
+
+          CheckIfLastReport:
+            Type: Choice
+            Choices: 
+              - Variable: "$.isLastReport"
+                BooleanEquals: true
+                Next: CheckIfLastStore
+            Default: SelectOlap
+
+
+          CheckIfLastStore:
+            Type: Choice
+            Choices: 
+              - Variable: "$.isLastStore"
+                BooleanEquals: true
+                Next: Success
+            Default: SelectNextStore
+
+          Success: 
+            Type: Pass
+            Next: Disconnect
+
+          Timeout: 
+            Type: Pass
+            Next: CheckIfLastReport
+
+          Disconnect:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:custom.stage}-disconnect_from_iiko"
+            ResultPath: "$"   
+            End: true
+
+plugins:
+  - serverless-offline
+  - serverless-pseudo-parameters
+  - serverless-step-functions

@@ -1,0 +1,211 @@
+# serverless.yml
+
+service: ${env:PROJECT_NAME}
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+  - serverless-dotenv-plugin
+
+custom:
+  wsgi:
+    app: app.app
+    packRequirements: false
+  pythonRequirements:
+    dockerizePip: non-linux
+    slim: false
+    zip: true
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${env:STAGE}
+  region: ${env:REGION}
+  apiKeys:
+    - name: apikey-${env:PROJECT_NAME}-${env:STAGE}
+      value: ${env:TOKEN}
+  tags:
+    Name: ${env:PROJECT_NAME}-${env:STAGE}
+
+
+  environment:
+    LAMBDA_FUNCTION_NAME: ${self:service}-${self:provider.stage}-app
+    QUEUE_NAME: ${self:service}-${self:provider.stage}-queue
+    KINESIS_NAME: ${self:service}-${self:provider.stage}-kinesis
+    DYNAMO_TB_ACTIVITY: ${self:service}-${self:provider.stage}-act
+    DBNAME_TB_CONTROL: ${self:service}-${self:provider.stage}-actControl
+    DBNAME_TB_PROCESS: ${self:service}-${self:provider.stage}-process
+    KEY_ID: ${env:KEY_ID}
+    SECRET_KEY: ${env:SECRET_KEY}
+    RDS_HOST: ${env:RDS_HOST}
+    RDS_PORT: ${env:RDS_PORT}
+    RDS_DBNAME: ${env:RDS_DBNAME}
+    RDS_USER: ${env:RDS_USER}
+    RDS_PASSWORD: ${env:RDS_PASSWORD}
+    TOKEN: ${env:TOKEN}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - sqs:SendMessage
+        - sqs:ReceiveMessage
+        - sqs:DeleteMessage
+        - sqs:GetQueueAttributes
+        - sqs:GetQueueUrl
+        - sqs:ListQueues
+      Resource:
+        - Fn::GetAtt:
+          - cubeBuilderQueueMerge
+          - Arn
+        - Fn::GetAtt:
+          - cubeBuilderQueueBlend
+          - Arn
+        - Fn::GetAtt:
+          - cubeBuilderQueuePosBlend
+          - Arn
+        - Fn::GetAtt:
+          - cubeBuilderQueuePublish
+          - Arn
+          
+    - Effect: "Allow"
+      Action:
+        - kinesis:GetRecords
+        - kinesis:GetShardIterator
+        - kinesis:DescribeStream
+        - kinesis:ListStreams
+      Resource:
+        - Fn::GetAtt:
+          - cubeBuilderKinesis
+          - Arn
+
+package:
+  exclude:
+    - venvold/**
+    - venv/**
+    - node_modules/**
+    - package-lock.json
+    - cube_builder_aws/__pycache__/**
+    - cube_builder_aws/utils/__pycache__/**
+    - venv/**
+    - example.env
+    - .env
+
+functions:
+  app:
+    handler: wsgi.handler
+    timeout: 720
+    memorySize: 256
+    events:
+      - http: 
+          path: /
+          method: ANY
+          private: true
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+      - http:
+          path: '{proxy+}'
+          method: ANY
+          private: true
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+
+  app_merge: 
+    handler: app.continue_process
+    timeout: 360
+    memorySize: 2560
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - cubeBuilderQueueMerge
+              - Arn
+
+  app_blend: 
+    handler: app.continue_process
+    timeout: 720
+    memorySize: 3008
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - cubeBuilderQueueBlend
+              - Arn
+
+  app_posblend: 
+    handler: app.continue_process
+    timeout: 720
+    memorySize: 3008
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - cubeBuilderQueuePosBlend
+              - Arn
+
+  app_publish: 
+    handler: app.continue_process
+    timeout: 360
+    memorySize: 1024
+    events:
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - cubeBuilderQueuePublish
+              - Arn
+      - stream:
+          type: kinesis
+          batchSize: 50
+          arn:
+            Fn::GetAtt:
+              - cubeBuilderKinesis
+              - Arn
+
+resources:
+  Resources:
+    cubeBuilderQueueMerge:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-queue-merge
+        VisibilityTimeout: 360
+
+    cubeBuilderQueueBlend:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-queue-blend
+        VisibilityTimeout: 720
+
+    cubeBuilderQueuePosBlend:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-queue-posblend
+        VisibilityTimeout: 720
+
+    cubeBuilderQueuePublish:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-queue-publish
+        VisibilityTimeout: 360
+
+    cubeBuilderKinesis:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${self:service}-${self:provider.stage}-kinesis
+        ShardCount: 1

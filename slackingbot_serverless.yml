@@ -1,0 +1,229 @@
+service: SlackingBot
+frameworkVersion: ">=1.26.0 <2.0.0"
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  #credentialsProfile: oph-opintopolku-session-dev
+  pythonRequirements:
+    dockerizePip: false
+  region: eu-west-1
+  domainName: slackingbot.goforecrew.com
+  stage: dev
+  environmentName: dev
+  channel: channel-${self:custom.environmentName}
+  #topics: "${self:custom.channel},flowdock-notifications"
+  channels: "flowdock-notifications"
+  channelListParameter: channelList
+  messageTable: messages-${self:custom.environmentName}
+  authorizationTableName: slackingbot-authorization-${self:custom.environmentName}
+
+provider:
+  name: aws
+  region: ${self:custom.region}
+  #profile: ${self:custom.credentialsProfile}
+  tracing: true
+  runtime: python3.6
+  stage: ${self:custom.stage}
+  endpointType: REGIONAL
+  apiKeys:
+   - ${self:custom.stage}-apikey
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+  stackTags:
+    STACK: "${self:service}"
+    REGION: "${self:custom.region}"
+
+  #usagePlan:
+  #  quota:
+  #    limit: 5000
+  #    offset: 2
+  #    period: MONTH
+  #  throttle:
+  #    burstLimit: 200
+  #    rateLimit: 100
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:BatchWriteItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Scan
+        - dynamodb:GetItem
+      Resource:
+        - "arn:aws:dynamodb:${self:custom.region}:*:table/${self:custom.messageTable}"
+        - "arn:aws:dynamodb:${self:custom.region}:*:table/${self:custom.authorizationTableName}"
+    - Effect: Allow
+      Action:
+        - SNS:Publish
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - xray:PutTelemetryRecords
+        - xray:PutTraceSegments
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter
+        - ssm:GetParameters
+        - ssm:*
+      Resource:
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:ssm'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'parameter/maintenance'
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:ssm'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'parameter/channelList'
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:ssm'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'parameter/BOT_TOKEN'
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:ssm'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'parameter/SLACK_URL'
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:ssm'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'parameter/VERIFICATION_TOKEN'
+  environment:
+    CHANNEL_NAME: ${self:custom.channel}
+    CHANNEL_LIST_PARAMETER: ${self:custom.channelListParameter}
+    ALARM_TABLE: ${self:custom.messageTable}
+    AUTHORIZATION_TABLE: ${self:custom.authorizationTableName}
+    REGION: ${self:custom.region}
+
+functions:
+  GetSentMessages:
+    handler: api.get_historical_messages
+    memorySize: 2048
+    events:
+      - http:
+          path: messages
+          method: get
+          cors: true
+          authorizer:
+            name: AuthorizerFunc
+            resultTtlInSeconds: 10
+            identitySource: method.request.header.Authorization
+            identityValidationExpression: Bearer .*
+            type: token
+
+  SendMessage:
+    handler: api.send_slack_message
+    memorySize: 2048
+    events:
+      - http:
+          path: messages
+          method: post
+          cors: true
+          authorizer:
+            name: AuthorizerFunc
+            resultTtlInSeconds: 10
+            identitySource: method.request.header.Authorization
+            identityValidationExpression: Bearer .*
+            type: token
+  SlackEvent:
+    handler: api.slack_event_handler
+    memorySize: 2048
+    events:
+      - http:
+          path: events
+          method: post
+          cors: true
+#          authorizer:
+#            name: AuthorizerFunc
+#            resultTtlInSeconds: 10
+#            identitySource: method.request.header.Authorization
+#            identityValidationExpression: Bearer .*
+#            type: token
+  AuthorizerFunc:
+    handler: authorizer.handler
+    memorySize: 3008
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"
+
+resources:
+  Description: "Serverless stack for SlackingBot"
+  Resources:
+    messageChannel:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: ${self:custom.channel}
+        TopicName: ${self:custom.channel}
+    MessagesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.messageTable}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: N
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    AuthorizationsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.authorizationTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    ControlParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: maintenance
+        Type: String
+        Value: "false"
+        Description: "SSM Parameter controlling messaging publishing."
+    MessageChannels:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: ${self:custom.channelListParameter}
+        Type: StringList
+        Value: ${self:custom.channels}
+        Description: "SSM Parameter for channel list"

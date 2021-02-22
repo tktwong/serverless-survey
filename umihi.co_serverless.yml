@@ -1,0 +1,48 @@
+custom:
+  profile: umihico # aws account configured in ~/.aws/credentials
+  service: myportfolio # project name
+  certificateName: umihi.co # certificated domain in AWS Certificate Manager
+  domainName-prod: umihi.co # domain name
+  domainName-stg: stg.${self:custom.domainName-prod}
+  customDomain:
+    domainName: ${self:custom.domainName-${opt:stage, self:provider.stage}}
+    basePath: ''
+    stage: ${self:provider.stage}
+    certificateName: ${self:custom.certificateName}
+    createRoute53Record: true
+
+service:
+  name: ${self:custom.service}
+
+provider:
+  name: aws
+  region: ap-northeast-1
+  runtime: provided
+  stage: stg
+  profile: ${self:custom.profile}
+  environment:
+    APP_STORAGE: '/tmp'
+    ENV: ${opt:stage, self:provider.stage}
+    BREF_BINARY_RESPONSES: 1
+  apiGateway:
+    binaryMediaTypes:
+      - '*/*'
+
+plugins:
+  - ./vendor/bref/bref
+  - serverless-domain-manager
+
+functions:
+  laravel:
+    handler: public/index.php
+    timeout: 28
+    layers:
+      - ${bref:layer.php-73-fpm}
+    events:
+      - http: 'ANY /'
+      - http: 'ANY /{proxy+}'
+
+package:
+  exclude:
+    - node_modules/**
+    - .git/**

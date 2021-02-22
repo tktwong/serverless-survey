@@ -1,0 +1,47 @@
+service: line-bot-tool
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: go1.x
+  region: ap-northeast-1
+  memorySize: 400
+  timeout: 60
+  stage: ${opt:stage, self:custom.defaultStage}
+
+layers:
+  chromeLayer:
+    path: line-layer/driver
+
+custom:
+  defaultStage: dev
+  profiles:
+    dev: sls
+  otherfile:
+    environment:
+      dev: ${file(./conf/dev/dev.yml)}
+
+package:
+  individually: true
+
+functions:
+  lineBot:
+    handler: bin/lineBot
+    layers:
+      - {Ref: ChromeLayerLambdaLayer}
+    package:
+      exclude:
+        - './**'
+      include:
+        - './bin/**'
+    environment:
+      LINE_SECRET_KEY: ${self:custom.otherfile.environment.${self:provider.stage}.LINE_SECRET_KEY}
+      LINE_ACCESS_KEY: ${self:custom.otherfile.environment.${self:provider.stage}.LINE_ACCESS_KEY}
+      MANABA_ID: ${self:custom.otherfile.environment.${self:provider.stage}.MANABA_ID}
+      MANABA_PASSWORD: ${self:custom.otherfile.environment.${self:provider.stage}.MANABA_PASSWORD}
+    events:
+      - http:
+          path: callback
+          method: post
+          cors: true

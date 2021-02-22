@@ -1,0 +1,123 @@
+service: SRE-Toolchain
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  # - serverless-webpack
+  - serverless-offline
+  - serverless-offline-sns
+
+package:
+  # individually: true
+  exclude:
+    - ./**
+    - "!node_modules/**"
+  include:
+    - src/**
+    - handler.js
+    - package.json
+
+custom:
+  webpack:
+    includeModules:
+    forceExclude:
+      - aws-sdk
+  serverless-offline-sns:
+    port: 4002 # a free port for the sns server to run on
+    debug: true
+  mySnsTopic: "ops_tools"
+
+  mySnsTopicArn:
+    local: "arn:aws:sns:us-east-1:123456789012:${self:custom.mySnsTopic}"
+    dev:
+      {
+        "Fn::Join":
+          [
+            "",
+            [
+              "arn:aws:sns:${self:provider.region}:",
+              { "Ref": "AWS::AccountId" },
+              ":${self:custom.mySnsTopic}",
+            ],
+          ],
+      }
+    prod:
+      {
+        "Fn::Join":
+          [
+            "",
+            [
+              "arn:aws:sns:${self:provider.region}:",
+              { "Ref": "AWS::AccountId" },
+              ":${self:custom.mySnsTopic}",
+            ],
+          ],
+      }
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 512 # optional, in MB, default is 1024
+  timeout: 20 # optional, in seconds, default is 6
+  stage: ${opt:stage,'dev'}
+  region: ${opt:region, 'us-east-1'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+        - "sqs:GetQueueUrl"
+      Resource: "arn:aws:sqs:${self:provider.region}:689199822638:ops_tools"
+    - Effect: "Allow"
+      Action:
+        - "sqs:ListQueues"
+      Resource: "arn:aws:sqs:${self:provider.region}:689199822638:*"
+    - Effect: Allow
+      Action:
+        - SNS:Publish
+      Resource:
+        {
+          "Fn::Join":
+            [
+              "",
+              [
+                "arn:aws:sns:${self:provider.region}:",
+                { "Ref": "AWS::AccountId" },
+                ":${self:custom.mySnsTopic}",
+              ],
+            ],
+        }
+
+functions:
+  api:
+    handler: src/api.endpoint
+    events:
+      - http: ANY /
+      - http: "ANY {proxy+}"
+  snsConsumer:
+    handler: src/snsConsumer.handler
+    events:
+      - sns: ${self:custom.mySnsTopic}
+  producer:
+    handler: src/snsProducer.handler
+    events:
+      - http:
+          path: ping
+          method: get
+          cors: true
+# resources:
+#     Resources
+# MyQueue:
+#     Type: "AWS::SQS::Queue"
+#     Properties:
+#         QueueName: "ops_tools"
+#         VisibilityTimeout: 300
+# SNSTopic:
+#     Type: AWS::SNS::Topic
+#     Properties:
+#         DisplayName: Ops Tools
+#         TopicName: ${self:custom.mySnsTopic}
+# SNSSubscription:
+#     Type: AWS::SNS::Subscription
+#     Properties:
+#         TopicArn: {"Ref": "SNSTopic"}
+

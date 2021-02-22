@@ -1,0 +1,213 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+##-----------------------------------------Start of Service-------------------------------------------------------------
+service: sls-demo
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+##-----------------------------------------End of Service---------------------------------------------------------------
+
+
+
+##-----------------------------------------Start of Provider------------------------------------------------------------
+provider:
+  name: aws
+  runtime: nodejs4.3
+  region: us-east-1
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  # you can define service wide environment variables here
+  # NOTE: ACCESS THESE VARIABLES BY USING process.env.DYNAMO_TABLENAME in the lambda
+  environment:
+    DYNAMODB_TABLE: INS_20_USER_REQUEST
+
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:*"
+#      Resource: "arn:aws:s3:::customer-service-full-web-module"
+#    - Effect: "Allow"
+#      Action:
+#        - "dynamodb:*"
+#      Resource: "arn:aws:dynamodb:us-east-1:164336801877:table/INS_20_USER_REQUEST"
+
+##-----------------------------------------End of Provider--------------------------------------------------------------
+
+
+##-----------------------------------------Start of Custom--------------------------------------------------------------
+
+custom:
+  defaultStage: dev
+  profiles:
+    dev: devProfile
+    stag: stagProfile
+
+##-----------------------------------------End of Custom----------------------------------------------------------------
+
+
+##-----------------------------------------Start of Packaging-----------------------------------------------------------
+
+# you can add packaging information here
+package:
+  individually: true
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+  exclude:
+    - node_modules/**
+
+##-----------------------------------------End of Packaging-------------------------------------------------------------
+
+
+##-----------------------------------------Start of Plugins-------------------------------------------------------------
+plugins:
+  - serverless-plugin-include-dependencies
+
+##-----------------------------------------Start of Plugins-------------------------------------------------------------
+
+
+
+##-----------------------------------------Start of Functions-----------------------------------------------------------
+
+functions:
+  requests:
+    handler: get.requests
+    role: demoRole
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+    events:
+      - http:
+          path: requests/get
+          method: get
+          cors: true
+#      - s3:
+#        bucket: customer-service-full-web-module
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+  sample:
+      handler: sample.sample
+      role: demoRole1
+      events:
+        - http:
+            path: demo/sample
+            method: get
+            cors: true
+            integration: lambda
+            authorizer:
+              name: authorizer
+              arn: arn:aws:cognito-idp:us-east-1:164336801877:userpool/us-east-1_z6m8QUoCq
+              claims:
+                - email
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+
+##-----------------------------------------End of Functions-------------------------------------------------------------
+
+
+
+##-----------------------------------------Start of Resources-------------------------------------------------------------------
+
+# you can add CloudFormation resource templates here
+#resources:
+resources:
+  Resources:
+    demoRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        RoleName: demoRole
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        # note that these rights are needed if you want your function to be able to communicate with resources within your vpc
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        Policies:
+          - PolicyName: demoPolicy
+            PolicyDocument:
+              Statement:
+                -  Effect: "Allow"
+                   Action:
+                     - "dynamodb:*"
+                   Resource: ["arn:aws:dynamodb:us-east-1:164336801877:table/INS_20_USER_REQUEST"]
+
+    demoRole1:
+       Type: AWS::IAM::Role
+       Properties:
+         Path: /
+         RoleName: demoRole1
+         AssumeRolePolicyDocument:
+           Statement:
+             - Effect: Allow
+               Principal:
+                 Service:
+                   - lambda.amazonaws.com
+               Action: sts:AssumeRole
+         # note that these rights are needed if you want your function to be able to communicate with resources within your vpc
+         ManagedPolicyArns:
+           - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+    LoggingPermissionPolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: LoggingPermission
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: arn:aws:logs:us-east-1:164336801877:log-group:/aws/lambda/*:*:*
+        Roles:
+          - Ref: 'demoRole'
+          - Ref: 'demoRole1'
+
+    S3PutPolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: S3PutPolicy
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Action:
+                - "s3:PutObject"
+              Resource:
+               Fn::Join:
+                 - ""
+                 - - "arn:aws:s3:::"
+                   - "Ref" : "ServerlessDeploymentBucket"
+        Roles:
+          - Ref: 'demoRole'
+          - Ref: 'demoRole1'
+
+##-----------------------------------------End of Resources-------------------------------------------------------------

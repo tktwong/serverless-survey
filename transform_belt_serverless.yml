@@ -1,0 +1,136 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: transform-belt
+#app: your-app-name
+#tenant: your-tenant-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: ruby2.5
+
+# you can overwrite defaults here
+#  stage: dev
+  region: ap-northeast-1
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ecs:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "iam:PassRole"
+      Resource: [
+        !GetAtt TaskRole.Arn,  
+        !GetAtt TaskExecutionRole.Arn
+      ]  
+
+functions:
+  transform:
+    handler: transform.execute
+    environment:
+      SUBNET_ID: subnet-XXXXXXXXXXX  #FIXME
+      SECURITY_GROUP: sg-XXXXXXXXXX  #FIXME
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    EcsCulster:
+      Type: AWS::ECS::Cluster
+      Properties:
+        ClusterName: transform-cluster
+
+    TaskRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: transform-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - ecs-tasks.amazonaws.com
+              Action:
+                - sts:AssumeRole
+
+    TaskExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: transform-execution-role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - ecs-tasks.amazonaws.com
+              Action:
+                - sts:AssumeRole
+
+        Policies:
+          - PolicyName: transform-execution-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - ecr:GetAuthorizationToken
+                    - ecr:BatchCheckLayerAvailability
+                    - ecr:GetDownloadUrlForLayer
+                    - ecr:BatchGetImage
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: "*"
+                  
+    TaskDefinition:
+      Type: AWS::ECS::TaskDefinition
+      Properties:
+        Family: transform
+        TaskRoleArn: !Ref TaskRole
+        ExecutionRoleArn: !Ref TaskExecutionRole
+        RequiresCompatibilities:
+          - FARGATE
+        NetworkMode: awsvpc
+        Memory: 512
+        Cpu: 256
+        ContainerDefinitions:
+          -
+            Name: app
+            Image: ubuntu
+            # ECRのコンテナを使う場合は以下を修正して使う
+            # Image:
+            #   !Join
+            #     - '/'
+            #     - - !Ref 'AWS::AccountId'
+            #       - !Sub 'dkr.ecr.ap-northeast-1.amazonaws.com/[ECR_NAME]:[TAG]'
+                  
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: !Ref LogGroup
+                awslogs-region: ap-northeast-1
+                awslogs-stream-prefix: logs
+      
+    LogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /ecs/transorm-belt

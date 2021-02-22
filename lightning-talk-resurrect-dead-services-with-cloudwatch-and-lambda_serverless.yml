@@ -1,0 +1,59 @@
+service: eventbridge-demo
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+package:
+  exclude:
+    - tools
+
+custom:
+  STAGE: ${env:STAGE, opt:stage, 'dev'}
+  SERVICE_NAME: "${self:service}-${self:custom.STAGE}"
+  PROFILE: ${env:AWS_PROFILE, 'architecture'}
+  serverless-offline:
+    httpPort: ${env:HTTP_PORT, 3000}
+    lambdaPort: ${env:LAMBDA_PORT, 3002}
+    websocketPort: ${env:WEBSOCKET_PORT, 3001}
+
+provider:
+  name: aws
+  region: ${env:REGION}
+  stage: ${self:custom.STAGE}
+  runtime: nodejs12.x
+  profile: ${self:custom.PROFILE}
+  tags:
+    Client: 'White Prompt'
+    Project: 'Eventbridge Demo'
+  iamManagedPolicies:
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+
+functions:
+  requester:
+    handler: handlers.requester
+    environment:
+      TEST_URI: ${env:TEST_URI, 'https://1234567890.execute-api.us-east-1.amazonaws.com/dev/test'}
+    events:
+      - schedule:
+          enabled: true
+          rate: rate(1 minute)
+  responder:
+    handler: handlers.responder
+    environment:
+      TEST_STATUS: ${env:TEST_STATUS, '200'}
+      TEST_MESSAGE: ${env:TEST_MESSAGE, 'OK'}
+    events:
+      - http:
+          path: /test
+          method: GET
+  alarmStateChange:
+    handler: handlers.alarmStateChange
+    events:
+      - cloudwatchEvent:
+          event:
+            source:
+              - 'aws.cloudwatch'
+            detail-type:
+              - 'CloudWatch Alarm State Change'
+

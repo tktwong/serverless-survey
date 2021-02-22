@@ -1,0 +1,89 @@
+service: notes-app-2-api
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  usersTableName: ${self:custom.stage}-usersTable
+  factionsTableName: ${self:custom.stage}-factionsTable
+  augmentsTableName: ${self:custom.stage}-augmentsTable
+  beastsTableName: ${self:custom.stage}-beastsTable
+  gameRulesTableName: ${self:custom.stage}-gameRulesTable
+  riftTableName: ${self:custom.stage}-riftTable
+  overviewTableName: ${self:custom.stage}-overviewTable
+  bucketName: ${self:custom.stage}-images-capstone2019
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  versionFunctions: false
+  stage: hmg
+  region: ap-southeast-2
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    userTable: ${self:custom.usersTableName}
+    factionTable: ${self:custom.factionsTableName}
+    augmentTable: ${self:custom.augmentsTableName}
+    beastTable: ${self:custom.beastsTableName}
+    gameRuleTable: ${self:custom.gameRulesTableName}
+    riftTable: ${self:custom.riftTableName}
+    overviewTable: ${self:custom.overviewTableName}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - "Fn::GetAtt": [ UsersTable, Arn ]
+        - "Fn::GetAtt": [ FactionsTable, Arn ]
+        - "Fn::GetAtt": [ AugmentsTable, Arn ]
+        - "Fn::GetAtt": [ BeastsTable, Arn ]
+        - "Fn::GetAtt": [ GameRulesTable, Arn ]
+        - "Fn::GetAtt": [ RiftTable, Arn ]
+        - "Fn::GetAtt": [ OverviewTable, Arn ]
+
+functions:
+  - ${file(resources/users/users-functions.yml)}
+  - ${file(resources/factions/factions-functions.yml)}
+  - ${file(resources/augment/augment-functions.yml)}
+  - ${file(resources/beasts/beasts-functions.yml)}
+  - ${file(resources/gameRules/gameRules-functions.yml)}
+  - ${file(resources/rift/rift-functions.yml)}
+  - ${file(resources/overview/overview-functions.yml)}
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(resources/users/users-dynamodb.yml)}
+  - ${file(resources/factions/factions-dynamodb.yml)}
+  - ${file(resources/augment/augment-dynamodb.yml)}
+  - ${file(resources/beasts/beasts-dynamodb.yml)}
+  - ${file(resources/gameRules/gameRules-dynamodb.yml)}
+  - ${file(resources/rift/rift-dynamodb.yml)}
+  - ${file(resources/overview/overview-dynamodb.yml)}
+  # S3
+  - ${file(resources/s3-bucket.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

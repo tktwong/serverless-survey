@@ -1,0 +1,119 @@
+#  ██████████ ██      ██                  ██            ██   ███████
+# ░░░░░██░░░ ░██     ░░                  ░██    ██   ██░██  ██░░░░░██
+#     ░██    ░██      ██ ██████  ██████ ██████ ░░██ ██ ░██ ██     ░░██
+#     ░██    ░██████ ░██░░██░░█ ██░░░░ ░░░██░   ░░███  ░██░██      ░██
+#     ░██    ░██░░░██░██ ░██ ░ ░░█████   ░██     ░██   ░██░██    ██░██
+#     ░██    ░██  ░██░██ ░██    ░░░░░██  ░██     ██    ░██░░██  ░░ ██
+#     ░██    ░██  ░██░██░███    ██████   ░░██   ██     ░██ ░░███████ ██
+#     ░░     ░░   ░░ ░░ ░░░    ░░░░░░     ░░   ░░      ░░   ░░░░░░░ ░░
+
+service: thirstyIQ
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  # stage: dev
+  region: us-west-2
+  cfLogs: true
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/*"
+    - Effect: "Allow"
+      Action:
+        - "SNS:Publish"
+      Resource: "arn:aws:sns:${self:provider.region}:*:refresh-users"
+
+#package:
+#  exclude:
+#    - exclude-me.js
+#  artifact: my-service-code.zip
+
+functions:
+  thirsty:
+    handler: index.slash
+    events:
+      - http: POST thirsty
+
+  authorization:
+    handler: index.authorization
+    events:
+      - http: GET callback
+
+  refresh:
+    handler: index.refresh
+    events:
+      - sns: refresh-users
+      - schedule: cron(0 4 * * ? *)
+
+# AWS Cron Expressions:
+# https://docs.aws.amazon.com/AmazonCloudWatch/latest/events/ScheduledEvents.html#CronExpressions
+
+resources:
+  Resources:
+    groupsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: thirstyiq-groups
+        KeySchema:
+          - AttributeName: organization
+            KeyType: HASH
+          - AttributeName: name
+            KeyType: RANGE
+        AttributeDefinitions:
+          - AttributeName: organization
+            AttributeType: S
+          - AttributeName: name
+            AttributeType: S
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: thirstyiq-users
+        KeySchema:
+          - AttributeName: organization
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        AttributeDefinitions:
+          - AttributeName: organization
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        GlobalSecondaryIndexes:
+          - IndexName: organization-index
+            KeySchema:
+              - AttributeName: organization
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    slackTeamsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: thirstyiq-slack-teams
+        # DeletionPolicy: Retain
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

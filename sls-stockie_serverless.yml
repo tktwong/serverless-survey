@@ -1,0 +1,79 @@
+service:
+  name: stockie
+
+plugins:
+  - serverless-bundle
+  - serverless-pseudo-parameters
+  - serverless-step-functions
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 256
+  stage: ${opt:stage, 'dev'}
+  region: us-east-2
+  iamRoleStatements:
+    - ${file(iam/ApiKeysIAM.yml):ApiKeysIAM}
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource:
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/stockieBotOrders-${self:provider.stage}
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: '*'
+  environment: ${file(environment/EnvVars.yml):EnvVars}
+functions:
+  getMarketStatus:
+    handler: src/handlers/getMarketStatus.handler
+  getDailyStockList:
+    handler: src/handlers/getDailyStockList.handler
+  stockToBuy:
+    handler: src/handlers/stockToBuy.handler
+  currentPerformanceCheck:
+    handler: src/handlers/currentPerformanceCheck.handler
+  calculateOrderAmount:
+    handler: src/handlers/calculateOrderAmount.handler
+  createNewOrder:
+    handler: src/handlers/createNewOrder.handler
+  checkStockPositions:
+    handler: src/handlers/checkStockPositions.handler
+resources:
+  Resources:
+    stockieBotOrdersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: stockieBotOrders-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+    StepsLogs:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/StockieAutoOrderFlow/${self:service}-StepsLogs
+stepFunctions:
+  validate: true
+  stateMachines:
+    StockieAutoOrderFlow: ${file(stateMachineControls/stockieAutoOrderFlow.yml)}
+    StockieDayTradeFlow: ${file(stateMachineControls/stockieDayTradeFlow.yml)}
+custom:
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+  paramsPath:
+    apiKey: /Stockie/envs/ALPACA_LIVE_API_KEY
+    secretKey: /Stockie/envs/ALPACA_LIVE_SECRET_KEY
+  options:
+    IncreasePercentage: 4
+    min_share_price: 2
+    max_share_price: 13
+    min_last_dv: 500000
+    risk: 0.001
+    stopPerc: 0.95

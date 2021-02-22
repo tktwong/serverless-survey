@@ -1,0 +1,44 @@
+service:
+  name: ${self:custom.name}
+
+custom:
+  ${file(./sls.config.js)}
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  deploymentBucket:
+    name: ${self:custom.bucket}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    REGION: ${opt:region, 'us-east-1'}
+
+functions:
+  authorizer:
+    handler: src/functions/authorizer.handler
+    environment:
+      JWT_SECRET: ${self:custom.jwtSecret}
+  hello:
+    handler: src/functions/hello.handler
+    environment:
+      TEST_VAR: ${self:custom.param1}
+    events:
+      - http:
+          method: get
+          path: hello
+          authorizer: authorizer
+
+  teamsDelete:
+    handler: src/functions/teams/delete.handler
+    environment:
+      TABLE_NAME: 'teamsTable'
+    events:
+      - http:
+          method: delete
+          path: draftTeams/{leagueAbbrev}/{id}

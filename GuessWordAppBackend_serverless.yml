@@ -1,0 +1,85 @@
+
+service: guesswordapi
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: ${opt:region}
+  environment:
+    SERVICE: ${self:service}
+    DATA_SOURCE_TABLE: !Ref DataSourceTable
+    REGION: ${opt:region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:*
+        - logs:*
+        - dynamodb:*
+      Resource: "*"
+package:
+  exclude:
+    - README.md
+    - node_modules/**
+    - env/**
+    - .gitignore
+    - .vscode/**
+    - .serverless/**
+    - "*.pyc"
+    - __pycache__
+    - package-lock.json
+
+functions:
+  getEasyWord:
+    handler: handler.get_easy_word
+    events:
+     - http:
+         path: easy
+         method: get
+  getMediumWord:
+    handler: handler.get_medium_word
+    events:
+     - http:
+         path: medium
+         method: get
+  getHardWord:
+    handler: handler.get_hard_word
+    events:
+     - http:
+         path: hard
+         method: get
+
+resources:
+  Resources:
+      DataSourceTable:
+        Type: AWS::DynamoDB::Table
+        Properties:
+          TableName: ${self:service}-data-source
+          KeySchema:
+            -
+              AttributeName: "data_source_id"
+              KeyType: "HASH"
+          AttributeDefinitions:
+            -
+              AttributeName: "data_source_id"
+              AttributeType: "S"
+            -
+              AttributeName: "data_source_type"
+              AttributeType: "S"
+          BillingMode: "PAY_PER_REQUEST"
+          GlobalSecondaryIndexes:
+            -
+              IndexName: "data_source_type_index"
+              KeySchema:
+                -
+                  AttributeName: "data_source_type"
+                  KeyType: "HASH"
+              Projection:
+                ProjectionType: "ALL"
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+          SSESpecification:
+            KMSMasterKeyId: "alias/aws/dynamodb"
+            SSEEnabled: true
+            SSEType: "KMS"
+plugins:
+  - serverless-python-requirements

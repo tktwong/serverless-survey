@@ -1,0 +1,80 @@
+service: nowpt-service
+
+plugins:
+        - serverless-bundle
+        - serverless-pseudo-parameters
+
+provider:
+        name: aws
+        runtime: nodejs12.x
+        stage: ${opt:stage,'dev'}
+        region: us-east-1
+        environment:
+                USERS_TABLE: ${self:custom.UsersTable.name}
+        logRetentionInDays: 7
+        iamRoleStatements:
+                - ${file(roles/UsersTable.yml):UsersTable}
+
+resources:
+        Resources:
+                UsersTable: ${file(resources/DefUsersTable.yml):DefUsersTable}
+                UserPool: ${file(resources/DefUserPool.yml):UserPool}
+                UserPoolClient: ${file(resources/DefUserPoolClient.yml):UserPoolClient}
+                UserPoolDomain: ${file(resources/DefUserPoolDomain.yml):UserPoolDomain}
+                ApiAuthorizer: ${file(resources/DefApiAuthorizer.yml):ApiAuthorizer}
+                CognitoPermission: ${file(resources/DefCognitoPermission.yml):CognitoPermission}
+
+functions:
+        getUsers:
+                handler: functions/getUsers.handler
+                events:
+                        - http:
+                                path: users
+                                method: get
+                                authorizer:
+                                        type: COGNITO_USER_POOLS
+                                        authorizerId: ${self:custom.ApiAuthorizer.id}
+                                
+        getUserById:
+                handler: functions/getUserById.handler
+                events:
+                        - http:
+                                path: users/{id}
+                                method: get
+                                authorizer:
+                                        type: COGNITO_USER_POOLS
+                                        authorizerId: ${self:custom.ApiAuthorizer.id}
+                                
+
+        createUser:
+                handler: functions/createUser.handler
+                events:
+                        - cognitoUserPool:
+                                pool: nowpt
+                                trigger: PreSignUp
+                                existing: true
+        updateUser:
+                handler: functions/updateUser.handler
+                events:
+                        - http:
+                                path: users/{id}
+                                method: put
+                                authorizer:
+                                        type: COGNITO_USER_POOLS
+                                        authorizerId: ${self:custom.ApiAuthorizer.id}
+        
+custom:
+        UsersTable:
+                name: !Ref UsersTable
+                arn: !GetAtt UsersTable.Arn
+        UserPool:
+                id: !Ref UserPool
+                arn: !GetAtt UserPool.Arn
+        ApiAuthorizer:
+                id: !Ref ApiAuthorizer
+        ApiGatewayRestApi:
+                id: !Ref ApiGatewayRestApi
+        Info:
+                email: ${file(environment.yml):Environment.email}
+        bundle:
+                linting: false

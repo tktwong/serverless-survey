@@ -1,0 +1,48 @@
+service: neo4jserverless
+# app and org for use with dashboard.serverless.com
+app: neo4j
+org: maxn90
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+# you can overwrite defaults here
+  stage: dev
+  region: eu-central-1
+
+functions:
+  query:
+    handler: src/query/app.lambdaHandler
+    events:
+      - http:
+          path: query
+          method: get
+          cors: true
+          authorizer:
+            name: verify-token
+            identitySource: method.request.header.Authorization
+            resultTtlInSeconds: 3600
+    environment: # Handling secure parameters like this is not adviced. See motivation in README.md
+      NEO4J_URI: '${ssm:NEO4J_URI~true}'
+      NEO4J_USER: '${ssm:NEO4J_USER~true}'
+      NEO4J_PASSWORD: '${ssm:NEO4J_PASSWORD~true}' # really not adviced.
+
+  verify-token:
+    handler: src/authorizer/verifyToken.verifyToken
+    environment:
+      JWT_SECRET: '${ssm:JWT_SECRET~true}'
+
+  token:
+    handler: src/authorizer/app.token
+    events:
+      - http:
+          path: token
+          method: get
+          cors: true
+    environment:
+      JWT_SECRET: '${ssm:JWT_SECRET~true}'
+    

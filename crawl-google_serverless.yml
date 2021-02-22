@@ -1,0 +1,68 @@
+service: crawl-google-trigger-notify
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  region: ap-northeast-2
+  runtime: nodejs6.10
+  environment:
+    SERVICE_NAME: crawl-google
+    DYNAMODB_TABLE: ${self:provider.environment.SERVICE_NAME}-${opt:stage, self:provider.stage}
+    STAGE: ${opt:stage, self:provider.stage}
+    CRAWL_CORE_FUNCTION: ${self:provider.environment.SERVICE_NAME}-core-${opt:stage, self:provider.stage}-crawl
+    SLACK_ACCESS_TOKEN: XYNDWH9iaoLCsSmHyigWB6wm
+    REGION: ${self:provider.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "arn:aws:lambda:${opt:region, self:provider.region}:*:function:*"
+
+functions:
+  trigger:
+    handler: crawl/trigger.trigger
+    events:
+      - http:
+          path: crawl
+          method: post
+          cors: true
+  notify:
+    handler: crawl/notify.notify
+    events:
+      - schedule: rate(1 minute)
+
+resources:
+  Resources:
+    CrawlDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: keyword
+            AttributeType: S
+          -
+            AttributeName: years
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: keyword
+            KeyType: HASH
+          -
+            AttributeName: years
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

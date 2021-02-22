@@ -1,0 +1,92 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: lambda-partition-auto-expansion # NOTE: update this with your service name
+#app: your-app-name
+#tenant: your-tenant-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: python3.8
+  timeout: 60
+  memorySize: 128
+
+  # you can overwrite defaults here
+  stage: dev
+  region: eu-west-1
+
+  # you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ec2:DescribeInstances"
+        - "ec2:DescribeVolumes"
+        - "ssm:DescribeInstanceInformation"
+        - "ssm:ListCommands"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "ssm:SendCommand"
+      Resource:
+        - "arn:aws:ssm:*:*:document/${self:custom.ssmDocWindows}"
+        - "arn:aws:ec2:*:*:instance/*"
+  iamManagedPolicies:
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+
+package:
+  include:
+    - handler.py
+  exclude:
+    - slsattributes.json
+    - windows_expand.ps1
+    - README.md
+
+functions:
+  partitionextension:
+    name: partition-auto-expansion-${self:provider.stage}
+    handler: handler.partitionextension
+    events:
+      - cloudwatchEvent:
+          event:
+            source:
+              - "aws.ec2"
+            detail-type:
+              - "AWS API Call via CloudTrail"
+            detail:
+              eventSource:
+                - ec2.amazonaws.com
+              eventName:
+                - ModifyVolume
+    environment:
+      VolumeDocumentWin: ${self:custom.ssmDocWindows}
+
+plugins:
+  - serverless-plugin-ssm-document
+
+custom:
+  ssmDocWindows: ssm-partition-expansion-windows
+  #ssmDocLinux: ssm-partition-expansion-linux
+  ssmDocuments:
+    expandWindows:
+      name: ${self:custom.ssmDocWindows}
+      description: Expand partition on a Windows instance.
+      scriptFile: ./windows_expand.ps1
+      #action: aws:runPowerShellScript
+    #expandLinux:
+    #name: ${self:custom.ssmDocLinux}
+    #description: Expand partition on a Linux instance.
+    #scriptFile: ./linux_expand.sh

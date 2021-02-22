@@ -1,0 +1,64 @@
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage , 'dev'}
+  mode: ${opt:mode , 'online'}
+  region: 'eu-central-1'
+  logRetentionInDays: 90
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-warmup
+
+package:
+  individually: true
+  excludeDevDependencies: false
+  exclude:
+    - ./**
+
+service:
+  name: 'express_boilerplate'
+  id: ${self:service.name}-${self:provider.stage}
+  apiBasePath: '/express'
+  graphQLBasePath: '/graphql'
+  graphQLFederationPath: '/api'
+  Route53HostedZoneId: xy
+
+custom:
+  warmup:
+    prewarm: true
+    concurrency: 10
+    payload:
+      source: serverless-plugin-warmup
+
+functions:
+  express:
+    handler: packages/express_lambda/dist/handler.handler
+    warmup: true
+    timeout: 30
+    events:
+      - http: GET ${self:service.apiBasePath}
+      - http: POST ${self:service.apiBasePath}
+    package:
+      include:
+        - packages/express_lambda/dist/**
+  graphql:
+    handler: packages/graphql_lambda/dist/handler.handler
+    warmup: true
+    timeout: 30
+    events:
+      - http: GET ${self:service.graphQLBasePath}
+      - http: POST ${self:service.graphQLBasePath}
+    package:
+      include:
+        - packages/graphql_lambda/dist/**
+  federation:
+    handler: packages/federation_lambda/dist/handler.handler
+    warmup: true
+    timeout: 30
+    events:
+      - http: GET ${self:service.graphQLFederationPath}
+      - http: POST ${self:service.graphQLFederationPath}
+    package:
+      include:
+        - packages/federation_lambda/dist/**

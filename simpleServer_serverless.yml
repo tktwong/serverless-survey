@@ -1,0 +1,87 @@
+service: my-service
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - dynamodb:Query
+         - dynamodb:Scan
+         - dynamodb:GetItem
+         - dynamodb:PutItem
+         - dynamodb:UpdateItem
+         - dynamodb:DeleteItem
+         - "ses:*"
+       Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+functions:
+  dailyReminder:
+    handler: handler.sendReminderDaily
+    events:
+      # Invoke the Lambda function everyday
+      - schedule: rate(5 days)
+  weekendReminder:
+    handler: handler.sendReminderWeekend
+    events:
+      # Invoke the Lambda function every weekend at 1pm US/Eastern Time
+      - schedule: cron(30 22 ? * SUN,SAT *)
+  create:
+    handler: pets/create.create
+    events:
+      - http:
+          path: pets
+          method: post
+          cors: true
+
+  list:
+    handler: pets/list.list
+    events:
+      - http:
+          path: pets
+          method: get
+          cors: true
+
+  get:
+    handler: pets/get.get
+    events:
+      - http:
+          path: pets/{id}
+          method: get
+          cors: true
+
+  update:
+    handler: pets/update.update
+    events:
+      - http:
+          path: pets/{id}
+          method: put
+          cors: true
+
+  delete:
+    handler: pets/delete.delete
+    events:
+      - http:
+          path: pets/{id}
+          method: delete
+          cors: true
+
+resources:
+  Resources:
+    PetsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain # Keeps around the DynamoDB resource when we redeploy/destroy
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

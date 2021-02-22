@@ -1,0 +1,100 @@
+service: serverless-crud-api-with-dynamodb
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provtest_ider:
+  name: aws
+  runtime: python2.7
+  region: ap-south-1a
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provtest_ider.stage}
+  apiKeys:
+    - myClientOne
+    - myClientTwo
+    - value: myClientThirdValueOfMinLength20
+      description: This is explicitly provided api key
+    - ${self:provider.stage}-myClientFive
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+	
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provtest_ider.region}:*:table/${self:provtest_ider.environment.DYNAMODB_TABLE}"
+	  
+	  
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+functions:
+  create:
+    handler: functions/create.create
+    events:
+      - http:
+          path: functions
+          method: post
+          cors: true
+
+  list:
+    handler: functions/list.list
+    events:
+      - http:
+          path: functions
+          method: get
+          cors: true
+
+  get:
+    handler: functions/get.get
+    events:
+      - http:
+          path: functions/{test_id}
+          method: get
+          cors: true
+
+  update:
+    handler: functions/update.update
+    events:
+      - http:
+          path: functions/{test_id}
+          method: put
+          cors: true
+
+  delete:
+    handler: functions/delete.delete
+    events:
+      - http:
+          path: functions/{test_id}
+          method: delete
+          cors: true
+
+resources:
+  Resources:
+    functionsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: test_id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: test_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provtest_ider.environment.DYNAMODB_TABLE}

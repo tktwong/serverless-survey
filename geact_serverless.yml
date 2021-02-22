@@ -1,0 +1,51 @@
+service:
+    name: geact-serverless
+
+# Add the serverless-webpack plugin
+plugins:
+    - serverless-webpack
+    - serverless-offline
+    - serverless-dotenv-plugin
+
+provider:
+    name: aws
+    runtime: nodejs8.10
+    region: ap-northeast-2
+
+functions:
+    api:
+        handler: src/server.handler
+        events:
+            - http:
+                  path: /
+                  method: ANY
+            - http:
+                  path: /{any+}
+                  method: ANY
+
+resources:
+    Resources:
+        CloudFrontDistribution:
+            Type: AWS::CloudFront::Distribution
+            Properties:
+                DistributionConfig:
+                    Comment: geact-serverless
+                    DefaultCacheBehavior:
+                        TargetOriginId: geact-serverless
+                        ViewerProtocolPolicy: 'redirect-to-https'
+                        DefaultTTL: 30
+                        ForwardedValues:
+                            QueryString: false
+                    Enabled: true
+                    Origins:
+                        - Id: geact-serverless
+                          DomainName:
+                              Fn::Join:
+                                  - '.'
+                                  - - Ref: ApiGatewayRestApi
+                                    - execute-api.ap-northeast-2.amazonaws.com
+                          OriginPath: /prod
+                          CustomOriginConfig:
+                              HTTPPort: 80
+                              HTTPSPort: 443
+                              OriginProtocolPolicy: https-only

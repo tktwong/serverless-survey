@@ -1,0 +1,51 @@
+# serverless.yml
+
+service:
+  name: dev-town-tuts-slickchat-api
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 256
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-1
+  iamRoleStatements:
+    - ${file(iam/ChannelsTableIAM.yml):ChannelsTableIAM}
+  environment:
+    CHANNELS_TABLE_NAME: ${self:custom.ChannelsTable.name}
+
+resources:
+  Resources:
+    ChannelsTable: ${file(resources/ChannelsTable.yml):ChannelsTable}
+
+functions:
+  graphql:
+    handler: ./src/server.graphqlHandler
+    events:
+    - http:
+        path: graphql
+        method: post
+        cors: true
+        authorizer: ${self:custom.authorizer}
+    - http:
+        path: graphql
+        method: get
+        cors: true
+        authorizer: ${self:custom.authorizer}
+  systemMessage:
+    handler: ./src/systemMessage.handler
+
+custom:
+  authorizer: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:dev-town-tuts-slickchat-auth-${self:provider.stage}-auth
+  ChannelsTable:
+    name: !Ref ChannelsTable
+    arn: !GetAtt ChannelsTable.Arn
+  webpack:
+    webpackConfig: 'webpack.config.js' 
+    includeModules:
+      forceExclude:
+        - aws-sdk

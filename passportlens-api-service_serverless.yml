@@ -1,0 +1,135 @@
+service: passport-lens
+frameworkVersion: ">=1.0.0 < 2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'} # -s 옵션을 받으면 사용하고, 그렇지 않으면 기본 dev 스테이지 사용
+  region: ap-northeast-2
+  logs:
+    restApi: true # api gateway log options /aws/api-gateway/{service}-{stage}.
+    level: ${self:custom:LOG_LEVEL}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.dynamodb.customers}
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.dynamodb.customers}/index/*
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.dynamodb.apps}
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.dynamodb.apps}/index/*
+  environment:
+    STAGE: ${self:provider.stage}
+    LOG_LEVEL: ${self:custom.CONFIG.${self:custom.STAGE}.LOG_LEVEL}
+    ACCESS_TOKEN_SECRET: ${self:custom.CONFIG.${self:custom.STAGE}.ACCESS_TOKEN_SECRET}
+    REFRESH_TOKEN_SECRET: ${self:custom.CONFIG.${self:custom.STAGE}.REFRESH_TOKEN_SECRET}
+    SERVICE_KEY: ${self:custom.CONFIG.${self:custom.STAGE}.SERVICE_KEY}
+    DYNAMODB_CUSTOMERS_TABLE: ${self:custom.dynamodb.customers}
+    DYNAMODB_APPS_TABLE: ${self:custom.dynamodb.apps}
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+functions:
+  # authorizer 함수
+  validate:
+    handler: src/functions/validate.validate
+  # 환경변수 조회
+  getEnv:
+    handler: src/functions/getEnv.getEnv
+    events:
+      - http:
+          path: v1/environments
+          method: get
+          cors: true
+  # App 등록 API
+  registerApp:
+    handler: src/functions/registerApp.registerApp
+    events:
+      - http:
+          path: v1/apps
+          method: post
+          cors: true
+  # App 인증 API access token, refresh token 발급
+  loginApp:
+    handler: src/functions/loginApp.loginApp
+    events:
+      - http:
+          path: v1/apps/login
+          method: post
+          cors: true
+  # access token, referesh token 재 발급 API
+  refreshToken:
+    handler: src/functions/refreshToken.refreshToken
+    events:
+      - http:
+          path: v1/apps/tokens
+          method: post
+          cors: true
+  # passport decode API (token 방식 인증)
+  decryptCode:
+    handler: src/functions/decryptCode.decryptCode
+    events:
+      - http:
+          path: v1/lens
+          method: post
+          cors: true
+          authorizer: validate
+  # passport decode API (api key 방식 인증)
+  decryptPassport:
+    handler: src/functions/decryptPassport.decryptPassport
+    events:
+      - http:
+          path: v1/passports
+          method: post
+          cors: true
+  # Customer 고객 등록 API
+  # createCustomer:
+  #   handler: src/functions/createCustomer.createCustomer
+  #   events:
+  #     - http:
+  #         path: v1/customers
+  #         method: post
+  #         cors: true
+custom:
+  STAGE: ${self:provider.stage} # 현재 스테이지 별로 정보를 달리하기 위함
+  CONFIG: ${file(./src/common/environments.js):CONFIG} # environments.js 에서 가져올 데이터 베이스 접속정보
+  LOG_LEVEL: ${self:custom.CONFIG.${self:custom.STAGE}.LOG_LEVEL}
+  dynamodb:
+    customers: ${self:service}-customers-${self:custom.STAGE}
+    apps: ${self:service}-apps-${self:custom.STAGE}
+  serverless-mocha-plugin:
+    testTemplate: templates/test-template.ejs
+    functionTemplate: templates/function-template.ejs
+# resources:
+#   Resources:
+#     appTable:
+#       Type: AWS::DynamoDB::Table
+#       DeletionPolicy: Retain
+#       Properties:
+#         TableName: ${self:custom.dynamodb.appTable}
+#         AttributeDefinitions:
+#           - AttributeName: accesskey
+#             AttributeType: S
+#         KeySchema:
+#           - AttributeName: accesskey
+#             KeyType: HASH
+#         ProvisionedThroughput:
+#           ReadCapacityUnits: 1
+#           WriteCapacityUnits: 1
+# 위에 리소스 생성 시 이미 만들어 진 상태에서 deploy 하면 오류 남
+# plugins 없으면 IAM roles의 변수 설정에 오류가 남
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-mocha

@@ -1,0 +1,115 @@
+service: anilist-updater 
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - SNS:Publish
+      Resource: {
+        "Fn::Join" : [
+          ":", [
+            "arn:aws:sns:${self:custom.region}",
+            { "Ref" : "AWS::AccountId" },
+            "${self:custom.notifyForAnilistUpdate}" 
+          ]
+        ]
+      }
+
+plugins:
+  - serverless-domain-manager
+
+custom:
+  region: 'us-east-1'
+  notifyForAnilistUpdate: ${self:service}-notifyForAnilistUpdate
+  queueForAnilistUpdate: ${self:service}-queueForAnilistUpdate
+  customDomain: 
+    domainName: anilist.shibanoodle.com
+    stage: dev
+    certificateName: '*.shibanoodle.com'
+    createRoute53Record: true
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+
+functions:
+  tvdbIDToAnilistConverter:
+    handler: src/id-converter.index
+    timeout: 20
+    environment:
+      tvdb_APIToken: ${ssm:/lambda/anilist-updater/TVDB-APITok~true}
+      topicArn:  { "Fn::Join" : [ ":", [ "arn:aws:sns:${self:custom.region}", { "Ref" : "AWS::AccountId" }, "${self:custom.notifyForAnilistUpdate}" ] ] }
+    events:
+    - http:
+        path: /tvdb
+        method: post
+    
+  anilistAPI:
+    handler: src/anilist-updater.index
+    environment:
+      anilistOAuthToken: ${ssm:/lambda/anilist-updater/AnilistOAuthToken~true}
+      tvdb_APIToken: ${ssm:/lambda/anilist-updater/TVDB-APITok~true}
+      discordWebhookToken: ${ssm:/lambda/anilist-updater/DiscordWebhookToken~true}
+    timeout: 20
+    events:
+    - sqs:
+        arn: 
+          Fn::GetAtt:
+            - queueForAnilistUpdate
+            - Arn
+    - http:
+        path: /mutation
+        method: post
+    - http:
+        path: /query
+        method: post
+    - http:
+        path: /search
+        method: post
+  
+
+    
+
+resources:
+  Resources:
+    notifyForAnilistUpdate:
+      Type: "AWS::SNS::Topic"
+      Properties:
+        DisplayName: "${self:custom.notifyForAnilistUpdate}"
+        TopicName: "${self:custom.notifyForAnilistUpdate}"
+        Subscription: [ 
+          {
+            "Endpoint":{"Fn::GetAtt":["queueForAnilistUpdate","Arn"]},
+            "Protocol":"sqs"
+          }
+        ]
+    MyQueuePolicy:
+      Type: "AWS::SQS::QueuePolicy"
+      Properties:      
+        PolicyDocument: {
+              "Version":"2012-10-17",
+              "Id":"MyQueuePolicy",
+              "Statement":[
+                {
+                  "Sid":"Allow-SendMessage-To-Both-Queues-From-SNS-Topic",
+    	      "Effect":"Allow",           
+    	      "Principal":"*",
+     	      "Action":["sqs:SendMessage"],
+    	      "Resource":"*",
+                  "Condition":{
+                    "ArnEquals":{
+                      "aws:SourceArn":{"Ref":"notifyForAnilistUpdate"}
+                    }
+                  }
+                }
+              ]
+        }
+        Queues: [{"Ref":"queueForAnilistUpdate"}]
+    queueForAnilistUpdate:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "${self:custom.queueForAnilistUpdate}"
+        

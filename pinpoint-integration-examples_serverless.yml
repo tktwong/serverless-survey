@@ -1,0 +1,88 @@
+custom:
+  variables:
+    region: ${env:REGION}
+    environment: ${env:ENVIRONMENT}
+  serverless-offline:
+    resourceRoutes: true # needed to run sls offline correctly
+  bundle:
+    ignorePackages:
+      - pg-native
+    linting: false
+
+service: ${self:custom.variables.environment}-sample-backend
+
+# Create an optimized package for our functions
+package:
+  individually: true
+  
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-dotenv-plugin # Load .env as environment variables
+  - serverless-offline
+  - serverless-plugin-tracing
+
+provider:
+  stage: ${opt:stage, self:custom.variables.environment}
+  name: aws
+  runtime: nodejs12.x
+  region: ${opt:region, self:custom.variables.region}
+  tracing: true
+  profile: bureau-sample-backend
+
+functions:
+  app:
+    role: customSampleBackendRole
+    handler: src/index.handler
+    vpc:
+      securityGroupIds:
+        - ${env:SECURITY_GROUP_ID}
+      subnetIds:
+        - ${env:SUBNET_1}
+        - ${env:SUBNET_2}
+    environment:
+      REDIS_CLUSTER_URL: ${env:REDIS_CLUSTER_URL}
+    events:
+      - http:
+          method: post
+          path: callback
+          cors: true
+      - http:
+          method: get
+          path: userinfo
+          cors: true
+
+resources:
+  Resources:
+    customSampleBackendRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        RoleName: ${self:custom.variables.environment}-sample-backend-customSampleBackendRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        Policies:
+          - PolicyName: ${self:custom.variables.environment}-sample-backend-customSampleBackendPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ec2:CreateNetworkInterface
+                    - ec2:DescribeDhcpOptions
+                    - ec2:DescribeNetworkInterfaces
+                    - ec2:DeleteNetworkInterface
+                    - ec2:DescribeSubnets
+                    - ec2:DescribeSecurityGroups
+                    - ec2:DescribeVpcs
+                    - ec2:CreateNetworkInterfacePermission
+                    - xray:PutTraceSegments
+                  Resource: "*"
+

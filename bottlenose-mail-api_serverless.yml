@@ -1,0 +1,120 @@
+service: bottlenose-mail-api
+
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  inboxesTableName: ${self:custom.stage}-inboxes
+  emailsTableName: ${self:custom.stage}-emails
+  emailsBucketName: bottlenosemail${self:custom.stage}emails
+  emailsBucketRef: S3BucketBottlenosemail${self:custom.stage}emails
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    stage: ${self:custom.stage}
+    inboxesTableName: ${self:custom.inboxesTableName}
+    emailsTableName: ${self:custom.emailsTableName}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:DeleteObject
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - Fn::GetAtt: [ InboxesTable, Arn ]
+        - Fn::Join: ['/', [{ Fn::GetAtt: [ InboxesTable, Arn ] }, 'index/*']]
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - Fn::GetAtt: [ EmailsTable, Arn ]
+        - Fn::Join: ['/', [{ Fn::GetAtt: [ EmailsTable, Arn ] }, 'index/*']]
+
+functions:
+  inboxesCreate:
+    handler: handlers/inboxesCreate.main
+    events:
+      - http:
+          path: inboxes
+          method: post
+          cors: true
+  inboxesGet:
+    handler: handlers/inboxesGet.main
+    events:
+      - http:
+          path: inboxes/{id}
+          method: get
+          cors: true
+  emailsList:
+    handler: handlers/emailsList.main
+    events:
+      - http:
+          path: emails
+          method: get
+          cors: true
+  emailsGet:
+    handler: handlers/emailsGet.main
+    events:
+      - http:
+          path: emails/{id}
+          method: get
+          cors: true
+  emailAddressCheck:
+    handler: handlers/emailAddressCheck.main
+  processEmail:
+    handler: handlers/processEmail.main
+    events:
+      - s3:
+          bucket: ${self:custom.emailsBucketName}
+          event: s3:ObjectCreated:*
+  inboxesDeleteExpired:
+    handler: handlers/inboxesDeleteExpired.main
+    events:
+      - schedule:
+          rate: cron(0/5 * * * ? *)
+          enabled: true
+
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  - ${file(resources/s3-bucket.yml)}
+  # SES Lambda Permissions
+  - ${file(resources/ses-lambda.yml)}
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}

@@ -1,0 +1,56 @@
+service: lambda-sqs
+
+frameworkVersion: "=1.41.0"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  environment: ${file(env.yml):${self:provider.stage}}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - sqs:*
+      Resource: arn:aws:sqs:${self:provider.region}:*:*
+    - Effect: "Deny"
+      Action:
+        - sqs:AddPermission
+        - sqs:CreateQueue
+        - sqs:DeleteQueue
+        - sqs:RemovePermission
+      Resource: arn:aws:sqs:${self:provider.region}:*:*
+
+package:
+  exclude:
+    - test/**
+
+custom:
+  lambda1SQS: "lambda1SQS-${self:provider.stage}"
+  lambda2SQS: "lambda2SQS-${self:provider.stage}"
+
+functions:
+  processSQSLambda1:
+    handler: handler.processSQSLambda1
+    reservedConcurrency: 10
+    events:
+      - sqs:
+          batchSize: 1
+          arn: 
+            Fn::GetAtt:
+              - Lambda1SQS
+              - Arn
+    environment:
+      SQS_LAMBDA2_URL:
+        Ref: Lambda2SQS
+
+resources:
+  Resources:
+    Lambda1SQS:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.lambda1SQS}
+    Lambda2SQS:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.lambda2SQS}

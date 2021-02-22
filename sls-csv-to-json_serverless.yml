@@ -1,0 +1,65 @@
+service: sls-csv-to-json-service
+
+plugins:
+  - serverless-plugin-existing-s3
+  - serverless-pseudo-parameters
+  - serverless-offline
+
+custom:
+  bucket: intuit.akgupta.tech
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-west-1
+  cors: true
+  environment:
+    BUCKET: ${self:custom.bucket}
+    accountId: '#{AWS::AccountId}'
+    region: '#{AWS::Region}'
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:PutBucketNotification"
+        - "s3:GetBucketNotification"
+        - "s3:*"
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+
+functions:
+
+  createCsv:
+    handler: handler.createCsv
+    events:
+      - http:
+          method: post
+          path: csv/{name}
+
+  readFile:
+    handler: handler.readFile
+    events:
+      - http:
+          method: get
+          path: /{fileType}/{name}
+          request:
+            parameters:
+              paths:
+                fileType: true
+                name: true
+
+  jsonTransformer:
+    handler: handler.jsonTransformer
+    events:
+      - existingS3:
+          bucket: ${self:custom.bucket}
+          events:
+            - s3:ObjectCreated:*
+          rules:
+            - suffix: .csv
+
+  hello:
+    handler: hello.handler
+    events:
+      - http:
+          method: get
+          path: hello

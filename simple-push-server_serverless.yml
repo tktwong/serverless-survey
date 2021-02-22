@@ -1,0 +1,90 @@
+service:
+  name: push-service
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-domain-manager
+  - serverless-aws-static-file-handler
+  - serverless-apigw-binary
+  - serverless-apigwy-binary
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - dynamodb:DescribeTable
+      - dynamodb:Query
+      - dynamodb:Scan
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+      - dynamodb:BatchWriteItem
+      - dynamodb:UpdateItem
+      - dynamodb:DeleteItem
+      Resource: arn:aws:dynamodb:eu-west-2:*:*
+
+resources:
+  Resources:
+    guestsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: simple-push-server.subscriptions
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+functions:
+  subscribe:
+    handler: handler.saveSubscription
+    events:
+    - http:
+        path: /api/subscriptions
+        method: put
+    - http:
+        path: /api/subscriptions/{id}
+        method: put
+        request:
+          parameters:
+            paths:
+              id: true
+  push:
+    handler: handler.sendPush
+    events:
+    - http:
+        path: /api/push
+        method: post
+  static:
+    handler: handler.staticFiles
+    events:
+    - http:
+        path: /bin/{file+}
+        method: get
+        contentHandling: CONVERT_TO_BINARY
+    - http:
+        path: /{any+}
+        method: get
+    - http:
+        path: /
+        method: get
+
+custom:
+  customDomain:
+    domainName: push.paullessing.com
+    certificateArn: paullessing.com
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: false
+    endpointType: edge
+  apigwBinary:
+    types:
+    - 'image/png'
+    - 'image/x-icon'

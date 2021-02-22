@@ -1,0 +1,58 @@
+service: fgm-site
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: us-east-1
+  profile: fgm-dev
+  deploymentBucket:
+    name: fgm-serverless-deployments
+
+custom:
+  s3BucketName: www.forgoodmeasure.us
+
+package:
+  include:
+    - dist/server/server-bundle.js
+    - lambda.js
+  exclude:
+    - ./**
+
+functions:
+  server:
+    handler: lambda.handler
+    environment:
+      node_env: lambda
+    events:
+      - http: GET /
+      - http: GET /{proxy+}
+
+resources:
+  Resources:
+    WebsiteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3BucketName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+        VersioningConfiguration:
+          Status: Enabled
+    CloudfrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+          - DomainName: ${self:custom.s3BucketName}.s3.amazonaws.com
+            Id: myS3Origin
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+          Enabled: 'true'
+          DefaultRootObject: index.html
+          DefaultCacheBehavior:
+            TargetOriginId: myS3Origin
+            ForwardedValues:
+              QueryString: 'true'
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: allow-all
+          PriceClass: PriceClass_100

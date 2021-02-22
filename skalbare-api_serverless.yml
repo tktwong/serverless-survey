@@ -1,0 +1,89 @@
+service: skalbare-api
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  # Set the table name here so we can use it while testing locally
+  notesTable: skalbare-${self:custom.stage}-notes
+  profilesTable: skalbare-${self:custom.stage}-profiles
+  postsTable: skalbare-${self:custom.stage}-posts
+  cognitoIdentiyPoolId: us-east-1_WaYiSCIq8
+  # cognitoIdentiyPoolId: us-east-1_nwwbtYMOe
+  # productsTable: skalbare-${self:custom.stage}-products
+  # Set our DynamoDB throughput for prod and all other non-prod stages.
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  # Load our webpack config
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  # Load our secret environment variables based on the current stage.
+  # Fallback to default if it is not in prod.
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    # Tables
+    notesTable: ${self:custom.notesTable}
+    profilesTable: ${self:custom.profilesTable}
+    postsTable: ${self:custom.postsTable}
+    cognitoIdentiyPoolId: ${self:custom.cognitoIdentiyPoolId}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        - "Fn::GetAtt": [ NotesTable, Arn ]
+        - "Fn::GetAtt": [ ProfilesTable, Arn ]
+        - "Fn::GetAtt": [ PostsTable, Arn ]
+
+    - Effect: Allow
+      Action:
+        - "s3:GetObject"
+        - "s3:PutObject"
+      Resource:
+        - Fn::Join:
+          - ''
+          -
+            - Fn::GetAtt: [AttachmentsBucket, Arn]
+            - '/*'
+
+functions:
+  - ${file(services/notes/notes.yml)}
+  - ${file(services/profiles/profiles.yml)}
+  - ${file(services/posts/posts.yml)}
+  - ${file(services/users/users.yml)}
+  - ${file(services/images/images.yml)}
+
+# Create our resources with separate CloudFormation templates
+resources:
+  - ${file(resources/api-gateway-errors.yml)}
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/s3-bucket.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

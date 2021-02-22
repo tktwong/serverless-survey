@@ -1,0 +1,173 @@
+org: anishsam
+app: sls-appsync-todo-service
+
+service: sls-appsync-todo-service
+
+plugins:
+  - serverless-appsync-plugin
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  versionFunctions: false
+  environment:
+    SLS_STAGE: ${self:custom.stage}
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  extra: ${file(vars/${self:custom.stage}.yaml)}
+  accountId: #{AWS::AccountId}
+  appSync:
+    name: sls-appsync-todo-api-${self:custom.stage}
+    authenticationType: API_KEY
+    schema: schema.graphql
+    serviceRole: AppSyncSGServiceRole-${self:custom.stage}
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: awsDynamoToDoTableDataSource
+        description: DynamoDB DataSource for ToDo
+        config:
+          tableName: { Ref: TodosDB }
+      - type: AWS_LAMBDA
+        name: awsLambdaToDoCountDataSource
+        description: Lambda DataSource
+        config:
+          lambdaFunctionArn: { Fn::GetAtt: [TodoCountLambdaFunction, Arn] } # Where TodoCountLambdaFunction is the lambda function cloudformation resource created by serverless for the serverless function named graphql
+          serviceRoleArn: { Fn::GetAtt: [AppSyncLambdaServiceRole, Arn] }
+    mappingTemplates:
+      - type: Query
+        dataSource: awsDynamoToDoTableDataSource
+        field: getTodo
+        request: GetTodo.req.vtl
+        response: GetTodo.res.vtl
+      - type: Query
+        dataSource: awsDynamoToDoTableDataSource
+        field: listTodos
+        request: ListTodos.req.vtl
+        response: ListTodos.res.vtl
+      - type: Mutation
+        dataSource: awsDynamoToDoTableDataSource
+        field: addTodo
+        request: AddTodo.req.vtl
+        response: AddTodo.res.vtl
+      - type: Mutation
+        dataSource: awsDynamoToDoTableDataSource
+        field: updateTodo
+        request: UpdateTodo.req.vtl
+        response: UpdateTodo.res.vtl
+      - type: Mutation
+        dataSource: awsDynamoToDoTableDataSource
+        field: deleteTodo
+        request: DeleteTodo.req.vtl
+        response: DeleteTodo.res.vtl
+      - type: Query
+        dataSource: awsLambdaToDoCountDataSource
+        field: getTodosCount
+        request: GetTodosCount.req.vtl
+        response: GetTodosCount.res.vtl
+
+functions:
+  todoCount:
+    handler: src/todo_count/handler.todoCount
+    role: ToDoCountLambdaExecutionRole
+    environment:
+      DDB_TABLE: { Ref: TodosDB }
+    tags:
+      APP_NAME: ${self:custom.extra.AppName}
+
+# CloudFormation Resource Templates
+resources:
+  Resources:
+    # DynamoDB
+    TodosDB:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput: ${self:custom.extra.DynamoCapacity}
+        Tags:
+          - Key: APP_NAME
+            Value: ${self:custom.extra.AppName}
+    # AppSync lambda role
+    AppSyncLambdaServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: Lambda-${self:custom.appSync.serviceRole}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - appsync.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: Lambda-${self:custom.appSync.serviceRole}-Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - lambda:invokeFunction
+                  Resource:
+                    - arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:custom.stage}-todoCount
+                    - arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${self:custom.stage}-todoCount:*
+        Tags:
+          - Key: APP_NAME
+            Value: ${self:custom.extra.AppName}
+    # Execution Role for ToDoCount Lambda
+    ToDoCountLambdaExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ToDoCountLambdaRole-${self:custom.stage}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ToDoCountLambdaRole-${self:custom.stage}-Policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                        - ':'
+                        - - arn:aws:logs
+                          - Ref: AWS::Region
+                          - Ref: AWS::AccountId
+                          - log-group:/aws/lambda/*:*:*
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Scan
+                  Resource:
+                    - 'Fn::Join':
+                        - ''
+                        - - 'arn:aws:dynamodb:'
+                          - Ref: 'AWS::Region'
+                          - ':'
+                          - Ref: 'AWS::AccountId'
+                          - ':table/'
+                          - Ref: TodosDB
+        Tags:
+          - Key: APP_NAME
+            Value: ${self:custom.extra.AppName}
+  Outputs:
+    TodosDB:
+      Description: DynamoDB Table for ToDo
+      Value: { Ref: TodosDB }

@@ -1,0 +1,100 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: movies-rating
+
+custom:
+  movieTableName: 'java-movies-rating-${self:provider.stage}'
+
+provider:
+  name: aws
+  runtime: java8
+  memorySize: 512 # optional, in MB, default is 1024
+  timeout: 11 # optional, in seconds, default is 6
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["MoviesDynamoDBTable", "Arn" ] }
+  environment:
+    MOVIE_TABLE_NAME: ${self:custom.movieTableName}
+
+package:
+  artifact: 'target/${self:service}-${self:provider.stage}.jar'
+
+functions:
+  listMovies:
+    handler: com.serverless.handlers.ListMoviesHandler
+    events:
+      - http:
+          path: /movies
+          method: get
+          cors: true
+  getMovie:
+    handler: com.serverless.handlers.GetMovieHandler
+    events:
+      - http:
+          path: /movies/{id}
+          method: get
+          cors: true
+  addMovie:
+    handler: com.serverless.handlers.AddMovieHandler
+    events:
+      - http:
+          path: /movies
+          method: post
+          integration: LAMBDA
+          cors: true
+  rateMovie:
+    handler: com.serverless.handlers.RateMovieHandler
+    events:
+      - http:
+          path: /movies/{id}
+          method: put
+          integration: LAMBDA
+          cors: true
+  deleteMovie:
+    handler: com.serverless.handlers.DeleteMovieHandler
+    events:
+      - http:
+          path: /movies/{id}
+          method: delete
+          cors: true
+
+resources:
+  Resources:
+    MoviesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.movieTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: name
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

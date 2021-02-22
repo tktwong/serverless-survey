@@ -1,0 +1,93 @@
+# Parameter definitions: https://www.serverless.com/framework/docs/providers/aws/guide/serverless.yml/
+
+service: brandi
+frameWorkVersion: ">=1.72.0 <2.0.0"
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-s3-local
+  - serverless-apigw-binary
+  - serverless-dotenv-plugin
+  - serverless-domain-manager
+  - serverless-api-gateway-throttling
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, self:custom.default-stage}
+  region: ap-south-1
+  logs:
+    restApi: true
+    httpApi: true
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource:
+        - arn:aws:s3:::${env:AWS_S3_BUCKET_NAME}
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:GetObject"
+        - "s3:DeleteObject"
+      Resource:
+        - arn:aws:s3:::${env:AWS_S3_BUCKET_NAME}/*
+
+custom:
+  default-stage: local
+  serverless-offline:
+    httpPort: 9000
+    printOutput: true
+  apiGatewayThrottling:
+    maxRequestsPerSecond: 10
+    maxConcurrentRequests: 10
+  apigwBinary:
+    types:
+      - '*/*'
+  s3:
+    host: localhost
+    directory: s3/${self:provider.stage}
+  dotenv:
+    basePath: ./config/
+  customDomain:
+    domainName: ${env:DOMAIN}
+    basePath: ''
+    stage: ${self:provider.stage}
+    certificateArn: ${env:AWS_CERT_ARN}
+    createRoute53Record: true
+    apiType: rest
+    autoDomain: true
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+    packagerOptions:
+      scripts:
+        - npm uninstall sharp
+        - npm install --arch=x64 --platform=linux sharp
+
+package:
+  exclude:
+    - .idea/**
+    - dist/__tests__/**
+    - src/**
+    - tsconfig.tsbuildinfo
+
+functions:
+  express:
+    handler: dist/lambda-wrapper.handler
+    name: 'brandi-${self:provider.stage}'
+    description: Brandi
+    memorySize: 512
+    timeout: 60
+    events:
+      - http: ANY /
+      - http: ANY {proxy+}
+
+resources:
+  Resources:
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${env:AWS_S3_BUCKET_NAME}

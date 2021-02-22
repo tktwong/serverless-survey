@@ -1,0 +1,66 @@
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage,'dev'} # if you don't specify stage during deployement, application will be deployed to dev stage
+  region: us-east-1 # you can change region according to your requirements
+  iamRoleStatements: # create iam rule for resources being used by application
+    - ${file(iam/ToDOTableIAM.yml):ToDOTableIAM}
+  environment:
+    NODE_ENV: dev
+    TODO_TABLE_NAME: ${self:custom.ToDOTable.name}
+
+resources:
+  Resources:
+    ToDOTable: ${file(resources/ToDOTable.yml):ToDOTable} # define what resources you want to use
+
+package:
+  exclude:
+    - config/.env.stg
+    - config/.env.pro
+  include:
+    - config/.env.dev
+
+functions:
+  create:
+    handler: app/handler.create
+    events:
+      - http:
+          path: todo
+          method: post
+  update:
+    handler: app/handler.update
+    events:
+      - http:
+          path: todo/{id}
+          method: put
+  find:
+    handler: app/handler.find
+    events:
+      - http:
+          path: todos
+          method: get
+  findOne:
+    handler: app/handler.findOne
+    events:
+      - http:
+          path: todo/{id}
+          method: get
+
+  deleteOne:
+    handler: app/handler.deleteOne
+    events:
+      - http:
+          path: todo/{id}
+          method: delete
+
+custom:
+  serverless-offline:
+    httpPort: 4000
+  TodoTable:
+    name: !Ref ToDOTable
+    arn: !GetAtt ToDOTable.Arn

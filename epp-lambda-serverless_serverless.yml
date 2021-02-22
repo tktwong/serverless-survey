@@ -1,0 +1,242 @@
+service:
+  name: epp-api
+  awsKmsKeyArn: ${self:custom.secrets.kms_id} 
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-secrets-plugin
+  - serverless-domain-manager # lets us hook up domain names to our endpoints effortlessly
+
+custom:
+  secrets: ${file(secrets.${opt:stage, self:provider.stage}.yml)}
+  func_prefix: epp-api-${opt:stage, self:provider.stage}-
+
+  # a.s. use to identify where route 53 will be created
+  enabled:
+    dev: true
+    prod: true
+    other: false
+
+  # a.s. not using it currently, but just for a reference... 
+  Conditions:
+    IsProd:
+      Fn::Equals:
+        - ${opt:stage}
+        - prod  
+
+  customDomain:
+    domainName: ${self:custom.secrets.domain}
+    basePath: ''
+    createRoute53Record: ${self:custom.enabled.${opt:stage}, false}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-east-1
+  profile: serverless-admin
+  stage: ${opt:stage, 'dev'} # Set the default stage used. Default is dev
+  versionFunctions: false # a.s. MVP
+  iamRoleStatements: # enable SNS publishing, lambda invocation and other  permissions
+    $ref: ./iamRoleStatements.json
+
+  apiKeys:
+    - ${opt:stage, self:provider.stage}-epp-rest-api-key
+  #   - ${env:MY_API_KEY} # you can hide it in a serverless variable  
+  
+  environment:
+    func_prefix: ${self:custom.func_prefix}
+    db_username: ${self:custom.secrets.db_username}
+    db_password: ${self:custom.secrets.db_password}
+    db_host: ${self:custom.secrets.db_host}
+    db_name: ${self:custom.secrets.db_name}
+    redis_host: ${self:custom.secrets.redis_host}
+    sns_topic_sync: ${self:custom.secrets.sns_topic_sync}
+    sns_topic_warm: ${self:custom.secrets.sns_topic_warm}
+
+
+    # MY_API_KEY: "test1"
+    # MY_API_SECRET: ${ssm:nameOfKey} # a.s. from parameters store
+  vpc:
+    securityGroupIds:
+      - ${self:custom.secrets.securityGroupIds_1} # sg-030d89f3ae773ca18
+    subnetIds:
+      - ${self:custom.secrets.subnetIds_1} # subnet-029377579e95c75bc
+      - ${self:custom.secrets.subnetIds_2} # subnet-0b81529965cd09ee7
+
+
+functions:
+
+  #
+  # DATABASE related functions
+  #
+
+  # list all occupations
+  listoccupations:
+    handler: db-ctrl/list-occupation.listdb
+    timeout: 30 # WARNING: Function synchskills has timeout of 60 seconds, however, it is attached to API Gateway therefore automatically limited to 30 seconds.
+    memorySize: 2048 # increased memory size for occupations retrieval
+    events:
+      - http:
+          path: occupation
+          method: get
+          cors: true
+          private: true
+
+  # get a single occupation
+  # title, risk, salary, etc
+  getoccupation:
+    handler: db-ctrl/get-occupation.get
+    events:
+      - http:
+          path: occupation/{id}
+          method: get
+          cors: true
+          private: true
+
+  # a.s. get a single occupation's attribute(s)
+  getoccupationattribute:
+    handler: db-ctrl/get-occupation-attribute.get
+    memorySize: 2048 # increased memory size for occupations attributes
+    events:
+      - http:
+          path: occupation/attribute/{id}
+          method: get
+          cors: true
+          private: true
+
+  # a.s. get distance from DB
+  getoccupationdistance:
+    handler: db-ctrl/get-occupation-distance.get
+    events:
+      - http:
+          path: occupation/distance/{id}
+          method: get
+          cors: true
+          private: true
+
+  #
+  # SYNCH DATABASE -> REDIS related functions
+  #
+
+  synchoccupations:
+    handler: synch/synch-occupations.synchoccupations
+    events:
+      - http:
+          path: synch-occupations
+          method: get
+          cors: true
+
+  # db: occ_skill -> details:11-1011.00
+  synchskills:
+    handler: synch/synch-skills.synchskills
+    # a.s. brought back timeout to 30 sec
+    timeout: 30 # WARNING: Function synchskills has timeout of 60 seconds, however, it's attached to API Gateway so it's automatically limited to 30 seconds.
+    events:
+      - http:
+          path: synch-skills
+          method: get
+          cors: true
+
+  # db: occ_ability -> details:11-1011.00
+  synchabilities:
+    handler: synch/synch-abilities.synchabilities
+    timeout: 30 
+    events:
+      - http:
+          path: synch-abilities
+          method: get
+          cors: true
+
+  # a.s.  create a new SNS topic with the name dispatch
+  #       call a function every time a message is sent
+  #       to the dispatch topic.
+  #       Functions to call:
+  #       1. Synch Occupations
+  #       2. Synch Occupation Details
+  dispatcher-occupations:
+    handler: synch/synch-occupations.synchoccupations
+    events:
+      - sns: ${self:custom.secrets.sns_topic_sync}
+      # - sns: synch-epp-db-redis
+
+  dispatcher-skills:
+    handler: synch/synch-skills.synchskills
+    # a.s. increased the timeout to 30 sec
+    timeout: 30
+    events:
+      - sns: ${self:custom.secrets.sns_topic_sync}
+      # - sns: synch-epp-db-redis
+
+  dispatcher-abilities:
+    handler: synch/synch-abilities.synchabilities
+    # a.s. increased the timeout to 30 sec
+    timeout: 30
+    events:
+      - sns: ${self:custom.secrets.sns_topic_sync}
+      # - sns: synch-epp-db-redis
+
+  dispatcher-warm-list:
+    handler: warmup/warm-list-occ.listOcc
+    timeout: 30
+    events:
+      - sns: ${self:custom.secrets.sns_topic_warm}
+
+  dispatcher-warm-get-occ:
+    handler: warmup/warm-get-occ.getOcc
+    timeout: 30
+    events:
+      - sns: ${self:custom.secrets.sns_topic_warm}
+
+  dispatcher-warm-get-occ-attr:
+    handler: warmup/warm-get-occ-attr.getOccAttr
+    timeout: 30
+    events:
+      - sns: ${self:custom.secrets.sns_topic_warm}
+
+  dispatcher-warm-get-occ-dist:
+    handler: warmup/warm-get-occ-dist.getOccDist
+    timeout: 30
+    events:
+      - sns: ${self:custom.secrets.sns_topic_warm}
+
+  # a.s.  CRON job - every day
+  cron-synch:
+    handler: scheduler/synch-db-redis.synch
+    timeout: 60
+    events:
+      - schedule: cron(30 15 * * ? *) # run at 3.30 PM UTC every day (10.30 am EST)
+
+  # a.s.  CRON job - every 30 minutes
+  cron-warm:
+    handler: scheduler/warmup-lambdas.warm
+    timeout: 60
+    events:
+      - schedule: rate(30 minutes) # run every 30 minutes
+
+
+  #
+  # REDIS related functions
+  #
+
+  listredis:
+    handler: redis-ctrl/list-redis.listredis
+    events:
+      - http:
+          path: redis/occupation
+          method: get
+          cors: true
+          private: true
+
+
+  # a.s. DETAILS
+  getdetails:
+    handler: redis-ctrl/get.get
+    events:
+      - http:
+          path: redis/occupation/{id}
+          method: get
+          cors: true
+          private: true
+
+

@@ -1,0 +1,90 @@
+service: dxtrack
+
+provider:
+  name: aws
+  runtime: python3.6
+  region: eu-west-1
+  # this is so that we can use ${AWS::...} syntax without colliding with sls
+  # https://serverless.com/framework/docs/providers/aws/guide/variables#using-custom-variable-syntax
+  variableSyntax: "\\${((?!AWS)[ ~:a-zA-Z0-9._'\",\\-\\/\\(\\)]+?)}"
+  stage: ${opt:stage, "dev"}
+
+custom:
+  base_name: dxtrack
+  deployment_version: 1
+  fh_error_name: ${self:custom.base_name}-error-input-${self:provider.stage}
+  fh_metric_name: ${self:custom.base_name}-metric-input-${self:provider.stage}
+  fh_error_output_prefix: fh-jsonl-error-output-
+  fh_metric_output_prefix: fh-jsonl-metric-output-
+  bucket_name: ${self:custom.base_name}-${self:provider.stage}
+  bucket_arn: arn:aws:s3:::${self:custom.bucket_name}
+  account_id: { Fn::Sub: "${AWS::AccountId}" }
+
+resources:
+  Resources:
+
+    S3BucketDxtrack:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucket_name}
+
+    DXTrackFirehoseToS3Role:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: DXTrackFirehoseToS3Role-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                - firehose.amazonaws.com
+              Action:
+              - sts:AssumeRole
+        Policies:
+          - PolicyName: FirehoseToS3Policy-${self:provider.stage}
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                  - s3:*
+                  Resource:
+                    - ${self:custom.bucket_arn}
+                    - ${self:custom.bucket_arn}/*
+
+    ErrorKinesisFirehose:
+      Type: AWS::KinesisFirehose::DeliveryStream
+      DependsOn: S3BucketDxtrack
+      Properties:
+        DeliveryStreamName: ${self:custom.fh_error_name}
+        DeliveryStreamType: DirectPut
+        ExtendedS3DestinationConfiguration:
+          BucketARN: ${self:custom.bucket_arn}
+          BufferingHints:
+            IntervalInSeconds: 900
+            SizeInMBs: 50
+          CompressionFormat: GZIP
+          Prefix: ${self:custom.fh_error_output_prefix}
+          RoleARN: { Fn::GetAtt: [ DXTrackFirehoseToS3Role, Arn ] }
+          CloudWatchLoggingOptions:
+            Enabled: true
+            LogGroupName: /aws/kinesisfirehose/${self:custom.fh_error_name}
+            LogStreamName: S3Delivery
+
+    MetricKinesisFirehose:
+      Type: AWS::KinesisFirehose::DeliveryStream
+      DependsOn: S3BucketDxtrack
+      Properties:
+        DeliveryStreamName: ${self:custom.fh_metric_name}
+        DeliveryStreamType: DirectPut
+        ExtendedS3DestinationConfiguration:
+          BucketARN: ${self:custom.bucket_arn}
+          BufferingHints:
+            IntervalInSeconds: 900
+            SizeInMBs: 50
+          CompressionFormat: GZIP
+          Prefix: ${self:custom.fh_metric_output_prefix}
+          RoleARN: { Fn::GetAtt: [ DXTrackFirehoseToS3Role, Arn ] }
+          CloudWatchLoggingOptions:
+            Enabled: true
+            LogGroupName: /aws/kinesisfirehose/${self:custom.fh_metric_name}
+            LogStreamName: S3Delivery-${self:provider.stage}

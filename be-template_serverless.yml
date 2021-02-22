@@ -1,0 +1,198 @@
+service: be-TEMPLATE_NAME-service
+
+custom:
+    stage: ${opt:stage, "development"}
+    dynamoDb:
+        tableName: be-TEMPLATE_NAME-${self:custom.stage}
+        billingMode: PAY_PER_REQUEST
+    s3:
+        bucketName: be-TEMPLATE_NAME-bucket-${self:custom.stage}
+    sqs:
+        queueName: be-TEMPLATE_NAME-${self:custom.stage}
+    common:
+        deletionPolicies:
+            development: Delete
+            default: Retain
+        deletionPolicy: ${self:custom.common.deletionPolicies.${self:custom.stage}, self:custom.common.deletionPolicies.default}
+    authorizer:
+        name: authorizer
+        identitySource: method.request.header.Authorization
+        type: token
+    webpack:
+        webpackConfig: ./webpack.config.js
+        packager: 'yarn'
+
+package:
+  individually: true
+
+### PLUGINS
+
+plugins:
+    - serverless-dotenv-plugin
+    - serverless-webpack
+    - serverless-offline
+
+### RESOURCES
+
+resources:
+    - ${file(./infrastructure/resources/DB.yml)}
+    - ${file(./infrastructure/resources/S3.yml)}
+    - ${file(./infrastructure/resources/SQS.yml)}
+
+### PROVIDER
+
+provider:
+    name: aws
+    runtime: nodejs14.x
+    region: ca-central-1
+    stage: ${self:custom.stage}
+    environment:
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+        REGION: ${self:provider.region}
+        DYNAMODB_TABLE: ${self:custom.dynamoDb.tableName}
+        S3_BUCKET_NAME: ${self:custom.s3.bucketName}
+        SQS_QUEUE: ${self:custom.sqs.queueName}
+        SOME_DOTENV_VAR: ${env:SOME_DOTENV_VAR}
+        AWS_XRAY_CONTEXT_MISSING: LOG_ERROR
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - dynamodb:DeleteItem
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource:
+          - "arn:aws:dynamodb:*:*:table/${self:custom.dynamoDb.tableName}"
+      - Effect: "Allow"
+        Action:
+          - dynamodb:Query
+        Resource:
+          - "arn:aws:dynamodb:*:*:table/${self:custom.dynamoDb.tableName}/index/GSI1"
+      - Effect: "Allow"
+        Action:
+          - sqs:GetQueueUrl
+          - sqs:SendMessage
+        Resource:
+          - Fn::GetAtt:
+            - SQSQueueTEMPLATE_NAME
+            - Arn
+      - Effect: "Allow"
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+        Resource: "arn:aws:s3:::${self:custom.s3.bucketName}/*"
+    tracing:
+        apiGateway: true
+        lambda: true
+
+### FUNCTIONS
+
+functions:
+    authorizer:
+        handler: src/functions/authorizer/index.default
+
+    example:
+        handler: src/functions/example/index.default
+        events:
+            - http:
+                path: /api/example/
+                method: get
+                cors: true
+
+    list:
+        handler: src/functions/list/index.default
+        events:
+            - http:
+                path: /api/TEMPLATE_NAME/
+                method: get
+                cors: true
+                authorizer: ${self:custom.authorizer}
+
+    create:
+        handler: src/functions/create/index.default
+        events:
+            - http:
+                path: /api/TEMPLATE_NAME/
+                method: post
+                cors: true
+                authorizer: ${self:custom.authorizer}
+
+    put:
+        handler: src/functions/put/index.default
+        events:
+            - http:
+                path: /api/TEMPLATE_NAME/{TEMPLATE_NAME_SK}/
+                method: put
+                request:
+                    parameters:
+                        paths:
+                            TEMPLATE_NAME_SK: true
+                cors: true
+                authorizer: ${self:custom.authorizer}
+
+    get:
+        handler: src/functions/get/index.default
+        events:
+            - http:
+                path: /api/TEMPLATE_NAME/{TEMPLATE_NAME_SK}/
+                method: get
+                request:
+                    parameters:
+                        paths:
+                            TEMPLATE_NAME_SK: true
+                cors: true
+                authorizer: ${self:custom.authorizer}
+
+    delete:
+        handler: src/functions/delete/index.default
+        events:
+            - http:
+                path: /api/TEMPLATE_NAME/{TEMPLATE_NAME_SK}/
+                method: delete
+                request:
+                    parameters:
+                        paths:
+                            TEMPLATE_NAME_SK: true
+                cors: true
+                authorizer: ${self:custom.authorizer}
+
+    upload:
+        handler: src/functions/upload/index.default
+        iamRoleStatementsName: TEMPLATE_NAME-${self:custom.stage}-upload-role
+        iamRoleStatements:
+        events:
+            - http:
+                path: /api/TEMPLATE_NAME/upload/
+                method: post
+                cors: true
+                authorizer: ${self:custom.authorizer}
+
+    download:
+        handler: src/functions/download/index.default
+        events:
+            - http:
+                path: /api/TEMPLATE_NAME/download/{fileId}/
+                method: get
+                request:
+                    parameters:
+                        paths:
+                            fileId: true
+                cors: true
+                authorizer: ${self:custom.authorizer}
+
+    cron:
+        handler: src/functions/cron/index.handler
+        timeout: 30
+        events:
+            - eventBridge:
+                schedule: rate(10 minutes)
+
+    consumer:
+        handler: src/functions/consumer/index.handler
+        events:
+            - sqs:
+                arn:
+                    Fn::GetAtt:
+                        - SQSQueueTEMPLATE_NAME
+                        - Arn

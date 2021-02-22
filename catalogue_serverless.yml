@@ -1,0 +1,463 @@
+service:
+  name: mna-api
+
+# Add the serverless-webpack plugin
+plugins:
+  #- serverless-webpack
+  - serverless-offline
+  - serverless-aws-documentation
+  - serverless-dotenv-plugin
+  - serverless-package-external
+
+# package:
+#   individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-3
+  environment:
+    # DEBUG: "*"
+    PAGE_LOAD_TIMEOUT: 20000
+    LOGGING: true
+    STAGE: '${opt:stage}'
+    MONGODB_URL_DEV: '${env:MONGODB_URL_DEV}'
+    MONGODB_DBNAME_DEV: '${env:MONGODB_DBNAME_DEV}'
+    MONGODB_URL_PROD: '${env:MONGODB_URL_PROD}'
+    MONGODB_DBNAME_PROD: '${env:MONGODB_DBNAME_PROD}'
+    API_ENTREPRISE_KEY: '${env:API_ENTREPRISE_KEY}'
+
+custom:
+  dotenv:
+    path: ../.env
+  packageExternal:
+    external:
+      - '../common'
+      - '../jobs'
+  # webpack:
+  #   webpackConfig: ./webpack.config.js
+  #   packager: 'yarn'
+  #   includeModules:
+  #     forceExclude:
+  #       - aws-sdk
+  documentation:
+    # this is general info about the API
+    api:
+      info:
+        version: '2.0.3'
+        title: MNA API
+        description: mission apprentissage API
+        termsOfService: https://www.beta.gouv.fr
+        contact:
+          name: Antoine Bigard
+          url: https://www.beta.gouv.fr
+          email: antoine.bigard@beta.gouv.fr
+        license:
+          name: The license
+          url: https://www.github.com
+      tags:
+        -
+          name: Formation
+          description: CRUD formation en apprentissage
+        -
+          name: Etablissement
+          description: CRUD établissement
+        -
+          name: Recherche
+          description: Elastic search routes
+        -
+          name: Services
+          description: Les services / WS
+    models:
+      -
+        name: "EstablishmentSchema"
+        description: "This is an establishment"
+        contentType: "application/json"
+        schema: ${file(establishmentSchema.json)}
+      -
+        name: "FormationSchema"
+        description: "This is a formation"
+        contentType: "application/json"
+        schema: ${file(formationSchema.json)}
+  commonModelSchemaFragments:
+    MethodResponse200JsonEstablisment:
+      statusCode: '200'
+      responseBody:
+        description: "Response body description"
+      responseModels:
+        "application/json": EstablishmentSchema
+    MethodResponse200JsonFormation:
+      statusCode: '200'
+      responseBody:
+        description: "Response body description"
+      responseModels:
+        "application/json": FormationSchema
+
+functions:
+  createTraining:
+    handler: src/training/createTraining.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: post
+          path: formation
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Créer une formation"
+            description: "Ajout d'une nouvelle formation"
+            tags:
+              - Formation
+            requestHeaders:
+              -
+                name: Authorization
+                description: "Api key"
+                required: true
+            methodResponses:
+              - ${self:custom.commonModelSchemaFragments.MethodResponse200JsonFormation}
+  getTrainingById:
+    handler: src/training/getTrainingById.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: formation/{id}
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Accèder à une formation"
+            description: "Détails de la formation"
+            tags:
+              - Formation
+            pathParams:
+              -
+                name: id
+                description: "formation ID"
+                required: true
+            methodResponses:
+              - ${self:custom.commonModelSchemaFragments.MethodResponse200JsonFormation}
+  getTraining:
+    handler: src/training/getTraining.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: formation
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Accèder à une formation avec des critéres"
+            description: "Avec filtres de recherche"
+            tags:
+              - Formation
+            queryParams:
+              -
+                name: query
+                description: "Filtre de recherche"
+                required: false
+            methodResponses:
+              - ${self:custom.commonModelSchemaFragments.MethodResponse200JsonFormation}
+  getTrainings:
+    handler: src/training/getTrainings.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: formations
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Get formations avec des critéres"
+            description: "Avec filtres de recherche"
+            tags:
+              - Formation
+  countTrainings:
+    handler: src/training/countTrainings.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: formations/count
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Nombre de formations"
+            description: "Retourne le nombre total de formation avec ou sans critéres"
+            tags:
+              - Formation
+  updateTraining:
+    handler: src/training/updateTraining.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: put
+          path: formation/{id}
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Mise à jour d'une formation"
+            description: "Update"
+            tags:
+              - Formation
+  deleteTraining:
+    handler: src/training/deleteTraining.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: delete
+          path: formation/{id}
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Supprimer une formation"
+            description: "Delete by id"
+            tags:
+              - Formation
+  createEstablishment:
+    handler: src/establishment/createEstablishment.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: post
+          path: etablissement
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Créer un établissement"
+            description: "Ajout d'un nouvel établissement"
+            tags:
+              - Etablissement
+            requestHeaders:
+              -
+                name: Authorization
+                description: "Api key"
+                required: true
+            methodResponses:
+              - ${self:custom.commonModelSchemaFragments.MethodResponse200JsonEstablisment}
+  getEstablishmentById:
+    handler: src/establishment/getEstablishmentById.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: etablissement/{id}
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Accèder à un établissement"
+            description: "Détails de l'établissement"
+            tags:
+              - Etablissement
+            pathParams:
+              -
+                name: id
+                description: "établissement ID"
+                required: true
+            methodResponses:
+              - ${self:custom.commonModelSchemaFragments.MethodResponse200JsonEstablisment}
+  getEstablishment:
+    handler: src/establishment/getEstablishment.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: etablissement
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Accèder à un établissement avec des critéres"
+            description: "Avec filtres de recherche"
+            tags:
+              - Etablissement
+            methodResponses:
+              - ${self:custom.commonModelSchemaFragments.MethodResponse200JsonEstablisment}
+  getEstablishments:
+    handler: src/establishment/getEstablishments.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: etablissements
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Get etablissements avec des critéres"
+            description: "Avec filtres de recherche"
+            tags:
+              - Etablissement
+  findBySiretUaiAddr:
+    handler: src/establishment/findBySiretUaiAddr.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: etablissements/siret-uai
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Recherche de siret, d'uai par siret et/ou uai et/ou adresse"
+            description: "Avec filtres de recherche"
+            tags:
+              - Etablissement
+  countEstablishments:
+    handler: src/establishment/countEstablishments.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: etablissements/count
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Nombre d'etablissements"
+            description: "Retourne le nombre total d'etablissements avec ou sans critéres"
+            tags:
+              - Etablissement
+  updateEstablishment:
+    handler: src/establishment/updateEstablishment.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: put
+          path: etablissement/{id}
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Mise à jour d'un établissement"
+            description: "Update by id"
+            tags:
+              - Etablissement
+  deleteEstablishment:
+    handler: src/establishment/deleteEstablishment.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: delete
+          path: etablissement/{id}
+          cors:
+            origin: '*'
+          documentation:
+            summary: "Supprimer un établissement"
+            description: "Delete by id"
+            tags:
+              - Etablissement
+  esMultiSearch:
+    handler: src/search/esMultiSearch.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: post
+          path: es/search/{index}/_msearch
+          cors:
+            origin: '*'
+          documentation:
+            tags:
+              - Recherche
+  esMultiSearchNoindex:
+    handler: src/search/esMultiSearchNoindex.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: post
+          path: search/_msearch
+          cors:
+            origin: '*'
+          documentation:
+            tags:
+              - Recherche
+  esSearch:
+    handler: src/search/esSearch.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: post
+          path: es/search/{index}/_search
+          cors:
+            origin: '*'
+          documentation:
+            tags:
+              - Recherche
+  esScroll:
+    handler: src/search/esScroll.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: post
+          path: es/search/{index}/scroll
+          cors:
+            origin: '*'
+          documentation:
+            tags:
+              - Recherche
+  services:
+    handler: src/services/index.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: services
+          cors:
+            origin: '*'
+          documentation:
+            tags:
+              - Services
+  getUsers:
+    handler: src/admin/user/getUsers.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: admin/users
+          cors:
+            origin: '*'
+  updateUser:
+    handler: src/admin/user/updateUser.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: put
+          path: admin/user/{username}
+          cors:
+            origin: '*'
+  deleteUser:
+    handler: src/admin/user/deleteUser.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: delete
+          path: admin/user/{username}
+          cors:
+            origin: '*'
+  createUser:
+    handler: src/admin/user/createUser.handler
+    memorySize: 3008
+    timeout: 30
+    events:
+      - http:
+          method: post
+          path: admin/user
+          cors:
+            origin: '*'

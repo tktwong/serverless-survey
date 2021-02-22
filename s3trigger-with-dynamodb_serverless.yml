@@ -1,0 +1,144 @@
+
+
+service: s3-dev-dynamo-demo # NOTE: update this with your service name
+
+custom: 
+  BucketName: ${self:provider.stage}-mybuk
+  TableName: 'Contact'
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  environment: ${self:custom}
+  memorySize: 128
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: Allow
+      Action:  
+        - s3:GetObject
+        - s3:PutObject
+        - s3:ListBucket
+      Resource:  "arn:aws:s3:::${self:custom.BucketName}/*" 
+      
+
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:ListBucket"
+        - "dynamodb:ListStreams"
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.TableName}"
+
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  s3hello:
+    handler: handler.s3hello
+    events:
+      - s3:
+          bucket: ${self:custom.BucketName}
+          AccessControl: PublicRead
+          event: s3:ObjectCreated:*
+  dynamoStreamTrigger:
+    handler: handler.dynamoStreamTrigger
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - contactTable
+              - StreamArn
+        # enabled: true
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    contactTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.TableName}
+        AttributeDefinitions:
+              - AttributeName: "id"
+                AttributeType: "S"
+        KeySchema: 
+            - AttributeName:  "id"
+              KeyType:  "HASH"
+        ProvisionedThroughput:
+            ReadCapacityUnits:  1
+            WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES 
+        
+  #   Bucket:
+  # 2  Type: AWS::S3::Bucket
+  # 3  Properties:
+  # 4    BucketName: ${self:custom.config.bucket}
+  # 5    BucketEncryption:
+  # 6      ServerSideEncryptionConfiguration:
+  # 7        - ServerSideEncryptionByDefault:
+  # 8          SSEAlgorithm: AES256
+  # 9    VersioningConfiguration:
+  # 10      Status: Enabled
+  # 11    CorsConfiguration:
+  # 12      CorsRules:
+  # 13        - AllowedHeaders: ['*']
+  # 14          AllowedMethods: [GET, PUT]
+  # 15          AllowedOrigins: ['*']
+  # 16          Id: CORSRuleId1
+  # 17          MaxAge: '3600'
+
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

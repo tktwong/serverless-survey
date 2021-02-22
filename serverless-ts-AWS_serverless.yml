@@ -1,0 +1,61 @@
+service:
+  name: ${self:custom.service.mainName}-${self:custom.service.subService}
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-pseudo-parameters
+  # - serverless-domain-manager
+  # - serverless-plugin-warmup
+
+provider:
+  name: aws
+  region: ap-south-1
+  profile: mynkmk5
+  runtime: nodejs12.x
+  stage: dev #choose in cli: serverless --stage {dev/prod} to deploy
+  role: arn:aws:iam::#{AWS::AccountId}:role/lambda-basic-execution # previous hash is not comment due to usage of serverless-pseudo-parameters
+  memorySize: 256
+  timeout: 10
+  environment: ${self:custom.environment}
+  tags:
+    project: ${self:custom.service.mainName}
+
+custom:
+  service:
+    mainName: serverless-ts-mynkmk5
+    subService: sample #choose name of the service, it will be path to rest of endpoints e.g myApi.com/sample/{myEndpointUri}
+  webpack: ${file(../serverlessCommon/webpack.yml)}
+  # warmup: ${file(../serverlessCommon/warmup.yml)}
+  layers:
+    layerVersion: 1
+    layerNode: arn:aws:lambda:ap-south-1:527989403245:layer:serverless-ts-mynkmk5-layers-dev:1
+  # customDomain: ${file(../serverlessCommon/customDomain.yml)}
+  # domains: ${file(../serverlessCommon/domains.yml)}
+  environment: ${file(../../.envs/.env.${self:provider.stage}.yml)}
+  common:
+    cors: ${file(../serverlessCommon/cors.yml)}
+    apiGateway: ${file(../serverlessCommon/apiGateway.yml)}
+    authorizer: ${file(../serverlessCommon/authorizer.yml)}
+  isProd:
+    dev: false
+    prod: true
+
+functions:
+  sampleGet:
+    handler: sampleGet.handler
+    warmup: false
+    layers:
+      - ${self:custom.layers.layerNode}
+    events:
+      - http:
+          method: GET
+          path: / # is uri which root is ${self:custom.service.subService}
+          private: false
+          authorizer: ${self:custom.common.authorizer}
+          cors: ${self:custom.common.cors.${self:provider.stage}.defaultCache}
+
+resources:
+  Resources:
+    GatewayResponseExpiredToken: ${self:custom.common.apiGateway.GatewayResponseExpiredToken}
+    GatewayResponseDefault4XX: ${self:custom.common.apiGateway.GatewayResponseDefault4XX}

@@ -1,0 +1,62 @@
+
+plugins: # List of plugins of use on application
+  - serverless-dynamodb-local
+  - serverless-offline # Get your serverless configuration and run the server local
+  - serverless-plugin-typescript-express # Help us with configuration typescript on serverless
+
+# Project name on the infrastructure created
+service: node-typescript-serverless
+
+custom:
+  tableName: 'users-table-${self:provider.stage}'
+  dynamodb:
+    start:
+      migrate: true
+    stages:
+      - test
+      - local
+      - dev
+
+provider:
+  name: aws # Provider name, where the infrastructure has be created
+  runtime: nodejs12.x # The node version where the lambda functions going to run
+  stage: local # Control the environment of application
+  region: us-east-1 # Default region where the lambda functions running
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["UsersDynamoDBTable", "Arn" ] }
+  environment:
+    USERS_TABLE: ${self:custom.tableName}
+
+functions: # The array with definitions of lambda functions of the your application 
+  app: # Lambda function name
+    handler: dist/server.handler # The function name mapped of the application
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+resources:
+  Resources:
+    UsersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: userId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

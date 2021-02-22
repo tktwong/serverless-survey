@@ -1,0 +1,203 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: apiMovies
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${opt:stage, 'dev'}
+  region: eu-central-1
+  environment:
+    CLIENT_ID:
+      Ref: MyCognitoPoolClient
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: !GetAtt MoviesTable.Arn #Obtener el ARN de la tabla
+  endpointType: REGIONAL
+  apiName: apiMovies-${self:provider.stage}
+  apiKeys:
+    - apiMoviesDEV-${self:provider.stage}
+  usagePlan:
+    quota:
+      limit: 1000
+      offset: 0
+      period: DAY
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+
+
+functions:
+  read:
+    handler: movies/read.handler
+    events:
+      - http:
+          path: movies/{id}
+          method: get
+          private: true
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref MyAuthorizer
+  list:
+    handler: movies/list.handler
+    events:
+      - http:
+          path: movies
+          method: get
+          private: true
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref MyAuthorizer
+  create:
+    handler: movies/create.handler
+    events:
+      - http:
+          path: movies
+          method: put
+          private: true
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref MyAuthorizer
+  update:
+    handler: movies/update.handler
+    events:
+      - http:
+          path: movies/{id}
+          method: post
+          private: true
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref MyAuthorizer
+  delete:
+    handler: movies/delete.handler
+    events:
+      - http:
+          path: movies
+          method: delete
+          private: true
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref MyAuthorizer
+  signup:
+    handler: authentication/signup.handler
+    events:
+      - http:
+          path: signup
+          method: post
+          private: true
+          cors: true
+  confirm_signup:
+    handler: authentication/confirm_signup.handler
+    events:
+      - http:
+          path: confirm_signup
+          method: post
+          private: true
+          cors: true
+  login:
+    handler: authentication/login.handler
+    events:
+      - http:
+          path: login
+          method: post
+          private: true
+          cors: true
+
+
+
+resources:
+  Resources:
+    MoviesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: MoviesTable
+        AttributeDefinitions:
+          - AttributeName: code
+            AttributeType: S
+        KeySchema:
+          - AttributeName: code
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    MyCognitoPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: MyCognitoPool-${self:provider.stage}
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireUppercase: true
+            RequireLowercase: true
+            RequireNumbers: true
+            RequireSymbols: true
+            TemporaryPasswordValidityDays: 7
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+        EmailVerificationMessage: "Tu código de activación de la cuenta es {####}"
+        EmailVerificationSubject: "Activación de la cuenta"
+        MfaConfiguration: OFF
+        UserPoolTags:
+          Env: ${self:provider.stage}
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: false
+          InviteMessageTemplate:
+            EmailMessage: "Esta es tu contraseña para tu cuenta {username}: {####}"
+            EmailSubject: "Tu cuenta"
+        UsernameConfiguration:
+          CaseSensitive: false
+
+    MyCognitoPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: MyCognitoPoolClient-${self:provider.stage}
+        ExplicitAuthFlows:
+          - USER_PASSWORD_AUTH
+        RefreshTokenValidity: 30
+        UserPoolId:
+          Ref: MyCognitoPool
+    
+    # Proteger los endpoint con el token del login
+    MyAuthorizer: 
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: MyAuthorizer-${self:provider.stage}
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - !GetAtt MyCognitoPool.Arn
+        IdentitySource: method.request.header.Authorization

@@ -1,0 +1,231 @@
+service: atx-serverless-transforms-workshop
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-dynamodb-local
+  - serverless-offline-sns
+  - serverless-s3-remover
+  - serverless-plugin-existing-s3
+  - serverless-plugin-tracing
+  - serverless-plugin-lambda-dead-letter
+  - serverless-s3-local
+  - serverless-offline-scheduler
+  - serverless-offline
+
+custom:
+  private: ${file(./private.yml)}
+  default_stage: ${self:custom.private.stage}
+  stage: ${opt:stage, self:custom.default_stage}
+  accountId: { Ref: AWS::AccountId }
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: false
+      #      noStart: true
+      convertEmptyValues: true
+  serverless-offline-sns:
+    port: 4002 # a free port for the sns server to run on
+    debug: false
+    # host: 0.0.0.0 # Optional, defaults to 127.0.0.1 if not provided to serverless-offline
+    # sns-endpoint: http://127.0.0.1:4567 # Optional. Only if you want to use a custom endpoint
+    # accountId: 123456789012 # Optional
+  serverless-offline:
+    port: 4000
+  bucketArn:
+    Fn::Join:
+    - ''
+    - - 'arn:aws:s3:::'
+      - Ref: localbucket
+      - '/*'
+  s3:
+    host: 0.0.0.0
+    port: 8080
+    directory: /tmp
+  boolean:
+    true: true
+    false: false
+  remover:
+    prompt: ${self:custom.boolean.${opt:s3-remover-prompt, 'true'}}
+    buckets:
+      - "${self:provider.environment.ATHENA_S3_BUCKET}-${self:custom.stage}"
+      - "${self:provider.environment.FTP_S3_BUCKET}-${self:custom.stage}"
+
+provider:
+  name: aws
+  stage: dev
+  region: us-east-1
+  profile: serverless-admin
+  runtime: nodejs8.10
+  tracing: true
+  environment:
+    AWS_ACCOUNT_ID: ${self:custom.accountId}
+    ATHENA_S3_BUCKET: ${file(./config.yml):ATHENA_S3_BUCKET}
+    FTP_S3_BUCKET: ${file(./config.yml):FTP_S3_BUCKET}
+    FTP_HOST: ${file(./config.yml):${self:custom.stage}.FTP_HOST}
+    FTP_PASSWORD: ${file(./config.yml):${self:custom.stage}.FTP_PASSWORD}
+    FILENAME: ${file(./config.yml):FILENAME}
+    FTP_PORT: ${file(./config.yml):FTP_PORT}
+    FTP_USER: ${file(./config.yml):FTP_USER}
+    FTP_REMOTE_PATH: ${file(./config.yml):FTP_REMOTE_PATH}
+    STAGE: ${self:custom.stage}
+    REGION: ${self:provider.region}
+    MAX_RECORDS_PER_BATCH: ${file(./config.yml):MAX_RECORDS_PER_BATCH}
+    MAX_CONCURRENT_BATCHES: ${file(./config.yml):MAX_CONCURRENT_BATCHES}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - xray:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - sqs:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - athena:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - glue:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - sns:*
+      Resource: "*"
+
+functions:
+
+  transfer:
+    handler: transfer/index.handler
+    timeout: 180
+    deadLetter:
+      sqs: transfer-dl-queue
+    events:
+      - schedule: cron(0 23 * * ? *)
+
+  createManufacturers:
+    handler: createManufacturers/index.handler
+    timeout: 360
+    deadLetter:
+      sqs: createManufacturers-dl-queue
+    events:
+      - existingS3:
+          bucket: "${self:provider.environment.FTP_S3_BUCKET}-${self:custom.stage}"
+          events:
+            - s3:ObjectCreated:*
+
+  createBugatchi:
+    handler: createBugatchi/index.handler
+    timeout: 720
+    deadLetter:
+      sqs: createBugatchi-dl-queue
+    events:
+      - sns: createManufacturersQueryId
+
+  selectBugatchi:
+    handler: selectBugatchi/index.handler
+    timeout: 360
+    deadLetter:
+      sqs: selectBugatchi-dl-queue
+    events:
+      - sns: createBugatchiQueryId
+
+  importBugatchi:
+    handler: importBugatchi/index.handler
+    timeout: 720
+    deadLetter:
+      sqs: importBugatchi-dl-queue
+    events:
+      - sns: selectBugatchiQueryId
+
+resources:
+  Resources:
+    BugatchiTable:
+      Type: "AWS::DynamoDB::Table"
+      Description: "Data Store for Bugatchi Manufacturer"
+      Properties:
+        TableName: "bugatchi"
+        KeySchema:
+          - AttributeName: "product_id"
+            KeyType: "HASH"
+          - AttributeName: "category"
+            KeyType: "RANGE"
+        AttributeDefinitions:
+          - AttributeName: "product_id"
+            AttributeType: "S"
+          - AttributeName: "category"
+            AttributeType: "S"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 25
+          WriteCapacityUnits: 75
+
+    S3BucketAthena:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicReadWrite
+        BucketName: "${self:provider.environment.ATHENA_S3_BUCKET}-${self:custom.stage}"
+        LifecycleConfiguration:
+          Rules:
+            - ExpirationInDays: 1
+              Status: Enabled
+              Prefix: "results/"
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [GET, PUT, HEAD, POST, DELETE]
+              AllowedOrigins: ['*']
+              Id: myCORSRuleId1
+              MaxAge: '3600'
+
+    S3BucketFtp:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicReadWrite
+        BucketName: "${self:provider.environment.FTP_S3_BUCKET}-${self:custom.stage}"
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [GET, PUT, HEAD, POST, DELETE]
+              AllowedOrigins: ['*']
+              Id: myCORSRuleId1
+              MaxAge: '3600'
+
+    AthenaProductsDB:
+      Type: 'AWS::Glue::Database'
+      Properties:
+        DatabaseInput:
+          Name: 'products'
+        CatalogId:
+          Ref: AWS::AccountId
+
+package:
+  include:
+    - transfer/**
+    - createManufacturers/**
+    - createBugatchi/**
+    - selectBugatchi/**
+    - importBugatchi/**
+  exclude:
+    - docker-compose.yml
+    - README.md
+
+
+
+
+

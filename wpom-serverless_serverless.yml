@@ -1,0 +1,83 @@
+service:
+  name: wpom
+
+frameworkVersion: ">=1.47.0 <2.0.0"
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+custom:
+  prefix: ${opt:prefix, 'wpom'}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  profile: ${opt:profile, 'default'}
+  region: ${opt:region, 'eu-west-2'}
+  timeout: 30
+  environment:
+    PREFIX: ${self:custom.prefix}
+  # TODO: Change me!
+  # TODO: Find a better way to define api keys
+  apiKeys:
+    - ${opt:stage, 'dev'}-barry.hanbury-pickett@itineris.co.uk
+    - ${opt:stage, 'dev'}-jack.alexander@itineris.co.uk
+    - ${opt:stage, 'dev'}-lee.hanbury-pickett@itineris.co.uk
+    - ${opt:stage, 'dev'}-rufus.tang@itineris.co.uk
+    - ${opt:stage, 'dev'}-tim@itineris.co.uk
+  usagePlan:
+    quota:
+      limit: 200
+      period: WEEK
+  # TODO: Review me!
+  # Help wanted!
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "cloudformation:*"
+      Resource:
+        - "arn:aws:cloudformation:${self:provider.region}:*:stack/${self:custom.prefix}*/*"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        - "arn:aws:s3:::${self:custom.prefix}*"
+    - Effect: "Allow"
+      Action:
+        - "iam:*"
+      Resource:
+        - "arn:aws:iam::*:user/${self:custom.prefix}*"
+    - Effect: "Allow"
+      Action:
+        - "cloudfront:*"
+      Resource:
+        - "*"
+
+functions:
+  create:
+    handler: handler.create
+    events:
+      - http:
+          method: post
+          path: stacks
+          private: true
+          request:
+            schema:
+              application/json: ${file(schemas/create_request.json)}
+
+  show:
+    handler: handler.show
+    events:
+      - http:
+          method: get
+          path: stacks/{name}
+          private: true
+
+  createAccessKey:
+    handler: handler.createAccessKey
+    events:
+      - http:
+          method: post
+          path: stacks/{name}/access-keys/{resource}
+          private: true

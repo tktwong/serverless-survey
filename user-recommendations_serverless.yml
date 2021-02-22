@@ -1,0 +1,166 @@
+service: user-recommendations
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  memorySize: 128 # optional, default is 1024
+  stage: dev
+  region: eu-west-1
+  users_table: '${self:service}-${opt:stage, self:provider.stage}-users'
+  places_table: '${self:service}-${opt:stage, self:provider.stage}-places'
+  recommendations_table: '${self:service}-${opt:stage, self:provider.stage}-recommendations'
+  recommendations_create_function: '${self:service}-${opt:stage, self:provider.stage}-recommendationsCreate'
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:*:*:*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+      Resource: "arn:aws:dynamodb:*:*:table/${self:service}-*"
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "arn:aws:lambda:*:*:*"
+
+functions:
+  usersCreate:
+    handler: handler.usersCreate
+    environment:
+      USERS_TABLE: ${self:provider.users_table}
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+  usersReadAll:
+    handler: handler.usersReadAll
+    environment:
+      USERS_TABLE: ${self:provider.users_table}
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+  placesCreate:
+    handler: handler.placesCreate
+    environment:
+      PLACES_TABLE: ${self:provider.places_table}
+    events:
+      - http:
+          path: places
+          method: post
+          cors: true
+  placesReadAll:
+    handler: handler.placesReadAll
+    environment:
+      PLACES_TABLE: ${self:provider.places_table}
+    events:
+      - http:
+          path: places
+          method: get
+          cors: true
+  recommendationsCreate:
+    handler: handler.recommendationsCreate
+    environment:
+      RECOMMENDATIONS_TABLE: ${self:provider.recommendations_table}
+    events:
+      - http:
+          path: recommendations
+          method: post
+          cors: true
+  recommendationsReadByUserId:
+    handler: handler.recommendationsReadByUserId
+    environment:
+      RECOMMENDATIONS_TABLE: ${self:provider.recommendations_table}
+    events:
+      - http:
+          path: recommendations/{userId}
+          method: get
+          cors: true
+  createRecommendationForCreatedPlace:
+    handler: handler.createRecommendationForCreatedPlace
+    environment:
+      RECOMMENDATIONS_CREATE_FUNCTION: ${self:provider.recommendations_create_function}
+    events:
+      - stream:
+          arn: ${env:PLACES_DYNAMODB_TABLE_STREAM_ARN}
+
+resources:
+  Resources:
+    UsersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.users_table}
+
+    PlacesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: createdBy
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+          -
+            AttributeName: createdBy
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.places_table}
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+
+    RecommendationsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: userId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.recommendations_table}
+
+  Outputs:
+    PlacesDymamoDbTableStreamArn:
+      Description: The PlacesDynamoDbTable StreamArn
+      Value:
+        'Fn::GetAtt': [ PlacesDynamoDbTable, StreamArn ]
+      Export:
+        Name: PlacesDynamoDbTableStreamArn

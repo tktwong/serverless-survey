@@ -1,0 +1,54 @@
+service: sb-serverless-backend
+provider:
+    name: aws
+    runtime: nodejs6.10
+    stage: production
+    region: us-east-2
+    apiKeys:
+        - publicKey
+    usagePlan:
+        quota:
+            limit: 100
+            period: DAY
+        throttle:
+            rateLimit: 1
+            burstLimit: 1
+        usagePlanName: Basic
+    iamRoleStatements:
+        -
+            Effect: Allow
+            Action:
+                - 'dynamodb:Scan'
+                - 'dynamodb:Query'
+            Resource: 'arn:aws:dynamodb:us-east-2:955418883240:table/ChuckDB'
+package:
+    individually: true
+    exclude:
+        - .git/**
+        - playground/**
+functions:
+    getRandomFact:
+        description: Gets a random Chuck Norris fact from ChuckDB.
+        handler: functions/getRandomFact/handler.handler
+        memorySize: 256
+        timeout: 5
+        events:
+            -
+                http:
+                    path: random-fact
+                    method: GET
+                    private: true
+                    cors: true
+custom:
+    domain: chuck.boilerplate.space
+# BasePathMapping works only if you have a custom domain set within API Gateway already.
+resources:
+    Resources:
+        BasePathMapping:
+            Type: AWS::ApiGateway::BasePathMapping
+            Properties:
+                BasePath: ''
+                DomainName: ${self:custom.domain}
+                RestApiId:
+                    Ref: ApiGatewayRestApi
+                Stage: ${self:provider.stage}

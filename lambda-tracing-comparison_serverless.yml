@@ -1,0 +1,67 @@
+service:
+  name: lambda-tracing-comparison
+
+plugins:
+  - serverless-webpack
+  - serverless-plugin-tracing
+  - serverless-pseudo-parameters
+  - serverless-lumigo
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-west-1
+  iamManagedPolicies:
+    - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+    - arn:aws:iam::aws:policy/AmazonS3FullAccess
+    - arn:aws:iam::aws:policy/AmazonSQSFullAccess
+    - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+  environment:
+    DynamoTableName: 
+      Ref: DynamoDbTable
+    s3BucketName:
+      Ref: S3Bucket
+    requestGetUrl: "https://api.npoint.io/c61afd6999268ca3eb5a"
+
+custom:
+  lumigo:
+    token: "${ssm:/lumigo/token}"
+    nodePackageManager: npm
+
+package:
+  individually: true
+
+functions:
+  aws-xray:
+    handler: src/functions/aws-xray/index.handler
+    tracing: true
+    events:
+      - sqs:
+          arn: 
+            Fn::GetAtt: [SQSXrayTrigger, Arn]
+
+  lumigo:
+    handler: src/functions/lumigo/index.handler
+    lumigo:
+      enabled: true
+    events:
+      - sqs:
+          arn: 
+            Fn::GetAtt: [SQSLumigoTrigger, Arn]
+
+  ddb-stream-processor:
+    handler: src/functions/ddb-stream-processor/index.handler
+    tracing: true
+    lumigo:
+      enabled: true
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [DynamoDbTable, StreamArn]
+
+
+resources:
+  - ${file(resources/cfn.yml)}
+  

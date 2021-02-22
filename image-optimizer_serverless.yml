@@ -1,0 +1,63 @@
+
+service: 
+  name: image-optimizer
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ap-northeast-2
+  stage: ${opt:stage}
+
+  deploymentBucket:
+    name: ${file(./serverless.env.yml):${opt:stage}.DEPLOYMENT_BUCKET}
+  #    serverSideEncryption: AES256
+  #
+  environment:
+    NODE_ENV: ${opt:stage}
+    CONFIG: ${file(./serverless.env.yml):${opt:stage}.CONFIG}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "lambda:*"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "*"
+            
+plugins:
+  - serverless-sentry
+  - serverless-apigw-binary
+
+custom:
+  sentry:
+    dsn: ${file(./serverless.env.yml):${opt:stage}.SENTRY_DSN}
+  apigwBinary:
+    types:
+      - '*/*'
+
+package:
+  include:
+    - node_modules/
+    - '!node_modules/serverless-apigw-binary/**'
+    - '!node_modules/.bin/**'
+    - ${file(./serverless.env.yml):${opt:stage}.CONFIG}
+    - src/
+
+functions:
+  resize:
+    handler: src/resize/handler.main
+    memorySize: 512
+    timeout: 6
+    events:
+      - http:
+          path: /{path+}
+          method: get
+          contentHandling: CONVERT_TO_BINARY
+          integration: lambda-proxy
+          request:
+            parameters:
+              paths:
+                path: true
+

@@ -1,0 +1,74 @@
+service: myserverlessproject2
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: serverlessUser
+  region: eu-west-1
+
+plugins:
+  - serverless-s3-sync
+
+custom:
+  bucketName: my-serverless-react-app-4556
+  s3Sync:
+    -bucketName: ${self:custom.bucketName}
+      localDir: client/build/
+
+resources:
+  Resources:
+    ReactAppBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketName}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    S3AccessPolicy:
+      Type: AWS::S3::BucketPolicy
+      properties:
+        Bucket:
+          Ref: ReactAppBucket
+        PolicyDocument:
+          Statement:
+            -$id: PublicReadObject
+              Effect: Allow
+              Principal: '*'
+              Action: 
+                - s3:GetObject
+              Resource: arn:aws:s3:::${self.custom.bucketName}
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName: ${custome:self.bucketName}.s3.amazonaws.com
+              ID: ReactApp
+              CustomeOriginConfig: 
+                HTTPPort: 80
+                HTTPSPORT: 443
+                OrigiginProtocolPolicy: https-only
+          Enabled: 'true'
+          DefaultRootObject: client/index.js
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: app.js
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS-
+              - PATCH
+              - POST
+              - PUT
+            TargetOriginId: ReactApp
+            ForwardedValues:
+              QueryString: 'false'
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true

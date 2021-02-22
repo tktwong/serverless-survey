@@ -1,0 +1,145 @@
+service:
+  name: connbot
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+custom:
+  # Log all events to CloudWatch
+  slack_enable_logging: true
+
+  # The dynamodb table to store OAuth access data
+  slack_table_name: Teams-${opt:stage}
+  reactions_table_name: Reactions-${opt:stage}
+  message_table_name: Messages-${opt:stage}
+
+  # The path used to post Slack events to
+  slack_event_path: slack
+
+  # The path used to install the Slack App
+  slack_install_path: slack
+
+  # The path to redirect to after an install
+  slack_install_redirect: https://slack.com
+  
+  # Space delimited scopes
+  slack_client_scopes: "bot commands incoming-webhook"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+  environment:
+    STAGE: ${opt:stage}
+    TABLE_NAME: ${self:custom.slack_table_name}
+    REACTIONS_TABLE_NAME: ${self:custom.reactions_table_name}
+    MESSAGE_TABLE_NAME: ${self:custom.message_table_name}
+    API_APP_ID: ${ssm:connbot.${opt:stage}.SLACK_APP_API_ID}
+    CLIENT_ID: ${ssm:connbot.${opt:stage}.SLACK_CLIENT_ID}
+    CLIENT_SECRET: ${ssm:connbot.${opt:stage}.SLACK_CLIENT_SECRET}
+    CLIENT_SCOPES: ${self:custom.slack_client_scopes}
+    INSTALL_REDIRECT: ${self:custom.slack_install_redirect}
+    VERIFICATION_TOKEN: ${ssm:connbot.${opt:stage}.VERIFICATION_TOKEN}
+    ENABLE_LOGGING: ${self:custom.slack_enable_logging}
+    LOGDNA_KEY: ${ssm:connbot.LOGDNA_KEY}
+
+
+functions:
+  slack:
+    handler: index.handler
+    events:
+      ## Slash Commands, Events, and Interactive Messages
+      - http:
+          path: ${self:custom.slack_event_path}
+          method: post
+          integration: lambda
+          response:
+            template: $input.path('$')
+
+      ## OAuth Routes      
+      - http:
+          path: ${self:custom.slack_install_path}
+          method: get
+          integration: lambda
+          request:
+            parameters:
+              querystrings:
+                code: true
+                state: true
+          response:
+            statusCodes:
+              201:
+                pattern: ''
+              301:
+                pattern: http.*
+                headers:
+                  Location: integration.response.body.errorMessage
+                  Cache-Control: "'no-cache, no-store, must-revalidate'"
+
+resources:
+  Resources:
+    TeamsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.slack_table_name}
+    MessageDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: timestamp
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.message_table_name}
+    UserReactionsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: userId
+            AttributeType: S
+          -
+            AttributeName: teamId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: teamId
+            KeyType: HASH
+          -
+            AttributeName: userId
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.reactions_table_name}

@@ -1,0 +1,104 @@
+service: notes-app-api
+
+# Create optimized packages (per function, better UX)
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: prod
+  region: us-west-2
+  # via serverless-dotenv-plugin
+  # in /.env
+  environment:
+    tableName: notes
+    stripeSecretKey: ${env:STRIPE_SECRET_KEY}
+# Lambdas granted permission to access DynamoDB
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-west-2:*:*"
+
+functions:
+# API endpoint, calls /create.js
+  create:
+      handler: create.main
+      events:
+        - http:
+            path: notes
+            method: post
+            cors: true
+            authorizer: aws_iam
+  get:
+    # API endpoint calls /get.js
+    # - path: url path is /notes/{id}
+    # - HTTP method: GET request
+    handler: get.main
+    events:
+      - http:
+          path: notes/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  list:
+    # API endpoint calls /list.js
+    # queries for all 
+    # - path: url path is /notes
+    # - HTTP method: GET request
+    handler: list.main
+    events:
+      - http:
+          path: notes
+          method: get
+          cors: true
+          authorizer: aws_iam
+  update:
+    # API endpoint calls /update.js
+    # - path: url path is /notes/{id}
+    # - HTTP method: PUT request
+    handler: update.main
+    events:
+      - http:
+          path: notes/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  delete:
+    # API endpoint calls /delete.js
+    # - path: url path is /notes/{id}
+    # - HTTP method: DELETE request
+    handler: delete.main
+    events:
+      - http:
+          path: notes/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+  billing:
+    # API endpoint calls /billing.js
+    # - path: url path is /billing
+    # - HTTP method: POST request
+    handler: billing.main
+    events:
+      - http:
+          path: billing
+          method: post
+          cors: true
+          authorizer: aws_iam
+# Create resources w separate CloudFormation templates
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}

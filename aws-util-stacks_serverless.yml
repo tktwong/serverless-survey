@@ -1,0 +1,114 @@
+service: ec2
+
+custom:
+  project: util
+  baseName: ${self:custom.project}-${opt:stage}-${self:service}
+
+  nameTag:
+    Key: Name
+    Value: !Ref AWS::StackName
+
+provider:
+  name: aws
+  stage: ${opt:stage}
+  stackName: ${self:custom.baseName}
+  deploymentBucket:
+    blockPublicAccess: true
+
+resources:
+  Resources:
+
+    # VPC
+
+    VPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        EnableDnsSupport: true
+        EnableDnsHostnames: true
+        CidrBlock: 10.0.0.0/24
+        Tags: [ '${self:custom.nameTag}' ]
+
+    PublicSubnet:
+      Type: AWS::EC2::Subnet
+      Properties:
+        AvailabilityZone: !Select [ 0, !GetAZs '' ]
+        VpcId: !Ref VPC
+        CidrBlock: 10.0.0.0/24
+        MapPublicIpOnLaunch: true
+        Tags: [ '${self:custom.nameTag}' ]
+
+    InternetGateway:
+      Type: AWS::EC2::InternetGateway
+      Properties:
+        Tags: [ '${self:custom.nameTag}' ]
+
+    GatewayAttachement:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        VpcId: !Ref VPC
+        InternetGatewayId: !Ref InternetGateway
+
+    PublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref VPC
+        Tags: [ '${self:custom.nameTag}' ]
+
+    PublicRoute:
+      Type: AWS::EC2::Route
+      DependsOn: GatewayAttachement
+      Properties:
+        RouteTableId: !Ref PublicRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId: !Ref InternetGateway
+
+    PublicSubnetRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PublicSubnet
+        RouteTableId: !Ref PublicRouteTable
+
+    SecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        VpcId: !Ref VPC
+        GroupDescription: Allow only SSH
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            CidrIp: 0.0.0.0/0
+        Tags: [ '${self:custom.nameTag}' ]
+
+    # EC2
+
+    EC2Instance:
+      Type: AWS::EC2::Instance
+      Properties:
+        ImageId: ${ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}
+        InstanceType: ${opt:type, 't2.micro'}
+        IamInstanceProfile: !Ref EC2InstanceProfile
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: "true"
+            DeviceIndex: "0"
+            GroupSet:
+              - !Ref SecurityGroup
+            SubnetId: !Ref PublicSubnet
+        Tags: [ '${self:custom.nameTag}' ]
+
+    EC2InstanceProfile:
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        Roles:
+          - !Ref EC2Role
+
+    EC2Role:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: ec2.amazonaws.com
+              Action: sts:AssumeRole

@@ -1,0 +1,77 @@
+service: serverless-cdn
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  versionFunctions: false
+  logRetentionInDays: 3
+  deploymentBucket:
+    serverSideEncryption: AES256
+    blockPublicAccess: true
+  stackTags: ${self:custom.config.tags}
+
+package:
+  individually: true
+  excludeDevDependencies: true
+
+plugins:
+  - serverless-finch
+  - serverless-webpack
+
+custom:
+  config: ${file(./stages/${self:provider.stage}.yml)}
+  client:
+    bucketName: '${self:custom.config.domain}'
+    distributionFolder: dist
+    indexDocument: 'index.html'
+    errorDocument: 'index.html'
+    manageResources: false
+    objectHeaders:
+      ALL_OBJECTS:
+        - name: 'Cache-Control'
+          value: 'max-age=2628000, public' # 1 month in seconds
+      'index.html': # https://stackoverflow.com/a/2068407
+        - name: 'Cache-Control'
+          value: 'no-cache, no-store, must-revalidate, max-age=0'
+        - name: Pragma
+          value: 'no-cache'
+        - name: Expires
+          value: '0'
+    sse: AES256
+    uploadOrder:
+      - .*
+      - index\.html
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+    packager: npm
+
+functions:
+  defaultIndex:
+    name: '${self:service}-${self:provider.stage}-origin-request-defaultIndex'
+    handler: functions/default_index.handler
+    description: CloudFront origin-request default index handler
+    timeout: 1 # seconds
+    memorySize: 128 # megabytes
+    events:
+      - cloudFront:
+          eventType: origin-request
+
+  webSecurity:
+    name: '${self:service}-${self:provider.stage}-origin-response-webSecurity'
+    handler: functions/web_security.handler
+    description: CloudFront origin-response web security handler
+    timeout: 1 # seconds
+    memorySize: 128 # megabytes
+    events:
+      - cloudFront:
+          eventType: origin-response
+
+resources:
+  - ${file(resources/acm_cf.yml)}
+  - ${file(resources/cloudfront_cf.yml)}
+  - ${file(resources/route53_cf.yml)}
+  - ${file(resources/s3_cf.yml)}

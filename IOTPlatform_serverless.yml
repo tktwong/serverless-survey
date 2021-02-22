@@ -1,0 +1,181 @@
+service: iot-platform
+
+custom:
+  clientid: ${ssm:/biscuit/iot/prod/clientid}
+  projectid: ${ssm:/biscuit/iot/prod/projectid}
+  authuri: ${ssm:/biscuit/iot/prod/authuri}
+  tokenuri: ${ssm:/biscuit/iot/prod/tokenuri}
+  authproviderx509certurl: ${ssm:/biscuit/iot/prod/authproviderx509certurl}
+  clientsecret: ${ssm:/biscuit/iot/prod/clientsecret~true}
+  redirecturis: ${ssm:/biscuit/iot/prod/redirecturis~true}
+  accesstoken: ${ssm:/biscuit/iot/prod/accesstoken~true}
+  tokentype: ${ssm:/biscuit/iot/prod/tokentype~true}
+  refreshtoken: ${ssm:/biscuit/iot/prod/refreshtoken~true}
+  idtoken: ${ssm:/biscuit/iot/prod/idtoken~true}
+  expirydate: ${ssm:/biscuit/iot/prod/expirydate}
+
+provider:
+  name: aws
+  profile: aws-iot
+  runtime: nodejs6.10
+
+  # you can overwrite defaults here
+  stage: dev
+  region: us-east-1
+
+  # you can define service wide environment variables here
+  environment:
+    GOOGLE_SCRIPT_API_VERSION: v1
+    CLIENT_ID: ${self:custom.clientid}
+    PROJECT_ID: ${self:custom.projectid}
+    AUTH_URL: ${self:custom.authuri}
+    TOKEN_URI: ${self:custom.tokenuri}
+    AUTHPROVIDER_X509_CERT_URL: ${self:custom.authproviderx509certurl}
+    CLIENT_SECRET: ${self:custom.clientsecret}
+    REDIRECT_URIS: ${self:custom.redirecturis}
+    ACCESS_TOKEN: ${self:custom.accesstoken}
+    TOKEN_TYPE: ${self:custom.tokentype}
+    REFRESH_TOKEN: ${self:custom.refreshtoken}
+    ID_TOKEN: ${self:custom.idtoken}
+    EXPIRY_DATE: ${self:custom.expirydate}
+    DYNAMODB_TABLE: dynamoDB
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - SNS:*
+      Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}'
+
+plugins:
+  - serverless-offline
+
+functions:
+  hello:
+    handler: user-handler.createUser
+    events:
+      - http:
+          path: /user
+          method: post
+  
+  snstopics:
+    handler: handlers/sns-handler.snsTopics
+    events:
+      - http:
+          path: /sns
+          method: post
+
+  log:
+    handler: handlers/log-handler.log
+    events:
+      - http:
+          path: /publish-message
+          method: post
+
+  deviceHandler:
+    handler: handlers/deviceHandler.deviceHandler
+    events:
+      - http:
+          path: /device
+          method: post
+
+  test:
+    handler: handlers/test.test
+    events:
+      - http:
+          path: /test
+          method: get
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    LogsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+    SnsSMSTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: First SNS Topic
+        TopicName: sms-sns-stream
+    SnsSkypeTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Second SNS Topic
+        TopicName: skype-sns-stream
+    SnsTopicPolicy:
+      Type: AWS::SNS::TopicPolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Sid: SnsTopicPolicy
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sns:Publish
+            Resource: "*"
+        Topics:
+          - Ref: SnsSMSTopic
+          - Ref: SnsSkypeTopic
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"
+
+components:
+  myAwsSnsTopic:
+    type: aws-sns-topic
+    inputs:
+      displayName: My SNS Topic display name
+      policy:
+        Version: '2008-10-17'
+        Id: policy_id
+        Statement:
+          - Effect: Allow
+            Sid: statement_id
+            Principal:
+              AWS: '*'
+            Action:
+              - 'SNS:Publish'
+              - 'SNS:RemovePermission'
+              - 'SNS:SetTopicAttributes'
+              - 'SNS:DeleteTopic'
+              - 'SNS:ListSubscriptionsByTopic'
+              - 'SNS:GetTopicAttributes'
+              - 'SNS:Receive'
+              - 'SNS:AddPermission'
+              - 'SNS:Subscribe'
+            Resource: 'arn:aws:sns:us-east-1:534288293305:sns-call'
+            Condition:
+              StringEquals:
+                'AWS:SourceOwner': '534288293305'
+      deliveryPolicy:
+        http:
+          defaultHealthyRetryPolicy:
+            minDelayTarget: 20
+            maxDelayTarget: 20
+            numRetries: 1
+            numMaxDelayRetries: 0
+            numNoDelayRetries: 0
+            numMinDelayRetries: 2
+            backoffFunction: linear
+          disableSubscriptionOverrides: true
+          defaultThrottlePolicy:
+            maxReceivesPerSecond: 3
+      deliveryStatusAttributes:
+      name: 'sns-call'

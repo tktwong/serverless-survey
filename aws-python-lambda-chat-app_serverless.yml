@@ -1,0 +1,299 @@
+# AWS Python Serverless Chat Application
+#
+# Currently entirely defined as a singular service.
+# Future revisions will be to break the application into
+# relevant services to take advantage of the microservices
+# architecture. The benefit is an application that does not
+# need to be fully redeployed with minor changes to
+# functionality
+#
+# Features:
+#  - User registration and login managed by the application
+#  - Chat group creation and adding users
+#  - Selection of groups for further detail
+#    - Messages grouped by timestamp
+#  - Loading older messages (greator than immediate 20)
+#  - Messaging to own groups (send/receive)
+#  - Leaving a group
+#  - Logging out of the application
+#  - Frontend rendering handled by AWS lambda via Jinja2
+#    HTML template rendering and DOM replacement
+#
+# Future Plans:
+#  - Login/security managed by alternative means (perhaps
+#    AWS Cognito)
+#  - Breakdown of application to microservices/separate
+#    stacks
+#    - Involved restructuring of the project code
+#  - Frontend rendering delegated to React (current
+#    approach with Jinja is messy and not easily scalable)
+#    - Still have a service for syncing/declaring the
+#      appropriate S3 bucket
+#  - Leaving a group + rejoining indefinitely (gaps in
+#    between create "exclusion zones" where messages should
+#    not be loaded from backend)
+#  - Cleaner exception handling for frontend and backend
+#    (mess of botocore exceptions calling `raise' instead
+#    of gracefully returning and issues with invalid users
+#    entered on group creation screen not properly showing)
+#    - Adding also a user search field in group creation
+#
+# Relevant GitHub Issues:
+#  - Cross stack reference resolution for local testing
+#    (attempting 'Fn::ImportValue' assigns to env vars
+#    does not resolve locally - unsure about deployment-
+#    wise)
+#    https://github.com/serverless/serverless/pull/7147
+
+service: chat-application
+frameworkVersion: "=1.69.0"
+
+provider:
+  name: aws
+  logs:
+    websocket: true
+  runtime: python3.8
+  websocketApiName: serverless-chat-api
+  websocketApiRouteSelectionExpression: $request.body.action
+  iamRoleStatements:
+    # Allow management of WebSocket connections
+    - Effect: Allow
+      Action:
+        - "execute-api:ManageConnections"
+      Resource:
+        - "arn:aws:execute-api:*:*:**/@connections/*"
+    # Allows lambda functions to invoke others
+    - Effect: Allow
+      Action:
+        - "lambda:InvokeFunction"
+      Resource:
+        - "arn:aws:lambda:us-east-1:*:function:*"
+    # Allow read access to all s3 buckets
+    - Effect: Allow
+      Action:
+        - "s3:GetObject"
+      Resource:
+        - "arn:aws:s3:::**/*"
+    # Allow access to all dynamodb tables
+    - Effect: Allow
+      Action:
+        - "dynamodb:PutItem"
+        - "dynamodb:GetItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:BatchGetItem"
+        - "dynamodb:BatchWriteItem"
+        - "dynamodb:Scan"
+        - "dynamodb:Query"
+      Resource:
+        - "arn:aws:dynamodb:us-east-1:*:*"
+
+plugins:
+  - serverless-s3-sync
+  - serverless-offline
+  - serverless-dynamodb-local
+  - serverless-s3-local
+  - serverless-python-requirements
+
+custom:
+  usersTableName: users
+  connectionsTableName: connections
+  groupsTableName: groups
+  statesTableName: states
+  messagesTableName: messages
+  pythonRequirements:
+    #dockerizePip: true
+    noDeploy: []
+  s3Sync:
+    - bucketName: chat-application-upload-bucket-11097
+      localDir: UploadData
+    - bucketName: chat-application-static-site-bucket-11097
+      localDir: static
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      # inMemory: false
+      # dbPath: offline/dynamodb
+      migrate: true
+    migration:
+      dir: offline/migrations
+
+functions:
+  connectionManagement:
+    handler: connection_handler.connection_manager
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+  defaultManagement:
+    handler: default_message_handler.default_message
+    events:
+      - websocket:
+          route: $default
+  login:
+    handler: login_handler.login
+    events:
+      - websocket:
+          route: login
+  logout:
+    handler: logout_handler.logout
+    events:
+      - websocket:
+          route: logout
+  createUser:
+    handler: create_user_handler.create_user
+    events:
+      - websocket:
+          route: createUser
+  createGroup:
+    handler: create_group_handler.create_group
+    events:
+      - websocket:
+          route: createGroup
+  getGroup:
+    handler: get_group_handler.get_group
+    events:
+      - websocket:
+          route: getGroup
+  sendMessage:
+    handler: send_message_handler.send_message
+    events:
+      - websocket:
+          route: sendMessage
+  fetchGroups:
+    handler: fetch_groups_handler.fetch_groups
+    events:
+      - websocket:
+          route: fetchGroups
+  getRecentMessages:
+    handler: get_recent_messages_handler.get_recent_messages
+    events:
+      - websocket:
+          route: getRecentMessages
+  fetchCreateGroupPage:
+    handler: fetch_create_group_page_handler.fetch_create_group_page
+    events:
+      - websocket:
+          route: fetchCreateGroupPage
+  leaveGroup:
+    handler: leave_group_handler.leave_group
+    events:
+      - websocket:
+          route: leaveGroup
+  fullActiveMessageRender:
+    handler: full_active_message_render_handler.full_active_message_render
+  sideMessageRender:
+    handler: side_message_render_handler.side_message_render
+  fetchChatRender:
+    handler: fetch_chat_render_handler.fetch_chat_render
+  activePaneRender:
+    handler: active_pane_render_handler.active_pane_render
+  ping:
+    handler: ping_handler.ping
+    events:
+      - http:
+          path: ping
+          method: get
+
+resources:
+  Resources:
+    StaticSiteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: chat-application-static-site-bucket-11097
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSiteBucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                'Fn::Join':
+                  - ""
+                  - - "arn:aws:s3:::"
+                    - Ref: StaticSiteBucket
+                    - "/*"
+    DemoBucketUpload:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: chat-application-upload-bucket-11097
+    UsersDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.usersTableName}
+        AttributeDefinitions: 
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    ConnectionsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.connectionsTableName}
+        AttributeDefinitions: 
+          - AttributeName: connectionID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: connectionID
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    GroupsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.groupsTableName}
+        AttributeDefinitions: 
+          - AttributeName: groupID
+            AttributeType: S
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: groupID
+            KeyType: HASH
+          - AttributeName: username
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+    # StatesDynamoDbTable:
+    #   Type: AWS::DynamoDB::Table
+    #   Properties:
+    #     TableName: ${self:custom.statesTableName}
+    #     AttributeDefinitions: 
+    #       - AttributeName: groupID
+    #         AttributeType: S
+    #       - AttributeName: username
+    #         AttributeType: S
+    #     KeySchema:
+    #       - AttributeName: groupID
+    #         KeyType: HASH
+    #       - AttributeName: username
+    #         KeyType: RANGE
+    #     BillingMode: PAY_PER_REQUEST
+    MessagesDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.messagesTableName}
+        AttributeDefinitions: 
+          - AttributeName: groupID
+            AttributeType: S
+          - AttributeName: sendTimestamp
+            AttributeType: N
+        KeySchema:
+          - AttributeName: groupID
+            KeyType: HASH
+          - AttributeName: sendTimestamp
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST

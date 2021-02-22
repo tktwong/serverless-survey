@@ -1,0 +1,56 @@
+service:
+  name: clean-architecture-typescript
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  prune:
+    automatic: true
+    number: 1
+
+plugins:
+  - serverless-offline
+  - serverless-pseudo-parameters
+  - serverless-webpack
+  - serverless-prune-plugin
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  environment: ${file(serverless/env.yml):${self:provider.stage}}
+  apiGateway:
+    minimumCompressionSize: 1024
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+        - s3:*
+      Resource:
+        - { 'Fn::GetAtt': ['DynamoDbTablePerson', 'Arn'] }
+        - { 'Fn::GetAtt': ['S3BucketTablePerson', 'Arn'] }
+        - Fn::Join:
+            - ''
+            - - 'arn:aws:s3:::'
+              - Ref: S3BucketTablePerson
+              - '/*'
+
+functions:
+  createPerson:
+    handler: src/application/createPerson.handler
+    events:
+      - http:
+          method: post
+          path: createPerson
+  updatePerson:
+    handler: src/application/updatePerson.handler
+    events:
+      - http:
+          method: put
+          path: updatePerson
+
+resources:
+  - ${file(serverless/resources/aws-dynamodb-person-table.yml)}
+  - ${file(serverless/resources/aws-s3-person-table.yml)}

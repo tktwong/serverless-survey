@@ -1,0 +1,228 @@
+service: InvestGuruPrototype1
+
+frameworkVersion: ">=1.38.0"
+
+
+plugins:
+  - serverless-python-requirements
+  - serverless-finch
+
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: us-east-1
+  profile: InvestGuruAdmin
+  environment:
+    alphaVantageApiKey: ${file(./.alphavantage)}
+
+
+custom:
+  name: "InvestGuruPrototype1API"
+  pythonRequirements:
+    dockerizePip: false
+  client:
+    bucketName: "invest-guru-webapp"
+    distributionFolder: invest-guru-prototype1-vue/dist
+
+package:
+  exclude:
+    - node_modules/**
+    - invest_guru/**/*_test.py
+
+
+functions:
+  simpleMovingAverageAnalytic:
+    handler: invest_guru.handlers.simple_moving_average_analytic_handler.handle
+    timeout: 30
+
+
+resources:
+  Resources:
+
+####################################################################################################################
+## IAM roles and policies
+####################################################################################################################
+
+    LambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: appsync.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: appsync-lambda-access
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: lambda:invokeFunction
+                  Resource:
+                    - !GetAtt SimpleMovingAverageAnalyticLambdaFunction.Arn
+                    - !Join [ "", [ !GetAtt SimpleMovingAverageAnalyticLambdaFunction.Arn, "*" ] ]
+
+    CognitoSNSPolicy:
+      Type: AWS::IAM::ManagedPolicy
+      Properties:
+        Description: Managed policy to allow Amazon Cognito to access SNS
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Sid: AllowSNSPublishing
+              Effect: Allow
+              Action:
+                - sns:publish
+              Resource: "*"
+
+    SNSRole:
+      Type: AWS::IAM::Role
+      Description: "An IAM Role to allow Cognito to send SNS messages"
+      Properties:
+        RoleName: ${self:custom.name}-cognito-sns-role
+        ManagedPolicyArns:
+          - Ref: CognitoSNSPolicy
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Principal:
+                Service:
+                  - cognito-idp.amazonaws.com
+      DependsOn:
+        - CognitoSNSPolicy
+
+
+####################################################################################################################
+## Cognito
+####################################################################################################################
+
+    UserPool:
+      Type: AWS::Cognito::UserPool
+      Description: "A Cognito user pool for authenticating users"
+      Properties:
+        UserPoolName: ${self:custom.name}-user-pool
+        AutoVerifiedAttributes:
+          - phone_number
+        MfaConfiguration: "ON"
+        SmsConfiguration:
+          ExternalId: ${self:custom.name}-external
+          SnsCallerArn: !GetAtt SNSRole.Arn
+        Schema:
+          - Name: email
+            AttributeDataType: String
+            Mutable: false
+            Required: true
+          - Name: phone_number
+            AttributeDataType: String
+            Mutable: false
+            Required: true
+
+    UserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Description: "App Client used by AWS AppSync"
+      Properties:
+        ClientName: ${self:custom.name}-appsync-client
+        GenerateSecret: false
+        UserPoolId: !Ref UserPool
+
+
+####################################################################################################################
+## Lambda permissions
+####################################################################################################################
+
+    LoggingSimpleMovingAverageAnalyticLambdaPermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: !GetAtt SimpleMovingAverageAnalyticLambdaFunction.Arn
+        Action: lambda:InvokeFunction
+        Principal: !Join ["", ["logs.", !Ref AWS::Region, ".amazonaws.com" ] ]
+
+
+####################################################################################################################
+## AppSync API
+####################################################################################################################
+
+    AppSyncApi:
+      Type: AWS::AppSync::GraphQLApi
+      Description: "The Invest Guru GraphQL API"
+      Properties:
+        AuthenticationType: "AMAZON_COGNITO_USER_POOLS"
+        UserPoolConfig:
+          UserPoolId: !Ref UserPool
+          AwsRegion: ${self:provider.region}
+          DefaultAction: "ALLOW"
+        Name: ${self:custom.name}
+
+    AppSyncSchema:
+      Type: AWS::AppSync::GraphQLSchema
+      Properties:
+        ApiId: !GetAtt AppSyncApi.ApiId
+        Definition: ${file(./schema.graphql)}
+
+
+####################################################################################################################
+## AppSync Lambda data sources
+####################################################################################################################
+
+    AppSyncSimpleMovingAverageAnalyticLambdaDataSource:
+      Type: AWS::AppSync::DataSource
+      Properties:
+        Type: AWS_LAMBDA
+        Name: ${self:custom.name}_${self:provider.stage}_sma_analytic_lambda_datasource
+        ApiId: !GetAtt AppSyncApi.ApiId
+        ServiceRoleArn: !GetAtt LambdaRole.Arn
+        LambdaConfig:
+          LambdaFunctionArn: !GetAtt SimpleMovingAverageAnalyticLambdaFunction.Arn
+
+
+####################################################################################################################
+## AppSync Lambda query resolvers
+####################################################################################################################
+
+    AppSyncSimpleMovingAverageAnalyticQueryResolver:
+      Type: AWS::AppSync::Resolver
+      DependsOn: AppSyncSchema
+      Properties:
+        ApiId: !GetAtt AppSyncApi.ApiId
+        TypeName: Query
+        FieldName: simpleMovingAverageAnalytic
+        DataSourceName: !GetAtt AppSyncSimpleMovingAverageAnalyticLambdaDataSource.Name
+        RequestMappingTemplate: |
+          {
+            "version": "2017-02-28",
+            "operation": "Invoke",
+            "payload": $utils.toJson($context.arguments)
+          }
+        ResponseMappingTemplate: "$util.toJson($context.result)"
+
+
+####################################################################################################################
+## Outputs
+####################################################################################################################
+
+  Outputs:
+    GraphQLApiEndpoint:
+      Description: The URL to the GraphQL Endpoint
+      Value: !GetAtt AppSyncApi.GraphQLUrl
+    GraphQLApiId:
+      Description: The API ID of the GraphQL API
+      Value: !GetAtt AppSyncApi.ApiId
+    UserPoolId:
+      Description: The Id of the UserPool
+      Value: !Ref UserPool
+    UserPoolClientId:
+      Description: The Id of the UserPool
+      Value: !Ref UserPoolClient
+    AwsRegion:
+      Description: Region that is being used for these AWS resources
+      Value: !Ref "AWS::Region"

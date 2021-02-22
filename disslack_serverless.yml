@@ -1,0 +1,69 @@
+service: disslack-disqus-comments-to-slack
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+      
+provider:
+  name: aws
+  runtime: nodejs10.x
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    DISSLACK_SLACK_WEBHOOK: ${file(./disslack.env.yml):dev.DISSLACK_SLACK_WEBHOOK}
+    DISSLACK_DISQUS_FORUM: ${file(./disslack.env.yml):dev.DISSLACK_DISQUS_FORUM}
+    DISSLACK_DISQUS_ACCESS_TOKEN: ${file(./disslack.env.yml):dev.DISSLACK_DISQUS_ACCESS_TOKEN}
+    DISSLACK_DISQUS_API_SECRET: ${file(./disslack.env.yml):dev.DISSLACK_DISQUS_API_SECRET}
+    DISSLACK_DISQUS_API_KEY: ${file(./disslack.env.yml):dev.DISSLACK_DISQUS_API_KEY}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  check:
+    handler: disslack/check.check
+    events:
+      - http:
+          path: disslack
+          method: get
+          cors: true
+  cron:
+    handler: disslack/check.check
+    events:
+      # Invoke Lambda function every hour
+      - schedule: rate(1 hour)
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

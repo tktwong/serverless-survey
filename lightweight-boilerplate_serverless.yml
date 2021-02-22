@@ -1,0 +1,94 @@
+service: python-api # CHANGE ME
+
+provider:
+  name: aws
+  runtime: python3.6
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  stage: ${opt:stage, self:custom.defaultStage}
+  memorySize: 128
+  logRetentionInDays: 14
+  timeout: 15
+  region: ${self:custom.configuration.region, opt:region}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:DescribeTable
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+      Resource:
+        - arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/${self:custom.usersTableName}
+  environment:
+    STAGE: ${self:provider.stage}
+    REGION: ${self:provider.region}
+
+plugins:
+  - serverless-python-requirements
+  - serverless-pseudo-parameters
+  - serverless-prune-plugin
+  - serverless-wsgi
+
+custom:
+  configuration: ${file(./config/${self:provider.stage}.yml):config}
+  # This file is ignored from VCS. Access secrets like so ${file(serverless-env.yml):config.KeyDefinedInServerlessEnvFile}
+  secrets:  ${file(serverless-env.yml):secrets}
+  defaultStage: dev
+  usersTableName: ${self:provider.stage}-${self:service}-users-table
+  # Optional: create an IAM user to assume a role and deploy this service
+  profiles:
+    dev: personal
+    staging: personal
+  ## PLUGINS
+  prune:
+    automatic: true
+    number: 5
+  pythonRequirements:
+    dockerizePip: non-linux
+  wsgi:
+    app: src/app.app
+    packRequirements: false
+package:
+ include:
+   - src/**
+ exclude:
+   - __pycache__/**
+   - venv/**
+   - node_modules/**
+   - package.json
+   - yarn.lock
+
+functions:
+  api:
+    handler: wsgi_handler.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+          # cors: true
+      - http:
+          path: '{proxy+}'
+          method: ANY
+          # cors: true
+    environment:
+      USER_TABLE: ${self:custom.usersTableName}
+    tags:
+      service: api
+
+resources:
+  Resources:
+    UsersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: uuid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.usersTableName}

@@ -1,0 +1,38 @@
+service: fax
+
+frameworkVersion: "~> 1.34.1"
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: ca-central-1
+  runtime: ruby2.5
+  memory: 1024
+  timeout: 5
+
+  # service-wide env vars from env.yml (env.yml in .gitignore!)
+  environment:
+    SRFAX_ACCESS_ID: ${file(env.yml):${self:provider.stage}.SRFAX_ACCESS_ID}
+    SRFAX_ACCESS_PWD: ${file(env.yml):${self:provider.stage}.SRFAX_ACCESS_PWD}
+    INCOMING_FAX_BUCKET: ${file(env.yml):${self:provider.stage}.INCOMING_FAX_BUCKET}
+
+  # Lambda function's IAM Role and permissions
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: arn:aws:s3:::${self:provider.environment.INCOMING_FAX_BUCKET}/*
+
+functions:
+  faxGet:
+    handler: fax.get
+    events:
+      - schedule:
+          name: pollInboundFaxQueue
+          description: poll for new faxes received.
+          # 6am - 10pm PST check every 2min... outside office hours, check every 10min
+          rate: rate(2 minutes)

@@ -1,0 +1,79 @@
+service: api
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  environment:
+    ENVIRONMENT_PATH: ${self:provider.stage}
+  runtime: dotnetcore2.0
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:DescribeTable"
+        - "dynamodb:PutItem"
+        - "dynamodb:Query"
+        - "dynamodb:Scan"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:DeleteItem"
+        - "ssm:GetParametersByPath"
+      Resource: '*'
+package:
+  artifact: ../artifacts/deploy-package.zip 
+  #TODO: need to put in the git-sha onto this and/or tag it.  Should I also be pushing this to S3?
+
+functions:
+  log:
+    handler: CsharpHandlers::Api.Handler::Log
+    events:
+      - http:
+          path: log
+          method: post
+resources:
+  Resources:
+    s3WebSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: dancountability
+        WebsiteConfiguration: 
+          ErrorDocument: index.html
+          IndexDocument: error.html
+        AccessControl: PublicRead
+    loggingDb:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: Id
+            AttributeType: S
+          - AttributeName: InsertDate
+            AttributeType: S
+          - AttributeName: Text
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Id
+            KeyType: HASH
+          - AttributeName: InsertDate
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ActivityLog
+        GlobalSecondaryIndexes:
+          - IndexName: dateIndex
+            KeySchema:
+              - AttributeName: Text
+                KeyType: HASH
+              - AttributeName: InsertDate
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - Id
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+    IncomingLogQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: activity-log-queue-${opt:stage, 'dev'}
+        #different queues for different environments
+          

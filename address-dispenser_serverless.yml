@@ -1,0 +1,62 @@
+service: cv-address-dispenser
+custom: ${file(./custom.yml):custom}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  memorySize: 128
+  timeout: 30
+  versionFunctions: false
+  profile: ${self:custom.profile}
+  region: ${self:custom.region}
+  stage: ${self:custom.stage}
+  environment: ${file(./environment.yml):environment}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:UpdateItem
+      Resource: arn:aws:dynamodb:${opt:region, self:provider.region}:*:*
+
+functions:
+  GetBTCAddress: ${file(src/config.yml):GetBTCAddress}
+  GetLTCAddress: ${file(src/config.yml):GetLTCAddress}
+  setup: ${file(src/config.yml):setup}
+
+package:
+  individually: true
+
+resources:
+  Resources:
+    IdStore:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-IdStore
+        AttributeDefinitions:
+          - AttributeName: currency
+            AttributeType: S
+        KeySchema:
+          - AttributeName: currency
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    AddressStore:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-AddressStore
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

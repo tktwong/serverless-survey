@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+service: tweet-weight-logger-distributions
+
+provider:
+  name: aws
+  stage: dev
+  region: ap-northeast-1
+
+resources:
+  Resources:
+    ClientBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:service}-${opt:stage, 'dev'}-clientbucket
+        WebsiteConfiguration:
+          IndexDocument: index.html
+      DeletionPolicy: Retain
+    ClientBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: ClientBucket
+        PolicyDocument:
+          Statement:
+            - Action: s3:GetObject
+              Effect: Allow
+              Resource:
+                Fn::Join:
+                  - ""
+                  - - "arn:aws:s3:::"
+                    - Ref: ClientBucket
+                    - "/*"
+              Principal: "*"
+    ClientDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - ${file(../domain.yml):ClientDistributionAlias}
+          Origins:
+            - Id: S3Origin
+              DomainName:
+                Fn::GetAtt: [ClientBucket, DomainName]
+              CustomOriginConfig:
+                OriginProtocolPolicy: http-only
+          Enabled: true
+          DefaultRootObject: index.html
+          DefaultCacheBehavior:
+            TargetOriginId: S3Origin
+            ForwardedValues:
+              QueryString: false
+            ViewerProtocolPolicy: redirect-to-https
+

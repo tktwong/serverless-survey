@@ -1,0 +1,444 @@
+service:
+  name: sls-3dinpainting-app
+
+plugins:
+  - serverless-webpack
+  - serverless-aws-documentation
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-plugin-tracing
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  # runtime: nodejs8.10
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-central-1'}
+  timeout: 8 # optional, in seconds, default is 6
+  tracing:
+    lambda: true
+    apiGateway: true
+    iamRoleStatements:            # Permissions here or under every function to trace
+      - Effect: 'Allow'           # xray tracing permissions
+        Action:
+          - 'xray:PutTraceSegments'             # Trace Segments
+          - 'xray:PutTelemetryRecords'          # Tracing and telemetry
+        Resource:
+          - '*'
+  environment:
+    LOG_LEVEL: debug
+
+    JOBS_TABLE: tblJOBS-${self:provider.stage}
+    IDX_JOBS_NAME: idxJobsName-${self:provider.stage}
+    IDX_JOBS_JOBID: idxJobsId-${self:provider.stage}
+    IDX_JOBS_USERID: idxJobsUserId-${self:provider.stage}
+    S3_IMGS: ${self:service.name}-imgs-${self:provider.stage}
+    S3_VIDS: ${self:service.name}-vids-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+
+custom:
+  documentation:
+  api:
+    info:
+      version: "v0.0.2"
+      title: "CDND-05 CAPSTONE IMAGE APP"
+      description: "Capstone Image App for CDND05. (c) Christian Kulik"
+      contact:
+        name: "Christian Kulik"
+        url: "https://github.com/chk-code"
+        email: "63784760+chk-code@users.noreply.github.com"
+      license:
+          name: "MIT License"
+          url: "https://raw.githubusercontent.com/chk-code/cdnd-05-3dinpainting/LICENSE"
+  models:
+    - name: CreateJobRequest
+      contentType: application/json
+      schema: ${file(models/create-job-request.json)}
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetJobs:
+    handler: src/lambda/http/getJobs.handler
+    iamRoleStatementsName: GetJobs-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}/index/${self:provider.environment.IDX_JOBS_USERID}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_IMGS}/*
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_VIDS}/*
+    events:
+      - http:
+          method: get
+          path: jobs
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+
+  CreateJobs:
+    handler: src/lambda/http/createJob.handler
+    events:
+      - http:
+          method: post
+          path: jobs
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new Job
+            description: Create a new Job
+    iamRoleStatementsName: CreateJob-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}
+
+  UpdateJob:
+    handler: src/lambda/http/updateJob.handler
+    events:
+      - http:
+          method: patch
+          path: jobs/{jobId}
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          authorizer: Auth
+          documentation:
+            summary: Update a Job Status
+            description: Update a Job Status
+    iamRoleStatementsName: UpdateJobStatus-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}
+
+  DeleteJob:
+    handler: src/lambda/http/deleteJob.handler
+    events:
+      - http:
+          method: delete
+          path: jobs/{jobId}
+          authorizer: Auth
+          cors: true
+          documentation:
+            summary: Delete a Job
+            description: Delete a Job
+    iamRoleStatementsName: DeleteJob-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_VIDS}
+      - Effect: Allow
+        Action:
+          - s3:DeleteObject
+          - s3:GetObject
+          - s3:headObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_VIDS}/*
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_IMGS}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:DeleteObject
+          - s3:headObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_IMGS}/*
+
+  NewImgNotifications:
+    handler: src/lambda/s3/convertImage.handler
+    events:
+      - sns: arn:aws:sns:eu-central-1:335400721406:sls-3dinpainting-app-imgs-dev-SNSTopic
+    iamRoleStatementsName: NewImgNotifications-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_VIDS}/*
+    timeout: 30 # optional, in seconds, default is 6
+
+  GenerateUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: jobs/{jobId}/uploadimg
+          authorizer: Auth
+          cors: true
+          documentation:
+            summary: Create a new image for conversion
+            description: Create a new image for conversion
+    iamRoleStatementsName: GenerateUploadURL-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}/index/${self:provider.environment.IDX_JOBS_JOBID}
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_IMGS}/*
+  ZipImgs:
+    handler: src/lambda/http/zipImgs.handler
+    events:
+      - http:
+          method: post
+          path: jobs/{jobId}/zip
+          authorizer: Auth
+          cors: true
+          documentation:
+            summary: Create a zip file for converted images
+            description: Create a zip file for converted images
+    iamRoleStatementsName: ZipImgs-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}/index/${self:provider.environment.IDX_JOBS_JOBID}
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:PutObjectRequest
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_VIDS}/*
+    timeout: 30 # optional, in seconds, default is 6
+
+  ConvertJob:
+    handler: src/lambda/http/convertJob.handler
+    events:
+      - http:
+          method: post
+          path: jobs/{jobId}/convert
+          authorizer: Auth
+          cors: true
+          documentation:
+            summary: Convert an image 
+            description: Convert an image
+    iamRoleStatementsName: ConvertJob-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}/index/${self:provider.environment.IDX_JOBS_JOBID}
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.JOBS_TABLE}
+
+resources:
+  Resources:
+    # INFRASTRUCTURE
+    GatewayResponseDefault4xx:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId: !Ref ApiGatewayRestApi
+      
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    # TABLES
+    JobsTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: jobId
+            AttributeType: S
+          - AttributeName: jobName
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: jobId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.JOBS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.IDX_JOBS_NAME}
+            KeySchema:
+            - AttributeName: jobName
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          - IndexName: ${self:provider.environment.IDX_JOBS_JOBID}
+            KeySchema:
+            - AttributeName: jobId
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+          - IndexName: ${self:provider.environment.IDX_JOBS_USERID}
+            KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    # S3 - Images Bucket
+    ImgBucketTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:provider.environment.S3_IMGS}-SNSTopic
+        DisplayName: ${self:provider.environment.S3_IMGS}-SNSTopic
+
+    ImgBucketTopicPolicy:
+      Type: AWS::SNS::TopicPolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: "*"
+              Action: sns:Publish
+              Resource:
+                !Ref ImgBucketTopic
+              Condition:
+                ArnLike:
+                  AWS:SourceArn: arn:aws:s3:::${self:provider.environment.S3_IMGS}
+        Topics:
+          - !Ref ImgBucketTopic
+
+    ImgBucket:
+      Type: AWS::S3::Bucket
+      DependsOn: ImgBucketTopicPolicy
+      Properties:
+        BucketName: ${self:provider.environment.S3_IMGS}
+        NotificationConfiguration:
+          TopicConfigurations:
+            - Event: s3:ObjectCreated:Put
+              Topic: !Ref ImgBucketTopic
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    ImgBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: ${self:provider.environment.S3_IMGS}-policy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.S3_IMGS}/*'
+        Bucket: !Ref ImgBucket
+
+    # S3 - Videos Bucket
+    VidsBucketTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:provider.environment.S3_VIDS}-SNSTopic
+        DisplayName: ${self:provider.environment.S3_VIDS}-SNSTopic
+
+    VidsBucketTopicPolicy:
+      Type: AWS::SNS::TopicPolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: "*"
+              Action: sns:Publish
+              Resource:
+                !Ref VidsBucketTopic
+              Condition:
+                ArnLike:
+                  AWS:SourceArn: arn:aws:s3:::${self:provider.environment.S3_VIDS}
+        Topics:
+          - !Ref VidsBucketTopic
+
+    VidBucket:
+      Type: AWS::S3::Bucket
+      DependsOn: VidsBucketTopicPolicy
+      Properties:
+        BucketName: ${self:provider.environment.S3_VIDS}
+        NotificationConfiguration:
+          TopicConfigurations:
+            - Event: s3:ObjectCreated:Put
+              Topic: !Ref VidsBucketTopic
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    VidBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: ${self:provider.environment.S3_VIDS}-policy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.S3_VIDS}/*'
+        Bucket: !Ref VidBucket

@@ -1,0 +1,63 @@
+service:
+  name: health-tracker
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+
+provider:
+  name: aws
+  region: ${self:custom.region}
+  runtime: nodejs10.x
+  stackName: ${self:service.name}-${self:custom.specifiedStage}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+      Resource: 
+        - { Fn::GetAtt: ["SuveryTable", "Arn"] }
+  environment:
+    PARAM_ENV_NAME: ${self:custom.specifiedStage}
+    DEFAULT_AWS_REGION: ${self:custom.region}
+    TABLE_NAME: ${self:custom.suveryTableName}
+    ENABLE_DEBUG_LOG: 'true'
+
+custom:
+  region: "ap-southeast-2"
+  specifiedStage: "dev"
+  suveryTableName: ht-suvery-${self:custom.specifiedStage}
+
+functions:
+  getStatistics:
+    handler: src/handler.getStatistics
+    events:
+      - http:
+          path: au-statistics-overview
+          method: get
+          cors: true
+  postSurvey:
+    handler: src/handler.postSurvey
+    events:
+      - http:
+          path: survey
+          method: post
+          cors: true
+  getOrganisation:
+    handler: src/handler.getOrganisation
+    events:
+      - http:
+          path: org-overview
+          method: get
+          cors: true
+
+resources:
+  - ${file(resources/serverles-cognito-user-pool.yml)}
+  - ${file(resources/serverless-dynamodb-table.yml)}

@@ -1,0 +1,247 @@
+service: tutor-me
+custom:
+  authTable: 'authentication-${self:provider.stage}'
+  studentsTable: 'students-${self:provider.stage}'
+  tutorsTable: 'tutors-${self:provider.stage}'
+  appointmentsTable: 'appointments-${self:provider.stage}'
+provider:
+  name: aws 
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  environment:
+    STUDENTS_TABLE: ${self:custom.studentsTable}
+    AUTH_TABLE: ${self:custom.authTable}
+    TUTORS_TABLE: ${self:custom.tutorsTable}
+    APPOINTMENTS_TABLE: ${self:custom.appointmentsTable}
+functions:
+  authentication:
+    role: myDynamoRole
+    handler: app.auth
+    events:
+      - http:
+          path: auth
+          method: post
+          cors:
+            origins: '*'
+  addUser:
+    role: myDynamoRole
+    handler: app.addUser
+    events:
+      - http:
+          path: add
+          method: post
+          cors:
+            origins: '*'
+  getStudentByLocation:
+    role: myDynamoRole
+    handler: app.getStudentByLocation
+    events:
+      - http:
+          path: /getStudent/{location}
+          method: get
+          cors:
+            origins: '*'
+  getTutorByLocation:
+    role: myDynamoRole
+    handler: app.getTutorByLocation
+    events:
+      - http:
+          path: /getTutor/{location}
+          method: get
+          cors: 
+            origins: '*'
+  getTutorByUsername:
+    role: myDynamoRole
+    handler: app.getTutorByUsername
+    events:
+      - http:
+          path: /getTutor/username/{username}
+          method: get
+          cors: 
+            origins: '*'
+  getStudentByUsernam:
+    role: myDynamoRole
+    handler: app.getStudentByUsername
+    events:
+      - http:
+          path: /getStudent/username/{username}
+          method: get
+          cors: 
+            origins: '*'
+  setAvailability:
+    role: appointmentsRole
+    handler: appointments.setAvailability
+    events:
+      - http:
+          path: /appointment/setAvailability
+          method: post
+          cors: 
+            origins: '*'
+  getAvailability:
+    role: appointmentsRole
+    handler: appointments.getAvailability
+    events:
+      - http:
+          path: /appointment/getAvailability
+          method: post
+          cors: 
+            origins: '*'
+  bookAvailability:
+    role: appointmentsRole
+    handler: appointments.bookAvailability
+    events:
+      - http:
+          path: /appointment/bookAvailability
+          method: post
+          cors: 
+            origins: '*'
+resources:
+  Resources:
+    StudentsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: username
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.studentsTable}
+    
+    TutorsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: username
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tutorsTable}
+
+    AuthenticationDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: username
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.authTable}
+
+    AppointmentsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: username
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.appointmentsTable}
+    
+    myDynamoRole:
+      Type: AWS::IAM::Role # https://www.serverless.com/framework/docs/providers/aws/guide/iam/ https://intellipaat.com/community/17023/how-do-i-assign-function-level-iamrolestatements-in-serverless-framework
+      Properties:
+        RoleName: myDynamoRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: myPolicyName
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Query
+                    - dynamodb:Scan
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:DeleteItem
+                  Resource:
+                    - { "Fn::GetAtt": ["StudentsDynamoDBTable", "Arn"] }
+                    - { "Fn::GetAtt": ["TutorsDynamoDBTable", "Arn"] }
+                    - { "Fn::GetAtt": ["AuthenticationDynamoDBTable", "Arn"] }
+
+    appointmentsRole:
+      Type: AWS::IAM::Role # https://www.serverless.com/framework/docs/providers/aws/guide/iam/ https://intellipaat.com/community/17023/how-do-i-assign-function-level-iamrolestatements-in-serverless-framework
+      Properties:
+        RoleName: appointmentsRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: myPolicyName
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Query
+                    - dynamodb:Scan
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                    - dynamodb:DeleteItem
+                  Resource:
+                    - { "Fn::GetAtt": ["AppointmentsDynamoDBTable", "Arn"] }

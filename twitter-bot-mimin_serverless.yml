@@ -1,0 +1,58 @@
+service: twitter-bot-mimin
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: ap-northeast-1
+  deploymentBucket: serverless-upload-ap-northeast-1
+  versionFunctions: false
+
+functions:
+  main:
+    handler: handler.main
+    description: Post image to twitter when niltea is push to github
+    environment:
+      MIMIN_TOKEN:                       "${ssm:/app/mimin/token~true}"
+      MIMIN_TWITTER_COMSUMER_KEY:        "${ssm:/app/mimin/consumer_key~true}"
+      MIMIN_TWITTER_COMSUMER_SECRET:     "${ssm:/app/mimin/consumer_secret~true}"
+      MIMIN_TWITTER_ACCESS_TOKEN:        "${ssm:/app/mimin/access_token_key~true}"
+      MIMIN_TWITTER_ACCESS_TOKEN_SECRET: "${ssm:/app/mimin/access_token_secret~true}"
+    events:
+      - http:
+          path: endpoint
+          method: post
+
+resources:
+  Description: Post image to twitter when niltea is push to github
+  Resources:
+    MainLogGroup:
+      Properties:
+        RetentionInDays: 7
+
+    IamRoleLambdaExecution:
+      Properties:
+        RoleName: "${self:service}"
+
+    Domain:
+      Type: AWS::ApiGateway::DomainName
+      Properties:
+        CertificateArn: "${ssm:/acm/camelon.info~true}"
+        DomainName: "mimin.camelon.info"
+
+    Mapping:
+      Type: AWS::ApiGateway::BasePathMapping
+      Properties:
+        DomainName: { Ref: Domain }
+        RestApiId:  { Ref: ApiGatewayRestApi }
+        Stage: dev
+
+    RecordSetOfAPI:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        Name: "mimin.camelon.info"
+        Type: A
+        HostedZoneName: "camelon.info."
+        AliasTarget:
+          DNSName: { Fn::GetAtt: [Domain, DistributionDomainName] }
+          HostedZoneId: Z2FDTNDATAQYW2

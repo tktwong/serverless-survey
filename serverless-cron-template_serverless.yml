@@ -1,0 +1,103 @@
+service: http-observatory-cron
+
+frameworkVersion: ">=1.2.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: python3.6
+  region: us-west-2
+  iamRoleStatements:
+   - Effect: "Allow"
+     Action:
+       - "s3:PutObject"
+       - "s3:PutObjectAcl"
+     Resource: 
+      Fn::Join:
+        - ""
+        - - Fn::GetAtt:
+            - S3BucketObservatoryResults
+            - Arn
+          - "/*"
+
+functions:
+  cron:
+    handler: handler.run
+    alarms:
+      # Alert on any errors (very generic alert)
+      - functionErrors
+      # If you created a custom alert definition (on line 74), use it on a function here
+      # - customAlarm
+      # Below, we are creating a custom metric, and alerting on that
+      # This is possible due to the use of the plugin, however is not very configurable
+      # Need to make sure to select a descriptive name and a good description
+      # Here, basically we are alerting on the first instance of an unhandled exception
+      - name: StackTrace
+        description: 'Uncaught exception triggered'
+        namespace: 'AWS/Lambda'
+        metric: StackTrace   # define custom metrics here
+        threshold: 1
+        statistic: Maximum
+        period: 60
+        evaluationPeriods: 1
+        comparisonOperator: GreaterThanOrEqualToThreshold
+        treatMissingData: notBreaching
+        # Pattern specified here will scan the lambda function logs for this pattern
+        # If there is a match, it will raise this alarm
+        # Format here follows CloudWatch metric filter format
+        # See: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html
+        # Below is an example pattern which would match on a log like:
+        # {"level": "ERROR", "message": "Some message"} 
+        # pattern: '{($.level = "ERROR") && ($.message = *)}'
+        # Let's set a simpler pattern so it would keep alerting on unhandled exceptions
+        pattern: 'Traceback'
+    events:
+      # Invoke Lambda function every minute
+      - schedule: rate(1 minute)
+      - s3:
+        bucket: ${self:custom.cfg.s3BucketName}
+        event: s3:ObjectCreated:*
+
+resources:
+  Resources:
+    S3BucketObservatoryResults:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.cfg.s3BucketName}
+
+plugins:
+  - serverless-plugin-aws-alerts
+  - serverless-python-requirements
+
+custom:
+  notifications:
+    - protocol: email
+      endpoint: culucenk@mozilla.com      # Change this to your email address
+  alerts:
+    topics:
+      alarm:
+        topic: ${self:service}-httpobs-exception-alarm
+        notifications: ${self:custom.notifications}
+    # Create custom alarm definitions here
+    # Below is an example custom alarm
+    # definitions:
+    #   customAlarm:
+    #     description: 'My custom alarm'
+    #     namespace: 'AWS/Lambda'
+    #     metric: duration
+    #     threshold: 200
+    #     statistic: Average
+    #     period: 300
+    #     evaluationPeriods: 1
+    #     comparisonOperator: GreaterThanThreshold
+    # These are pre-made alerts provided by the plugin
+    # global:
+    #   - functionThrottles
+    #   - functionErrors
+    #   - functionInvocations
+    #   - functionDuration
+    function:
+      - functionErrors
+  cfg:
+    s3BucketName: "observatoryresults3"
+  pythonRequirements:
+    dockerizePip: non-linux

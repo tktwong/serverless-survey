@@ -1,0 +1,51 @@
+service: ${opt:service}
+
+provider:
+  name: aws
+  runtime: nodejs${self:custom.runtime.${opt:stage, self:provider.stage}}
+  timeout: 30 # API Gateway endpoints cannot exceed 30 seconds.
+  stage: develop
+  profile: default # References ~/.aws/credentials profile names.
+  environment: ${file(./.env.yml):${opt:stage, self:provider.stage}}
+
+stackTags:
+  project: 'PROJECT_NAME'
+  environment: ${opt:stage, self:provider.stage}
+  service: ${self:service}
+
+custom:
+  serverless-offline:
+    # httpsProtocol: 'dev-certs'
+    port: 5000
+
+  webpack: ${file(./webpack.yml)}
+
+  runtime:
+    develop: '6.10'
+    staging: '8.10'
+    production: '8.10'
+
+# IAM Statements provided here are attached to the Lambda execution role.
+iamRoleStatements:
+  - ${file(./iam/S3.yml)}
+
+# Declare REST endpoints, or event (SNS,SQS,S3 etc.) handlers here.
+functions:
+  ping:
+    handler: src/ping.default
+    events:
+      - http:
+          path: ping
+          method: get
+      # Ping every 5 minutes to avoid cold starts
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: true
+
+# you can add CloudFormation resource templates here
+# resources:
+#  Resources:
+
+plugins:
+  - serverless-webpack
+  - serverless-offline

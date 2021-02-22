@@ -1,0 +1,125 @@
+service: get-things-done-laz
+# app and org for use with dashboard.serverless.com
+app: get-things-done-laz
+org: limlight86
+
+frameworkVersion: "2"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  profile: personal
+  environment:
+    tableName: ${self:custom.siteName}
+    stage: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:Query
+        - dynamodb:DeleteItem
+        - dynamodb:PutItem
+      Resource:
+        - Fn::GetAtt: [DynamoTable, Arn]
+
+plugins:
+  - serverless-bundle
+  - serverless-offline
+  - serverless-s3-sync
+
+package:
+  individually: true
+
+custom:
+  siteName: ${self:service}-${self:provider.stage}
+  s3Sync:
+    - bucketName: ${self:custom.siteName}
+      localDir: dist
+
+functions:
+  graphql:
+    handler: backend/index.handler
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+      - http:
+          path: graphql
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.siteName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:GetObject
+              Resource:
+                Fn::Join: ["", ["arn:aws:s3:::", { "Ref": "StaticSite" }, "/*"]]
+    DynamoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.siteName}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH # PARTITION
+          - AttributeName: id
+            KeyType: RANGE # SORT
+        BillingMode: PAY_PER_REQUEST
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:custom.siteName}
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:custom.siteName}
+        GenerateSecret: False
+        UserPoolId:
+          Ref: CognitoUserPool
+
+outputs:
+  region: ${self:provider.region}
+  gatewayUrl:
+    Fn::Join:
+      [
+        "",
+        [
+          "https://",
+          { "Ref": "ApiGatewayRestApi" },
+          ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}/graphql",
+        ],
+      ]
+  userPool: !Ref CognitoUserPool
+  userPoolClient: !Ref CognitoUserPoolClient
+  siteUrl: http://${self:custom.siteName}.s3-website-${self:provider.region}.amazonaws.com

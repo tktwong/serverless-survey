@@ -1,0 +1,65 @@
+service: garmin-api
+frameworkVersion: "2"
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: python3.8
+  logs:
+    httpApi: true
+  stage: ${env:STAGE}
+  region: ${env:REGION}
+  lambdaHashingVersion: 20201221
+  apiGateway:
+    shouldStartNameWithService: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${env:NAME_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${env:ACTIVITY_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${env:STATS_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${env:HEART_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${env:STEPS_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${env:ACTIVITY_SPLITS_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${env:ACTIVITY_DETAILS_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${env:ACTIVITY_WEATHER_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${env:ACTIVITY_HEART_RATE_ZONES_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${env:DEVICE_LAST_USED_TABLE}"
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource:
+        - "arn:aws:secretsmanager:${self:provider.region}:*:secret:${env:SECRET_ARN}"
+
+functions:
+  app:
+    handler: main.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors: true
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+
+package:
+  exclude:
+    - node_modules/**
+    - __pycache__/**
+
+plugins:
+  - serverless-python-requirements
+  - serverless-dotenv-plugin
+  - serverless-offline

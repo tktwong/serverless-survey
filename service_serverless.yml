@@ -1,0 +1,180 @@
+service: z36-db
+
+plugins:
+  - serverless-domain-manager
+  
+provider:
+  name: aws
+  region: us-east-2
+  runtime: nodejs6.10
+  memorySize: ${self:custom.memorySize}
+  timeout: ${self:custom.timeout}
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: slsdev
+  apiKeys:
+    - dev-db
+  environment:
+    token: ${ssm:dev-token}
+    table_logs: ${self:custom.tables.logs}
+    table_transformations: ${self:custom.tables.transformations}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 
+        - 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.tables.logs}'
+        - 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.tables.transformations}'
+        - 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.tables.logs}/index/transformation-created-index'
+        - 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.tables.transformations}/index/status-created-index'
+custom:
+  memorySize: 128
+  timeout: 10
+  defaultStage: dev
+  dev:
+    profile: slsdev
+    private: true
+    domain: 'dev-db.z36.io'
+  prod:
+    profile: slsprod
+    private: true
+    domain: 'db.z36.io'
+  private: ${self:custom.${self:provider.stage}.private}
+  customDomain:
+    basePath: ''
+    domainName: ${self:custom.${self:provider.stage}.domain}
+    stage: ${self:provider.stage}
+  bucket: ${self:provider.stage}-z36-bucket
+  tables:
+    transformations: ${self:provider.stage}-transformations
+    logs: ${self:provider.stage}-logs
+
+package:
+  include:
+    - components/**/*.*
+    - functions/**/*.*
+    - services/**/*.*
+
+functions:
+  create:
+    memorySize: ${self:custom.memorySize}
+    timeout: ${self:custom.timeout}
+    handler: functions/create/function.handler
+    events:
+      - http:
+          path: /{table}/new
+          method: post
+          private: ${self:custom.private}
+  get:
+    memorySize: ${self:custom.memorySize}
+    timeout: ${self:custom.timeout}
+    handler: functions/get/function.handler
+    events:
+      - http:
+          path: /{table}/{id}
+          method: get
+          private: ${self:custom.private}
+  update:
+    memorySize: ${self:custom.memorySize}
+    timeout: ${self:custom.timeout}
+    handler: functions/update/function.handler
+    events:
+      - http:
+          path: /{table}/{id}
+          method: patch
+          private: ${self:custom.private}
+  delete:
+    memorySize: ${self:custom.memorySize}
+    timeout: ${self:custom.timeout}
+    handler: functions/delete/function.handler
+    events:
+      - http:
+          path: /{table}/{id}
+          method: delete
+          private: ${self:custom.private}
+  query:
+    memorySize: ${self:custom.memorySize}
+    timeout: ${self:custom.timeout}
+    handler: functions/query/function.handler
+    events:
+      - http:
+          path: /{table}/query
+          method: post
+          private: ${self:custom.private}
+
+resources:
+  Resources:
+    TransformationsTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.tables.transformations}
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: status
+            AttributeType: N
+          -
+            AttributeName: created
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes: 
+          - IndexName: status-created-index
+            KeySchema: 
+              - AttributeName: status
+                KeyType: HASH
+              - AttributeName: created
+                KeyType: RANGE
+            Projection: 
+              ProjectionType: ALL
+            ProvisionedThroughput: 
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    LogsTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.tables.logs}
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: transformation
+            AttributeType: S
+          -
+            AttributeName: created
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes: 
+          - IndexName: transformation-created-index
+            KeySchema: 
+              - AttributeName: transformation
+                KeyType: HASH
+              - AttributeName: created
+                KeyType: RANGE
+            Projection: 
+              ProjectionType: ALL
+            ProvisionedThroughput: 
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

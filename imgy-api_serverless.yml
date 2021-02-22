@@ -1,0 +1,94 @@
+# Service
+service: image-service
+
+# Provider settings
+provider:
+  name: aws
+  awsKmsKeyArn: arn:aws:kms:us-east-1:716173361611:key/221039c5-56df-46a2-b1a7-76510b468cbd
+  stage: dev
+  runtime: go1.x
+  region: eu-west-1
+  versionFunctions: false
+  deploymentBucket:
+    name: imageservice-bucket
+  environment:
+    AWS_REGION_IMGY: eu-west-1
+    IMAGES_TABLE: dev-images
+    S3_BUCKET_NAME: imgy
+
+# Deployment package
+package:
+ individually: true
+ exclude:
+   - ./**
+
+ # DynamoDB tables
+resources:
+  Resources:
+    imagesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: dev-images
+        AttributeDefinitions:
+          - AttributeName: imageID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: imageID
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+functions:
+  create:
+    handler: bin/api-create
+    description: Create image
+    memorySize: 128
+    timeout: 10
+    role: arn:aws:iam::716173361611:role/imgy-api
+    package:
+      include:
+        - ./bin/api-create
+    events:
+      - http:
+          path: api/image
+          method: post
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:eu-west-1:716173361611:userpool/eu-west-1_qPM5Dx2JO
+  get:
+    handler: bin/api-get
+    description: Get image
+    memorySize: 128
+    timeout: 10
+    role: arn:aws:iam::716173361611:role/imgy-api
+    package:
+      include:
+        - ./bin/api-get
+    events:
+      - http:
+          path: api/image/{imageID}
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:eu-west-1:716173361611:userpool/eu-west-1_qPM5Dx2JO
+          request:
+            parameters:
+              paths:
+                imageID: true
+  # downloader:
+  #   handler: bin/api-downloader
+  #   description: Get presigned URL for download operation
+  #   memorySize: 128
+  #   timeout: 10
+  #   role: arn:aws:iam::716173361611:role/imgy-api
+  #   package:
+  #     include:
+  #       - ./bin/api-downloader
+  #   events:
+  #     - http:
+  #         path: api/downloader
+  #         method: get
+  #         cors: true
+  #         authorizer:
+  #           arn: arn:aws:cognito-idp:eu-west-1:716173361611:userpool/eu-west-1_qPM5Dx2JO

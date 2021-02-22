@@ -1,0 +1,47 @@
+service: s3-upload
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: us-east-1
+  environment:
+    SOURCE_BUCKET_NAME: ${env:SOURCE_BUCKET_NAME}
+    TARGET_BUCKET_NAME: ${env:TARGET_BUCKET_NAME}
+    DYNAMODB_TABLE: ${env:DYNAMODB_TABLE}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+package:
+  exclude:
+    - "**/*"
+    - "!node_modules/**"
+    - "!build/**"
+    - "**/*.spec.js"
+    - "**/*.spec.js.snap"
+
+functions:
+  create:
+    handler: build/handler.create
+    events:
+      - s3:
+          bucket: ${self:provider.environment.SOURCE_BUCKET_NAME}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .jpg
+  remove:
+    handler: build/handler.remove
+    events:
+      - s3:
+          bucket: ${self:provider.environment.SOURCE_BUCKET_NAME}
+          event: s3:ObjectRemoved:*
+          rules:
+            - suffix: .jpg

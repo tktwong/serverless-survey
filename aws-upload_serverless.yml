@@ -1,0 +1,72 @@
+service: ${self:custom.config.service}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${self:custom.config.region}
+  stage: dev
+  memorySize: 128
+  timeout: 5
+  endpointType: regional
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource:
+        - arn:aws:logs:*:*:* # allow lambdas to create logs
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:ListBucket
+        - s3:ListBucketVersions
+      Resource:
+        - 'arn:aws:s3:::${self:custom.config.bucket}'
+        - 'arn:aws:s3:::${self:custom.config.bucket}/*'
+
+custom:
+  allowedHeaders:
+    - Accept
+    - Content-Type
+    - Content-Length
+    - Authorization
+    - X-Amz-Date
+    - X-Api-Key
+    - X-Amz-Security-Token
+    - X-Amz-User-Agent
+  stage: ${opt:stage, self:provider.stage}
+  config: ${file(./config.json)}
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+
+functions:
+  get-upload-url:
+    handler: functions/misc/image-upload.url
+    description: Uses getSignedUrl method to issue a signed URL for uploading images to S3
+    events:
+      - http:
+          path: /v1/upload-url
+          method: get
+          cors:
+            origin: '*'
+            headers: ${self:custom.allowedHeaders}
+
+resources:
+  Resources:
+    Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.config.bucket}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ['*']
+              AllowedMethods: [GET, PUT]
+              AllowedOrigins: ['*']
+              Id: CORSRuleId1
+              MaxAge: '3600'
+
+package:
+  exclude:
+    - 'app/**'

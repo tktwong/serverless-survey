@@ -1,0 +1,99 @@
+service: scooter
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  environment:
+    STRIPE_SECRET_KEY: ${file(./env.yml):default.STRIPE_SECRET_KEY}
+    MONGO_URL: ${file(./env.yml):default.MONGO_URL}
+  vpc:
+    securityGroupIds:
+      - sg-5bb00e2f
+      - sg-163e825e
+    subnetIds:
+      - subnet-37fca853
+      - subnet-a5da32aa
+      - subnet-b93e60f2
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'ec2:CreateNetworkInterface'
+        - 'ec2:CreateNetworkInterface'
+        - 'ec2:DescribeNetworkInterfaces'
+        - 'ec2:DescribeVpcs'
+        - 'ec2:DeleteNetworkInterface'
+        - 'ec2:DescribeSubnets'
+        - 'ec2:DescribeSecurityGroups'
+      Resource:
+        '*'
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: /
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+
+  clear:
+    handler: scootersHandler.clear
+    events:
+      - http:
+          path: clear
+          method: get
+
+  getById:
+    handler: scootersHandler.getById
+    events:
+      - http:
+          path: scooters/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+
+  # SORACOM Funk will interact with this service
+  createOrUpdateScooter:
+    handler: scootersHandler.createOrUpdate
+    events:
+      - http:
+          path: scooters
+          method: post
+
+  getScooters:
+    handler: scootersHandler.all
+    events:
+      - http:
+          path: scooters
+          method: get
+
+  getTransactions:
+    handler: transactionsHandler.all
+    events:
+      - http:
+          path: transactions
+          method: get
+
+  startRide:
+    handler: transactionsHandler.start
+    events:
+      - http:
+          path: transactions
+          method: post
+  stopRide:
+    timeout: 3
+    handler: transactionsHandler.stop
+    events:
+      - http:
+          path: transactions/{id}
+          method: patch
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true

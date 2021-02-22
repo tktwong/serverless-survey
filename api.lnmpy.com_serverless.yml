@@ -1,0 +1,96 @@
+service: api
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: ap-northeast-2
+  timeout: 300
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+plugins:
+  - serverless-offline
+
+functions:
+  rss:
+    handler: apis.rss
+    events:
+      - http:
+          method: GET
+          path: rss/{provider}
+      - http:
+          method: GET
+          path: rss/{provider}/{args+}
+  auth-proxy:
+    handler: apis.gfw_proxy
+    events:
+      - http:
+          method: ANY
+          path: public/proxy/{service}/{provider}
+          cors: true
+      - http:
+          method: ANY
+          path: public/proxy/{service}/{provider}/{args+}
+          cors: true
+      - http:
+          method: ANY
+          path: proxy/{service}/{provider}
+          cors: true
+      - http:
+          method: ANY
+          path: proxy/{service}/{provider}/{args+}
+          cors: true
+  notify:
+    handler: apis.notify
+    events:
+      - http:
+          method: ANY
+          path: notify/{service}
+      - http:
+          method: ANY
+          path: notify/{service}/{to}
+  url:
+    handler: apis.url
+    events:
+      - http:
+          method: POST
+          path: url
+      - http:
+          method: GET
+          path: url
+      - http:
+          method: GET
+          path: url/{id}
+      - http:
+          method: DELETE
+          path: url/{id}
+
+resources:
+  Resources:
+    ShortUrlsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

@@ -1,0 +1,324 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: yalk-backend # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-east-1
+  role: arn:aws:iam::649854575814:role/yalk-backend-role
+  apiKeys:
+    - ${file(./env.yml):custom.${opt:stage, self:provider.stage}.common.apiKey}
+  environment:
+    DYNAMODB_USERS_TABLE: ${self:service}-users-${opt:stage, self:provider.stage}
+    DYNAMODB_SUBSCRIPTIONS_TABLE: ${self:service}-subscriptions-${opt:stage, self:provider.stage}
+    ORIGIN: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.common.origin}
+    CLIENT_ID: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.token.clientId}
+    CLIENT_SECRET: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.token.clientSecret}
+    REDIRECT_URI: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.token.redirectUri}
+    ZOHO_AUTH_TOKEN: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.zoho.authToken}
+    ZOHO_ORGANIZATION_ID: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.zoho.organizationId}
+    ZOHO_PRODUCT_ID: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.zoho.productId}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_USERS_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_SUBSCRIPTIONS_TABLE}"
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  #------------
+  # Users
+  #------------
+  createUser:
+    handler: api/user/createUser.create
+    events:
+      - http:
+          path: user
+          method: post
+          cors:
+            origin: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.common.origin} # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            type: COGNITO_USER_POOLS
+            name: yalk-cognito-authorizer
+            identitySource: method.request.header.Authorization
+            arn: arn:aws:cognito-idp:us-east-1:649854575814:userpool/us-east-1_2hKrloLWf
+
+  listUsers:
+    handler: api/user/listUsers.list
+    events:
+      - http:
+          path: users
+          method: get
+          cors:
+            origin: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.common.origin} # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            type: COGNITO_USER_POOLS
+            name: yalk-cognito-authorizer
+            identitySource: method.request.header.Authorization
+            arn: arn:aws:cognito-idp:us-east-1:649854575814:userpool/us-east-1_2hKrloLWf
+
+  getUser:
+    handler: api/user/getUser.get
+    events:
+      - http:
+          path: user/{id}
+          method: get
+          cors:
+            origin: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.common.origin} # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            type: COGNITO_USER_POOLS
+            name: yalk-cognito-authorizer
+            identitySource: method.request.header.Authorization
+            arn: arn:aws:cognito-idp:us-east-1:649854575814:userpool/us-east-1_2hKrloLWf
+
+  updateUser:
+    handler: api/user/updateUser.update
+    events:
+      - http:
+          path: user/{id}
+          method: put
+          cors:
+            origin: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.common.origin} # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            type: COGNITO_USER_POOLS
+            name: yalk-cognito-authorizer
+            identitySource: method.request.header.Authorization
+            arn: arn:aws:cognito-idp:us-east-1:649854575814:userpool/us-east-1_2hKrloLWf
+
+  deleteUser:
+    handler: api/user/deleteUser.delete
+    events:
+      - http:
+          path: user/{id}
+          method: delete
+          cors:
+            origin: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.common.origin} # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            type: COGNITO_USER_POOLS
+            name: yalk-cognito-authorizer
+            identitySource: method.request.header.Authorization
+            arn: arn:aws:cognito-idp:us-east-1:649854575814:userpool/us-east-1_2hKrloLWf
+
+  confirmUser:
+    handler: api/user/confirmUser.confirm
+
+  #------------
+  # token
+  #------------
+
+  token:
+    handler: api/token/token.token
+    events:
+      - http:
+          path: token
+          method: post
+          cors:
+            origin: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.common.origin} # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+  #--------------
+  # subscriptions
+  #--------------
+
+  createSubscription:
+    handler: api/subscription/createSubscription.create
+    events:
+      - http:
+          path: subscription
+          method: post
+          cors:
+            origin: ${file(./env.yml):custom.${opt:stage, self:provider.stage}.common.origin} # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          private: true
+
+resources:
+  Resources:
+    DynamoDbUserTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:service}-users-${opt:stage, self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    DynamoDbSubscriptionsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:service}-subscriptions-${opt:stage, self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: subscription_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: subscription_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    ApiGatewayMethodUsersGet:
+      Type: "AWS::ApiGateway::Method"
+      Properties:
+        AuthorizationScopes:
+          - "aws.cognito.signin.user.admin"
+    ApiGatewayMethodUserPost:
+      Type: "AWS::ApiGateway::Method"
+      Properties:
+        AuthorizationScopes:
+          - "aws.cognito.signin.user.admin"
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

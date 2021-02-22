@@ -1,0 +1,335 @@
+service:
+  name: token-generator
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-offline-scheduler
+  - serverless-plugin-ifelse
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-2
+  stage: ${opt:stage, 'dev'}
+  environment:
+    APIKEY_DYNAMODB_TABLE: apiKeyStore-${self:provider.stage}
+    API_DYNAMODB_TABLE: apiStore-${self:provider.stage}
+    API_GATEWAY_DYNAMODB_TABLE: apiGatewayStore-${self:provider.stage}
+    API_DYNAMODB_TABLE_STREAM_ARN: arn:aws:dynamodb:${opt:region, self:provider.region}:775052747630:table/${self:provider.environment.API_DYNAMODB_TABLE}/stream/2019-01-31T16:00:00.871
+    AUTHORISER_FUNCTION_ARN: arn:aws:lambda:eu-west-2:775052747630:function:token-generator-dev-authorise-api-key
+    COGNITO_USER_POOL_ID: $(ssm:/token-generator-dev/test_cognito_user_pool_id)
+    COGNITO_CLIENT_ID: $(ssm:/token-generator-dev/test_cognito_client_id)
+    COGNITO_ARN: arn:aws:cognito-idp:eu-west-2:775052747630:userpool/eu-west-2_rQ3dI3Vbp
+    ENCRYPT_SECRET: $(ssm:/token-generator-dev/encrypt_secret)
+    ENCRYPT_IV: $(ssm:/token-generator-dev/encrypt_iv)
+    ELASTIC_SEARCH_DOMAIN_NAME: api-search
+    ELASTIC_INDEX_API: api-${self:provider.stage}
+    ELASTIC_INDEX_SWAGGER: swagger
+    ELASTIC_SEARCH_ENDPOINT: https://search-api-search-i7mzbfy4dowrf6r3offrnrjhze.eu-west-2.es.amazonaws.com
+    ELASTIC_SEARCH_VERSION: "6.3"
+    IS_PROD: false
+    REGION: ${opt:region, self:provider.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.APIKEY_DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.API_GATEWAY_DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.API_DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+      Resource: ${self:provider.environment.API_DYNAMODB_TABLE_STREAM_ARN}
+    - Effect: Allow
+      Action:
+        - es:ESHttpPost
+        - es:ESHttpPut
+        - es:ESHttpDelete
+        - es:ESHttpGet
+      Resource:
+        - "arn:aws:es:${opt:region, self:provider.region}:*:domain/${self:provider.environment.ELASTIC_SEARCH_DOMAIN_NAME}/*"    
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource:
+        - "arn:aws:lambda:${opt:region, self:provider.region}:*:function:token-generator-dev-update-api-key-last-accessed"
+custom:
+  currentStage: ${opt:stage, self:provider.stage}
+  serverlessIfElse:
+    - If: '"${self:custom.currentStage}" == "production"'
+      Set: 
+        provider.environment.IS_PROD: true
+      ElseSet: 
+        provider.environment.IS_PROD: false
+functions:
+  # APIKEY CONTROLLER
+  create-api-key:
+    handler: controllers/apiKeyController.createKey
+    events:
+      - http:
+          method: post
+          path: api-key
+          cors:
+            - enabled: true
+              origin: "*"
+              headers: "Content-Type,Authorization,Access-Control-Allow-Origin"
+              methods: "DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT" 
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_ARN}
+  read-api-key:
+    handler: controllers/apiKeyController.readKey
+    events:
+      - http:
+          method: get
+          path: api-key
+          cors:
+            - enabled: true
+              origin: "*"
+              headers: "Content-Type,Authorization,Access-Control-Allow-Origin"
+              methods: "DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT" 
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_ARN}
+  read-api-keys-for-user:
+    handler: controllers/apiKeyController.readKeysForUser
+    events:
+      - http:
+          method: get
+          path: api-key/{cognito_username}
+          cors:
+            - enabled: true
+              origin: "*"
+              headers: "Content-Type,Authorization,Access-Control-Allow-Origin"
+              methods: "DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT" 
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_ARN}
+          request:
+            parameters:
+              paths:
+                id: true
+  read-all-unverified-keys:
+    handler: controllers/apiKeyController.readAllUnVerifiedKeys
+    events: 
+      - http:
+          method: get
+          path: api-key/unverified
+          cors:
+            - enabled: true
+              origin: "*"
+              headers: "Content-Type,Authorization,Access-Control-Allow-Origin"
+              methods: "DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT" 
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_ARN}
+  verify-api-key:
+    handler: controllers/apiKeyController.verifyKey
+    events:
+      - http:
+          method: post
+          path: api-key/verify
+          cors:
+            - enabled: true
+              origin: "*"
+              headers: "Content-Type,Authorization,Access-Control-Allow-Origin"
+              methods: "DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT" 
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_ARN}
+  authorise-api-key:
+    handler: controllers/apiKeyController.authoriseKey
+  update-api-key-last-accessed:
+    handler: controllers/apiKeyController.updateLastAccessField       
+  # API CONTROLLER
+  create-api:
+    handler: controllers/apiController.createApi
+    events:
+      - http:
+          method: post
+          path: api
+          cors: true
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_ARN}
+  read-api:
+    handler: controllers/apiController.getApi
+    events:
+      - http:
+          method: get
+          path: api/{id}
+          cors:
+            - enabled: true
+              origin: "*"
+              headers: "Content-Type,Authorization,Access-Control-Allow-Origin"
+              methods: "DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT"
+          request:
+            parameters:
+              paths:
+                id: true
+  read-api-list:
+    handler: controllers/apiController.getApiList
+    events:
+      - http:
+          method: get
+          path: api
+          cors: true
+  delete-api: 
+    handler: controllers/apiController.deleteApi
+    events:
+      - http:
+          method: delete
+          path: api/{id}
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_ARN}
+  # migrate-api:
+  #   handler: controllers/apiController.migrateApi
+  #   events:
+  #     - http:
+  #         method: get
+  #         path: api/migrate
+  #         cors: true
+  #         authorizer:
+  #           arn: ${self:provider.environment.COGNITO_ARN}
+  
+  # HEALTH CONTROLLER
+  health-check:
+    handler: controllers/healthController.healthCheck
+    events:
+      - http:
+          method: get
+          path: health
+          authorizer: 
+            arn: ${self:provider.environment.AUTHORISER_FUNCTION_ARN}
+  # ES CONTROLLER
+  index-elastic-search:
+    handler: controllers/esController.indexES
+    events:
+      - http:
+          method: get
+          path: index-es
+  update-es-from-stream:
+    handler: controllers/esController.dynamoDBStreamToEs
+    events:
+      - stream:
+        type: dynamodb
+        arn: ${self:provider.environment.API_DYNAMODB_TABLE_STREAM_ARN}
+  # SWAGGER CONTROLLER
+  get-swagger-info-from-json:
+    handler: controllers/swaggerController.periodicallyIndexESWithSwaggerJson
+    events:
+      - schedule: rate(1 day)
+      - enabled: ${self:provider.environment.IS_PROD}
+  read-swagger-list:
+    handler: controllers/swaggerController.getSwaggerList
+    events: 
+      - http: 
+          method: get
+          path: swagger-paths
+          cors: true        
+  read-swagger:
+    handler: controllers/swaggerController.getSwaggerPath
+    events:
+      - http:
+          method: get
+          path: swagger-paths/{apiId}
+          cors: true
+          request:
+            parameters:
+              paths:
+                apiId: true
+    
+resources:
+  Conditions:
+    IsDev:
+      Fn::Equals: 
+        - ${opt:stage}
+        - dev
+
+  Resources:
+    TokenStore:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.APIKEY_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    ApiGatewayStore:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.API_GATEWAY_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5          
+    ApiStore:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.API_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    ApiSearch:
+      Type: "AWS::Elasticsearch::Domain"
+      Condition: IsDev
+      Properties:
+        ElasticsearchVersion: ${self:provider.environment.ELASTIC_SEARCH_VERSION}
+        DomainName: ${self:provider.environment.ELASTIC_SEARCH_DOMAIN_NAME}
+        ElasticsearchClusterConfig:
+          DedicatedMasterEnabled: false
+          InstanceCount: "1"
+          ZoneAwarenessEnabled: false
+          InstanceType: "t2.small.elasticsearch"
+        EBSOptions:
+          EBSEnabled: true
+          Iops: 0
+          VolumeSize: 10
+          VolumeType: "gp2"
+        AccessPolicies:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                AWS: "*"
+              Action: "es:*"
+              Resource: "*"
+        AdvancedOptions:
+          rest.action.multi.allow_explicit_index: "true"

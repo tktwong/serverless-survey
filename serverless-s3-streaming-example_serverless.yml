@@ -1,0 +1,66 @@
+service:
+  name: serverless-s3-streaming-example
+
+package:
+  individually: true
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  profile: ${env:AWS_PROFILE, 'default'}
+  region: ${self:custom.region}
+  environment:
+    BUCKET: ${self:custom.src_bucket}
+    REGION: ${self:custom.region}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: "arn:aws:s3:::${self:custom.src_bucket}"
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:GetObject"
+        - "s3:DeleteObject"
+      Resource: "arn:aws:s3:::${self:custom.src_bucket}/${opt:stage, self:provider.stage}/uploads/*"
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:DeleteObject"
+        - "s3:PutObject"
+      Resource: "arn:aws:s3:::${self:custom.dest_bucket}/${opt:stage, self:provider.stage}/processed/*"
+
+functions:
+  ProcessUpload:
+    handler: src/handler.default
+    # Adjust this timeout based on your file size
+    timeout: 300                   
+    events:
+      - s3:
+          bucket: ${self:custom.src_bucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: ${opt:stage, self:provider.stage}/uploads
+          existing: true
+    environment:
+        DEST_BUCKET: ${self:custom.dest_bucket}
+        DEST_PREFIX: ${opt:stage, self:provider.stage}/processed
+        STAGE: ${opt:stage, self:provider.stage}
+        DEBUG: ${self:custom.logging.${opt:stage, self:provider.stage}_debug}
+
+custom:
+  region: ${env:REGION, 'us-east-1'}
+  src_bucket: ${self:service}
+  dest_bucket: ${self:service}     # NOTE: This could be another bucket/path if desired
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    packager: 'yarn'
+    includeModules: true
+  logging:
+    dev_debug: "s3-stream:*"
+    prod_debug: ""

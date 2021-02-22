@@ -1,0 +1,116 @@
+service:
+  name: mr-voicemail
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ${opt:region, 'us-east-1'} # Transcribe isn't in ap-southeast-2
+  memorySize: 128
+  timeout: 300
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  tags:
+    Owner: bret.waldow@mechanicalrock.io
+    Purpose: MR Connect voicemailBucket
+    Stack: ${self:custom.profiles.${self:provider.stage}}
+
+custom:
+  defaultStage: dev
+
+  profiles:
+    dev: sandbox-bretwaldow-admin
+
+  params:
+    amazonConnectCcpUrl: 'https://mr-throw-away.awsapps.com/connect/ccp'
+    amazonConnectRegion: 'ap-southeast-2'
+    amazonConnectLogGroupName: '/aws/connect/mr-throw-away'
+    amazonConnectAccessRoleArn: 'arn:aws:iam::871094195766:role/aws-service-role/connect.amazonaws.com/AWSServiceRoleForAmazonConnect_eyEc0NMDJcfuCuLgLRZD'
+    amazonConnectInstanceArn: 'arn:aws:connect:ap-southeast-2:871094195766:instance/df2430bb-5796-482e-b18b-7543a3e5881e'
+
+  common:
+    notificationTopic: ${self:service}-Notifications
+    notificationTopicArn: "arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:${self:custom.common.notificationTopic}"
+    notificationTimeZone: "Australia/Perth"
+    voicemailBucket:  ${self:service}-recordings
+    amazonConnectLogGroup: "arn:aws:logs:${self:custom.params.amazonConnectRegion}:#{AWS::AccountId}:log-group:${self:custom.params.amazonConnectLogGroupName}:*"
+
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    includeModules:
+      forceExclude:
+        - aws-sdk
+    packager: npm
+    packagerOptions:
+      scripts:
+        - rm -rf node_modules/aws-sdk
+
+  package:
+    excludeDevDependencies: true
+    individually: true
+
+  pseudoParameters:
+    allowReferences: true
+    skipRegionReplace: true
+
+functions:
+#  s3alert:
+#    handler: handler.s3alert
+  processVoicemail:
+    handler: voicemail.process
+    description: "Processes new voicemail recordings by notifying via an SNS topic."
+    events:
+      - s3:
+        bucket: ${self:custom.common.voicemailBucket}
+        event: s3:ObjectCreated:*
+    environment:
+      NOTIFICATION_TOPIC: ${self:custom.common.notificationTopicArn}
+      NOTIFICATION_TIMEZONE: ${self:custom.common.notificationTimeZone}
+      LINK_EXPIRY_IN_DAYS: 7
+      CONNECT_REGION: ${self:custom.params.amazonConnectRegion}
+      CONNECT_LOG_GROUP: ${self:custom.params.amazonConnectLogGroupName}
+    onError: ${self:custom.common.notificationTopicArn}
+    iamRoleStatementsName: ${self:custom.common.notificationTopic}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - logs:FilterLogEvents
+        Resource: ${self:custom.common.amazonConnectLogGroup}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+        Resource: "arn:aws:s3:::${self:custom.common.voicemailBucket}/*"
+      - Effect: Allow
+        Action:
+          - sns:Publish
+        Resource:
+          - ${self:custom.common.notificationTopicArn}
+
+resources:
+  Resources:
+    SNSTopicMrNotify:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.common.notificationTopic}
+    S3VoicemailBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.common.voicemailBucket}
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              Function: "#{ProcessVoicemailLambdaFunction.Arn}"
+    ProcessVoicemailLambdaPermissionContainerS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: "#{ProcessVoicemailLambdaFunction.Arn}"
+        Principal: "s3.amazonaws.com"
+        Action: "lambda:InvokeFunction"
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: "arn:aws:s3:::${self:custom.common.voicemailBucket}"

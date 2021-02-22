@@ -1,0 +1,118 @@
+service: acg-image-resizer-sls
+
+frameworkVersion: ">=1.9.0 <2.0.0"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  stackname: ${self:service}-${self:custom.stage}
+  secrets: ${file(secrets.yml):secrets}
+  s3Sync:
+    - bucketName: ${self:custom.stackname}-bucket
+      localDir: public
+  scriptHooks:
+    package:initialize: yarn build
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs8.10
+
+functions:
+  originResponse:
+    name: ${self:custom.stackname}-originResponse
+    handler: functions/originResponse/originResponse.handler
+    memorySize: 128
+    timeout: 5
+    role: LambdaEdgeRole
+    lambdaAtEdge:
+      distribution: WebsiteDistribution
+      eventType: origin-response
+    package:
+      include:
+        - functions/originResponse/**/*
+
+resources:
+  Description: ACG Image Resizer
+  Resources:
+    LambdaEdgeRole: ${file(resources/roles/lambdaedge-role.yml)}
+    CloudfrontOAI:
+      Type: "AWS::CloudFront::CloudFrontOriginAccessIdentity"
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: Created for ${self:custom.stackname} 
+    DefaultBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: ${self:custom.stackname}-bucket
+        AccessControl: Private
+    BucketPolicy:
+      Type: "AWS::S3::BucketPolicy"
+      Properties:
+        Bucket: {Ref: DefaultBucket}
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                CanonicalUser:
+                  - {"Fn::GetAtt": [CloudfrontOAI, S3CanonicalUserId]}
+              Action:
+                - s3:ListBucket
+                - s3:GetObject
+              Resource:
+                - {"Fn::Join": ["", ["arn:aws:s3:::", {Ref: DefaultBucket}]]}
+                - {"Fn::Join": ["", ["arn:aws:s3:::", {Ref: DefaultBucket}, "/*"]]}
+            - Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:ListBucket
+                - s3:GetObject
+              Resource:
+                - {"Fn::Join": ["", ["arn:aws:s3:::", {Ref: DefaultBucket}]]}
+                - {"Fn::Join": ["", ["arn:aws:s3:::", {Ref: DefaultBucket}, "/*"]]}
+              Condition:
+                IpAddress: 
+                  aws:SourceIp: ${self:custom.secrets.homeIP}
+    WebsiteDistribution:
+      Type: "AWS::CloudFront::Distribution"
+      Properties:
+        DistributionConfig:
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: true
+          Enabled: true
+          HttpVersion: http2
+          PriceClass: PriceClass_100
+          IPV6Enabled: true
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+            CachedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+            DefaultTTL: 0
+            MaxTTL: 100
+            MinTTL: 0
+            SmoothStreaming: false
+            TargetOriginId: WebsiteBucketOrigin
+            ViewerProtocolPolicy: redirect-to-https
+          Origins:
+            - DomainName: {"Fn::GetAtt": [DefaultBucket, DomainName]}
+              Id: WebsiteBucketOrigin
+              S3OriginConfig:
+                OriginAccessIdentity: {"Fn::Join": ["", ["origin-access-identity/cloudfront/", {Ref: CloudfrontOAI}]]}
+
+plugins:
+  - serverless-plugin-cloudfront-lambda-edge
+  - serverless-scriptable-plugin
+  - serverless-s3-sync
+
+package:
+  individually: true
+  exclude:
+    - '**/*'

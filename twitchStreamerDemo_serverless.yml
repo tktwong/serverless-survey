@@ -1,0 +1,90 @@
+service: twitchDemo # NOTE: update this with your service name
+
+# Deploy application on Ireland region : eu-west-1
+provider:
+  name: aws
+  runtime: python3.6
+  region: eu-west-1
+  stage: dev
+  endpointType: REGIONAL
+  environment:
+#    accountId: '#{AWS::AccountId}'
+#    region: '#{AWS::Region}'
+#    SLS_DEBUG: "*"
+    LOG_LEVEL: INFO
+
+package:
+  individually: true
+  exclude:
+    - ./**
+  include:
+    - handlers/**
+#    - node_modules/**
+
+plugins:
+  - serverless-s3-sync
+  - serverless-python-requirements
+
+custom:
+  siteName: twitchdemo-test-dsti
+  s3Sync:
+    - bucketName: "${self:custom.siteName}"
+      localDir: static
+  pythonRequirements:
+      slim: true
+      dockerizePip: true
+
+resources:
+  Resources:
+#Bucket to host static files
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.siteName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "StaticSite"
+                    },
+                    "/*"
+                  ]
+                ]
+
+Outputs:
+    StaticSiteS3BucketName:
+      Value:
+        'Ref': StaticSite
+    StaticSiteS3BucketDomainName:
+      Value:
+        Fn::GetAtt:
+          - StaticSite
+          - DomainName
+    StaticSiteS3BucketWebsiteURL:
+      Value:
+        Fn::Join:
+          - ''
+          - - 'http://'
+            - Ref: StaticSite
+    StaticSiteS3BucketCanonicalWebsiteURL:
+      Value:
+        Fn::GetAtt:
+          - StaticSite
+          - WebsiteURL

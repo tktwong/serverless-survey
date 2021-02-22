@@ -1,0 +1,152 @@
+service: kabuce-api
+
+app: kabuce
+org: nativecode
+
+frameworkVersion: "2"
+
+functions:
+  domains_register:
+    handler: handler.domains_register
+    events:
+      - http:
+          path: domains/register
+          method: put
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: ${opt:profile, 'nativecode'}
+  region: ${opt:region, 'us-east-1'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:*:*:*"
+
+package:
+  exclude:
+    - "**/*.spec.ts"
+    - .prettierrc
+    - bitbucket-pipelines.yml
+    - jest.config.js
+    - CHANGELOG.md
+    - README.md
+
+plugins:
+  - serverless-certificate-creator
+  - serverless-domain-manager
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-plugin-typescript
+
+custom:
+  customCertificate:
+    certificateName: kabuce.resttools.net
+    hostedZoneNames: "resttools.net."
+    subjectAlternativeNames:
+      - "kabuce.dev.resttools.net"
+      - "kabuce.prod.resttools.net"
+
+  customDomain:
+    autoDomain: true
+    domainName: kabuce.${self:provider.stage}.resttools.net
+    stage: ${self:provider.stage}
+    basePath: v1
+    certificateArn: ${certificate:${self:custom.customCertificate.certificateName}:CertificateArn}
+    createRoute53Record: true
+    apiType: rest
+    endpointType: edge
+    securityPolicy: tls_1_2
+    hostedZoneId: ZGQHZTX78BS1D
+
+  dynamodb:
+    stages:
+      - dev
+      - prod
+    start:
+      migrate: true
+      seed: true
+    seed:
+      domains:
+        sources:
+          - table: kabuce_domains
+            sources:
+              - ./seeds/domains.json
+      integrations:
+        sources:
+          - table: kabuce_integrations
+            sources:
+              - ./seeds/integrations.json
+      users:
+        sources:
+          - table: kabuce_users
+            sources:
+              - ./seeds/users.json
+
+resources:
+  Resources:
+    Domains:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: kabuce_domains
+        AttributeDefinitions:
+          - AttributeName: domain
+            AttributeType: S
+        KeySchema:
+          - AttributeName: domain
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    Integrations:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: kabuce_integrations
+        AttributeDefinitions:
+          - AttributeName: integration
+            AttributeType: S
+        KeySchema:
+          - AttributeName: integration
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    Users:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: kabuce_users
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 10
+
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    GatewayResponseDefault5XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_5XX
+        RestApiId:
+          Ref: ApiGatewayRestApi

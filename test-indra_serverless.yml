@@ -1,0 +1,180 @@
+org: juliowong
+app: indra
+service: test-indra
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  lambdaHashingVersion: 20201221
+  region: us-east-1
+  stackName: test-indra-stack
+  apiName: api-test
+  stage: dev
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+       - dynamodb:Query
+       - dynamodb:Scan
+       - dynamodb:GetItem
+       - dynamodb:PutItem
+       - dynamodb:UpdateItem
+       - dynamodb:DeleteItem
+      Resource:
+        Fn::GetAtt:
+          - swapiTable
+          - Arn
+
+plugins:
+  - serverless-openapi-documentation
+  - serverless-offline
+
+custom:
+  tableName: "swapiTable"
+  documentation:
+    models:
+      -
+        name: "addPeopleResponse"
+        description: "Respuesta de inserción de personas"
+        contentType: "application/json"
+        schema:
+          type: "object"
+          properties:
+            success:
+              type: "boolean"
+
+      -
+        name: "getPeopleResponse"
+        description: "Respuesta de inserción de personas"
+        contentType: "application/json"
+        schema:
+          type: "object"
+          properties:
+            nombre:
+              type: "string"
+            masa:
+              type: "string"
+            colorCabello:
+              type: "string"
+            fechaEdicion:
+              type: "string"
+            vehiculos:
+              type: "array"
+              items:
+                type: string
+            altura:
+              type: "string"
+            url:
+              type: "string"
+            anioNacimiento:
+              type: "string"
+            peliculas:
+              type: "array"
+              items:
+                type: string
+            navesEstelares:
+              type: "array"
+              items:
+                type: string
+            colorPiel:
+              type: "string"
+            colorOjo:
+              type: "string"
+            especies:
+              type: "array"
+              items:
+                type: string
+            fechaCreacion:
+              type: "string"
+            mundoNatal:
+              type: "string"
+            genero:
+              type: "string"
+
+functions:
+  addPeople:
+    handler: src/handler.addPeople
+    environment:
+      DY_TABLE: ${self:custom.tableName}
+      BASE_URI_SWAPI: https://swapi.py4e.com/api
+    events:
+      - http:
+          path: /people/{peopleId}
+          method: post
+          cors: true
+          documentation:
+            summary: "Agregar una persona en base al peopleId indicado como parametro"
+            description: "Agregar persona, previa busqueda en el API Demo swapi por peopleId"
+            requestBody:
+              description: "Path Param peopleId"
+            requestModels:
+              application/json: "addPeopleResponse"
+            pathParams:
+              - name: peopleId
+                description: El id de la persona
+                schema:
+                  type: string
+            methodResponses:
+              - statusCode: 200
+                responseBody:
+                  description: "Persona agregada correctamente"
+                responseModels:
+                  application/json: "addPeopleResponse"
+              - statusCode: 400
+                responseBody:
+                  description: "Ocurrio un error en el servicio al agregar una persona"
+                responseModels:
+                  application/json: "addPeopleResponse"
+              - statusCode: 500
+                responseBody:
+                  description: "Ocurrio un error interno al agregar una persona"
+                responseModels:
+                  application/json: "addPeopleResponse"
+
+  getPeople:
+    handler: src/handler.getPeople
+    environment:
+      DY_TABLE: ${self:custom.tableName}
+    events:
+      - http:
+          path: /people/{peopleId}
+          method: get
+          cors: true
+          documentation:
+            summary: "Obtener una persona en base al peopleId indicado como parametro"
+            description: "Obtener una persona desde la BD DynamoDB por peopleId"
+            requestBody:
+              description: "Path Param peopleId"
+            requestModels:
+              application/json: "getPeopleResponse"
+            pathParams:
+              - name: peopleId
+                description: El id de la persona
+                schema:
+                  type: string
+            methodResponses:
+              - statusCode: 201
+                responseBody:
+                  description: "Busqueda exitosa"
+                responseModels:
+                  application/json: "getPeopleResponse"
+
+resources:
+  Resources:
+    swapiTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: partitionKey
+            AttributeType: S
+          - AttributeName: sortKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: partitionKey
+            KeyType: HASH
+          - AttributeName: sortKey
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 10

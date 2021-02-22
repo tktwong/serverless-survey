@@ -1,0 +1,129 @@
+service: StepFunctionService
+
+frameworkVersion: ">=1.13.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  cfLogs: true
+  environment: ${file(env.yml)}
+  region: ${self:provider.environment.region}
+  role: ${self:provider.environment.role}
+
+package:
+  individually: true
+  excludeDevDependencies: false
+  exclude:
+     - ./**
+
+plugins:
+   - serverless-step-functions
+custom:
+   lambdaARN: arn:aws:lambda:${self:provider.environment.region}:${self:provider.environment.accountId}:function:${self:service}-dev
+
+functions:
+    DownloadImage:
+        handler: download_image/index.handler
+        cfLogs: true
+        region: eu-west-1
+        package:
+          include:
+            - download_image/**
+        memorySize: 1024
+        timeout: 15
+
+    ResizeImage:
+        handler: resize_image/index.handler
+        cfLogs: true
+        region: eu-west-1
+        package:
+          include:
+            - resize_image/**
+        memorySize: 1024
+        timeout: 15
+
+    ExtractMetadata:
+        handler: extract_metadata/index.handler
+        cfLogs: true
+        region: eu-west-1
+        package:
+          include:
+            - extract_metadata/**
+        memorySize: 256
+        timeout: 10
+    ImageRekognition:
+        handler: image_rekognition/index.handler
+        cfLogs: true
+        region: eu-west-1
+        package:
+          include:
+            - image_rekognition/**
+        memorySize: 1024
+        timeout: 15
+
+    SaveInDB:
+        handler: save_in_db/index.handler
+        cfLogs: true
+        region: eu-west-1
+        package:
+          include:
+            - save_in_db/**
+        memorySize: 256
+        timeout: 15
+
+resources:  # CloudFormation template syntax
+  Resources:
+    imageTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: imageTable
+        AttributeDefinitions:
+          - AttributeName: Id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+
+stepFunctions:
+  stateMachines:
+    demo:
+      definition:
+        Comment: "Demo"
+        StartAt: DownloadImage
+        States:
+            DownloadImage:
+              Type: Task
+              Resource: ${self:custom.lambdaARN}-DownloadImage
+              Next: Parallel
+            Parallel:
+               Type: Parallel
+               Next: SaveInDB
+               Branches:
+                - StartAt: ExtractMetadata
+                  States:
+                   ExtractMetadata:
+                     Type: Task
+                     Resource: ${self:custom.lambdaARN}-ExtractMetadata
+                     End: true
+
+                - StartAt: ResizeImage
+                  States:
+                    ResizeImage:
+                      Type: Task
+                      Resource: ${self:custom.lambdaARN}-ResizeImage
+                      End: true
+
+                - StartAt: ImageRekognition
+                  States:
+                   ImageRekognition:
+                     Type: Task
+                     Resource: ${self:custom.lambdaARN}-ImageRekognition
+                     End: true
+            SaveInDB:
+                  Type: Task
+                  Resource: ${self:custom.lambdaARN}-SaveInDB
+                  End: true

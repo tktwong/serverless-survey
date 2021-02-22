@@ -1,0 +1,153 @@
+service: uploadimgtos3
+
+frameworkVersion: '2'
+
+custom:
+  bucket: upload-img-bucket
+  
+provider:
+  name: aws
+  runtime: nodejs12.x
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: 'arn:aws:s3:::${self:custom.bucket}/*'
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  environment:
+    BUCKET_NAME: ${self:custom.bucket}
+    DB_HOSTNAME:
+      Fn::GetAtt:
+        - DBInstance
+        - Endpoint.Address
+    DB_PORT:
+      Fn::GetAtt:
+        - DBInstance
+        - Endpoint.Port
+    DB_NAME: '${self:service}_${self:provider.stage}_db'
+    DB_USERNAME: 'userpost'
+    DB_PASSWORD: '1234567890'
+    COGNITO_USER_POOL_ID:
+      Ref: UserPool
+    COGNITO_CLIENT_ID: 
+      Ref: UserPoolClient
+
+package:
+  individually: true
+  exclude:
+    - '*'
+    - '**/*'
+
+functions:
+  signup:
+    handler: 'signup.handler'
+    package:
+      include:
+        - signup.js
+        - node_modules/**
+    events:
+      - http:
+          path: signup
+          method: post
+  signin:
+    handler: 'signin.handler'
+    package:
+      include:
+        - signin.js
+    events:
+      - http:
+          path: signin
+          method: post
+  getPresignedPostData:
+    handler: 'getPresignedPostData.handler'
+    package:
+      include:
+        - getPresignedPostData.js
+        - node_modules/**
+    events:
+      - http:
+          path: 'getPresignedPostData/{fileName}'
+          method: get
+          request:
+            parameters:
+              paths:
+                fileName: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getAllImages:
+    handler: 'images/getAll.handler'
+    package:
+      include:
+        - 'images/getAll.js'
+        - 'node_modules/**'
+    events:
+      - http:
+          path: 'images/getAll'
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  postImage:
+    handler: 'images/post.handler'
+    package:
+      include:
+        - 'images/post.js'
+        - 'node_modules/**'
+    events:
+      - http:
+          path: 'images/post'
+          method: post
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  deleteImage:
+    handler: 'images/delete.handler'
+    package:
+      include:
+        - 'images/delete.js'
+        - 'node_modules/**'
+    events:
+      - http:
+          path: 'images/delete'
+          method: delete
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getUsersImages:
+    handler: 'images/getUsersImages.handler'
+    package:
+      include:
+        - 'images/getUsersImages.js'
+        - 'node_modules/**'
+    events:
+      - http:
+          path: 'images/getUsersImages'
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getAllUsers:
+    handler: 'users/getUsers.handler'
+    package:
+      include:
+        - 'users/getUsers.js'
+        - 'node_modules/**'
+    events:
+      - http:
+          path: 'users/getAll'
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer   
+
+resources:
+  - ${file(resources/cognito.yml)}
+  - ${file(resources/rds.yml)}

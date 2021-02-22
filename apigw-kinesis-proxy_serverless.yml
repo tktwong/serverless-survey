@@ -1,0 +1,139 @@
+
+service: apigw-kinesis-proxy
+
+plugins:
+  - serverless-cloudformation-sub-variables
+
+provider:
+  name: aws
+  runtime: dotnetcore2.1
+  region: ap-southeast-2
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# or you can add iam managed policies by their ARN
+#  iamManagedPolicies:
+#    - 'some:aws:arn:xxx:*:*'
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+package:
+  artifact: bin/release/netcoreapp2.1/release.zip
+
+functions:
+  hello:
+    handler: CsharpHandlers::Namespace.Handler::FunctionHandler
+    events:
+      - stream:
+          type: kinesis
+          arn:
+            Fn::GetAtt:
+              - KinesisStream
+              - Arn
+
+resources:
+  Resources:
+    apiKinesisRole: 
+      Type: "AWS::IAM::Role"
+      Properties: 
+        AssumeRolePolicyDocument: 
+          Version: "2012-10-17"
+          Statement: 
+            - 
+              Effect: "Allow"
+              Principal: 
+                Service: 
+                  - "apigateway.amazonaws.com"
+              Action: 
+                - "sts:AssumeRole"
+        Path: "/"
+        
+    apiKinesisRolePolicies: 
+      Type: "AWS::IAM::Policy"
+      Properties: 
+        PolicyName: "apiKinesisRolePolicy"
+        PolicyDocument: 
+          Version: "2012-10-17"
+          Statement: 
+            - 
+              Effect: "Allow"
+              Action:
+                - "kinesis:PutRecord"
+                - "kinesis:PutRecords"
+              Resource:
+                - Fn::GetAtt:
+                    - KinesisStream
+                    - Arn
+        Roles: 
+          - 
+            Ref: "apiKinesisRole"
+
+    KinesisStream:
+      Type: AWS::Kinesis::Stream
+      Properties: 
+        ShardCount: 1
+    
+    RestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: ${self:service}-${opt:stage, 'dev'}
+
+    KinesisProxyMethod:
+      Type: AWS::ApiGateway::Method
+      DependsOn: RestApi
+      Properties: 
+        AuthorizationType: NONE
+        HttpMethod: POST
+        ResourceId:
+          Fn::GetAtt:
+            - RestApi
+            - RootResourceId
+        RestApiId:
+          Ref: RestApi
+        MethodResponses:
+          -
+            StatusCode: 200
+            ResponseModels:
+              "application/json": "Empty"
+        Integration:
+          Credentials:
+            Fn::GetAtt:
+              - apiKinesisRole
+              - Arn
+          IntegrationHttpMethod: POST
+          IntegrationResponses: 
+            - 
+              StatusCode: 200
+          PassthroughBehavior: WHEN_NO_TEMPLATES
+          RequestTemplates:
+            "application/json":
+              Fn::Sub:
+                - "{\n    \"StreamName\": \"#{KinesisStream}\",\n    \"Data\": \"$util.base64Encode($input.json('$.Data'))\",\n    \"PartitionKey\": \"$input.path('$.DeviceId')\"\n}"
+                - { KinesisStream: { Ref: KinesisStream } }
+          Type: AWS
+          Uri: arn:aws:apigateway:${self:provider.region}:kinesis:action/PutRecord
+
+    ApiGatewayDeployment:
+      Type: "AWS::ApiGateway::Deployment"
+      DependsOn: KinesisProxyMethod
+      Properties:
+        Description: ${self:service} API
+        RestApiId: 
+          Ref: RestApi
+        StageName: ${opt:stage, 'dev'}

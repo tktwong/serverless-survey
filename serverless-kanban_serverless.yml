@@ -1,0 +1,415 @@
+service:
+  name: kanbanignore-backend
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack # develop in typescript
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin # json schema validation
+  - serverless-aws-documentation # json schema validation
+  - serverless-plugin-tracing # xray tracing
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+
+  tracing: true # enable tracing
+
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    KANBAN_TABLE:  Kanban-${self:provider.stage}
+    KANBANITEM_TABLE: KanbanItem-${self:provider.stage}
+    KANBANITEM_INDEX: KanbanItemIndex
+    S3_BUCKET: dj-serverless-kanban-bucket-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+    AUTHID: dev-pwtgtc52 # id from auth0 for authentication
+  
+  # json schema validation
+  custom:
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: KanBanIgnore API
+        description: Serverless application for KanBanBoards
+    models:
+      - name: BoardRequest
+        contentType: application/json
+        schema: ${file(models/board-request.json)}
+      - name: UpdateBoardRequest
+        contentType: application/json
+        schema: ${file(models/board-request.json)}
+      - name: ItemRequest
+        contentType: application/json
+        schema: ${file(models/item-request.json)}
+      - name: UpdateItemRequest
+        contentType: application/json
+        schema: ${file(models/item-request.json)}
+
+functions:
+  
+  # auth with auth0
+  Auth: 
+    handler: src/lambda/auth/auth0Authorizer.handler
+    iamRoleStatements:
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+  
+  # get all boards
+  GetKanBanBoards:
+    handler: src/lambda/http/getKanBanBoards.handler
+    events:
+      - http: 
+          method: get
+          path: boards
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBAN_TABLE}
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  # create board
+  CreateKanBanBoard:
+    handler: src/lambda/http/createKanBanBoard.handler
+    events:
+      - http:
+          method: post
+          path: boards
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new KanBan board
+            description: Create a new KanBan board
+            requestModels:
+              'application/json': BoardRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBAN_TABLE}
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"     
+
+  # update board
+  UpdateKanBanBoard:
+    handler: src/lambda/http/updateKanBanBoard.handler
+    events:
+      - http:
+          method: patch
+          path: boards/{boardId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a KanBan board
+            description: Update a KanBan board
+            requestModels:
+              'application/json': UpdateBoardRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBAN_TABLE}
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  # delete board
+  DeleteKanBanBoard:
+    handler: src/lambda/http/deleteKanBanBoard.handler
+    events:
+      - http:
+          method: delete
+          path: boards/{boardId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBAN_TABLE}
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  # get all items of board
+  GetKanBanBoardItems:
+    handler: src/lambda/http/getKanBanBoardItems.handler
+    events:
+      - http: 
+          method: get
+          path: boardItems/{boardId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBANITEM_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBANITEM_TABLE}/index/${self:provider.environment.KANBANITEM_INDEX}
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  # create item in board
+  CreateKanBanBoardItem:
+    handler: src/lambda/http/createKanBanBoardItem.handler
+    events:
+      - http:
+          method: post
+          path: boardItems/{boardId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new KanBan item
+            description: Create a new KanBan item
+            requestModels:
+              'application/json': ItemRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBANITEM_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBANITEM_TABLE}/index/${self:provider.environment.KANBANITEM_INDEX}
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  # update item in board
+  UpdateKanBanBoardItem:
+    handler: src/lambda/http/updateKanBanBoardItem.handler
+    events:
+      - http:
+          method: patch
+          path: boardItems/{boardId}/{itemId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a KanBan item
+            description: Update a KanBan item
+            requestModels:
+              'application/json': UpdateItemRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBANITEM_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBANITEM_TABLE}/index/${self:provider.environment.KANBANITEM_INDEX}
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  # delete item in board
+  DeleteKanBanBoardItem:
+    handler: src/lambda/http/deleteKanBanBoardItem.handler
+    events:
+      - http:
+          method: delete
+          path: boardItems/{boardId}/{itemId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBANITEM_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.KANBANITEM_TABLE}/index/${self:provider.environment.KANBANITEM_INDEX}
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+  # generate upload url for image
+  GenerateImgUploadUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: boardItems/img/{itemId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*
+      - Effect: "Allow" # xray permissions (required)
+        Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+        Resource:
+          - "*"
+
+resources:
+  Resources: 
+    GatewayResponseDefault4XX:
+        Type: AWS::ApiGateway::GatewayResponse
+        Properties:
+          ResponseParameters:
+            gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+            gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+          ResponseType: DEFAULT_4XX
+          RestApiId:
+            Ref: ApiGatewayRestApi
+  
+    # request body validator
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    # dynamo db table for boards
+    KanBanBoardsDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.KANBAN_TABLE}
+        # Define partition key
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: boardId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: boardId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+    # todo dynamo db table for board items
+    KanBanBoardItemsDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.KANBANITEM_TABLE}
+        # Define partition key
+        AttributeDefinitions:
+          - AttributeName: boardId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+          - AttributeName: itemId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: boardId
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.KANBANITEM_INDEX}
+            KeySchema:
+              - AttributeName: boardId
+                KeyType: HASH
+              - AttributeName: itemId
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    # todo bucket policy
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyBucketPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.S3_BUCKET}/*'
+        Bucket: !Ref AttachmentsBucket
+
+    # todo bucket
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000

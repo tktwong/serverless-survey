@@ -1,0 +1,58 @@
+service: job-api
+
+plugins:
+  localPath: '/usr/local/lib/node_modules/'
+  modules:
+    - serverless-prune-plugin
+    - serverless-offline
+    - serverless-plugin-existing-s3
+
+custom:
+  jobTable: jobs-${opt:stage, self:provider.stage}
+  baseUri: api
+  prune:
+    automatic: true
+    number: 3
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  memorySize: 3008
+  stage: ${opt:stage}
+  region: us-east-1
+  stackName: sls-${self:service}-${opt:stage, self:provider.stage}-stack
+  # deploymentBucket:
+  #   name: sls-the-portal-${opt:stage}
+  # vpc:
+  #   securityGroupIds:
+  #     - ${self:custom.fromTerraform.middleware_lambda_security_group_id}
+  #   subnetIds: 
+  #     - ${self:custom.fromTerraform.middleware_private_subnet_private_0}
+  #     - ${self:custom.fromTerraform.middleware_private_subnet_private_1}
+  #     - ${self:custom.fromTerraform.middleware_private_subnet_private_2}
+  # apiGateway:
+  #   restApiId: ${self:custom.fromTerraform.middleware_private_api_gateway_id}
+  #   restApiRootResourceId:
+  #     'Fn::ImportValue': middleware-${opt:stage}-api-gateway-transformer-root-id
+  environment:
+    ${file(./configs/providers/${self:provider.name}/${opt:stage, self:provider.stage}/env.yml)}
+  
+  # iamManagedPolicies: ${self:custom.fromTerraform.middleware_lambda_iam_execution_vpc_policy_arns}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource:
+        - "*"
+
+functions:
+  ${file(./configs/functions/functions.yml)}
+
+resources:
+  - ${file(./configs/resources/jobs-table.yml)}
+
+
+

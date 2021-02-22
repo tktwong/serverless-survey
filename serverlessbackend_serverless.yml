@@ -1,0 +1,95 @@
+
+service: rahul-api-server # NOTE: update this with your service name
+
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: ap-south-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+       - dynamodb:Query
+       - dynamodb:Scan
+       - dynamodb:GetItem
+       - dynamodb:PutItem
+       - dynamodb:UpdateItem
+       - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:ap-south-1:690473212029:table/*"
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline      
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      convertEmptyValues: true
+    migration:
+      dir: offline/migrations
+
+functions:
+  createUser:
+    handler: signup.createUser
+    events:
+      - http:
+          path: signup
+          method: POST
+  validateUser:
+    handler: login.validateUser
+    events:
+      - http:
+          path: login
+          method: POST
+
+
+resources:  
+  Resources:
+    userRecord:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: usersRecord
+
+        AttributeDefinitions:
+        - AttributeName: emailId
+          AttributeType: S
+        - AttributeName: fName
+          AttributeType: S
+
+        KeySchema:
+        - AttributeName: emailId
+          KeyType: HASH
+        - AttributeName: fName
+          KeyType: RANGE
+        
+        #   LocalSecondaryIndexes:
+        # - IndexName: LastUser
+        #   KeySchema:
+        #   - AttributeName: emailId
+        #     KeyType: HASH
+        #   - AttributeName: fName
+           
+        #     KeyType: RANGE
+        #   Projection:
+        #     ProjectionType: KEYS_ONLY
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    # DynamoDBIamPolicy:
+    #   Type: AWS::IAM::Policy
+    #   DependsOn: userRecord
+    #   Properties:
+    #     PolicyName: lambda-dynamodb
+    #     PolicyDocument:
+    #       Version: '2012-10-17'
+    #       Statement:
+    #         - Effect: Allow
+    #           Action:
+    #             - dynamodb:GetItem
+    #             - dynamodb:PutItem
+    #           Resource: arn:aws:dynamodb:ap-south-1:012122264231:table/userRecord
+    #     Roles:
+    #       - Ref: IamRoleLambdaExecution

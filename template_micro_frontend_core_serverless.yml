@@ -1,0 +1,28 @@
+service: frontend
+
+plugins:
+  - serverless-plugin-scripts
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  stage: ${opt:stage,'dev'}
+  region: ${opt:region,'eu-west-1'}
+
+custom:
+  properties: ${file(./cicd/serverlessProperties.yml):properties}
+  scripts:
+    hooks:
+      "deploy:createDeploymentArtifacts": >
+        aws configure set default.region ${self:provider.region} &&
+        npm install
+      "deploy:deploy": >
+        ionic build --prod &&
+        aws s3 sync ./build s3://${file(cicd/env/${opt:stage}.yml):websiteUrl} --delete &&
+        aws cloudfront create-invalidation --distribution-id ${cf:frontend-dev.WebsiteCloudFrontDistribution} --paths "/*"
+
+resources:
+  - Resources:
+  - ${file(cicd/website-bucket.yml)}
+  - ${file(cicd/website-cloudfront.yml)}
+  - ${file(cicd/website-subdomain.yml)}

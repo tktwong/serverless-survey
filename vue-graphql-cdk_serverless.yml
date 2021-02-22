@@ -1,0 +1,80 @@
+# serverless.yml
+
+service: web
+
+# provider information
+# we are deploying on aws using the node 12.x runtime.
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    shouldStartNameWithService: true
+
+# these are the functions that will run our app.
+# typically you need only one for our use-case.
+# our function is named app
+# the handler is located in lambda.js file exported as "nuxt".
+# our function will handle any HTTP requests to any path, you can change that if you want.
+functions:
+  app:
+    handler: lambda.nuxt
+    events:
+      - http: ANY /
+      - http: ANY /{proxy+}
+
+# Add those plugins to our service
+plugins:
+  - serverless-offline
+  - serverless-apigw-binary
+  - serverless-stack-output
+
+custom:
+  apigwBinary:
+    types:
+      - '*/*'
+  output:
+    file: stack-outputs.json
+
+resources:
+  Resources:
+      StaticBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256
+          LifecycleConfiguration: # Optional, can be used to reduce wasted storage if you don't need old versions to be retained.
+            Rules:
+              - AbortIncompleteMultipartUpload: # Abandon incomplete uploads after 7 days.
+                  DaysAfterInitiation: 7
+                Status: Enabled
+              - NoncurrentVersionExpirationInDays: 7 # Delete old versions of files after 7 days. Think about whether this meets your audit requirements.
+                Status: Enabled
+          PublicAccessBlockConfiguration: # Disallow public buckets.
+            BlockPublicAcls: true
+            BlockPublicPolicy: true
+            IgnorePublicAcls: true
+            RestrictPublicBuckets: true
+          VersioningConfiguration: # Enable versioning.
+            Status: Enabled
+      StaticBucketPolicy: # Policy to disable non HTTPS access.
+        Type: AWS::S3::BucketPolicy
+        Properties:
+          Bucket: !Ref StaticBucket
+          PolicyDocument:
+            Statement:
+              - Sid: RequireTLS
+                Effect: Deny
+                Principal: "*"
+                Action: "*"
+                Resource: !Join ["", ["arn:aws:s3:::", !Ref StaticBucket]]
+                Condition:
+                  Bool:
+                    "aws:SecureTransport": false
+  Outputs:
+      StaticBucketName:
+        Value:
+          Ref: StaticBucket
+        Export:
+          Name: StaticBucketName

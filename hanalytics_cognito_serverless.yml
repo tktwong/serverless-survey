@@ -1,0 +1,250 @@
+service: aws-cognito-cloudformation
+# =============================================== Custom variables ========================================================
+custom:
+  currentStage: ${opt:stage, self:provider.stage}
+  userpoolname: userpool-${self:custom.currentStage}
+  sesarn: arn:aws:ses:us-east-1:512218250435:identity/dilshan.wijesinghe@auxenta.com
+  # postConfirmationarn: arn:aws:lambda:us-east-1:512218250435:function:aws-cognito-cloudformation-dilshan-postConfirmation
+  # userMigration: arn:aws:lambda:us-east-1:512218250435:function:aws-cognito-cloudformation-dilshan-userMigrationsHandler
+  callbackURL: https://hanalytics-app.com/login
+  logoutURL: https://hanalytics-app.com/login
+  domain: hanalytics
+
+# =============================================== Provider section ========================================================
+provider:
+  name: aws
+  runtime: python3.8
+  region: us-east-1
+
+# ==================================================== Functions ==========================================================
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: hello
+          method: get
+  
+  postConfirmation:
+    handler: postConfirmation.postCongig
+    events:
+      - cognitoUSerPool:
+          pool: UserPool
+          trigger: PostConfirmation
+
+  userMigrationsHandler:
+    handler: user_mingration.handler
+    events:
+      - cognitoUserPool:
+          pool: UserPool
+          trigger: UserMigration
+
+# ==================================================== Resources ==========================================================
+resources:
+  Resources:
+# -------------------------------- Creates a role that allows Cognito to send SNS messages --------------------------------
+    SNSRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument: 
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal: 
+                Service: 
+                  - "cognito-idp.amazonaws.com"
+              Action: 
+                - "sts:AssumeRole"
+        Policies:
+          - PolicyName: "CognitoSNSPolicy"
+            PolicyDocument: 
+              Version: "2012-10-17"
+              Statement: 
+                - Effect: "Allow"
+                  Action: "sns:publish"
+                  Resource: "*"
+
+# ------------------------------------------ Creates a user pool in cognito -----------------------------------------------
+    UserPool:
+      Type: "AWS::Cognito::UserPool"
+      DependsOn: 
+        - postConfirmation
+        - userMigrationsHandler
+      Properties:
+        UserPoolName: ${self:custom.userpoolname}
+        EmailConfiguration:
+          EmailSendingAccount: DEVELOPER
+          SourceArn: ${self:custom.sesarn}
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+        MfaConfiguration: "OPTIONAL"
+        EnabledMfas: 
+          - SMS_MFA
+        LambdaConfig:
+          PostConfirmation: !Ref postConfirmation
+          UserMigration: !Ref userMigrationsHandler
+        # LambdaConfig:
+        #     PostConfirmation: ${self:custom.postConfirmationarn}
+        #     UserMigration: ${self:custom.userMigration}
+        DeviceConfiguration:
+          ChallengeRequiredOnNewDevice: true
+        Policies:
+          PasswordPolicy:
+            MinimumLength:  8
+            RequireNumbers: false
+            RequireSymbols: false
+            RequireUppercase: false
+            RequireLowercase: false
+        Schema:
+          - Name: firstName
+            AttributeDataType: String
+            Mutable: true
+            Required: false
+          
+          - Name: lastName
+            AttributeDataType: String
+            Mutable: true
+            Required: false
+          
+          - Name: password
+            AttributeDataType: String
+            Mutable: true
+            Required: false
+
+          - Name: staySignIn
+            AttributeDataType: Boolean
+            Mutable: true
+            Required: false
+
+          - Name: country
+            AttributeDataType: String
+            Mutable: false
+            Required: false
+
+        SmsConfiguration:
+          ExternalId: !Sub ${self:custom.userpoolname}-external
+          SnsCallerArn: !GetAtt SNSRole.Arn
+
+# ------------------------------------------- Creates a User Pool Client --------------------------------------------------
+    UserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: !Sub ${self:custom.userpoolname}-client
+        GenerateSecret: false
+        SupportedIdentityProviders:
+          - COGNITO
+        CallbackURLs:
+          - ${self:custom.callbackURL}
+        LogoutURLs:
+          - ${self:custom.logoutURL}
+        AllowedOAuthFlowsUserPoolClient: true
+        AllowedOAuthFlows:
+          - code
+          - implicit
+        AllowedOAuthScopes:
+          - phone
+          - email
+          - openid
+          - aws.cognito.signin.user.admin
+          - profile
+        RefreshTokenValidity: 90
+        ExplicitAuthFlows:
+          - ALLOW_ADMIN_USER_PASSWORD_AUTH
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        PreventUserExistenceErrors: ENABLED
+        UserPoolId: !Ref UserPool
+   
+# --------------------------------------------- Create user pool domain ---------------------------------------------------
+    # Create user pool domain
+    # UserPoolDomain:
+    #   Type: AWS::Cognito::UserPoolDomain
+    #   Properties:
+    #     CustomDomainConfig:
+    #       CertificateArn:
+    #     Domain: ${self:custom.domain}
+    #     UserPoolId: !Ref UserPool
+
+# ----------------------------------------- Creates a federeated Identity pool --------------------------------------------
+    IdentityPool:
+      Type: "AWS::Cognito::IdentityPool"
+      Properties:
+        IdentityPoolName: !Sub ${self:custom.userpoolname}-Identity
+        AllowUnauthenticatedIdentities: false
+        CognitoIdentityProviders: 
+          - ClientId: !Ref UserPoolClient
+            ProviderName: !GetAtt UserPool.ProviderName
+
+    # Assigns the roles to the Identity Pool
+    IdentityPoolRoleMapping:
+      Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+      Properties:
+        IdentityPoolId: !Ref IdentityPool
+        Roles:
+          authenticated: !GetAtt CognitoAuthorizedRole.Arn
+          unauthenticated: !GetAtt CognitoUnAuthorizedRole.Arn
+
+# ------------------------------- Create a role for unauthorized acces to AWS resources -----------------------------------
+
+    CognitoUnAuthorizedRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument: 
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal: 
+                Federated: "cognito-identity.amazonaws.com"
+              Action: 
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals: 
+                  "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": unauthenticated
+        Policies:
+          - PolicyName: "CognitoUnauthorizedPolicy"
+            PolicyDocument: 
+              Version: "2012-10-17"
+              Statement: 
+                - Effect: "Allow"
+                  Action:
+                    - "mobileanalytics:PutEvents"
+                    - "cognito-sync:*"
+                  Resource: "*"
+
+ # -------------------------------- Create a role for authorized acces to AWS resources -----------------------------------
+
+    CognitoAuthorizedRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument: 
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal: 
+                Federated: "cognito-identity.amazonaws.com"
+              Action: 
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals: 
+                  "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": authenticated
+        Policies:
+          - PolicyName: "CognitoAuthorizedPolicy"
+            PolicyDocument: 
+              Version: "2012-10-17"
+              Statement: 
+                - Effect: "Allow"
+                  Action:
+                    - "mobileanalytics:PutEvents"
+                    - "cognito-sync:*"
+                    - "cognito-identity:*"
+                  Resource: "*"
+                - Effect: "Allow"
+                  Action:
+                    - "lambda:InvokeFunction"
+                  Resource: "*"

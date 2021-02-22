@@ -1,0 +1,120 @@
+service: mentorship
+
+custom:
+  usersTable: 'users-${self:provider.stage}'
+  messagesTable: 'messages-${self:provider.stage}'
+
+provider: 
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["UsersDynamoDBTable", "Arn"] }
+        - { "Fn::GetAtt": ["MessagesDynamoDBTable", "Arn"] }
+  environment:
+    USERS_TABLE: ${self:custom.usersTable}
+    MESSAGES_TABLE: ${self:custom.messagesTable}
+    AUTH0_CLIENT_ID: ${env:AUTH0_CLIENT_ID}
+    AUTH0_CLIENT_PUBLIC_KEY: ${env:AUTH0_CLIENT_PUBLIC_KEY}
+
+functions:
+  auth:
+    handler: services/auth.auth
+    cors: true
+  getUser:
+    handler: services/user/get.get
+    events:
+      - http: 
+          path: user/get
+          method: get
+          cors: true
+  createUser:
+    handler: services/user/create.create
+    events:
+      - http:
+          path: user/create
+          method: post
+          authorizer: auth
+          cors: true
+  sendMessage:
+    handler: services/message/send.send
+    events:
+      - http:
+          path: message/send
+          method: post
+          authorizer: auth
+          cors: true
+
+resources:
+  Resources:
+    # This response is needed for custom authorizer failures cors support ¯\_(ツ)_/¯
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    UsersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: sub
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: sub
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.usersTable}
+    MessagesDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.messagesTable}
+
+plugins: 
+  - serverless-plugin-typescript
+  - serverless-offline
+
+package:
+  exclude:
+    - docs/**/*
+  include:
+    index.ts

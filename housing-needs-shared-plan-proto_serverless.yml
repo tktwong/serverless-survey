@@ -1,0 +1,113 @@
+service: shared-plan-proto
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 256
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "*"
+  environment:
+    CUSTOMERS_TABLE: "${self:service}-${self:provider.stage}-customers"
+    SMS_API_URL: ${ssm:/shared-plan/SMS_API_URL}
+    SHARED_PLAN_URL: ${ssm:/shared-plan/SHARED_PLAN_URL}
+    jwtsecret: ${ssm:/common/hackney-jwt-secret}
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+  authorizer:
+    authorizer:
+      name: authorizer
+      type: request
+      resultTtlInSeconds: 0
+  client:
+    bucketName: "${self:service}-${self:provider.stage}-ui"
+    distributionFolder: ui/build
+    indexDocument: index.html
+    errorDocument: index.html
+
+package:
+  exclude:
+    - 'ui/**'
+    - 'api/node_modules/aws-sdk'
+
+plugins:
+  - serverless-offline
+  - serverless-offline-ssm
+  - serverless-dynamodb-local
+  - serverless-finch
+
+functions:
+  getCustomer:
+    handler: api/lambda.getCustomer
+    events:
+      - http:
+          path: customers/{customerId}
+          method: get
+          cors: true
+          authorizer: ${self:custom.authorizer.authorizer}
+  updateCustomer:
+    handler: api/lambda.updateCustomer
+    events:
+      - http:
+          path: customers/{customerId}
+          method: put
+          cors: true
+          authorizer: ${self:custom.authorizer.authorizer}
+  shareCustomerPlan:
+    handler: api/lambda.shareCustomerPlan
+    events:
+      - http:
+          path: customers/{customerId}/share_plan
+          method: post
+          cors: true
+          authorizer: ${self:custom.authorizer.authorizer}
+  authorizer:
+    handler: api/lambda.authorizer
+
+resources:
+  Resources:
+    CustomersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: customerId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: customerId
+            KeyType: HASH
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        TableName: ${self:provider.environment.CUSTOMERS_TABLE}
+    UIBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "${self:service}-${self:provider.stage}-ui"

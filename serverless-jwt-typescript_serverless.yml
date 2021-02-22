@@ -1,0 +1,74 @@
+service:
+  name: serverless-jwt-typescript
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-central-1
+  environment:  
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:  
+  authorize:
+    handler: src/handlers/auth.customAuthorizer
+  create:
+    handler: src/handlers/handler.create
+    events:
+      - http:
+          path: logs
+          method: post
+          cors: true  
+          authorizer: authorize          
+  get:
+    handler: src/handlers/handler.get
+    events:
+      - http:
+          path: logs
+          method: get
+          cors: true          
+          authorizer: authorize
+  hearthbeat:
+    handler: src/handlers/handler.hearthbeat
+    events:
+      - http:
+          path: hearthbeat
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    LogEntryDynamoDbTableWithJwt:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: deviceId
+            AttributeType: S
+          - AttributeName: created
+            AttributeType: N            
+        KeySchema:
+          -
+            AttributeName: deviceId
+            KeyType: HASH
+          -
+            AttributeName: created
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+custom:
+  stage: ${opt:stage, self:provider.stage}

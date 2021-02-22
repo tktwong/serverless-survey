@@ -1,0 +1,66 @@
+service:
+    name: backend-clinic
+
+plugins:
+    - serverless-webpack
+    - serverless-offline
+
+custom:
+    layerFile: layer.node_modules.zip
+    host: ${opt:host, file(./.env.${opt:cfg}.json):host}
+    username: ${opt:username, file(./.env.${opt:cfg}.json):username}
+    password: ${opt:password, file(./.env.${opt:cfg}.json):password}
+    local:
+        debug: true
+        docs: true
+    dev:
+        debug: true
+        docs: true
+    alpha:
+        debug: true
+        docs: false
+    prod:
+        debug: false
+        docs: false
+
+provider:
+    name: aws
+    runtime: nodejs12.x
+    stage: v1
+    memorySize: 256
+    timeout: 30
+    iamRoleStatements:
+        - Effect: Allow
+          Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+          Resource: '*'
+    environment:
+        ENABLE_DOCS: ${self:custom.${opt:cfg}.docs, 'false'}
+        DEBUG: ${self:custom.${opt:cfg}.debug, 'false'}
+        HOST: ${self:custom.host}
+        USERNAME: ${self:custom.username}
+        PASSWORD: ${self:custom.password}
+
+functions:
+    orders:
+        handler: src/api/bin/index.handler
+        events:
+            - http:
+                  path: orders/{proxy+}
+                  method: ANY
+                  cors: true
+            - http:
+                  path: orders/
+                  method: ANY
+                  cors: true
+        layers:
+            - { Ref: ClinicCommonLibsLambdaLayer }
+
+layers:
+    clinicCommonLibs:
+        package:
+            artifact: ${self:custom.layerFile}
+        compatibleRuntimes:
+            - nodejs12.x

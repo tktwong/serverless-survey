@@ -1,0 +1,78 @@
+service: cvs-svc-test-types
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  tracing: true # enable tracing
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-plugin-tracing
+  - serverless-plugin-typescript
+
+functions:
+  getTestTypes:
+    handler: src/handler.handler
+    events:
+    - http:
+        path: test-types
+        method: get
+    - http:
+        path: test-types/{id}
+        method: get
+        request:
+          parameters:
+            paths:
+              id: true
+            query:
+              fields: true
+              vehicleType: true
+              vehicleSize: true
+              vehicleConfiguration: true
+              vehicleAxles: false
+
+resources:
+  Resources:
+    Users:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: cvs-local-test-types
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: name
+          AttributeType: S
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: name
+          KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+custom:
+  serverless-offline:
+    port: 3002
+  dynamodb:
+    start:
+      port: 8002
+      inMemory: true
+      migrate: false
+      seed: false
+      noStart: true
+    seed:
+      test-types:
+        sources:
+        - table: cvs-local-test-types
+          sources: [./tests/resources/test-types.json]
+    stages:
+      - dev

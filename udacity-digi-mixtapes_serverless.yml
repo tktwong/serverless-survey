@@ -1,0 +1,392 @@
+service:
+  name: serverless-digi-mixtapes
+
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
+  - serverless-plugin-canary-deployments
+  # SERVERLESS OFFLINE: in order to use the serverless configuration locally/offline, uncomment the serverless-offline
+  # plugin and search for all SERVERLESS OFFLINE comments
+  # Run the application like this: sls offline
+#  - serverless-offline
+  # SERVERLESS OFFLINE: As this configuration contains dynamodb we need the following plugin as well to run it locally
+  # in order to work and not have an error like "Error: Unable to start DynamoDB Local process!", java needs to be
+  # installed locally and in your path
+  # You need to install and start the database BEFORE calling "sls offline" like this: sls dynamodb install and sls dynamodb start
+#  - serverless-dynamodb-local
+
+
+# Enable individual packaging for better performance of each lambda function
+# package:
+#   individually: true
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+
+  # More details on how to enable AWS X-Ray for distributed tracing, see:
+  # https://www.youtube.com/watch?v=Qj1w2Qbt99o & https://www.youtube.com/watch?v=QTlB32T6cVg & https://www.youtube.com/watch?v=dv9EZRGhMX4
+  # SERVERLESS OFFLINE: to easily use "sls offline", disable tracing doing the following steps:
+  # - comment the "tracing" configuration in the following lines
+  # - replace all XAWS function calls with AWS in your code
+  # - comment out the XAWS imports and the code where AWS is wrapped with XAWS
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  environment:
+    DYNAMO_DB_TABLE_MIXTAPE: DigiMixtapes-${self:provider.stage}
+    DYNAMO_DB_INDEX_MIXTAPE_TYPE_SONG: MixtapeTypeSongIndex
+    DYNAMO_DB_INDEX_TYPE_MIXTAPE_SONG: TypeMixtapeSongIndex
+    S3_BUCKET_MIXTAPE_SONGS: serverless-digi-mixtapes-app-93165037-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+    JWKS_URL: https://digi-mixtapes.eu.auth0.com/.well-known/jwks.json
+
+
+custom:
+  # SERVERLESS OFFLINE: to use "sls offline", uncomment "serverless-offline" and "dynamodb" sections
+#  serverless-offline:
+#    port: 3003
+#
+#  dynamodb:
+#    start:
+#      port: 8000
+#      inMemory: true
+#      migrate: true
+#      region: ${self:provider.region}
+#    stages:
+#      - dev
+
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Mixtape App API
+        description: Serverless application for creating and managing your mixtapes digitally
+    # models are used for request validation with the RequestBodyValidator, see plugin above and config below and
+    # https://www.serverless.com/plugins/serverless-reqvalidator-plugin/ and https://stackoverflow.com/a/49143822/2477404
+    models:
+      - name: CreateMixtapeRequest
+        contentType: application/json
+        schema: ${file(models/CreateMixtapeRequest.json)}
+      - name: UpdateMixtapeRequest
+        contentType: application/json
+        schema: ${file(models/UpdateMixtapeRequest.json)}
+      - name: CreateMixtapeSongRequest
+        contentType: application/json
+        schema: ${file(models/CreateMixtapeSongRequest.json)}
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+    iamRoleStatements:
+      - Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Effect: Allow
+        Resource: "*"
+
+  GetMixtapes:
+    handler: src/lambda/http/getMixtapes.handler
+    events:
+      - http:
+          method: get
+          path: mixtapes
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Action:
+          - dynamodb:Query
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}
+      - Action:
+          - dynamodb:Query
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}/index/${self:provider.environment.DYNAMO_DB_INDEX_TYPE_MIXTAPE_SONG}
+      - Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Effect: Allow
+        Resource: "*"
+  CreateMixtape:
+    handler: src/lambda/http/createMixtape.handler
+    events:
+      - http:
+          method: post
+          path: mixtapes
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new mixtape
+            description: Create a mixtape, then add songs to it
+            requestModels:
+              'application/json': CreateMixtapeRequest
+    iamRoleStatements:
+      - Action:
+          - dynamodb:PutItem
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}
+      - Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Effect: Allow
+        Resource: "*"
+  #    deploymentSettings:
+  #      type: Linear10PercentEvery1Minute
+  #      alias: Live
+
+  UpdateMixtape:
+    handler: src/lambda/http/updateMixtape.handler
+    events:
+      - http:
+          method: patch
+          path: mixtapes/{mixtapeId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a mixtape
+            description: Update mixtape details such as the name
+            requestModels:
+              'application/json': UpdateMixtapeRequest
+    iamRoleStatements:
+      - Action:
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}
+      - Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Effect: Allow
+        Resource: "*"
+
+  DeleteMixtape:
+    handler: src/lambda/http/deleteMixtape.handler
+    events:
+      - http:
+          method: delete
+          path: mixtapes/{mixtapeId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Action:
+          - s3:DeleteObject
+        Effect: Allow
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_MIXTAPE_SONGS}/*
+      - Action:
+          - dynamodb:GetItem
+          - dynamodb:DeleteItem
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}
+      - Action:
+          - dynamodb:Query
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}/index/${self:provider.environment.DYNAMO_DB_INDEX_MIXTAPE_TYPE_SONG}
+      - Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Effect: Allow
+        Resource: "*"
+
+  GetSongs:
+    handler: src/lambda/http/getMixtapeWithSongs.handler
+    events:
+      - http:
+          method: get
+          path: mixtapes/{mixtapeId}/songs
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Action:
+          - dynamodb:GetItem
+          - dynamodb:Query
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}
+      - Action:
+          - dynamodb:Query
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}/index/${self:provider.environment.DYNAMO_DB_INDEX_MIXTAPE_TYPE_SONG}
+      - Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Effect: Allow
+        Resource: "*"
+  CreateSong:
+    handler: src/lambda/http/createMixtapeSong.handler
+    events:
+      - http:
+          method: post
+          path: mixtapes/{mixtapeId}/songs
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new song in a mixtape
+            description: Create a song and add it at the end of the mixtape
+            requestModels:
+              'application/json': CreateMixtapeSongRequest
+    iamRoleStatements:
+      - Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}
+      - Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Effect: Allow
+        Resource: "*"
+  #    deploymentSettings:
+  #      type: Linear10PercentEvery1Minute
+  #      alias: Live
+
+  DeleteSong:
+    handler: src/lambda/http/deleteMixtapeSong.handler
+    events:
+      - http:
+          method: delete
+          path: mixtapes/{mixtapeId}/songs/{songId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Action:
+          - s3:DeleteObject
+        Effect: Allow
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_MIXTAPE_SONGS}/*
+      - Action:
+          - dynamodb:GetItem
+          - dynamodb:DeleteItem
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}
+      - Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Effect: Allow
+        Resource: "*"
+
+  # E.g. here we use the function name GenUploadUrl instead of the longer but more expressive GenerateSongUploadUrl in
+  # order to avoid errors of too long roleNames, see https://github.com/serverless/serverless/issues/2856
+  GenUploadUrl:
+    handler: src/lambda/http/generateSongUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: mixtapes/{mixtapeId}/songs/{songId}/upload-url
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Action:
+          - s3:PutObject
+          - s3:GetObject
+        Effect: Allow
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_MIXTAPE_SONGS}/*
+      - Action:
+          - dynamodb:GetItem
+        Effect: Allow
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}
+      - Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Effect: Allow
+        Resource: "*"
+
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+    MixtapeTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.DYNAMO_DB_TABLE_MIXTAPE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: creatorUserId
+            AttributeType: S
+          - AttributeName: mixtapeIdSongId
+            AttributeType: S
+          - AttributeName: mixtapeIdTypeSongCreatedAt
+            AttributeType: S
+          - AttributeName: typeMixtapeCreatedAtSongCreatedAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: creatorUserId
+            KeyType: HASH
+          - AttributeName: mixtapeIdSongId
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.DYNAMO_DB_INDEX_MIXTAPE_TYPE_SONG}
+            KeySchema:
+              - AttributeName: creatorUserId
+                KeyType: HASH
+              - AttributeName: mixtapeIdTypeSongCreatedAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: ${self:provider.environment.DYNAMO_DB_INDEX_TYPE_MIXTAPE_SONG}
+            KeySchema:
+              - AttributeName: creatorUserId
+                KeyType: HASH
+              - AttributeName: typeMixtapeCreatedAtSongCreatedAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    MixtapeSongsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET_MIXTAPE_SONGS}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 300
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.S3_BUCKET_MIXTAPE_SONGS}/*'
+        Bucket: !Ref MixtapeSongsBucket

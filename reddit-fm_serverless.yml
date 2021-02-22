@@ -1,0 +1,140 @@
+service:
+  name: reddit-fm
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-dotenv-plugin
+  - serverless-prune-plugin
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  hello:
+    handler: src/index.hello
+    events:
+      - http:
+          method: get
+          path: hello
+  get-user:
+    handler: src/handlers/users.getUser
+    events:
+    - http:
+        cors: true
+        method: get
+        path: users/{userId}
+        request:
+          parameters:
+            paths:
+              userId: true
+  create-playlist:
+    handler: src/handlers/users.createPlaylist
+    events:
+    - http:
+        cors: true
+        method: post
+        path: users/{userId}/playlists
+        request:
+          parameters:
+            paths:
+              userId: true
+  enable-playlist:
+    handler: src/handlers/users.enablePlaylist
+    events:
+    - http:
+        cors: true
+        method: post
+        path: users/{userId}/playlists/{playlistId}/status
+        request:
+          parameters:
+            paths:
+              userId: true
+              playlistId: true
+  disable-playlist:
+    handler: src/handlers/users.disablePlaylist
+    events:
+    - http:
+        cors: true
+        method: delete
+        path: users/{userId}/playlists/{playlistId}/status
+        request:
+          parameters:
+            paths:
+              userId: true
+              playlistId: true
+  get-playlist-songs:
+    handler: src/handlers/pipeline.getSongsForPlaylist
+    events:
+    - http:
+        cors: true
+        method: get
+        path: users/{userId}/playlists/songs
+        request:
+          parameters:
+            paths:
+              userId: true
+            querystrings:
+              subreddits: true
+              maxToAdd: true
+  run-pipeline-for-playlist:
+    handler: src/handlers/pipeline.runPipelineForPlaylist
+    events:
+      - http:
+          cors: true
+          method: post
+          path: users/{userId}/playlists/{playlistId}/songs/updates
+          request:
+            parameters:
+              paths:
+                userId: true
+                playlistId: true
+  spotify-login:
+    handler: src/handlers/auth.spotifyLogin
+    events:
+    - http:
+        method: get
+        path: spotify/login
+  spotify-verify:
+    handler: src/handlers/auth.spotifyVerify
+    events:
+    - http:
+        method: get
+        path: spotify/verify
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+custom:
+  serverless-offline:
+    port: 4000
+  prune:
+    automatic: true
+    includeLayers: true
+    number: 1

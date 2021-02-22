@@ -1,0 +1,47 @@
+service: sqs-service
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  QueueName: product-update-sqs
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: "eu-central-1"
+
+resources:
+  Resources:
+    UpdateProductsCountSQS:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.QueueName}
+    UpdateProductsCountSQSPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sns-messages"
+              Effect: Allow
+              Principal: "*"
+              Resource: "*"
+              Action: "SQS:SendMessage"
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: 'arn:aws:sns:eu-central-1:307905271295:ProductTopic'
+        Queues:
+          - Ref: UpdateProductsCountSQS
+    SnsTopicSubscription:
+      Type: 'AWS::SNS::Subscription'
+      Properties:
+        TopicArn: 'arn:aws:sns:eu-central-1:307905271295:ProductTopic'
+        Endpoint:
+          Fn::GetAtt: [UpdateProductsCountSQS, Arn]
+        Protocol: sqs
+        RawMessageDelivery: 'true'

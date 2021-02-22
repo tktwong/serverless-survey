@@ -1,0 +1,105 @@
+service: contact-form
+
+frameworkVersion: '>=1.9.0 <2.0.0'
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  rootDomain: floresjdev.com
+  devDomains:
+    - dev.floresjdev.com
+  prodDomains:
+    - www.floresjdev.com
+    - floresjdev.com
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'ses:SendEmail'
+        - 'ses:SendRawEmail'
+      Resource: 'arn:aws:ses:us-east-1:441343615666:identity/floresjdev.com'
+
+functions:
+  sendForm:
+    handler: processForm.handler
+    events:
+      - http:
+          path: /
+          method: post
+          cors: true
+
+resources:
+  Mappings: ${file(resources/mappings.yml)}
+  Outputs: ${file(resources/outputs.yml)}
+  Resources:
+    WebSite:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        WebsiteConfiguration:
+          ErrorDocument: index.html
+          IndexDocument: index.html
+    DnsRecords: ${file(resources/${self:custom.stage}-dns.yml)}
+    SSLCert: ${file(resources/${self:custom.stage}-ssl.yml)}
+    CDN:
+      Type: 'AWS::CloudFront::Distribution'
+      Properties:
+        DistributionConfig:
+          ViewerCertificate:
+            AcmCertificateArn: { Ref: SSLCert }
+            SslSupportMethod: sni-only
+          Enabled: true
+          HttpVersion: http2
+          Aliases: ${self:custom.${self:custom.stage}Domains}
+          DefaultRootObject: index.html
+          Origins:
+            - DomainName:
+                {
+                  'Fn::Join':
+                    [
+                      '',
+                      [
+                        { Ref: WebSite },
+                        '.',
+                        {
+                          'Fn::FindInMap':
+                            [
+                              RegionMap,
+                              { Ref: 'AWS::Region' },
+                              websiteendpoint,
+                            ],
+                        },
+                      ],
+                    ],
+                }
+              Id: S3Origin
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: http-only
+          DefaultCacheBehavior:
+            ViewerProtocolPolicy: redirect-to-https
+            TargetOriginId: S3Origin
+            AllowedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            DefaultTTL: 30
+            MinTTL: 10
+            ForwardedValues:
+              QueryString: true
+
+package:
+  exclude:
+    - bin/**
+    - src/**
+    - build/**
+    - node_modules/**
+    - resources/**
+    - package.json
+    - preact.config.js
+    - .gitignore
+    - yarn.lock
+  include:
+    - processForm.handler

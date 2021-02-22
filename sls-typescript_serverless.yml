@@ -1,0 +1,99 @@
+service:
+  name: sls-typescript
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+  serverless-offline-dynamodb-streams:
+    endpoint: http://localhost:8000
+    region: localhost
+    skipCacheInvalidation: false
+    readInterval: 500
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-offline-dynamodb-streams
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+  region: ap-northeast-1
+
+functions:
+  fetchStream:
+    handler: src/jobs/stream/show.handler
+    events:
+      - stream:
+          enabled: true
+          type: dynamodb
+          arn: arn:aws:dynamodb:ddblocal:000000000000:table/jobs/stream/2019-12-01T07:40:51.034
+          tableName: jobs
+          batchSize: 10
+
+  listJobs:
+    handler: src/jobs/list.handler
+    events:
+      - http:
+          method: get
+          path: /jobs
+
+  createJob:
+    handler: src/jobs/create.handler
+    events:
+      - http:
+          method: post
+          path: /jobs
+
+  getJob:
+    handler: src/jobs/findOne.handler
+    events:
+      - http:
+          method: get
+          path: /jobs/{id}
+          request:
+            parameters:
+              id: true
+
+  deleteJob:
+    handler: src/jobs/delete.handler
+    events:
+      - http:
+          method: delete
+          path: /jobs/{id}
+          request:
+            parameters:
+              id: true
+
+  updateJob:
+    handler: src/jobs/update.handler
+    events:
+      - http:
+          method: put
+          path: /jobs/{id}
+          request:
+            parameters:
+              id: true
+
+resources:
+  Resources:
+    JobsDynamoDBTable:
+      type: "AWS::Dynamodb::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

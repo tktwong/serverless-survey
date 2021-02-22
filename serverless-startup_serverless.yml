@@ -1,0 +1,90 @@
+service:                 serverless-template
+plugins:
+  - serverless-offline
+
+provider:
+  name:                  aws
+  runtime:               nodejs6.10
+  stage:                 dev
+  environment:
+    SERVICE:             pushwave-serverless # maybe self:service ?
+    NODE_ENV:            "${self:custom.stage}"
+    MONGODB_USERNAME:    "${self:custom.secrets.MONGODB_USERNAME}"
+    MONGODB_PASSWORD:    "${self:custom.secrets.MONGODB_PASSWORD}"
+    MONGODB_HOST:        "${self:custom.secrets.MONGODB_HOST}"
+    MONGODB_DATABASE:    "${self:custom.secrets.MONGODB_DATABASE}"
+    MAILGUN_API_KEY:     "${self:custom.secrets.MAILGUN_API_KEY}"
+    INTERNAL_API_KEY:    "${self:custom.secrets.INTERNAL_API_KEY}"
+
+package:
+  exclude:
+    - secrets.yml
+custom:
+  stage:                 ${opt:stage, self:provider.stage}
+  secrets:               ${file(secrets.yml):${self:custom.stage}}
+functions:
+  register:
+    handler:             actions/profile.register
+    description:         Register the profile
+    events:
+      - http:
+          path:          /register
+          method:        post
+  forgotPassword:
+    handler:             actions/profile.forgotPassword
+    description:         Trigger the forgot password flow
+    events:
+      - http:
+          path:          /profile/forgot
+          method:        post
+  resetPassword:
+    handler:             actions/profile.resetPassword
+    description:         Reset the password
+    events:
+      - http:
+          path:          /profile/reset
+          method:        post
+  deleteProfile:
+    handler:             actions/profile.deleteProfile
+    description:         Delete the profile
+    events:
+      - http:
+          path:          /profile
+          method:        delete
+          authorizer:    authorizerFunc
+  login:
+    handler:             actions/profile.login
+    description:         Log the user in
+    events:
+      - http:
+          path:          /login
+          method:        post
+  confirmProfile:
+    handler:             actions/profile.confirmProfile
+    description:         Confirm a new profile
+    events:
+      - http:
+          path:          /profile/confirm
+          method:        post
+  logoff:
+    handler:             actions/profile.logoff
+    description:         Log the user off
+    events:
+      - http:
+          path:          /logoff
+          method:        post
+          authorizer:    authorizerFunc
+  profile:
+    handler:             actions/profile.profile
+    description:         Get the user's profile
+    events:
+      - http:
+          path:          /profile
+          method:        get
+          authorizer:    authorizerFunc
+  authorizerFunc:
+    handler:             actions/auth.authorizerFunc
+    description:         Default authorizer function
+    resultTtlInSeconds:  3600
+    identitySource:      method.request.header.Authorization
+    type:                Token

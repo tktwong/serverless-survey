@@ -1,0 +1,93 @@
+service: artshell-url-shortener
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-west-1
+  stage: ${opt:stage, self:custom.defaultStage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        - arn:aws:dynamodb:eu-west-1:*:table/urls-by-shortid-${self:provider.stage}
+        - arn:aws:dynamodb:eu-west-1:*:table/shortids-by-url-${self:provider.stage}
+
+plugins:
+  - serverless-webpack
+  - serverless-domain-manager
+  - serverless-offline
+  - serverless-dynamodb-local
+
+custom:
+  defaultStage: dev
+  webpackIncludeModules:
+    packagePath: './package.json'
+  customDomain:
+    domainName: qr.artshell.link
+    basePath: ''
+    stage: ${self:provider.stage}
+  serverless-offline:
+    port: 8888
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+
+functions:
+  shorten:
+    handler: src/handler.shorten
+    events:
+      - http:
+          path: shorten
+          method: post
+          authorizer:
+            type: aws_iam
+    environment:
+      URLS_BY_SHORTID_TABLE: urls-by-shortid-${self:provider.stage}
+      SHORTIDS_BY_URL_TABLE: shortids-by-url-${self:provider.stage}
+  resolve:
+    handler: src/handler.resolve
+    events:
+      - http:
+          path: r/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+    environment:
+      URLS_BY_SHORTID_TABLE: urls-by-shortid-${self:provider.stage}
+
+resources:
+    # if you change this, remember to also change the tables definitions in test.hooks.js
+  Resources:
+    urlsByShortIdTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: urls-by-shortid-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    shortIdsByUrlTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: shortids-by-url-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: url
+            AttributeType: S
+        KeySchema:
+          - AttributeName: url
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

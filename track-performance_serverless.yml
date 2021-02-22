@@ -1,0 +1,73 @@
+service: track-performance
+
+plugins:
+  - serverless-webpack
+
+custom:
+  enabled:
+    production: true
+    development: false
+    local: false
+  bucketName: track-performance-${self:provider.stage}
+  regionAndAccount: us-east-1:251013100663
+  secretsArnPrefix: arn:aws:secretsmanager:${self:custom.regionAndAccount}:secret:${self:provider.stage}
+  webpack:
+    webpackConfig: webpack.config.ts
+    packager: yarn
+    includeModules: true # Enable auto-packing of external modules
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'local'}
+  memorySize: 128
+  timeout: 300
+  environment:
+    NODE_ENV: ${env:NODE_ENV, 'development'}
+    STAGE: ${self:provider.stage}
+    SCREENSHOTS_BUCKET_NAME: ${self:custom.bucketName}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource:
+        - "${self:custom.secretsArnPrefix}/wpt/apiKey-*"
+        - "${self:custom.secretsArnPrefix}/google/searchConsoleApis/apiKey-*"
+        - "${self:custom.secretsArnPrefix}/splunk/httpCollector/perfReports/token-*"
+        - "${self:custom.secretsArnPrefix}/browserStack/token-*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource:
+        - "arn:aws:s3:::${self:custom.bucketName}/*"
+    - Effect: Allow
+      Action:
+        - lambda:ListFunctions
+        - lambda:ListVersionsByFunction
+        - lambda:ListAliases
+        - cloudwatch:GetMetricStatistics
+        - cloudwatch:GetMetricData
+      Resource: "*"
+
+functions:
+  reportPerformance:
+    handler: src/reportPerformance.reportPerformance
+    events:
+      - schedule:
+          rate: rate(24 hours)
+          enabled: ${self:custom.enabled.${self:provider.stage}}
+
+package:
+  include:
+    - src/**
+    - secrets/**
+  exclude:
+    - .webpack
+
+resources:
+  Resources:
+    S3Bucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${self:custom.bucketName}
+

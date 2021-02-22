@@ -1,0 +1,98 @@
+service: vulnerabilitiesDataMigration
+provider:
+  name: aws
+  region: eu-west-2
+  runtime: dotnetcore3.1
+  vpc: ${self:custom.vpc.${opt:stage}}
+  stage: ${opt:stage}
+
+package:
+  individually: true
+
+functions:
+  load-csv:
+    handler: ResidentVulnerabilitiesDataPipeline::ResidentVulnerabilitiesDataPipeline.Handler::LoadCsv
+    role: dataPipelineLambdaExecutionRole
+    environment:
+      DB_HOST: ${ssm:/resident-vulnerabilities-api/${self:provider.stage}/postgres-hostname}
+      DB_PORT: ${ssm:/resident-vulnerabilities-api/${self:provider.stage}/postgres-port}
+      DB_USERNAME: ${ssm:/resident-vulnerabilities-api/${self:provider.stage}/postgres-username}
+      DB_PASSWORD: ${ssm:/resident-vulnerabilities-api/${self:provider.stage}/postgres-password}
+      DB_DATABASE: vulnerabilities_db
+      DB_TABLE_NAME: qlik_vulnerability
+    package:
+      artifact: bin/release/netcoreapp3.1/ResidentVulnerabilitiesDataPipeline.zip
+    events:
+      - s3:
+          bucket: ${self:custom.bucketName.${opt:stage}}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .csv
+          existing: true
+resources:
+  Resources:
+    dataPipelineLambdaExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /${self:service}/${self:provider.stage}/
+        RoleName: ${self:service}-dataPipelineLambdaExecutionRole
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+          - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        Policies:
+          - PolicyName: manageLogs
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                        - ':'
+                        - - 'arn:aws:logs'
+                          - Ref: 'AWS::Region'
+                          - Ref: 'AWS::AccountId'
+                          - 'log-group:/aws/lambda/*:*:*'
+                - Effect: "Allow"
+                  Action:
+                    - "s3:PutObject"
+                    - "s3:GetObject"
+                  Resource:
+                    Fn::Join:
+                      - ""
+                      - - "arn:aws:s3:::"
+                        - "Ref": "ServerlessDeploymentBucket"
+custom:
+  vpc:
+    development:
+      securityGroupIds:
+        - sg-0a457bf4e6eda31de
+      subnetIds:
+        - subnet-000b89c249f12a8ad
+    staging:
+      securityGroupIds:
+        - sg-04fa13c6d25c5f5cc
+      subnetIds:
+        - subnet-06d3de1bd9181b0d7
+        - subnet-0ed7d7713d1127656
+    production:
+      securityGroupIds:
+        - sg-0631be752dee5711a
+      subnetIds:
+        - subnet-01d3657f97a243261
+        - subnet-0b7b8fea07efabf34
+  bucketName:
+    development: drop-bucket-csv-to-postgres
+    staging: qlik-bucket-csv-to-postgres-staging
+    production: qlik-bucket-csv-to-postgres-production

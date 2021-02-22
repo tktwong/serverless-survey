@@ -1,0 +1,91 @@
+service: items
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-west-2
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    USERS_URL: "https://qmk33jcqwh.execute-api.eu-west-2.amazonaws.com/giovanni/user"
+    JWT_SECRET: REPLACE_THIS
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/location-status-index"
+functions:
+  items:
+    handler: lambdas/items.handler
+    events:
+      - http:
+          path: item
+          method: post
+      - http:
+          path: item/{id}
+          method: get
+      - http:
+          path: item
+          method: get
+      - http:
+          path: item
+          method: put
+
+  comments:
+    handler: lambdas/comments.handler
+    events:
+      - http:
+          path: comment
+          method: post
+
+resources:
+  Resources:
+    Items:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+
+        - AttributeName: createdAt
+          AttributeType: S
+
+        - AttributeName: location-status
+          AttributeType: S
+            
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+          
+        ProvisionedThroughput:
+          ReadCapacityUnits: '1'
+          WriteCapacityUnits: '1'
+
+        GlobalSecondaryIndexes:
+        - IndexName: location-status-index
+
+          KeySchema:
+          - AttributeName: location-status
+            KeyType: HASH
+
+          - AttributeName: createdAt
+            KeyType: RANGE
+
+          Projection:
+            ProjectionType: ALL
+
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+
+        TableName: ${self:service}-${opt:stage, self:provider.stage}

@@ -1,0 +1,143 @@
+service:
+  name: user-api-service
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-aws-documentation
+  
+provider:
+  name: aws
+  runtime: nodejs8.10
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    NODE_ENV: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+custom:
+  documentation:
+    api:
+      info:
+        version: '1.0.0'
+        title: Orange Theory API
+        description: Orange Theory API, for User Managnment demo
+      tags:
+        - name: User
+          description: User Management
+    models:
+      - name: UserRequest
+        contentType: "application/json"
+        schema: ${file(request_response_models/create_user_request_response_model.json)} # reference to your model's json schema file. You can also declare the model inline.
+functions:
+  list-users:
+    handler: handler.listUsers
+    events:
+      - http:
+          method: get
+          path: /user
+          cors: true
+  create-user:
+    handler: handler.createUser
+    events:
+      - http:
+          method: post
+          path: /user
+          cors: true
+          documentation:
+            summary: "Create user"
+            description: "Create new user"
+            tags:
+              - User
+            requestModels:
+              "application/json": UserRequest
+            methodResponses:
+              - statusCode: 200
+                responseModels:
+                  "application/json" : UserRequest
+              - statusCode: 400
+  update-user:
+    handler: handler.updateUser
+    events:
+      - http:
+          method: put
+          path: /user/{email}
+          cors: true
+          request:
+            schema:
+              application/json: ${file(request_response_models/create_user_request_response_model.json)} # reference to your model's json schema file. You can also declare the model inline.
+          documentation:
+            summary: "Update user"
+            description: "Udpate existing user, by email address"
+            tags:
+              - User
+            requestModels:
+              "application/json": UserRequest
+            methodResponses:
+              - statusCode: 200
+                responseModels:
+                  "application/json" : UserRequest
+              - statusCode: 400
+            pathParams:
+              - name: "email"
+                description: "Email address of the user to udpate"
+  get-user:
+    handler: handler.getUser
+    events:
+      - http:
+          method: get
+          path: /user/{email}
+          cors: true
+          documentation:
+            summary: "Retrieve user"
+            description: "Retrieve user, by email address"
+            tags:
+              - User
+            methodResponses:
+              - statusCode: 200
+                responseModels:
+                  "application/json" : UserRequest
+              - statusCode: 400
+            pathParams:
+              - name: "email"
+                description: "Email address of the user to retreive"
+  delete-user:
+    handler: handler.deleteUser
+    events:
+      - http:
+          method: delete
+          path: /user/{email}
+          cors: true
+          documentation:
+            summary: "Deletes user by email address"
+            description: "Deletes user by email address, which is the key"
+            tags:
+              - User
+            pathParams:
+              - name: "email"
+                description: "Email address of the user to delete"
+resources:
+  Resources:
+    UserDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: email
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

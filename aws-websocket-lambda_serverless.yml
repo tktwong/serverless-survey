@@ -1,0 +1,96 @@
+org: tridungle
+app: realtime-service
+service:
+  name: realtime-with-api-gateway
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  logs:
+    websocket: true
+  runtime: nodejs12.x
+  memorySize: 512 # optional, in MB, default is 1024
+  timeout: 10 # optional, in seconds, default is 6
+  stackName: ${self:service}-${self:provider.stage}
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  # iamRoleStatements:
+  #   - Effect: Allow
+  #     Action:
+  #       - 'execute-api:ManageConnections'
+  #     Resource:
+  #       - 'arn:aws:execute-api:*:*:**/@connections/*'
+  environment:
+    API_REGION: '${self:provider.region}'
+
+  # optional
+  websocketApiName: ws-realtime-${self:provider.stage}
+
+  # required for websocket apis
+  # this selects from your payload what your "routeKey" parameter is
+  # from the websocket event types on your function
+  websocketApiRouteSelectionExpression: $request.body.action
+
+functions:
+  connectionManager:
+    handler: src/handler.connectionManager
+    description: handle the socket connections
+    events:
+      - websocket:
+          route: $connect
+          routeResponseSelectionExpression: $default
+          authorizer:
+            name: authorizer
+            # See https://serverless.com/framework/docs/providers/aws/events/websocket#using-authorizers
+            # and https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-apigatewayv2-authorizer.html#cfn-apigatewayv2-authorizer-identitysource
+            # for more details on identitySource.
+            # See https://docs.aws.amazon.com/apigateway/latest/developerguide/request-response-data-mappings.html
+            # for more details on API Gateway mappings.
+            identitySource:
+              - 'route.request.header.X-Forwarded-Proto'
+      - websocket:
+          route: $disconnect
+  # just in case we are getting weird / bad data
+  # we can react to it with a sane response
+  defaultMessages:
+    handler: src/handler.defaultMessage
+    description: just in case we are getting weird / bad data we can react to it with a sane response
+    events:
+      - websocket:
+          route: $default
+  responseMessage:
+    handler: src/handler.responseMessage
+    events:
+      - websocket:
+          route: hello
+          routeResponseSelectionExpression: $default
+
+  # handle app messages
+  sendMessage:
+    handler: src/handler.sendMessage
+    description: handle app messages
+    events:
+      - websocket:
+          route: sendMessage
+
+  # Channel subscriptions
+  channelManager:
+    handler: src/handler.channelManager
+    description: handle chanel subscriptions
+    events:
+      - websocket:
+          route: subscribeChannel
+      - websocket:
+          route: unsubscribeChannel
+
+  # handle broadcasting all events
+  broadcast:
+    handler: src/handler.broadcast
+    description: handle broadcasting all events
+    events:
+      - websocket:
+          route: broadcastMessage
+  authorizer:
+    handler: src/authorizer.auth
+    description: handle authentication

@@ -1,0 +1,95 @@
+service: todo-example
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-west-1
+  stage: dev
+  memorySize: 256
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        "Fn::GetAtt": [ todoTable, Arn ]
+
+functions:
+  todos:
+    handler: handler.todos
+    events:
+      - http:
+          path: todos/list
+          method: get
+          cors: true
+      - http:
+          path: todos/update/{id}
+          method: put
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+      - http:
+          path: todos/update/{id}
+          method: delete
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+      - http:
+          path: todos/create
+          method: post
+          cors: true
+
+plugins:
+  - serverless-webpack
+#   - serverless-domain-manager
+
+# custom:
+#   customDomain:
+#     basePath: "urls"
+#     domainName: todos.example.com
+#     stage: dev
+
+resources:
+  Resources:
+    todoTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "title"
+            AttributeType: "S"
+        KeySchema:
+          -
+            AttributeName: "title"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: "5"
+          WriteCapacityUnits: "5"
+        GlobalSecondaryIndexes:
+          -
+            IndexName: "todoGSI"
+            KeySchema:
+              -
+                AttributeName: "title"
+                KeyType: "HASH"
+            Projection:
+              NonKeyAttributes:
+                - "description"
+              ProjectionType: "INCLUDE"
+            ProvisionedThroughput:
+              ReadCapacityUnits: "5"
+              WriteCapacityUnits: "5"
+  Outputs:
+    TodoTableArn:
+      Description: "Todo Table Arn"
+      Value:
+        "Fn::GetAtt": [ todoTable, Arn ]

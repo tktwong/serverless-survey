@@ -1,0 +1,90 @@
+service: strava
+
+provider:
+  name: aws
+  stage: prod
+  runtime: go1.x
+  region: us-east-1
+  deploymentBucket: ops-config-mgmt
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: "sns:Publish"
+      Resource: "${self:custom.sns-topic}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/Athletes"
+    - Effect: Allow
+      Action: cognito-identity:GetOpenIdTokenForDeveloperIdentity
+      Resource: "arn:aws:cognito-identity:#{AWS::Region}:#{AWS::AccountId}:identitypool/${ssm:COGNITO_IDENTITY_POOL_ID}"
+
+functions:
+  oauth:
+    handler: bin/oauth
+    memorySize: 128
+    events:
+      - http:
+          path: oauth
+          method: GET
+          cors: true
+    environment:
+      STRAVA_CLIENT_ID: "${ssm:STRAVA_CLIENT_ID}"
+      STRAVA_CLIENT_SECRET: "${ssm:STRAVA_CLIENT_SECRET}"
+      COGNITO_IDENTITY_POOL_ID: "${ssm:COGNITO_IDENTITY_POOL_ID}"
+      COGNITO_IDENTITY_LINKED_LOGIN: "${ssm:COGNITO_IDENTITY_LINKED_LOGIN}"
+  subscription:
+    handler: bin/subscription
+    memorySize: 128
+    events:
+      - http:
+          path: event
+          method: GET
+          cors: true
+    environment:
+      STRAVA_VERIFY_TOKEN: "${ssm:STRAVA_VERIFY_TOKEN}"
+  webhook:
+    handler: bin/webhook
+    memorySize: 128
+    events:
+      - http:
+          path: event
+          method: POST
+          cors: true
+    environment:
+      STRAVA_SUBSCRIPTION_ID: "${ssm:STRAVA_SUBSCRIPTION_ID}"
+      SNS_TOPIC: "${self:custom.sns-topic}"
+  activity:
+    handler: bin/activity
+    memorySize: 128
+    events:
+      - sns: "strava-events"
+    environment:
+      GOOGLE_API_KEY: "${ssm:GOOGLE_API_KEY}"
+
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+plugins:
+  - serverless-plugin-scripts
+  - serverless-domain-manager
+  - serverless-pseudo-parameters
+
+custom:
+  sns-topic: "arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:strava-events"
+  customDomain:
+    domainName: api.ridegopher.com
+    stage: prod
+    basePath: strava
+  scripts:
+    hooks:
+      package:initialize: make do_all
+

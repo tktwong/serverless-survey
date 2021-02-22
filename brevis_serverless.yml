@@ -1,0 +1,67 @@
+service: brevis
+tenant: orthodoz
+app: brevis-app
+org: orthodoz
+
+package:
+  individually: true
+
+plugins:
+  - serverless-webpack
+  - serverless-dotenv-plugin
+  - serverless-offline
+
+custom:
+  webpack:
+    includeModules: true
+    packager: 'npm'
+    excludeFiles: src/**/*.spec.js
+  serverless-offline:
+    port: 4000
+    printOutput: true
+    showDuration: true
+    skipCacheInvalidation: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  region: us-east-1
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    MONGODB_CONNECTION_STRING: ${param:MONGODB_CONNECTION_STRING}
+
+functions:
+  createShortUrlByHash:
+    handler: src/handler.createShortUrlByHash
+    events:
+      - http:
+          path: hash
+          method: POST
+          cors: true
+  getUrlByHash:
+    handler: src/handler.getUrlByHash
+    events:
+      - http:
+          path: url
+          method: GET
+          cors: true
+  getStatsByUrl:
+    handler: src/handler.getStatsByUrl
+    events:
+      - http:
+          path: stats/url
+          method: post
+          cors: true
+  cleanup:
+    handler: src/handler.cleanup
+    events:
+      - schedule:
+          name: cleanup-expired-hashes
+          description:
+            'Create cronjob which will delete every day at 12.00am hashes of
+            URLs which are not longer used by 12 months.'
+          enabled: true
+          rate: cron(0 0 * * ? *)

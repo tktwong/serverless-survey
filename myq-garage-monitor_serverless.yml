@@ -1,0 +1,37 @@
+service: myq-garage-monitor
+plugins:
+  - serverless-offline
+
+custom:
+  cloudWatchEventName: ${self:service}-scheduled-event
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - events:EnableRule
+        - events:ListRules
+        - events:DisableRule
+      Resource: "*"
+  environment:
+    DOOR_OPEN_ALLOWED_PERIOD: 30
+
+functions:
+  app:
+    handler: dist/service.monitorGarage
+    events:
+      - schedule:
+          name: ${self:custom.cloudWatchEventName}
+          description: 'Scheduled event that triggers lambda to monitor garage door'
+          rate: rate(30 minutes)
+          enabled: false
+  
+  getCloudWatchEvents:
+    handler: dist/app.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'

@@ -1,0 +1,536 @@
+service: cptac-sync
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-2
+  profile: vai
+  tags:
+    costcenter: pbc
+  stackTags:
+    costcenter: pbc
+  deploymentBucket:
+    tags:
+      costcenter: pbc
+  environment:
+    BSI_SECRET: ${opt:stage, self:provider.stage}-bsi-cptac-service
+    CDR_SECRET: ${opt:stage, self:provider.stage}-cdr-service
+    VSV_SECRET: vsv-api
+    BSI_BASE_URL: ${self:custom.bsi_base_url.${opt:stage, self:provider.stage}, self.bsi_base_url.dev}
+    CDR_BASE_URL: ${self:custom.cdr_base_url.${opt:stage, self:provider.stage}, self.cdr_base_url.dev}
+    BSI_RECEIPTS: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-receipts
+    BSI_RECEIPTS_SYNC: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-receipts-sync
+    BSI_ISCANS: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-iscans
+    BSI_ISCANS_SYNC: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-iscans-sync
+    BSI_MOLECULARQCS: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-molecularqcs
+    BSI_MOLECULARQCS_SYNC: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-molecularqcs-sync
+    BSI_PROTEINS: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-proteins
+    BSI_PROTEINS_SYNC: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-proteins-sync
+    IMAGES: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-images
+    IMAGES_SYNC: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-images-sync
+    LATEST_RECORD: ${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-latest-record
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource: 'arn:aws:secretsmanager:${opt:region, self:provider.region}:*:secret:${opt:stage, self:provider.stage}-bsi-cptac-service-*'
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource: 'arn:aws:secretsmanager:${opt:region, self:provider.region}:*:secret:${opt:stage, self:provider.stage}-cdr-service-*'
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource: 'arn:aws:secretsmanager:us-east-2:639677452477:secret:vsv-api-DlhtmE'
+    - Effect: Allow
+      Action:
+        - dynamodb:ListStreams
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:custom.table_prefix.${opt:stage, self:provider.stage}, self.table_prefix.dev}-*"
+package:
+  exclude:
+    - client/**
+    - README.md
+    - .gitignore
+
+functions:
+  # Scheduled Tasks
+  pull-recent-changes:
+    handler: handlers.pullrecentchanges
+    timeout: 600
+    memorySize: 256
+    alarms:
+      - name: functionErrors
+        threshold: 7
+        period: 10800
+    events:
+      - name: ${self:custom.service_prefix.${opt:stage, self:provider.stage}, self.service_prefix.dev}-iscan-timer
+      - schedule: cron(0 10-23 * * ? *)
+  # Stream Subscriptions
+  sync-receipt:
+    handler: handlers.syncreceipt
+    timeout: 120
+    memorySize: 256
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          maxiumRetryAttempts: 0
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - ShipmentReceipts
+              - StreamArn
+  sync-molecularqc:
+    handler: handlers.syncmolecularqc
+    timeout: 120
+    memorySize: 256
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          maxiumRetryAttempts: 0
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - Molecularqcs
+              - StreamArn
+  sync-iscan:
+    handler: handlers.synciscan
+    timeout: 120
+    memorySize: 256
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          maxiumRetryAttempts: 0
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - Iscans
+              - StreamArn
+  sync-protein:
+    handler: handlers.syncprotein
+    timeout: 120
+    memorySize: 256
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          maxiumRetryAttempts: 0
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - Proteins
+              - StreamArn
+  # Shipment Receipts API
+  get-receipt:
+    handler: handlers.getreceipt
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: receipt/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  get-receipt-sync:
+    handler: handlers.getreceiptsync
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: receiptsync/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  rebuild-receipt:
+    handler: handlers.rebuildreceipt
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: receipt/{id}
+          method: put
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  resync-receipt:
+    handler: handlers.resyncreceipt
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: receiptsync/{id}
+          method: put
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  pull-recent-receipts:
+    handler: handlers.pullrecentreceipts
+    memorySize: 256
+    timeout: 600
+    environment:
+      BSI_RECEIPTS: ${self:service}-${opt:stage, self:provider.stage}-receipts
+      LATEST_RECORD: ${self:service}-${opt:stage, self:provider.stage}-latest-record
+    events:
+      - http:
+         path: pullreceipts
+         method: put
+         async: true
+         cors: true
+         authorizer: aws_iam
+  # IScan API
+  get-iscan:
+    handler: handlers.getiscan
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: iscan/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  get-iscan-sync:
+    handler: handlers.getiscansync
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: iscansync/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  rebuild-iscan:
+    handler: handlers.rebuildiscan
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: iscan/{id}
+          method: put
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  resync-iscan:
+    handler: handlers.resynciscan
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: iscansync/{id}
+          method: put
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  pull-recent-iscan:
+    handler: handlers.pullrecentiscans
+    timeout: 600
+    memorySize: 256
+    events:
+      - http:
+         path: pulliscans
+         method: put
+         async: true
+         cors: true
+         authorizer: aws_iam
+  # Molecular QC API
+  get-molecularqc:
+    handler: handlers.getmolecularqc
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: molecularqc/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  get-molecularqc-sync:
+    handler: handlers.getmolecularqcsync
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: molecularqcsync/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  rebuild-molecularqc:
+    handler: handlers.rebuildmolecularqc
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: molecularqc/{id}
+          method: put
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  resync-molecularqc:
+    handler: handlers.resyncmolecularqc
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: molecularqcsync/{id}
+          method: put
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  pull-recent-molecularqc:
+    handler: handlers.pullrecentmolecularqcs
+    timeout: 600
+    memorySize: 256
+    events:
+      - http:
+         path: pullmolecularqcs
+         method: put
+         async: true
+         cors: true
+         authorizer: aws_iam
+  # Protein API
+  get-protein:
+    handler: handlers.getprotein
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: protein/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  get-protein-sync:
+    handler: handlers.getproteinsync
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: proteinsync/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  rebuild-protein:
+    handler: handlers.rebuildprotein
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: protein/{id}
+          method: put
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  resync-protein:
+    handler: handlers.resyncprotein
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: proteinsync/{id}
+          method: put
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  pull-recent-proteins:
+    handler: handlers.pullrecentproteins
+    timeout: 600
+    memorySize: 256
+    events:
+      - http:
+         path: pullproteins
+         method: put
+         async: true
+         cors: true
+         authorizer: aws_iam
+  # Image API
+  get-image:
+    handler: handlers.getimage
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: image/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  get-image-sync:
+    handler: handlers.getimagesync
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: imagesync/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  rebuild-image:
+    handler: handlers.rebuildimage
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: image/{id}
+          method: put
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  resync-image:
+    handler: handlers.resyncimage
+    timeout: 30
+    memorySize: 256
+    events:
+      - http:
+          path: imagesync/{id}
+          method: put
+          request:
+            parameters:
+              paths:
+                id: true
+          cors: true
+          authorizer: aws_iam
+  pull-recent-images:
+    handler: handlers.pullrecentimages
+    timeout: 600
+    memorySize: 256
+    events:
+      - http:
+         path: pullimages
+         method: put
+         async: true
+         cors: true
+         authorizer: aws_iam
+
+resources:
+  # DynamoDB
+  - ${file(sls-resources/dynamodb-shipment-receipts.yml)}
+  - ${file(sls-resources/dynamodb-shipment-receipts-sync.yml)}
+  - ${file(sls-resources/dynamodb-molecularqcs.yml)}
+  - ${file(sls-resources/dynamodb-molecularqcs-sync.yml)}
+  - ${file(sls-resources/dynamodb-iscans.yml)}
+  - ${file(sls-resources/dynamodb-iscans-sync.yml)}
+  - ${file(sls-resources/dynamodb-proteins.yml)}
+  - ${file(sls-resources/dynamodb-proteins-sync.yml)}
+  - ${file(sls-resources/dynamodb-images.yml)}
+  - ${file(sls-resources/dynamodb-images-sync.yml)}
+  - ${file(sls-resources/dynamodb-latest-record.yml)}
+  # Cognito
+  - ${file(sls-resources/cognito-user-pool.yml)}
+  - ${file(sls-resources/cognito-identity-pool.yml)}
+  # S3
+  # TODO: Add www.domain.com redirect to domain.com
+
+plugins:
+  - serverless-finch
+  - serverless-plugin-aws-alerts
+
+custom:
+  bsi_base_url:
+    prod: 'https://rest.bsisystems.com/api/rest/'
+    mirror: 'https://rest-mirror.bsisystems.com/api/rest/'
+    dev: 'https://rest-mirror.bsisystems.com/api/rest/'
+  cdr_base_url:
+    prod: 'https://cptac3.cancer.gov/cptacdataservices/rest/'
+    mirror: 'https://cptac3.cptac.net/cptacdataservices/rest/'
+    dev: 'https://cptac3.cptac.net/cptacdataservices/rest/'
+  table_prefix:
+    prod: ${self:service}-${opt:stage, self:provider.stage}
+    mirror: ${self:service}-${opt:stage, self:provider.stage}
+    dev: ${self:service}-${opt:stage, self:provider.stage}
+  service_prefix:
+    prod: ${self:service}-${opt:stage, self:provider.stage}
+    mirror: ${self:service}-${opt:stage, self:provider.stage}
+    dev: ${self:service}-${opt:stage, self:provider.stage}
+  client:
+    bucketName: ${self:service}-${opt:stage, self:provider.stage}.aws.vai.org
+    distributionFolder: client/build
+    errorDocument: index.html
+  alerts:
+    definitions:
+      functionErrors:
+        threshold: 3
+        period: 600
+        treatMissingData: notBreaching
+    stages:
+      - prod
+    topics:
+      alarm:
+        topic: ${self:service}-${opt:stage, self:provider.stage}-alerts-alarm
+        notifications:
+          - protocol: email
+            endpoint: anthony.watkins@vai.org
+    alarms:
+      - functionErrors

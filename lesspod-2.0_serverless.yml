@@ -1,0 +1,137 @@
+service: lesspod-22  # 1. Edit whole service name
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'} # 2. Edit AWS region name
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource:
+      - Fn::Join:
+        - ':'
+        - - arn:aws:lambda
+          - Ref: AWS::Region
+          - Ref: AWS::AccountId
+          - function:${self:service}-${opt:stage, self:provider.stage}-*
+  environment:
+    NODE_ENV: production
+    BUCKET_NAMESPACE: lp2mumabcdxyz23  # 3. Specify a new AWS S3 bucket namespace for bundled assets and static assets (should be unique)
+    ASSETS_BUCKET_NAME: ${self:provider.environment.BUCKET_NAMESPACE}-assets-${opt:stage, 'dev'}
+    STATIC_BUCKET_NAME: ${self:provider.environment.BUCKET_NAMESPACE}-static-${opt:stage, 'dev'}
+    ASSETS_BUCKET_URL: https://s3.${self:provider.region}.amazonaws.com/${self:provider.environment.ASSETS_BUCKET_NAME}
+    STATIC_BUCKET_URL: https://s3.${self:provider.region}.amazonaws.com/${self:provider.environment.STATIC_BUCKET_NAME}
+    
+custom:
+  webpack:
+    # webpackConfig: ./folder/my-webpack.config.js
+  serverless-offline:
+    port: 3000
+  s3Sync:
+    - bucketName: ${self:provider.environment.ASSETS_BUCKET_NAME}
+      localDir: .nuxt/dist/client
+    - bucketName: ${self:provider.environment.STATIC_BUCKET_NAME}
+      localDir: static
+  customDomain:
+    domainName: 'lesspod.org'
+    basePath: ''
+    certificateName: 'lesspod.org'
+    stage: 'dev'
+    createRoute53Record: true
+  warmup:
+    folderName: '_warmup' # Name of the folder created for the generated warmup 
+    cleanFolder: false
+    memorySize: 256
+    name: 'make-them-pop'
+    timeout: 20
+    prewarm: true
+
+package:
+  exclude:
+    - src/**
+  include:
+    - serverless.yml
+
+functions:
+  nuxt-renderer:
+    handler: handler.renderNUXT
+    memorySize: 512
+    timeout: 30
+    warmup: true
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors: true
+  API-renderer:
+    handler: handlerAPI.renderAPI
+    memorySize: 512
+    timeout: 30
+    events:
+      - http:
+          path: /api
+          method: ANY
+          cors: true
+      - http:
+          path: /api/{proxy+}
+          method: ANY
+          cors: true
+
+resources:
+  Resources:
+    AssetsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.ASSETS_BUCKET_NAME}
+    AssetsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: AssetsBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement: [
+            {
+              Action: ['s3:GetObject'],
+              Effect: 'Allow',
+              Resource: {
+                Fn::Join: ['', ['arn:aws:s3:::', { Ref: 'AssetsBucket' }, '/*']],
+              },
+              Principal: '*'
+            },
+          ]
+    StaticBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.STATIC_BUCKET_NAME}
+    StaticBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement: [
+            {
+              Action: ['s3:GetObject'],
+              Effect: 'Allow',
+              Resource: {
+                Fn::Join: ['', ['arn:aws:s3:::', { Ref: 'StaticBucket' }, '/*']],
+              },
+              Principal: '*'
+            },
+          ]
+
+
+plugins:
+  # - serverless-webpack
+  - serverless-s3-sync
+  - serverless-offline
+  - serverless-domain-manager
+  - serverless-plugin-warmup

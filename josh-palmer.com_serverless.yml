@@ -1,0 +1,163 @@
+service: secret
+
+package:
+  exclude:
+    - node_modules/**
+    - ./**
+  include:
+    - ./server/**
+
+plugins:
+  - serverless-secrets                     # safely inject secret environment variables into lambda functions
+  - serverless-plugin-include-dependencies # when making lambda package, remove any node modules not used by handlers
+  - serverless-dynamodb-local              # use a local instance of dynamodb when using serverless-offline
+  - serverless-offline                     # test lambda functions locally
+
+custom:
+  serverless-offline:
+    port: 4000
+  dynamodb:
+    start:
+      port: 8000
+      migrate: true  # auto create the table when dynamodb local starts
+      inMemory: true # destroy the database when dynamodb local stops
+  config: ${file(./serverlessconfig.yml)}
+  stage: ${self:custom.config.stage}
+  region: ${self:custom.config.${self:custom.stage}.region}
+  table_name: ${self:custom.config.${self:custom.stage}.table_name}
+  allow_origin: ${self:custom.config.${self:custom.stage}.origin}
+  policyversion: "2012-10-17"
+  tableresource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TABLE}"
+  secretresource: "arn:aws:ssm:${self:provider.region}:*:parameter/CAPTCHA_SECRET_KEY"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+
+  environment:
+    DEPLOYMENT: ${self:custom.stage}
+    REGION: ${self:custom.region}
+    TABLE: ${self:custom.table_name}
+    ALLOW_ORIGIN: ${self:custom.allow_origin}
+
+  environmentSecrets:
+    CAPTCHA_SECRET_KEY: "CAPTCHA_SECRET_KEY"
+
+functions:
+  fetch:
+    handler: server/handlers.fetchHandler
+    role: FetchRole
+    events:
+      - http:
+          path: ${self:service}/fetch
+          method: post
+          resp: json
+          cors:
+            origin: ${self:custom.allow_origin}
+            headers:
+              - Content-Type
+              - Origin
+              - Accept
+
+  submit:
+    handler: server/handlers.submitHandler
+    role: SubmitRole
+    events:
+      - http:
+          path: ${self:service}/submit
+          method: post
+          resp: json
+          cors:
+            origin: ${self:custom.allow_origin}
+            headers:
+              - Content-Type
+              - Origin
+              - Accept
+
+
+resources:
+  Resources:
+    MarkdownTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:provider.environment.TABLE}
+        AttributeDefinitions:
+         - AttributeName: id
+           AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+
+    SubmitRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        RoleName: SubmitRole-${self:custom.stage}
+        Path: "/"
+        AssumeRolePolicyDocument:
+          Version: ${self:custom.policyversion}
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: SubmitPolicy-${self:custom.stage}
+            PolicyDocument:
+              Version: ${self:custom.policyversion}
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                  Resource: ${self:custom.tableresource}
+          - PolicyName: GetSecretPolicy-${self:custom.stage}
+            PolicyDocument:
+              Version: ${self:custom.policyversion}
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ssm:GetParameters
+                  Resource: ${self:custom.secretresource}
+
+    FetchRole:
+          Type: 'AWS::IAM::Role'
+          Properties:
+            RoleName: FetchRole-${self:custom.stage}
+            Path: "/"
+            AssumeRolePolicyDocument:
+              Version: ${self:custom.policyversion}
+              Statement:
+                - Effect: Allow
+                  Principal:
+                    Service:
+                      - lambda.amazonaws.com
+                  Action: sts:AssumeRole
+            Policies:
+              - PolicyName: FetchPolicy-${self:custom.stage}
+                PolicyDocument:
+                  Version: ${self:custom.policyversion}
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - dynamodb:Query
+                        - dynamodb:GetItem
+                        - dynamodb:BatchWriteItem
+                      Resource: ${self:custom.tableresource}
+              - PolicyName: GetSecretPolicy-${self:custom.stage}
+                PolicyDocument:
+                  Version: ${self:custom.policyversion}
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - ssm:GetParameters
+                      Resource: ${self:custom.secretresource}

@@ -1,0 +1,83 @@
+service: chargingbreak-api
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: python3.6
+  stackName: chargingbreak-${self:provider.stage}
+  stage: ${opt:stage, self:custom.defaultStage}
+  environment:
+    CHARGERS_TABLE: chargers
+    TIPS_TABLE: tips
+    TIP_VOTES_TABLE: tip_votes
+    RATINGS_TABLE: ratings
+    USER_POOL_ARN:
+      Fn::GetAtt: [ CBUser, Arn ]
+    LAMBDA_FUNCTION_PREFIX: ${self:service}-${self:provider.stage}
+    RATING_TYPES: 'FOOD, KIDS, RESTROOMS, SHOPPING, ATMOSPHERE'
+    RATING_WEIGHT: 'USER=1, VERIFIED=3, ADMIN=5'
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+        - cognito-idp:ListUsers
+        - lambda:InvokeFunction
+      Resource:
+        - "arn:aws:dynamodb:*:*:table/${self:provider.environment.CHARGERS_TABLE}*"
+        - "arn:aws:dynamodb:*:*:table/${self:provider.environment.TIPS_TABLE}*"
+        - "arn:aws:dynamodb:*:*:table/${self:provider.environment.TIP_VOTES_TABLE}*"
+        - "arn:aws:dynamodb:*:*:table/${self:provider.environment.RATINGS_TABLE}*"
+        - "${self:provider.environment.USER_POOL_ARN}"
+        - "arn:aws:lambda:*:*:function:${self:service}-${self:provider.stage}-rating_cache"
+        
+package:
+  individually: true
+  excludeDevDependencies: true
+  exclude:
+    - ./**
+  include:
+    - src/__init__.py
+            
+custom:
+  defaultStage: ${git:branch}
+  customDomain:
+    domainName: api.chargingbreak.com
+    basePath: ""
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    
+plugins:
+  - serverless-plugin-git-variables
+  - serverless-domain-manager
+
+functions:
+  - ${file(resources/functions/charger.yml)}
+  - ${file(resources/functions/adminUpdateChargers.yml)}
+  - ${file(resources/functions/search.yml)}
+  - ${file(resources/functions/tip.yml)}
+  - ${file(resources/functions/tip_vote.yml)}
+  - ${file(resources/functions/rating.yml)}
+  - ${file(resources/functions/rating_cache.yml)}
+  - ${file(resources/functions/user.yml)}
+  
+resources:
+  - ${file(resources/tables/chargers.yml)}
+  - ${file(resources/tables/tips.yml)}
+  - ${file(resources/tables/tip_votes.yml)}
+  - ${file(resources/tables/ratings.yml)}
+  - ${file(resources/CBUser.yml)}
+  - ${file(resources/CognitoAuthorizer.yml)}

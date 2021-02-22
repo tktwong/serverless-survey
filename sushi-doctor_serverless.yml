@@ -1,0 +1,185 @@
+service: sushi-doctor # Never change
+useDotenv: true
+provider:
+  name: aws
+  region: ${env:AWS_DEPLOYMENT_REGION}
+  lambdaHashingVersion: 20201221
+  runtime: provided.al2
+  environment:
+    APP_NAME: 'sushi-doctor'
+    APP_SECRET: ${env:APP_SECRET}
+    APP_ENV: ${env:APP_ENV}
+    APP_DEBUG: ${env:APP_DEBUG}
+    APP_STAGE: ${env:APP_STAGE}
+    JWT_COOKIE_SECURE: 'true'
+    JWT_KEYS_DIRECTORY: ${env:JWT_KEYS_DIRECTORY}
+    AWS_KEY: ${env:AWS_KEY}
+    AWS_SECRET: ${env:AWS_SECRET}
+    AWS_DEPLOYMENT_REGION: ${env:AWS_DEPLOYMENT_REGION}
+    AWS_DYNAMO_DB_ENDPOINT: ${env:AWS_DYNAMO_DB_ENDPOINT}
+    AWS_QUEUE_ID: ${env:AWS_QUEUE_ID}
+plugins:
+  - ./vendor/bref/bref
+package:
+  exclude:
+    - .serverless/**
+    - node_modules/**
+    - tests/**
+    - var/log/**
+    - public/assets/**
+    - node_modules/**
+functions:
+  website: # ToDo: attach AmazonSQSFullAccess
+    handler: public/index.php
+    timeout: 28
+    layers:
+      - ${bref:layer.php-80-fpm}
+    events:
+      - httpApi: '*'
+      - schedule:
+          rate: rate(${env:AWS_WARMUP_RATE})
+          input:
+            warmer: true
+  console:
+    handler: bin/console
+    timeout: 120
+    layers:
+      - ${bref:layer.php-80} # PHP Web
+      - ${bref:layer.console} # PHP Console
+  worker:
+    handler: bin/consumer.php
+    timeout: 20
+    reservedConcurrency: 5
+    layers:
+      - ${bref:layer.php-80}
+    events:
+      - sqs:
+          arn: arn:aws:sqs:${env:AWS_DEPLOYMENT_REGION}:${env:AWS_QUEUE_ID}:sushi-doctor_${opt:stage}_queue
+          batchSize: 1
+resources:
+  Resources:
+    Assets:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: sushi-doctor-asset-${opt:stage}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: [ "*" ]
+              AllowedMethods: [ GET ]
+              AllowedOrigins: [ "*" ]
+    AssetsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref Assets # Ref for the bucket defined above
+        PolicyDocument:
+          Statement:
+            -   Effect: Allow
+                Principal: '*' # everyone
+                Action: 's3:GetObject' # to read
+                Resource: !Join ['/', [!GetAtt Assets.Arn, '*']] # thin
+    Front:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: sushi-doctor-front-${opt:stage}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: [ "*" ]
+              AllowedMethods: [ GET ]
+              AllowedOrigins: [ "*" ]
+    FrontBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref Front # Ref for the bucket defined above
+        PolicyDocument:
+          Statement:
+            -   Effect: Allow
+                Principal: '*' # everyone
+                Action: 's3:GetObject' # to read
+                Resource: !Join ['/', [!GetAtt Front.Arn, '*']] # things in the bucket # alternatively you can write out Resource: 'arn:aws:s3:::<bucket-name>/*'
+    WebsiteCDN:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - ${env:APP_DOMAIN} # sushi-doctor.com
+          ViewerCertificate:
+            AcmCertificateArn: ${env:APP_DOMAIN_CERTIFICATE}
+            SslSupportMethod: 'sni-only'
+            MinimumProtocolVersion: TLSv1.1_2016
+          Enabled: true
+          PriceClass: PriceClass_100
+          HttpVersion: http2
+          Origins:
+            -   Id: Website
+                DomainName: !Join ['.', [!Ref HttpApi, 'execute-api', !Ref AWS::Region, 'amazonaws.com']]
+                CustomOriginConfig:
+                  OriginProtocolPolicy: 'https-only' # API Gateway only supports HTTPS
+                OriginCustomHeaders:
+                  -   HeaderName: 'X-Forwarded-Host'
+                      HeaderValue: ${env:APP_DOMAIN}
+            -   Id: Assets
+                DomainName: !GetAtt Assets.RegionalDomainName
+                S3OriginConfig: {}
+            -   Id: Front
+                DomainName: !GetAtt Front.RegionalDomainName
+                S3OriginConfig: {}
+          DefaultCacheBehavior:
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            TargetOriginId: Website
+            DefaultTTL: 0
+            MinTTL: 0
+            MaxTTL: 0
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: all
+              Headers:
+                - 'Accept'
+                - 'Accept-Encoding'
+                - 'Accept-Language'
+                - 'Authorization'
+                - 'Origin'
+                - 'Referer'
+            ViewerProtocolPolicy: redirect-to-https # Force https
+          CacheBehaviors:
+            -   PathPattern: 'robots.txt'
+                TargetOriginId: Assets
+                AllowedMethods: [GET, HEAD]
+                ForwardedValues:
+                  QueryString: 'false'
+                  Cookies:
+                    Forward: none
+                ViewerProtocolPolicy: redirect-to-https
+                Compress: true
+            -   PathPattern: 'favicon.ico'
+                TargetOriginId: Assets
+                AllowedMethods: [GET, HEAD]
+                ForwardedValues:
+                  QueryString: 'false'
+                  Cookies:
+                    Forward: none
+                ViewerProtocolPolicy: redirect-to-https
+                Compress: true
+            -   PathPattern: 'assets/*' # Assets will be served under the `/assets/` prefix
+                TargetOriginId: Assets # the static files on S3
+                AllowedMethods: [GET, HEAD]
+                ForwardedValues:
+                  QueryString: 'false'
+                  Cookies:
+                    Forward: none
+                ViewerProtocolPolicy: redirect-to-https
+                Compress: true
+            -   PathPattern: 'build/*' # Front will be served under the `/build/` prefix
+                TargetOriginId: Front
+                AllowedMethods: [GET, HEAD]
+                ForwardedValues:
+                  QueryString: 'false'
+                  Cookies:
+                    Forward: none
+                ViewerProtocolPolicy: redirect-to-https
+                Compress: true
+          CustomErrorResponses: # Force CloudFront to not cache HTTP errors
+            -   ErrorCode: 500
+                ErrorCachingMinTTL: 0
+            -   ErrorCode: 504
+                ErrorCachingMinTTL: 0

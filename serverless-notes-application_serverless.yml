@@ -1,0 +1,154 @@
+service: serverless-notes-application-service
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:Query'
+        - 'dynamodb:Scan'
+        - 'dynamodb:GetItem'
+        - 'dynamodb:PutItem'
+        - 'dynamodb:UpdateItem'
+        - 'dynamodb:DeleteItem'
+      Resource:
+        - 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-${self:service}-*'
+        - 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-${self:service}-*/*'
+  environment:
+    REGION: ${self:provider.region}
+    NOTES_TABLE_NAME: !Ref Notes
+
+functions:
+  getNotes:
+    handler: handler.getNotes
+    events:
+      - http:
+          path: notes
+          method: get
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  getNote:
+    handler: handler.getNote
+    events:
+      - http:
+          path: note/{id}
+          method: get
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+          request:
+            parameters:
+              paths:
+                id: true
+  createNote:
+    handler: handler.createNote
+    events:
+      - http:
+          path: note
+          method: post
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  updateNote:
+    handler: handler.updateNote
+    events:
+      - http:
+          path: note/{id}
+          method: put
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+          request:
+            parameters:
+              paths:
+                id: true
+  deleteNote:
+    handler: handler.deleteNote
+    events:
+      - http:
+          path: note/{id}
+          method: delete
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+          request:
+            parameters:
+              paths:
+                id: true
+
+resources:
+  Resources:
+    Notes:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.stage}-${self:service}-notes
+
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+    UserPool:
+      Type: 'AWS::Cognito::UserPool'
+      Properties:
+        UserPoolName: ${self:provider.stage}-${self:service}-user-pool
+        UsernameAttributes: [email]
+
+    UserPoolClient:
+      Type: 'AWS::Cognito::UserPoolClient'
+      Properties:
+        ClientName: ${self:provider.stage}-${self:service}-user-pool-client
+        UserPoolId:
+          Ref: UserPool
+
+    IdentityPool:
+      Type: 'AWS::Cognito::IdentityPool'
+      Properties:
+        IdentityPoolName: Identity Pool
+        AllowUnauthenticatedIdentities: false
+        CognitoIdentityProviders:
+          - ClientId:
+              Ref: UserPoolClient
+            ProviderName:
+              Fn::GetAtt:
+                - UserPool
+                - ProviderName
+
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: cognito-authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [UserPool, Arn]

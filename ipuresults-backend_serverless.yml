@@ -1,0 +1,78 @@
+service:
+  name: ipuresults
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  env: ${file(./vars.env.js):getEnvVars}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ap-south-1
+  profile: ${self:custom.env.AWS_PROFILE}
+  iamManagedPolicies:
+    - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+    - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
+  environment:
+    DB_HOST: ${self:custom.env.DB_HOST}
+    DB_USER: ${self:custom.env.DB_USER}
+    DB_PASSWORD: ${self:custom.env.DB_PASSWORD}
+    BUCKET_NAME: ${self:custom.env.BUCKET_NAME}
+    START_URL: ${self:custom.env.START_URL}
+    DB_PORT: ${self:custom.env.DB_PORT}
+    DB_NAME: ${self:custom.env.DB_NAME}
+    DOWNLOADS_PER_MINUTE: ${self:custom.env.DOWNLOADS_PER_MINUTE}
+    CONVERTS_PER_MINUTE: ${self:custom.env.CONVERTS_PER_MINUTE}
+    PARSE_PER_MINUTE: ${self:custom.env.PARSE_PER_MINUTE}
+    RANK_PER_MINUTE: ${self:custom.env.RANK_PER_MINUTE}
+    ARN_PREFIX: ${self:custom.env.ARN_PREFIX}
+    FRONTEND_ORIGIN: ${self:custom.env.FRONTEND_ORIGIN}
+    SOCKET_TIMEOUT: ${self:custom.env.SOCKET_TIMEOUT}
+    CONNECTION_TIMEOUT: ${self:custom.env.CONNECTION_TIMEOUT}
+
+functions:
+  fetchLinks:
+    handler: handler.fetchLinks
+    events:
+      - schedule: rate(30 minutes)
+    timeout: 10
+  downloadPdf:
+    handler: handler.downloadPdf
+    memorySize: 1728
+    timeout: 30
+  convertToTxt:
+    handler: handler.convertToTxt
+    memorySize: 1728
+    timeout: 30
+  parseTxt:
+    handler: handler.parseTxt
+    memorySize: 1728
+    timeout: 60
+  executeScripts:
+    handler: handler.executeScripts
+    events:
+      - schedule: rate(1 minute)
+  getResult:
+    handler: handler.getResult
+    events:
+      - http:
+          path: results/{rollNumber}
+          method: GET
+  getRanks:
+    handler: handler.getRanks
+    events:
+      - http:
+          path: ranks/{type}
+          method: GET
+  rankResultSets:
+    handler: handler.rankResultSets
+    timeout: 30
+  options:
+    handler: handler.options
+    events:
+      - http:
+          path: '{proxy+}'
+          method: OPTIONS

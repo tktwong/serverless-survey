@@ -1,0 +1,292 @@
+service: fishwrapper
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+  customDomain:
+    domainName: ${ssm:domain-${self:provider.stage}}
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  apigwBinary:
+    types:
+      - '*/*'
+  serverless-offline-ssm:
+    stages:
+      - offline
+
+plugins:
+  - serverless-offline-ssm
+  - serverless-domain-manager
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-apigw-binary
+
+package:
+  exclude:
+    - test/**
+    - coverage/**
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource:
+        - { "Fn::GetAtt": ["PostsDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["FeaturesDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["UsersDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["SubscribersDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["InfiniteTimelineDynamoDBTable", "Arn" ] }
+        - Fn::Join:
+          - "/"
+          -
+            - { "Fn::GetAtt": ["InfiniteTimelineDynamoDBTable", "Arn" ] }
+            - "index/*"
+        - { "Fn::GetAtt": ["GlobalDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["QuizzesDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["InstaShortsDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["CrossSolnsDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["VideosDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["IssuesDynamoDBTable", "Arn" ] }
+        - 'arn:aws:s3:::fishwrapper-pictures-${self:provider.stage}/*'
+        - 'arn:aws:s3:::${ssm:storageBucket}/*'
+  environment:
+    POSTS_TABLE: 'posts-table-${self:provider.stage}'
+    FEATS_TABLE: 'features-table-${self:provider.stage}'
+    USERS_TABLE: 'users-table-${self:provider.stage}'
+    SUBSCRIBERS_TABLE: 'subscribers-table-${self:provider.stage}'
+    TIME_TABLE: 'infinite-table-${self:provider.stage}'
+    GLOBAL_TABLE: 'global-table-${self:provider.stage}'
+    QUIZZES_TABLE: 'quizzes-table-${self:provider.stage}'
+    INSTA_TABLE: 'insta-table-${self:provider.stage}'
+    CROSS_TABLE: 'cross-table-${self:provider.stage}'
+    VIDEO_TABLE: 'video-table-${self:provider.stage}'
+    ISSUE_TABLE: 'issues-table-${self:provider.stage}'
+    COOKIE_SECRET: ${ssm:cookieSecret}
+    S3_BUCKET: ${ssm:s3Bucket}
+    PICS_BUCKET: ${ssm:storageBucket}
+    SOLR_SITE: ${ssm:solrSite}
+    SOLR_PORT: ${ssm:solrPort}
+    SOLR_CORE: '${ssm:solrCore}-${self:provider.stage}'
+
+functions:
+  app:
+    handler: index.handler
+    events:
+      - http: 'ANY /'
+      - http: 'ANY {proxy+}'
+
+resources:
+  Resources:
+    PostsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: postId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: postId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'posts-table-${self:provider.stage}'
+
+    FeaturesDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: index
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: index
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'features-table-${self:provider.stage}'
+
+    UsersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: user
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: user
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'users-table-${self:provider.stage}'
+
+    SubscribersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: email
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: email
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'subscribers-table-${self:provider.stage}'
+
+    InfiniteTimelineDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: N
+          -
+            AttributeName: week
+            AttributeType: N
+          -
+            AttributeName: selected
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'infinite-table-${self:provider.stage}'
+        GlobalSecondaryIndexes:
+          - IndexName: gsiSelectedTimeline
+            KeySchema:
+              -
+                AttributeName: selected
+                KeyType: HASH
+              -
+                AttributeName: week
+                KeyType: RANGE
+            Projection:
+              ProjectionType: INCLUDE
+              NonKeyAttributes:
+                - content
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+
+    GlobalDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: key
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'global-table-${self:provider.stage}'
+
+    QuizzesDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: quizId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: quizId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'quizzes-table-${self:provider.stage}'
+
+    InstaShortsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: instaId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: instaId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'insta-table-${self:provider.stage}'
+
+    CrossSolnsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: crossId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: crossId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'cross-table-${self:provider.stage}'
+
+    VideosDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: videoId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: videoId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'video-table-${self:provider.stage}'
+
+    IssuesDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: issueId
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: issueId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'issues-table-${self:provider.stage}'

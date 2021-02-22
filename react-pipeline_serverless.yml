@@ -1,0 +1,97 @@
+service: react-pipeline
+
+frameworkVersion: ">=1.9.0 <2.0.0"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  devCognitoPool: 'arn:aws:cognito-idp:us-east-1:060069385732:userpool/us-east-1_54XZ88sE0'
+  prodCognitoPool: 'add me'
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs6.10
+environment:
+  DATA_TABLE: {Ref: DataDB}
+  ARTICLES_TABLE: {Ref: ArticlesDB}
+iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Scan
+        - dynamodb:Query
+      Resource:
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - ":table/"
+              - Ref: DataDB
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - '/index/*'
+              - Ref: DataDB
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - ":table/"
+              - Ref: ArticlesDB
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - '/index/*'
+              - Ref: ArticlesDB
+
+functions:
+  gql:
+    handler: backend/gql_endpoint.handler
+    events:
+    - http:
+        authorizer:
+          name: pool_auth
+          arn: '${self:custom.${self:custom.stage}CognitoPool}'
+        cors: true
+        path: /gql
+        method: post
+
+resources:
+  Outputs: ${file(resources/outputs.yml)}
+  Resources:
+    WebSite:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        WebsiteConfiguration:
+          ErrorDocument: index.html
+          IndexDocument: index.html
+    ArticlesDB: ${file(resources/article-db.yml)}
+package:
+  exclude:
+    - bin/**
+    - static/**
+    - resources/**
+    - package.json
+    - node_modules/**
+  include:
+    - node_modules/uuid/**
+    - node_modules/lodash/**
+    - node_modules/graphql/**
+    - node_modules/iterall/**

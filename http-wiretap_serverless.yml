@@ -1,0 +1,115 @@
+service:
+  name: ls-er-wiretap-test-infra
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ serviceTable, Arn ]
+
+functions:
+  getOk:
+    handler: build/handler.getOk
+    events:
+      - http:
+          method: get
+          path: downstream/ok
+
+  getNotFound:
+    handler: build/handler.getNotFound
+    events:
+      - http:
+          method: get
+          path: downstream/not-found
+
+  postCreated:
+    handler: build/handler.postCreated
+    events:
+      - http:
+          method: post
+          path: downstream/created
+
+  postServerError:
+    handler: build/handler.postServerError
+    events:
+      - http:
+          method: post
+          path: downstream/server-error
+
+  getSlowReply:
+    handler: build/handler.getSlowReply
+    timeout: 30
+    events:
+      - http:
+          method: get
+          path: downstream/slow-reply
+
+  getFixedBody:
+    handler: build/handler.getFixedBody
+    events:
+      - http:
+          method: get
+          path: downstream/fixed-body
+
+  postRelayBack:
+    handler: build/handler.postRelayBack
+    events:
+      - http:
+          method: post
+          path: downstream/relay-back
+
+  requestCapture:
+    handler: build/handler.captureRequest
+    environment:
+      TABLE_NAME: "ServiceTable"
+    events:
+      - http:
+          method: post
+          path: downstream/request-capture
+
+  getCapturedRequests:
+    handler: build/handler.getCapturedRequests
+    environment:
+      TABLE_NAME: "ServiceTable"
+    events:
+      - http:
+          method: get
+          path: downstream/request-capture
+
+resources:
+  Resources:
+    serviceTable:
+        Type: AWS::DynamoDB::Table
+        Properties:
+          TableName: "ServiceTable"
+          AttributeDefinitions:
+            - AttributeName: id
+              AttributeType: S
+          KeySchema:
+            - AttributeName: id
+              KeyType: HASH
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+
+  Outputs:
+    serviceUrl:
+      Value:
+        Fn::Join:
+          - ""
+          - - "https://"
+            - Ref: ApiGatewayRestApi
+            - ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}/downstream"

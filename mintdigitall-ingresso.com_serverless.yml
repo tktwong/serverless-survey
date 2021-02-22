@@ -1,0 +1,97 @@
+service: "ingresso-com-backend"
+
+custom:
+  tableName: "ingresso-com-backend-table-${self:provider.stage}"
+  sgApiKey: ""
+
+provider:
+  name: "aws"
+  runtime: "nodejs8.10"
+  stage: "dev"
+  region: "us-east-1"
+  environment:
+    MESSAGES_TABLE: ${self:custom.tableName}
+    AWS_DEPLOY_REGION: ${self:provider.region}
+    SENDGRID_API_KEY: ${self:custom.sgApiKey}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["ContactsDynamoDBTable", "Arn"] }
+        - {
+            "Fn::Join":
+              [
+                "/",
+                [
+                  { "Fn::GetAtt": ["ContactsDynamoDBTable", "Arn"] },
+                  "index",
+                  "emailIndex",
+                ],
+              ],
+          }
+        - {
+            "Fn::Join":
+              [
+                "/",
+                [
+                  { "Fn::GetAtt": ["ContactsDynamoDBTable", "Arn"] },
+                  "index",
+                  "companyIndex",
+                ],
+              ],
+          }
+
+functions:
+  createContact:
+    handler: handler.createContact
+    events:
+      - http:
+          method: POST
+          path: /contacts
+          private: false
+          cors: true
+
+resources:
+  Resources:
+    ContactsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: contactId
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+          - AttributeName: company
+            AttributeType: S
+        KeySchema:
+          - AttributeName: contactId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: emailIndex
+            KeySchema:
+              - AttributeName: email
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          - IndexName: companyIndex
+            KeySchema:
+              - AttributeName: company
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

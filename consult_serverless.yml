@@ -1,0 +1,280 @@
+service: consult-rest-api
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+        domain:
+          sources:
+            - table: User
+              sources: [./dynamodbTest/consultUserTable.json]
+            - table: Event
+              sources: [./dynamodbTest/eventTable.json]
+            - table: UserEventMapper
+              sources: [./dynamodbTest/UserEventMapperTable.json]
+
+    migration:
+      dir: offline/migrations
+    webpack:
+      IncludeModules: true
+
+provider:
+  name: aws
+  region: us-west-2
+  runtime: nodejs6.10
+  stage: dev
+  environment:
+    EVENT_TABLE: Event
+    USER_TABLE: User
+    USER_EVENT_MAPPER_TABLE: UserEventMapper
+
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.EVENT_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.USER_TABLE}"
+
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.USER_EVENT_MAPPER_TABLE}"
+
+
+functions:
+  CreateScheduler:
+    handler: scheduler/create.create
+    events:
+      - http:
+          path: schedule
+          method: post
+          cors: true
+
+  ListScheduler:
+    handler: scheduler/list.list
+    events:
+      - http:
+          path: schedule
+          method: get
+          cors: true
+
+  GetScheduler:
+    handler: scheduler/get.get
+    events:
+      - http:
+          path: schedule/get
+          method: get
+          cors: true
+
+  UpdateScheduler:
+      handler: scheduler/update.update
+      events:
+        - http:
+            path: schedule
+            method: put
+            cors: true
+
+  DeleteSchedular:
+      handler: scheduler/delete.delete
+      events:
+        - http:
+            path: schedule
+            method: delete
+            cors: true
+
+  UpdateEventSchedule:
+          handler: scheduler/eventSchedule.update
+          events:
+            - http:
+                path: user/event/schedule
+                method: put
+                cors: true
+
+
+  updateProfile:
+      handler: user/profile/update.update
+      events:
+        - http:
+            path: user/profile
+            method: put
+            cors: true
+
+  UserCreate:
+      handler: user/create.create
+      events:
+        - http:
+            path: user
+            method: post
+            cors: true
+
+  GetAuthUserInitData:
+      handler: user/get.get
+      events:
+        - http:
+            path: user
+            method: get
+            cors: true
+  GetFreeEventsFromUser:
+      handler: user/event/free/get.get
+      events:
+        - http:
+            path: user/event/free
+            method: get
+            cors: true
+  GetUserNextEvent:
+      handler:  user/event/next/get.get
+      events:
+        - http:
+            path: user/event/next
+            method: get
+            cors: true
+  GetUserEventJoin:
+      handler:  user/event/join/get.get
+      events:
+        - http:
+            path: user/event/join
+            method: get
+            cors: true
+  GetConsultants:
+    handler:  admin/consultant/list.list
+    events:
+      - http:
+          path: admin/consultant
+          method: get
+          cors: true
+  GetConsultees:
+      handler:  admin/consultee/list.list
+      events:
+        - http:
+            path: admin/consultee
+            method: get
+            cors: true
+
+  TestAuthToken:
+          handler: scheduler/test.create
+          events:
+            - http:
+                path: scheduler/test
+                method: post
+                cors: true
+  JwtDecorde:
+        handler: jwtTokenDecorder/get.get
+        events:
+          - http:
+              path: jwt
+              method: get
+              cors: true
+
+  UpdateRelatedUsers:
+        handler:  admin/relatedUser/update.update
+        events:
+          - http:
+              path: admin/relatedUser
+              method: put
+              cors: true
+  SuggestConsultants:
+        handler:  consultant/suggest/list.list
+        events:
+          - http:
+              path: consultant/suggest/{id}/{consultantRole}
+              method: get
+              cors: true
+
+
+resources:
+  Resources:
+    EventDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.EVENT_TABLE}
+
+    UserDynamoDbTable:
+          Type: 'AWS::DynamoDB::Table'
+          DeletionPolicy: Retain
+          Properties:
+            AttributeDefinitions:
+              -
+                AttributeName: id
+                AttributeType: S
+            KeySchema:
+              -
+                AttributeName: id
+                KeyType: HASH
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+            TableName:  ${self:provider.environment.USER_TABLE}
+
+
+    UserEventMapperDynamoDbTable:
+              Type: 'AWS::DynamoDB::Table'
+              
+              Properties:
+                AttributeDefinitions:
+                  -
+                    AttributeName: userId
+                    AttributeType: S
+                  -
+                    AttributeName: startDate
+                    AttributeType: S
+                KeySchema:
+                  -
+                    AttributeName: userId
+                    KeyType: HASH
+                  -
+                    AttributeName: startDate
+                    KeyType: RANGE
+                ProvisionedThroughput:
+                  ReadCapacityUnits: 1
+                  WriteCapacityUnits: 1
+                TableName:  ${self:provider.environment.USER_EVENT_MAPPER_TABLE}
+

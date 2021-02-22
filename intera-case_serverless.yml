@@ -1,0 +1,91 @@
+service: intera-case
+
+frameworkVersion: '2'
+
+custom:
+  stage: dev
+
+  #dynamodb-local
+  dynamodb:
+    stages:
+      - dev
+    start:
+      dbPath: ./
+      migrate: false
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  lambdaHashingVersion: 20201221
+  profile: personal
+  region: sa-east-1
+  stage: dev
+
+  apiGateway:
+    shouldStartNameWithService: true
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:TagResource
+        - dynamodb:UntagResource
+      Resource:
+        - 'Fn::GetAtt': [TalentsTable, Arn]
+        - 'Fn::GetAtt': [OpenjobsTable, Arn]
+
+functions:
+  graphql:
+    handler: handler.graphqlHandler
+    events:
+    - http:
+        path: graphql
+        method: post
+        cors: true
+  talents:
+    handler: lambdas.talents
+    name: talents
+  openJobs:
+    handler: lambdas.openjobs
+    name: openjobs
+
+resources:
+  Resources:
+    TalentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: talents
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    OpenjobsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: openjobs
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+plugins:
+  - serverless-offline
+  - serverless-dynamodb-local

@@ -1,0 +1,76 @@
+service: gloomhaven-online-ws
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: gloomhaven
+  stage: ${opt:stage, 'local'}
+  region: ${opt:region, 'local'}
+  environment: ${self:custom.env.vars}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:GetItem'
+        - 'dynamodb:PutItem'
+        - 'dynamodb:UpdateItem'
+        - 'dynamodb:Query'
+        - 'dynamodb:Scan'
+      Resource:
+        Fn::GetAtt:
+          - DynamoDbTable
+          - Arn
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  env: ${file(./envs/${self:provider.stage}.yml)}
+  serverless-offline:
+    port: 4000
+  dynamodb:
+    start:
+      dbPath: ${env:PWD}/.db
+      migrate: true
+      port: 3003
+    stages:
+      - ${self:provider.stage}
+
+functions:
+  connect:
+    handler: src/connection/connect/index.default
+    events:
+      - websocket:
+          route: $connect
+  disconnect:
+    handler: src/connection/disconnect/index.default
+    events:
+      - websocket:
+          route: $disconnect
+  event:
+    handler: src/connection/event/index.default
+    events:
+      - websocket:
+          route: $default
+          routeResponseSelectionExpression: $default
+
+resources:
+  Resources:
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.stage}-${self:provider.region}-gloomhaven-online
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

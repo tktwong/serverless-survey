@@ -1,0 +1,966 @@
+service:
+  name: rexor-integration-service
+
+plugins:
+  - '@hewmen/serverless-plugin-typescript'
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-west-1
+  stage: ${opt:stage, 'local'}
+  memorySize: 128
+  timeout: 28
+  environment: ${file(./environment/environment.${self:provider.stage}.json)}
+  role: 
+    Fn::GetAtt: [ RexorIntegrationLambdaVpcExecutionRole, Arn ]
+
+#---------------------------------------------------------------------------
+# FUNCTIONS
+#---------------------------------------------------------------------------  
+functions:
+  AzureADTokenAuthorizer:
+    handler: function/security/azure-ad-token-authorizer.handler
+
+  Auth:
+    handler: function/security/auth.handler
+    events:
+      - http:
+          method: get
+          path: login
+          cors: ${self:custom.LambdaCorsOptions}
+      - http:
+          method: get
+          path: token
+          cors: ${self:custom.LambdaCorsOptions}
+          request:
+            parameters:
+              querystrings:
+                code: true
+                id_token: true
+                state: true
+                session_state: true
+      - http:
+          method: get
+          path: logout
+          cors: ${self:custom.LambdaCorsOptions}
+  
+  ProjectMapping:
+    handler: function/project/project-mapping.handler
+    events: 
+      - http: 
+          method: post
+          path: project-mapping
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: delete
+          path: project-mapping/{id}
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: get
+          path: project-mapping
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: get
+          path: project-mapping/{id}
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+
+  IssueTypeMapping:
+    handler: function/project/issue-type-mapping.handler
+    events: 
+      - http:
+          method: post
+          path: issue-type-mapping
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: get
+          path: issue-type-mapping
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+          request:
+          parameters:
+            querystrings:
+              jiraProjectRexorProjectId: true
+      - http:
+          method: delete
+          path: issue-type-mapping/{id}  
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+
+  AbsenceMapping:
+    handler: function/project/absence-mapping.handler
+    events: 
+      - http:
+          method: get
+          path: absence
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+          request:
+          parameters:
+            querystrings:
+              jiraProjectRexorProjectId: true
+      - http:
+          method: post
+          path: absence
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: delete
+          path: absence/{id}
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+
+  JiraProject:
+    handler: function/project/jira-project.handler
+    events: 
+      - http:
+          method: get
+          path: jira-project
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: get
+          path: jira-project/{id}
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}   
+      - http:
+          method: get
+          path: jira-project/{id}/issue-type
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: get
+          path: jira-project/{id}/issue
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}  
+      - http:
+          method: get
+          path: jira-user/{projectKey}
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}    
+            
+  RexorProject:
+    handler: function/project/rexor-project.handler
+    events: 
+      - http:
+          method: get
+          path: rexor-project
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: get
+          path: rexor-project/{uid}
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: get
+          path: rexor-project/{uid}/activity
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: get
+          path: rexor-project/{uid}/time-code
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+
+  Company:
+    handler: function/company/company.handler
+
+  Person:
+    handler: function/person/person.handler
+
+  WorklogTransferController:
+    handler: function/worklog/worklog-transfer-controller.handler
+    events: 
+      - http:
+          method: get
+          path: worklog/transfer
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: post
+          path: worklog/transfer
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: delete
+          path: worklog/transfer/{worklogId}
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: get
+          path: worklog
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+      - http:
+          method: post
+          path: worklog/transferred
+          cors: ${self:custom.LambdaCorsOptions}
+          authorizer: ${self:custom.LambdaAuthorizerOptions}
+
+  TimeTransaction:
+    handler: function/time-transaction/time-transaction.handler
+    timeout: 300
+    vpc:
+      securityGroupIds:
+        - ${self:custom.LambdaSecurityGroupId}
+      subnetIds:
+        - Ref: "RexorIntegrationLambdaPrivateSubnet" 
+  
+  FindState:
+    handler: function/state-machine/worklog-transfer/find-state.handler
+    timeout: 300
+    vpc:
+      securityGroupIds:
+        - ${self:custom.LambdaSecurityGroupId}
+      subnetIds:
+        - Ref: "RexorIntegrationLambdaPrivateSubnet" 
+
+  TransferState:
+    handler: function/state-machine/worklog-transfer/transfer-state.handler
+    timeout: 300
+    vpc:
+      securityGroupIds:
+        - ${self:custom.LambdaSecurityGroupId}
+      subnetIds:
+        - Ref: "RexorIntegrationLambdaPrivateSubnet" 
+  
+  CountState:
+    handler: function/state-machine/worklog-transfer/count-state.handler
+    timeout: 300
+    vpc:
+      securityGroupIds:
+        - ${self:custom.LambdaSecurityGroupId}
+      subnetIds:
+        - Ref: "RexorIntegrationLambdaPrivateSubnet" 
+  
+  LogErrorState:
+    handler: function/state-machine/worklog-transfer/log-error-state.handler
+    timeout: 300
+    vpc:
+      securityGroupIds:
+        - ${self:custom.LambdaSecurityGroupId}
+      subnetIds:
+        - Ref: "RexorIntegrationLambdaPrivateSubnet" 
+
+  TempoHttpClient:
+    handler: function/http-client/tempo-http-client.handler
+    vpc:
+      securityGroupIds:
+        - ${self:custom.LambdaSecurityGroupId}
+      subnetIds:
+        - Ref: "RexorIntegrationLambdaPrivateSubnet" 
+
+  JiraProjectRexorProject:
+    timeout: 300
+    handler: function/orm/jira-project-rexor-project.handler
+    vpc:
+      securityGroupIds:
+        - ${self:custom.DatabaseSecurityGroupId} 
+      subnetIds:
+        - ${self:custom.DefaultVpcSubnet_1}
+        - ${self:custom.DefaultVpcSubnet_2}
+        - ${self:custom.DefaultVpcSubnet_3}
+
+  IssueTypeProjectActivity:
+    timeout: 300 
+    handler: function/orm/issue-type-project-activity.handler 
+    vpc:
+      securityGroupIds:
+        - ${self:custom.DatabaseSecurityGroupId} 
+      subnetIds:
+        - ${self:custom.DefaultVpcSubnet_1}
+        - ${self:custom.DefaultVpcSubnet_2}
+        - ${self:custom.DefaultVpcSubnet_3}
+
+  WorklogTimeTransaction:
+    timeout: 300 
+    handler: function/orm/worklog-time-transaction.handler 
+    vpc:
+      securityGroupIds:
+        - ${self:custom.DatabaseSecurityGroupId} 
+      subnetIds:
+        - ${self:custom.DefaultVpcSubnet_1}
+        - ${self:custom.DefaultVpcSubnet_2}
+        - ${self:custom.DefaultVpcSubnet_3}
+  
+  WorklogTransfer:
+    timeout: 300
+    handler: function/orm/worklog-transfer.handler
+    vpc:
+      securityGroupIds:
+        - ${self:custom.DatabaseSecurityGroupId} 
+      subnetIds:
+        - ${self:custom.DefaultVpcSubnet_1}
+        - ${self:custom.DefaultVpcSubnet_2}
+        - ${self:custom.DefaultVpcSubnet_3}
+  
+  Worklog:
+    timeout: 300
+    handler: function/orm/worklog.handler
+    vpc:
+      securityGroupIds:
+        - ${self:custom.DatabaseSecurityGroupId} 
+      subnetIds:
+        - ${self:custom.DefaultVpcSubnet_1}
+        - ${self:custom.DefaultVpcSubnet_2}
+        - ${self:custom.DefaultVpcSubnet_3}
+  
+  AuthenticationToken:
+    handler: function/orm/authentication-token.handler
+    vpc:
+      securityGroupIds:
+        - ${self:custom.DatabaseSecurityGroupId} 
+      subnetIds:
+        - ${self:custom.DefaultVpcSubnet_1}
+        - ${self:custom.DefaultVpcSubnet_2}
+        - ${self:custom.DefaultVpcSubnet_3}
+  
+  Absence:
+    handler: function/orm/absence.handler
+    vpc:
+      securityGroupIds:
+        - ${self:custom.DatabaseSecurityGroupId} 
+      subnetIds:
+        - ${self:custom.DefaultVpcSubnet_1}
+        - ${self:custom.DefaultVpcSubnet_2}
+        - ${self:custom.DefaultVpcSubnet_3}
+
+  IssueTimeCode:
+    handler: function/orm/issue-time-code.handler
+    vpc:
+      securityGroupIds:
+        - ${self:custom.DatabaseSecurityGroupId} 
+      subnetIds:
+        - ${self:custom.DefaultVpcSubnet_1}
+        - ${self:custom.DefaultVpcSubnet_2}
+        - ${self:custom.DefaultVpcSubnet_3}
+
+package:
+  exclude:
+    - "node_modules/@types/**"
+
+#---------------------------------------------------------------------------
+# CUSTOM VARIABLES
+#---------------------------------------------------------------------------  
+custom:
+  AwsAccount: 0000000000000
+  LambdaArnPrefix: "arn:aws:lambda:${self:provider.region}:${self:custom.AwsAccount}:function:${self:service}-${self:provider.stage}-"
+  StepFunctionsArnPrefix: "arn:aws:states:${self:provider.region}:${self:custom.AwsAccount}:stateMachine:"
+
+  LambdaCorsOptions:
+    origin: '*'
+    headers:
+      - Origin
+      - Accept
+      - Content-Type
+      - X-Amz-Date
+      - Authorization
+      - X-Api-Key
+      - X-Amz-Security-Token
+      - X-Amz-User-Agent
+    allowCredentials: true
+
+  WorklogTransferStateMachineName: "WorklogTransferStateMachine-${self:provider.stage}"
+  WorklogTransferStateMachineArn: "${self:custom.StepFunctionsArnPrefix}${self:custom.WorklogTransferStateMachineName}"
+  WorklogTransferStateMachineExecutionNamePrefix: "WorklogTransferExecution-${self:provider.stage}"
+
+  TempoHttpClientLambdaArn: '${self:custom.LambdaArnPrefix}TempoHttpClient'
+  JiraProjectRexorProjectLambdaArn: '${self:custom.LambdaArnPrefix}JiraProjectRexorProject'
+  IssueTypeProjectActivityLambdaArn: '${self:custom.LambdaArnPrefix}IssueTypeProjectActivity'
+  WorklogTimeTransactionLambdaArn: '${self:custom.LambdaArnPrefix}WorklogTimeTransaction'
+  WorklogTransferLambdaArn: '${self:custom.LambdaArnPrefix}WorklogTransfer'
+  WorklogLambdaArn: '${self:custom.LambdaArnPrefix}Worklog'
+  AuthenticationTokenLambdaArn: '${self:custom.LambdaArnPrefix}AuthenticationToken'
+  AbsenceLambdaArn: '${self:custom.LambdaArnPrefix}Absence'
+  IssueTimeCodeLambdaArn: '${self:custom.LambdaArnPrefix}IssueTimeCode'
+  FindStateLambdaArn:  '${self:custom.LambdaArnPrefix}FindState'
+  TransferStateLambdaArn:  '${self:custom.LambdaArnPrefix}TransferState'
+  CountStateLambdaArn:  '${self:custom.LambdaArnPrefix}CountState'
+  LogErrorLambdaArn: '${self:custom.LambdaArnPrefix}LogErrorState'
+
+  LambdaAuthorizerOptions:
+    name: AzureADTokenAuthorizer
+    resultTtlInSeconds: 0
+    identitySource: method.request.header.Authorization
+    type: token
+
+  ApiGatewayUrl: 
+    Fn::Join : ["", ["https://", {"Ref": "ApiGatewayRestApi" }, ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}"]]
+  DatabaseEndpoint: 
+    Fn::GetAtt: ["RexorIntegrationDbCluster","Endpoint.Address"]
+  DatabasePort: 
+    Fn::GetAtt: ["RexorIntegrationDbCluster", "Endpoint.Port"]
+
+  ApplicationLogGroupName: 
+    Fn::Join: ["-", ["rexor-integration-service-log", "${self:provider.stage}"]]
+
+  ProjectMappingLogStreamName: "ProjectMappingLogStream"
+  IssueTypeMappingLogStreamName: "IssueTypeMappingLogStream"
+
+  DefaultVpcId: "vpc-8d1d42ea"
+  DefaultVpcSubnet_1: "subnet-qqqqqqq"
+  DefaultVpcSubnet_2: "subnet-wwwwwww"
+  DefaultVpcSubnet_3: "subnet-eeeeeee"
+  DefaultRouteTableId: "rtb-rrrrrrr"
+  DefaultAvailabilityZone: "eu-west-1a"
+
+  ElasticIpAddressAllocationId_local: "eipalloc-aaaaaaa"
+  ElasticIpAddressAllocationId_dev: "eipalloc-bbbbbbb"
+  ElasticIpAddressAllocationId_stage: "eipalloc-cccccccc"
+  ElasticIpAddressAllocationId_prod: "eipalloc-dddddddd"
+
+  LambdaPublicSubnetIpRange_local: "171.32.48.0/22"
+  LambdaPrivateSubnetIpRange_local: "171.32.52.0/22"
+
+  LambdaPublicSubnetIpRange_dev: "171.32.56.0/22"
+  LambdaPrivateSubnetIpRange_dev: "171.32.60.0/22"
+
+  LambdaPublicSubnetIpRange_stage: "171.32.64.0/20"
+  LambdaPrivateSubnetIpRange_stage: "171.32.80.0/20"
+
+  LambdaPublicSubnetIpRange_prod: "171.32.96.0/20"
+  LambdaPrivateSubnetIpRange_prod: "171.32.112.0/20"
+
+  DatabaseName: rexor_integration_database
+  DatabaseUsername: pass12345  
+  DatabasePassword: pass12345
+  DatabaseSecurityGroupId: 
+    Fn::GetAtt: ["RexorIntegrationDbSecurityGroup" , "GroupId" ]
+
+  LambdaSecurityGroupId: 
+    Fn::GetAtt: ["RexorIntegrationLambdaSecurityGroup" , "GroupId" ]
+
+  serverless-offline:
+    port: 4000
+    noTimeout: true
+
+resources:
+#---------------------------------------------------------------------------
+# STACK OUTPUTS
+#---------------------------------------------------------------------------  
+  Outputs:
+    ApiGatewayUrl:
+      Description: URL of the API Gatway for deployed stage.
+      Value:
+        ${self:custom.ApiGatewayUrl}
+      Export: 
+        Name: 
+          Fn::Join: ["-", ["rexor-integration-service", "${self:provider.stage}", "api-gateway-url"]]
+
+    DatabaseEndpoint:
+      Description: URL for the Aurora database cluster.
+      Value:
+        ${self:custom.DatabaseEndpoint}
+
+    DatabasePort:
+      Description: Port for the Aurora database cluster.
+      Value:
+        ${self:custom.DatabasePort}
+
+    DatabaseName:
+      Description: Name of service layer database.
+      Value:
+        ${self:custom.DatabaseName}
+
+  Resources:
+
+#---------------------------------------------------------------------------
+# API GATEWAY CONFIGURATION
+#---------------------------------------------------------------------------  
+    GatewayResponse4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId: 
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    
+
+#---------------------------------------------------------------------------
+# STEP FUNCTIONS
+#---------------------------------------------------------------------------      
+    WorklogTransferStateMachine:
+      Type: "AWS::StepFunctions::StateMachine"
+      Properties:
+        StateMachineName: ${self:custom.WorklogTransferStateMachineName}
+        RoleArn:
+          Fn::GetAtt: [ RexorIntegrationStepFunctionExecutionRole, Arn ]
+        DefinitionString: | 
+          {  
+            "Comment":"Executes transfer of worklogs to Rexor.",
+            "StartAt":"Find",
+            "States":{
+              "Find":{
+                "Type": "Task",
+                "Resource":"${self:custom.FindStateLambdaArn}",
+                "InputPath":null,
+                "ResultPath":"$.worklogTransferEntity",
+                "Next": "Transfer",
+                "Catch":[
+                    {  
+                        "ErrorEquals":[  
+                          "States.ALL"
+                        ],
+                        "ResultPath": "$.error",
+                        "Next":"LogError"
+                    }
+                ]
+              },
+              "Transfer":{  
+                  "Type":"Task",
+                  "Resource":"${self:custom.TransferStateLambdaArn}",
+                  "InputPath":"$.worklogTransferEntity",
+                  "Next":"Count",
+                  "Catch":[  
+                    {  
+                        "ErrorEquals":[  
+                          "States.ALL"
+                        ],
+                        "ResultPath": "$.error",
+                        "Next":"LogError"
+                    }
+                  ]
+              },
+              "Count":{  
+                  "Type":"Task",
+                  "Resource":"${self:custom.CountStateLambdaArn}",
+                  "ResultPath":"$.remainingWorklogs",
+                  "Next":"TransferNext",
+                  "Catch":[  
+                    {  
+                        "ErrorEquals":[  
+                          "States.ALL"
+                        ],
+                        "ResultPath": "$.error",
+                        "Next":"LogError"
+                    }
+                  ]
+              },
+              "TransferNext":{  
+                  "Type":"Choice",
+                  "Choices":[  
+                    {  
+                        "Variable":"$.remainingWorklogs",
+                        "NumericGreaterThanEquals":1,
+                        "Next":"Find"
+                    }
+                  ],
+                  "Default":"Finalize"
+              },
+              "LogError":{  
+                  "Type":"Task",
+                  "Comment":"Logs errors to CloudWatch that occur during state machine execution.",
+                  "Resource":"${self:custom.LogErrorLambdaArn}",
+                  "End":true
+              },
+              "Finalize":{  
+                  "Type":"Pass",
+                  "End":true
+              }
+            }
+          }
+
+#---------------------------------------------------------------------------
+# CLOUDWATCH WARMUP EVENTS
+#---------------------------------------------------------------------------      
+    WarmupLambdaEventRule1: 
+      Type: "AWS::Events::Rule"
+      DependsOn:
+        - TempoHttpClientLambdaFunction
+        - JiraProjectRexorProjectLambdaFunction
+        - IssueTypeProjectActivityLambdaFunction
+        - AbsenceLambdaFunction
+        - IssueTimeCodeLambdaFunction
+      Properties: 
+        Description: "WarmupLambdaEventRule1-${self:provider.stage}"
+        ScheduleExpression: "rate(3 minutes)"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Arn: ${self:custom.TempoHttpClientLambdaArn}
+            Id: "TempoHttpClient"
+          - 
+            Arn: ${self:custom.JiraProjectRexorProjectLambdaArn}
+            Id: "JiraProjectRexorProject"
+          - 
+            Arn: ${self:custom.IssueTypeProjectActivityLambdaArn}
+            Id: "IssueTypeProjectActivity"
+          - 
+            Arn: ${self:custom.AbsenceLambdaArn}
+            Id: "Absence"
+          - 
+            Arn: ${self:custom.IssueTimeCodeLambdaArn}
+            Id: "IssueTimeCode"
+      
+
+    WarmupLambdaEventRule2: 
+      Type: "AWS::Events::Rule"
+      DependsOn:
+        - WorklogTimeTransactionLambdaFunction
+        - WorklogTransferLambdaFunction
+        - WorklogLambdaFunction
+        - AuthenticationTokenLambdaFunction
+      Properties: 
+        Description: "WarmupLambdaEventRule2-${self:provider.stage}"
+        ScheduleExpression: "rate(3 minutes)"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Arn: ${self:custom.WorklogTimeTransactionLambdaArn}
+            Id: "WorklogTimeTransaction"
+          - 
+            Arn: ${self:custom.WorklogTransferLambdaArn}
+            Id: "WorklogTransfer"
+          - 
+            Arn: ${self:custom.WorklogLambdaArn}
+            Id: "Worklog"  
+          - 
+            Arn: ${self:custom.AuthenticationTokenLambdaArn}
+            Id: "AuthenticationToken"
+
+    EventInvokePermissionTempoHttpClient: 
+      Type: "AWS::Lambda::Permission"
+      DependsOn: TempoHttpClientLambdaFunction
+      Properties: 
+        FunctionName: ${self:custom.TempoHttpClientLambdaArn}
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "WarmupLambdaEventRule1"
+            - "Arn"
+
+    EventInvokePermissionJiraProjectRexorProject: 
+      Type: "AWS::Lambda::Permission"
+      DependsOn: JiraProjectRexorProjectLambdaFunction
+      Properties: 
+        FunctionName: ${self:custom.JiraProjectRexorProjectLambdaArn}
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "WarmupLambdaEventRule1"
+            - "Arn"
+
+    EventInvokePermissionIssueTypeProjectActivity: 
+      Type: "AWS::Lambda::Permission"
+      DependsOn: IssueTypeProjectActivityLambdaFunction
+      Properties: 
+        FunctionName: ${self:custom.IssueTypeProjectActivityLambdaArn}
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "WarmupLambdaEventRule1"
+            - "Arn"
+
+    EventInvokePermissionAbsence: 
+      Type: "AWS::Lambda::Permission"
+      DependsOn: AbsenceLambdaFunction
+      Properties: 
+        FunctionName: ${self:custom.AbsenceLambdaArn}
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "WarmupLambdaEventRule1"
+            - "Arn"
+
+    EventInvokePermissionIssueTimeCode: 
+      Type: "AWS::Lambda::Permission"
+      DependsOn: IssueTimeCodeLambdaFunction
+      Properties: 
+        FunctionName: ${self:custom.IssueTimeCodeLambdaArn}
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "WarmupLambdaEventRule1"
+            - "Arn"  
+
+    EventInvokePermissionWorklogTimeTransaction: 
+      Type: "AWS::Lambda::Permission"
+      DependsOn: WorklogTimeTransactionLambdaFunction
+      Properties: 
+        FunctionName: ${self:custom.WorklogTimeTransactionLambdaArn}
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "WarmupLambdaEventRule2"
+            - "Arn"  
+
+    EventInvokePermissionWorklogTransfer: 
+      Type: "AWS::Lambda::Permission"
+      DependsOn: WorklogTransferLambdaFunction
+      Properties: 
+        FunctionName: ${self:custom.WorklogTransferLambdaArn}
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "WarmupLambdaEventRule2"
+            - "Arn" 
+
+    EventInvokePermissionWorklog: 
+      Type: "AWS::Lambda::Permission"
+      DependsOn: WorklogLambdaFunction
+      Properties: 
+        FunctionName: ${self:custom.WorklogLambdaArn}
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "WarmupLambdaEventRule2"
+            - "Arn"
+
+    EventInvokePermissionAuthenticationToken: 
+      Type: "AWS::Lambda::Permission"
+      DependsOn: AuthenticationTokenLambdaFunction
+      Properties: 
+        FunctionName: ${self:custom.AuthenticationTokenLambdaArn}
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "WarmupLambdaEventRule2"
+            - "Arn" 
+
+#---------------------------------------------------------------------------
+# CLOUDWATCH LOG 
+#---------------------------------------------------------------------------     
+    RexorIntegrationLogGroup:
+      Type: "AWS::Logs::LogGroup"
+      Properties:
+        LogGroupName: ${self:custom.ApplicationLogGroupName}
+        RetentionInDays: 3653
+
+    RexorIntegrationProjectMappingLogStream:
+      Type: "AWS::Logs::LogStream"
+      Properties:
+        LogGroupName: ${self:custom.ApplicationLogGroupName}
+        LogStreamName: ${self:custom.ProjectMappingLogStreamName}
+      DependsOn : RexorIntegrationLogGroup
+
+    RexorIntegrationIssueTypeMappingLogStream:
+      Type: "AWS::Logs::LogStream"
+      Properties:
+        LogGroupName: ${self:custom.ApplicationLogGroupName}
+        LogStreamName: ${self:custom.IssueTypeMappingLogStreamName}
+      DependsOn : RexorIntegrationLogGroup
+
+
+#---------------------------------------------------------------------------
+# IAM ROLES
+#---------------------------------------------------------------------------         
+    RexorIntegrationLambdaVpcExecutionRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "lambda.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Path: "/"
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - arn:aws:iam::aws:policy/AWSLambdaExecute
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+          - arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess
+        RoleName:
+          {"Fn::Join": ["", ["${self:provider.region}", "-RexorIntegrationLambdaVpcExecutionRole", "-${self:provider.stage}"]]}
+
+    RexorIntegrationStepFunctionExecutionRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "states.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Path: "/"
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+        RoleName:
+          {"Fn::Join": ["", ["${self:provider.region}", "-RexorIntegrationStepFunctionExecutionRole", "-${self:provider.stage}"]]}
+    
+#---------------------------------------------------------------------------
+# VPC SECURITY GROUPS
+#---------------------------------------------------------------------------      
+    RexorIntegrationDbSecurityGroup:
+      Type: "AWS::EC2::SecurityGroup"
+      Properties:
+        GroupName: "RexorIntegrationDbSecurityGroup-${self:provider.stage}"
+        GroupDescription: "Security group for access to Aurora database cluster."
+        VpcId: ${self:custom.DefaultVpcId}
+
+    RexorIntegrationDbSecurityGroupInboundRule1:
+      Type: 'AWS::EC2::SecurityGroupIngress'
+      Properties:
+        GroupId: 
+          Ref: RexorIntegrationDbSecurityGroup
+        IpProtocol: tcp
+        FromPort: '3306'
+        ToPort: '3306'
+        SourceSecurityGroupId:
+          Ref: RexorIntegrationDbSecurityGroup
+
+    RexorIntegrationDbSecurityGroupInboundRule2:
+      Type: 'AWS::EC2::SecurityGroupIngress'
+      Properties:
+        GroupId: 
+          Ref: RexorIntegrationDbSecurityGroup
+        IpProtocol: tcp
+        FromPort: '3306'
+        ToPort: '3306'
+        CidrIp: "119.235.280.115/32"
+
+    RexorIntegrationDbSubnetGroup:
+      Type: "AWS::RDS::DBSubnetGroup"
+      Properties:
+        DBSubnetGroupDescription: "A database subnet group for Rexor Integration Aurora database."
+        SubnetIds:
+          - ${self:custom.DefaultVpcSubnet_1}
+          - ${self:custom.DefaultVpcSubnet_2}
+          - ${self:custom.DefaultVpcSubnet_3}
+
+    RexorIntegrationDbClusterParameterGroup:
+      Type: "AWS::RDS::DBClusterParameterGroup"
+      Properties:
+        Family: "aurora5.6"
+        Description: "Database cluster parameter group for Rexor Integration Aurora database."
+        Parameters:
+          time_zone: UTC
+
+#---------------------------------------------------------------------------
+# AWS AURORA DATABASE (MYSQL)
+#---------------------------------------------------------------------------      
+    RexorIntegrationDbCluster:
+      Type: "AWS::RDS::DBCluster"
+      DeletionPolicy: Snapshot
+      Properties:
+        DatabaseName:
+          ${self:custom.DatabaseName}
+        Engine:
+          aurora
+        MasterUsername:
+          ${self:custom.DatabaseUsername}
+        MasterUserPassword:
+          ${self:custom.DatabasePassword}
+        DBSubnetGroupName:
+          Ref: RexorIntegrationDbSubnetGroup
+        DBClusterParameterGroupName:
+          Ref: RexorIntegrationDbClusterParameterGroup
+        Port: 3306
+        PreferredMaintenanceWindow: Sun:02:00-Sun:04:00
+        VpcSecurityGroupIds:
+          - Ref: RexorIntegrationDbSecurityGroup
+    
+    RexorIntegrationDbInstance:
+      Type: "AWS::RDS::DBInstance"
+      Properties:
+        DBSubnetGroupName:
+          Ref: RexorIntegrationDbSubnetGroup
+        Engine: aurora
+        DBClusterIdentifier:
+          Ref: RexorIntegrationDbCluster
+        PubliclyAccessible: 'true'
+        DBInstanceClass: "db.t2.small"
+
+#---------------------------------------------------------------------------
+# VPC SUBNETS & ROUTE TABLES
+#---------------------------------------------------------------------------             
+    RexorIntegrationLambdaPublicSubnet:
+      Type: "AWS::EC2::Subnet"
+      Properties:
+        AvailabilityZone: ${self:custom.DefaultAvailabilityZone}
+        CidrBlock: ${self:custom.LambdaPublicSubnetIpRange_${self:provider.stage}}
+        VpcId: ${self:custom.DefaultVpcId}
+    
+    RexorIntegrationSubnetRouteTableAssociation1:
+      Type: "AWS::EC2::SubnetRouteTableAssociation"
+      Properties:
+        SubnetId:
+          Ref: RexorIntegrationLambdaPublicSubnet
+        RouteTableId: ${self:custom.DefaultRouteTableId}
+      DependsOn: RexorIntegrationLambdaPublicSubnet
+
+    RexorIntegrationLambdaPrivateSubnet:
+      Type: "AWS::EC2::Subnet"
+      Properties:
+        AvailabilityZone: ${self:custom.DefaultAvailabilityZone}
+        CidrBlock: ${self:custom.LambdaPrivateSubnetIpRange_${self:provider.stage}}
+        VpcId: ${self:custom.DefaultVpcId}
+    
+    RexorIntegrationLambdaPrivateSubnetRouteTable:
+      Type: "AWS::EC2::RouteTable"
+      Properties:
+        VpcId: ${self:custom.DefaultVpcId}
+
+    RexorIntegrationSubnetRouteTableAssociation2:
+      Type: "AWS::EC2::SubnetRouteTableAssociation"
+      Properties:
+        SubnetId:
+          Ref: RexorIntegrationLambdaPrivateSubnet
+        RouteTableId: 
+          Ref: RexorIntegrationLambdaPrivateSubnetRouteTable
+      DependsOn: 
+        - RexorIntegrationLambdaPrivateSubnet
+        - RexorIntegrationLambdaPrivateSubnetRouteTable
+
+    RexorIntegrationLambdaPrivateSubnetRoute:
+      Type: "AWS::EC2::Route"
+      Properties:
+        DestinationCidrBlock: "0.0.0.0/0"
+        NatGatewayId:
+          Ref: RexorIntegrationNatGateway
+        RouteTableId:
+          Ref: RexorIntegrationLambdaPrivateSubnetRouteTable
+      DependsOn: 
+        - RexorIntegrationNatGateway
+        - RexorIntegrationLambdaPrivateSubnetRouteTable
+
+    RexorIntegrationLambdaSecurityGroup:
+      Type: "AWS::EC2::SecurityGroup"
+      Properties:
+        GroupName: "RexorIntegrationLambdaSecurityGroup-${self:provider.stage}"
+        GroupDescription: "Default security group for lambda executuion within VPC."
+        VpcId: ${self:custom.DefaultVpcId}
+
+#---------------------------------------------------------------------------
+# VPC NAT
+#---------------------------------------------------------------------------
+    RexorIntegrationNatGateway:
+      Type: "AWS::EC2::NatGateway"
+      Properties:
+        SubnetId:
+          Ref: RexorIntegrationLambdaPublicSubnet
+        AllocationId: ${self:custom.ElasticIpAddressAllocationId_${self:provider.stage}}
+      DependsOn: RexorIntegrationLambdaPublicSubnet
+        
+
+          
+
+        
+                   

@@ -1,0 +1,104 @@
+
+service: api-com-layers
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  
+##spotinst:
+  ##environment: ${file(../config.json):${opt:stage, self:provider.stage, 'dev'}}
+
+provider:
+  name: aws
+  stage:  ${opt:stage, 'dev'}
+  runtime: python3.8
+  tracing:
+    apiGateway: true
+    lambda: true
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'sns:*'
+      Resource: 
+        - arn:aws:sns:us-east-1:229169531288:SNS-${self:provider.stage}
+    - Effect: 'Allow'
+      Action:
+        - sqs:ChangeMessageVisibility
+        - sqs:DeleteMessage
+        - sqs:ReceiveMessage
+        - sqs:SendMessage
+      Resource:
+        - arn:aws:sqs:us-east-1:*:SQS-Principal-${self:provider.stage}*
+    - Effect: "Allow" # xray permissions (required)
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+        - sqs:SendMessage
+      Resource:
+        - "*"
+  
+package:
+  exclude:
+    - layer/**
+    
+layers:
+  LayerDependencies:
+    path: layer
+    description: "api exercise layers"
+    
+functions:
+      
+  api-gateway-to-sqs:
+    handler: handler.sqshandler
+    events:
+      - http:
+          path: /inseresqs
+          method: post
+          cors: true
+    layers:
+      - {Ref: LayerDependenciesLambdaLayer}
+    environment:
+      sqsUrl:
+        - https://sqs.us-east-1.amazonaws.com/229169531288/SQS-Principal-${self:provider.stage}
+      
+  envia-sqs-lambda:
+    handler: handler.printar
+    events:
+      - sqs:
+          arn:
+            - arn:aws:sqs:us-east-1:229169531288:SQS-Principal-${self:provider.stage}
+          batchSize: 1
+          enabled: true
+    layers:
+      - {Ref: LayerDependenciesLambdaLayer}
+    maximumRetryAttempts: 1
+    ##onError:
+    ##  - arn:aws:sqs:us-east-1:229169531288:DLQ-Principal-${self:provider.stage}
+    
+  envia-sqs2:
+    handler: handler.sqshandler2
+    events:
+      - sqs:
+          arn:
+            - arn:aws:sqs:us-east-1:229169531288:DLQ-Principal-${self:provider.stage}
+          batchSize: 1
+          enabled: true
+    environment:
+      sqsUrl2:
+        - https://sqs.us-east-1.amazonaws.com/229169531288/SQS-2-${self:provider.stage}
+    layers:
+      - {Ref: LayerDependenciesLambdaLayer}
+    maximumRetryAttempts: 1
+  
+  envia-sns:
+    handler: handler.sendToSNS
+    events:
+      - sqs:
+          arn:
+            - arn:aws:sqs:us-east-1:229169531288:SQS-2-${self:provider.stage}
+    environment:
+      snsArn:
+        - arn:aws:sns:us-east-1:229169531288:SNS-${self:provider.stage}
+    layers:
+      - {Ref: LayerDependenciesLambdaLayer}
+    maximumRetryAttempts: 1
+      

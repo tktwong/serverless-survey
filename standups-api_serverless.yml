@@ -1,0 +1,289 @@
+# The `service` block is the name of the service
+service: serverless-dev
+
+# Configuration variables
+#custom:
+  #secrets: ${file(env.json)}
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: us-east-1
+  iamRoleStatements:
+    $ref: ./iamRoleStatements.json
+
+# Lambda Functions Below Defined for Standup API
+functions:
+  createTeam:
+    handler: functions/createTeam.handler
+    events:
+      - http:
+          path: createteam
+          method: post
+          cors: true
+          #authorizer: aws_iam # Members are protected
+
+  addChildTeam:
+   handler: functions/addChildTeam.handler
+   events:
+     - http:
+         path: addchildteam
+         method: post
+         cors: true
+  #        authorizer: aws_iam # 
+  teamInfo:
+    handler: functions/teamInfo.handler
+    events:
+      - http:
+          path: teaminfo
+          method: post
+          cors: true
+          #authorizer: aws_iam # TODO: fixed cors
+  #
+  createTeamMember:
+    handler: functions/createTeamMember.handler
+    events:
+      - http:
+          path: createteammember
+          method: post
+          cors: true
+  #
+  transcodeVideo:
+    handler: functions/transcodeVideos.handler
+
+resources:
+  Resources:
+    TeamList:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: ID
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: ID
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'TeamList'
+        
+    TeamMembersList:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: TeamID
+            AttributeType: S
+          -
+            AttributeName: ID
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: TeamID
+            KeyType: HASH
+          -
+            AttributeName: ID
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'TeamMembersList'
+
+    TeamParentList:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: ParentID
+            AttributeType: S
+          -
+            AttributeName: ID
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: ParentID
+            KeyType: HASH
+          -
+            AttributeName: ID
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'TeamParentList'
+
+    UrlList:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: UserpoolTableDateID
+            AttributeType: S
+          -
+            AttributeName: ID
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: UserpoolTableDateID
+            KeyType: HASH
+          -
+            AttributeName: ID
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'UrlList'
+
+#   InputBucket:
+#     Type: AWS::S3::Bucket
+#     Properties:
+#       # Set the CORS policy
+#       CorsConfiguration:
+#         CorsRules:
+#           -
+#             AllowedOrigins:
+#               - '*'
+#             AllowedHeaders:
+#               - '*'
+#             AllowedMethods:
+#               - GET
+#               - PUT
+#               - POST
+#               - DELETE
+#               - HEAD
+#             MaxAge: 3000
+#
+#   OutputBucket:
+#     Type: AWS::S3::Bucket
+#     Properties:
+#       # Set the CORS policy
+#       CorsConfiguration:
+#         CorsRules:
+#           -
+#             AllowedOrigins:
+#               - '*'
+#             AllowedHeaders:
+#               - '*'
+#             AllowedMethods:
+#               - GET
+#               - PUT
+#               - POST
+#               - DELETE
+#               - HEAD
+#             MaxAge: 3000
+
+#   CognitoUserPool:
+#     Type: AWS::Cognito::UserPool
+#     Properties:
+#       # Generate a name based on the stage
+#       UserPoolName: standup-user-pool
+#       # Set email as an alias
+#       AliasAttributes:
+#         - email
+#       AutoVerifiedAttributes:
+#         - email
+#       Unable to get main verification to change to email instead of username
+#   CognitoUserPoolClient:
+#     Type: AWS::Cognito::UserPoolClient
+#     Properties:
+#       # Generate an app client name based on the stage
+#       ClientName: standup-user-pool-client
+#       UserPoolId:
+#         Ref: CognitoUserPool
+#       ExplicitAuthFlows:
+#         - ADMIN_NO_SRP_AUTH
+#       GenerateSecret: false
+#
+#   CognitoIdentityPool:
+#     Type: AWS::Cognito::IdentityPool
+#     Properties:
+#       # Generate a name based on the stage
+#       IdentityPoolName: standupIdentityPool
+#       # Don't allow unathenticated users
+#       AllowUnauthenticatedIdentities: false
+#       # Link to our User Pool
+#       CognitoIdentityProviders:
+#         - ClientId:
+#             Ref: CognitoUserPoolClient
+#           ProviderName:
+#             Fn::GetAtt: [ CognitoUserPool, ProviderName ]
+
+    # IAM roles
+#    CognitoIdentityPoolRoles:
+#      Type: AWS::Cognito::IdentityPoolRoleAttachment
+#      Properties:
+#        IdentityPoolId:
+#          Ref: CognitoIdentityPool
+#        Roles:
+#          authenticated:
+#            Fn::GetAtt: [CognitoAuthRole, Arn]
+#
+#    CognitoAuthRole:
+#      Type: AWS::IAM::Role
+#      Properties:
+#        Path: /
+#        AssumeRolePolicyDocument:
+#          Version: '2012-10-17'
+#          Statement:
+#            - Effect: 'Allow'
+#              Principal:
+#                Federated: 'cognito-identity.amazonaws.com'
+#              Action:
+#                - 'sts:AssumeRoleWithWebIdentity'
+#              Condition:
+#                StringEquals:
+#                  'cognito-identity.amazinaws.com:aud':
+#                    Ref: CognitoIdentityPool
+#                'ForAnyValue:StringLike':
+#                  'cognito-identity.amazonaws.com:amr': authenticated
+#        Policies:
+#          - PolicyName: 'CognitoAuthorizedPolicy'
+#            PolicyDocument:
+#              Version: '2012-10-17'
+#              Statement:
+#                - Effect: 'Allow'
+#                  Action:
+#                    - 'elastictranscoder:Read*'
+#                    - 'elastictranscoder:List*'
+#                    - 'elastictranscoder:*Job'
+#                    - 'elastictranscoder:*Preset'
+#                    - 's3:List*'
+#                    - 'sns:List*'
+#                  Resource: '*'
+#                #- Effect: 'Allow'
+#                #  Action:
+#                #    - 's3:*'
+#                #  Resource:
+  #
+
+  # Print out the name of the bucket that is created
+  Outputs:
+#    UserPoolId:
+#      Value:
+#        Ref: CognitoUserPool
+#
+#    UserPoolClientId:
+#      Value:
+#        Ref: CognitoUserPoolClient
+
+    #IdentityPoolId:
+    #  Value:
+    #    Ref: CognitoIdentityPool
+    
+#    CognitoAuthRole:
+#      Value:
+#        Ref: CognitoAuthRole
+#
+    OutputBucket:
+      Value:
+        Ref: OutputBucket
+
+    InputBucket:
+      Value:
+        Ref: InputBucket

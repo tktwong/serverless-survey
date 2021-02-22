@@ -1,0 +1,116 @@
+service: sls-registry-rest-api-with-dynamodb
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+#for handling stages: sls deploy --stage {stageName: qa}
+#1.
+#environment:
+  #MY_SECRET: ${file(../config.${self:provider.stage}.json):CREDS}
+#2.
+#custom:
+  # stage: ${opt:stage, self:provider.stage}
+  # domains:
+  #   prod: api.mycompany.com
+  #   staging: staging-api.mycompany.com
+  #   dev: dev-api.mycompany.com
+
+  # customDomain:
+  #   basePath: ""
+  #   domainName: ${self:custom.domains.${self:custom.stage}}
+  #   stage: "${self:custom.stage}"
+  #   createRoute53Record: true
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-west-2
+  stage: ${opt:stage, 'dev'}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+    LAMBDA_LAYER: ${self:service}-${self:provider.stage}
+    REGION: ${self:provider.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  create:
+    handler: api/create.handler
+    events:
+      - http:
+          path: gifts
+          method: post
+          cors: true
+    layers:
+      - { Ref: AwsUtilLambdaLayer }
+  retrieve:
+    handler: api/retrieve.handler
+    events:
+      -http:
+        path: gifts
+        method: get
+        cors: true
+    layers:
+      - { Ref: AwsUtilLambdaLayer }
+  update:
+    handler: api/update.handler
+    events:
+      - http:
+          path: gifts
+          method: put
+          cors: true
+    layers:
+      - { Ref: AwsUtilLambdaLayer }
+  delete:
+    handler: api/delete.handler
+    events:
+      - http:
+          path: gifts
+          method: delete
+          cors: true
+    layers:
+      - { Ref: AwsUtilLambdaLayer }
+  
+layers:
+  AwsUtil:
+    package:
+      artifact: util-layer.zip
+    #path: './lib/'
+    name: ${self:provider.environment.LAMBDA_LAYER}-aws-util
+
+resources:
+  Resources:
+    GiftsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: name
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+          -
+            AttributeName: name
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+plugins:
+  - serverless-offline
+        

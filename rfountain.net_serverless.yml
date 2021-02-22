@@ -1,0 +1,68 @@
+service: rfountain-net
+
+provider:
+  name: aws
+  # The AWS region in which to deploy (us-east-1 is the default)
+  region: us-east-1
+  # The stage of the application, e.g. dev, production, staging… ('dev' is the default)
+  stage: dev
+  runtime: provided
+  environment:
+    APP_DEBUG: false
+    DB_HOST: 'studios-rds.c0rrqknh2fu9.us-east-1.rds.amazonaws.com'
+    DB_USERNAME: admin
+    DB_PASSWORD: ${ssm:rfountain_db_password}
+    AWS_BUCKET: # environment variable for Laravel
+      Ref: Storage
+    ASSET_URL: https://assets.rfountain.net
+    MIX_ASSET_URL: https://assets.rfountain.net
+    CACHE_DRIVER: dynamodb
+    DYNAMODB_CACHE_TABLE: rfountain_cache
+    WINK_STORAGE_DISK: s3
+
+  iamRoleStatements:
+    # Allow Lambda to read and write files in the S3 buckets
+    - Effect: Allow
+      Action: s3:*
+      Resource:
+        - Fn::GetAtt: Storage.Arn # the storage bucket
+        - Fn::Join: ['', [Fn::GetAtt: Storage.Arn, '/*']] # everything in the storage bucket
+
+resources:
+  Resources:
+    Storage:
+      Type: AWS::S3::Bucket
+
+package:
+  # Directories to exclude from deployment
+  exclude:
+    - node_modules/**
+    - public/storage
+    - public/js
+    - public/css
+    - resources/js/**
+    - resources/sass/**
+    - storage/**
+    - tests/**
+
+functions:
+  # This function runs the Laravel website/API
+  web:
+    handler: public/index.php
+    timeout: 28 # in seconds (API Gateway has a timeout of 29 seconds)
+    layers:
+      - ${bref:layer.php-74-fpm}
+    events:
+      - http: 'ANY /'
+      - http: 'ANY /{proxy+}'
+  # This function lets us run artisan commands in Lambda
+  artisan:
+    handler: artisan
+    timeout: 120 # in seconds
+    layers:
+      - ${bref:layer.php-74} # PHP
+      - ${bref:layer.console} # The "console" layer
+
+plugins:
+  # We need to include the Bref plugin
+  - ./vendor/bref/bref

@@ -1,0 +1,135 @@
+service: ${env:SERVICE}
+app: ${env:SERVICE}
+
+plugins:
+  # - serverless-domain-manager # custom.customDomain
+  - serverless-deployment-bucket
+  - serverless-finch # custom.client
+  # - serverless-scriptable-plugin
+
+
+custom:
+  scriptHooks:
+    after:deploy:finalize:
+      - echo Y | sls client deploy -v -s ${env:STAGE}
+  client:
+      bucketName: ${env:BUCKET}
+      distributionFolder: frontend
+      indexDocument: index.html
+      errorDocument: index.html
+#   customDomain:
+#     domainName: ${env:API_DOMAIN}
+#     basePath: ''
+#     stage: ${env:STAGE}
+#     createRoute53Record: false
+
+
+provider:
+  deploymentBucket:
+    name: ${env:DEPLOYMENT_BUCKET}
+  name: aws
+  runtime: nodejs12.x
+  stage: ${env:STAGE}
+  region: ${env:REGION}
+  environment:
+    REGION: ${env:REGION}
+    BUCKET: ${env:BUCKET}
+    LOGS_BUCKET: ${env:LOGS_BUCKET}
+    STAGE: ${env:STAGE}
+    SUB_DOMAIN_BUCKET_1: ${env:SUB_DOMAIN_BUCKET_1}
+    SUB_DOMAIN_BUCKET_2: ${env:SUB_DOMAIN_BUCKET_2}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+      Resource: "arn:aws:s3:::${env:BUCKET}/*"
+
+
+functions:
+  sls-website:
+    package:
+      individually: true
+      exclude:
+        - frontend/**
+        - local/**
+        - scripts/**
+        - server.js
+        - package-lock.json
+        - package.json
+        - config.json
+        - node_modules/**
+        - .gitignore
+    handler: backend/api.handle_website
+    events:
+      - http:
+          path: shorten
+          method: post
+          cors: true
+          memorySize: 3008
+    # events:
+    #   - http:
+    #       path: shorten
+    #       method: post
+    #       cors: true #post
+    #       integration: lambda
+    #       memorySize: 3008
+    #       request:
+    #         template:
+    #           application/json: >
+    #             {
+    #               "url" : "$input.params('url')",
+    #             }
+
+  # file-upload:
+  #   package:
+  #     individually: true
+  #     exclude:
+  #       - config.json
+  #       - /node_modules
+  #       - /frontend
+  #       - package-lock.json
+  #       - package.json
+  #       - .gitignore
+  #   handler: backend/api.handle_upload
+  #   events:
+  #     - http:
+  #         path: upload
+  #         method: post
+  #         cors: true
+
+
+resources:
+  Resources:
+    ServerlessRedirectS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${env:BUCKET}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+        # LoggingConfiguration:
+        #   DestinationBucketName: !Ref 'ServerlessLoggingBucketResource'
+        #   LogFilePrefix: testing-logs
+
+    ServerlessRedirectS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: ${env:BUCKET}
+        PolicyDocument:
+          Statement:
+          - Action:
+            - s3:GetObject
+            - s3:PutObject
+            Effect: Allow
+            Resource:
+            - arn:aws:s3:::${env:BUCKET}/*
+            Principal: "*"
+
+Outputs:
+  ServerlessRedirectS3Bucket:
+    Description: "Serverless Redirect S3 Bucket"
+    Value: "!Ref ServerlessRedirectS3Bucket"
+  ServerlessRedirectS3BucketPolicy:
+    Description: "Serverless Redirect S3 Bucket Policy"
+    Value: "!Ref ServerlessRedirectS3BucketPolicy"

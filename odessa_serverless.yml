@@ -1,0 +1,541 @@
+service: odessa
+
+plugins:
+ - serverless-dynamodb-local
+
+provider:
+  name: aws
+  runtime: python3.6
+  timeout: 300
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${opt:profile, self:custom.defaultProfile}
+  region: ${opt:region, self:custom.defaultRegion}
+  environment: ${file(config/environments/${self:provider.stage}.yml)}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:dynamodb'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'table/*'
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+      Resource:
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:dynamodb'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'table/device_subscriptions'
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:dynamodb'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'table/device_logs/stream/*'
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:dynamodb'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'table/device_email_logs/stream/*'
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:dynamodb'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'table/device_network_statuses/stream/*'
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+        - s3:GetObject
+      Resource:
+            - 'arn:aws:s3:::dev-odessa-eu-email/*'
+            - 'arn:aws:s3:::qas-odessa-eu-email/*'
+            - 'arn:aws:s3:::odessa-eu-email/*'
+    - Effect: Allow
+      Action:
+        - sts:AssumeRole
+      Resource: '*'
+    - Effect: Allow
+      Action: execute-api:Invoke
+      Resource:
+        - 'Fn::Join':
+          - ':'
+          -
+            - 'arn:aws:execute-api'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - '*/*/POST/eu/ext/devices/log/history'
+
+package:
+  exclude:
+    - .env/**
+    - .git/**
+    - node_modules/**
+    - tests/**
+    - db/**
+
+custom:
+  defaultStage: local
+  defaultProfile: default
+  defaultRegion: local
+  httpPath: ${file(config/http_path.js):httpPath.${self:provider.region}}
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    migrate:
+      dir: ./db/migrations
+    seed:
+      domain:
+        sources:
+          - table: service_oids
+            sources: [./db/seeds/service_oids.json]
+      test_logs_and_notifications:
+        sources:
+          - table: device_logs
+            sources: [./tests/fixtures/logs_and_notifications/device_logs.json]
+          - table: device_subscriptions
+            sources: [./tests/fixtures/logs_and_notifications/device_subscriptions.json]
+          - table: device_network_statuses
+            sources: [./tests/fixtures/logs_and_notifications/device_network_statuses.json]
+      test_subscriptions:
+        sources:
+          - table: device_subscriptions
+            sources: [./tests/fixtures/subscriptions/device_subscriptions.json]
+      test_history_logs:
+        sources:
+          - table: device_logs
+            sources: [./tests/fixtures/history_logs/device_logs.json]
+          - table: device_subscriptions
+            sources: [./tests/fixtures/history_logs/device_subscriptions.json]
+          - table: device_email_logs
+            sources: [./tests/fixtures/history_logs/device_email_logs.json]
+          - table: reporting_registrations
+            sources: [./tests/fixtures/history_logs/reporting_registrations.json]
+          - table: accumulated_device_logs
+            sources: [./tests/fixtures/history_logs/accumulated_device_logs.json]
+      test_reporting_registrations:
+        sources:
+          - table: device_subscriptions
+            sources: [./tests/fixtures/reporting_registrations/device_subscriptions.json]
+      test_history_statuses:
+        sources:
+          - table: device_subscriptions
+            sources: [./tests/fixtures/history_statuses/device_subscriptions.json]
+          - table: reporting_registrations
+            sources: [./tests/fixtures/history_statuses/reporting_registrations.json]
+          - table: device_network_statuses
+            sources: [./tests/fixtures/history_statuses/device_network_statuses.json]
+      test_device_statuses:
+        sources:
+          - table: accumulated_device_logs
+            sources: [./tests/fixtures/device_statuses/accumulated_device_logs.json]
+
+    s3:
+      port: 8000
+      directory: /tmp
+      cors: false
+
+functions:
+  get_device_settings:
+    handler: functions/device_settings/handler.get
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/setting/get
+          method: post
+
+  set_device_settings:
+    handler: functions/device_settings/handler.set
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/setting/set
+          method: post
+
+  subscription_info:
+    handler: functions/subscriptions/handler.subscription_info
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/subscription/log/get
+          method: post
+
+  subscribe:
+    handler: functions/subscriptions/handler.subscribe
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/subscription/log/subscribe
+          method: post
+
+  unsubscribe:
+    handler: functions/subscriptions/handler.unsubscribe
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/subscription/log/unsubscribe
+          method: post
+
+  #subscription_stream_trigger:
+  #  handler: functions/subscriptions/stream.subscriptions
+  #  events:
+  #    - stream:
+  #        type: dynamodb
+  #        arn:
+  #          Fn::GetAtt:
+  #            - DeviceSubscriptions
+  #            - StreamArn
+  #        startingPosition: TRIM_HORIZON
+
+  run_subscribe:
+    name: run_subscribe
+    handler: functions/subscriptions/async.run_subscribe
+
+  run_unsubscribe:
+    name: run_unsubscribe
+    handler: functions/subscriptions/async.run_unsubscribe
+
+  run_get_notify_result:
+    name: run_get_notify_result
+    handler: functions/subscriptions/async.run_get_notify_result
+
+  handle_device_events:
+    handler: functions/device_events/handler.handle_device_events
+
+  get_latest_logs:
+    handler: functions/device_logs/handler.get_latest_logs
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/log/get
+          method: post
+
+  cloud_device_status_stream_trigger:
+   handler: functions/device_statuses/stream.save_cloud_device_status
+   events:
+     - stream:
+         type: dynamodb
+         arn:
+           Fn::GetAtt:
+             - DeviceLogs
+             - StreamArn
+         startingPosition: TRIM_HORIZON
+
+  save_notify_logs:
+    handler: functions/device_notifications/handler.save_notify_logs_db
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/log/notify/post
+          method: post
+
+  #save_notify_logs_stream_trigger:
+  #  handler: functions/device_notifications/stream.save_notify_logs_cache
+  #  events:
+  #    - stream:
+  #        type: dynamodb
+  #        arn:
+  #          Fn::GetAtt:
+  #            - DeviceLogs
+  #            - StreamArn
+  #        startingPosition: TRIM_HORIZON
+
+  save_notify_status:
+    handler: functions/device_notifications/handler.save_notify_status_db
+
+  #save_notify_status_stream_trigger:
+  #  handler: functions/device_notifications/stream.save_notify_status_cache
+  #  events:
+  #    - stream:
+  #        type: dynamodb
+  #        arn:
+  #          Fn::GetAtt:
+  #            - DeviceNetworkStatuses
+  #            - StreamArn
+  #        startingPosition: TRIM_HORIZON
+
+  get_history_logs:
+    handler: functions/history_logs/handler.get_history_logs
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/log/history
+          method: post
+          cors: true
+
+  ext_get_history_logs:
+    handler: functions/history_logs/handler.get_history_logs
+    events:
+      - http:
+          path: ${self:custom.httpPath}/ext/devices/log/history
+          method: post
+          authorizer:
+            name: auth_one_time_token
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.x-odessa-token
+            type: token
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - X-odessa-Token
+            allowCredentials: true
+
+  save_reporting_registration:
+    handler: functions/reporting_registrations/handler.save_reporting_registration
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/report/activation
+          method: post
+
+  save_mail_report:
+    handler: functions/email_notifications/handler.save_mail_report
+
+  email_device_status_stream_trigger:
+   handler: functions/device_statuses/stream.save_email_device_status
+   events:
+     - stream:
+         type: dynamodb
+         arn:
+           Fn::GetAtt:
+             - DeviceEmailLogs
+             - StreamArn
+         startingPosition: TRIM_HORIZON
+
+  get_history_statuses:
+    handler: functions/history_statuses/handler.get_history_statuses
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/status/history
+          method: post
+
+  send_push_notification:
+    name: send_push_notification
+    handler: functions/push_notifications/async.send_push_notification
+
+  get_device_statuses:
+    handler: functions/device_statuses/handler.get_device_statuses
+    events:
+      - http:
+          path: ${self:custom.httpPath}/devices/status
+          method: post
+
+  get_one_time_token:
+    handler: functions/tokens/handler.get_one_time_token
+    events:
+      - http:
+          path: ${self:custom.httpPath}/onetime
+          method: get
+
+  auth_one_time_token:
+    handler: functions/tokens/handler.auth
+
+resources:
+  Resources:
+    DeviceSubscriptions:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: device_subscriptions
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 5
+    ServiceOids:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: service_oids
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 1
+    DeviceNetworkStatuses:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: device_network_statuses
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 50
+          WriteCapacityUnits: 5
+    DeviceLogs:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: device_logs
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 50
+          WriteCapacityUnits: 5
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+    ReportingRegistrations:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: reporting_registrations
+        AttributeDefinitions:
+          - AttributeName: reporting_id
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+          - AttributeName: device_id
+            AttributeType: S
+          - AttributeName: serial_number
+            AttributeType: S
+        KeySchema:
+          - AttributeName: reporting_id
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: cloud_devices
+            KeySchema:
+            - AttributeName: device_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+              - reporting_id
+              - log_service_id
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 10
+              WriteCapacityUnits: 1
+          - IndexName: email_devices
+            KeySchema:
+            - AttributeName: serial_number
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+              - reporting_id
+              - log_service_id
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 10
+              WriteCapacityUnits: 1
+    DeviceEmailLogs:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: device_email_logs
+        AttributeDefinitions:
+          - AttributeName: serial_number
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        KeySchema:
+          - AttributeName: serial_number
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+    DeviceStatuses:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: device_statuses
+        AttributeDefinitions:
+          - AttributeName: reporting_id
+            AttributeType: S
+          - AttributeName: object_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: reporting_id
+            KeyType: HASH
+          - AttributeName: object_id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    PushNotificationSubscriptions:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: push_notification_subscriptions
+        AttributeDefinitions:
+          - AttributeName: log_service_id
+            AttributeType: S
+          - AttributeName: object_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: log_service_id
+            KeyType: HASH
+          - AttributeName: object_id
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    AccumulatedDeviceLogs:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: accumulated_device_logs
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: year_month
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: year_month
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 25
+          WriteCapacityUnits: 5

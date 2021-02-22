@@ -1,0 +1,171 @@
+# serverless deploy --state prod
+
+service: typeup-app-api
+# stage: test # this can be overriden, but the default lets test run without a --stage flag
+
+plugins:
+  - serverless-webpack
+
+custom:
+  webpackIncludeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  # stage: ${opt:stage}
+  region: us-west-2
+  environment:
+    stage: ${opt:stage}
+
+  # 'iamRoleStatement' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-west-2:*:*"
+
+resources:
+  Resources:
+
+    statusesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: typeup-statuses-${opt:stage}
+        AttributeDefinitions:
+          - AttributeName: statusId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: statusId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: typeup-users-${opt:stage}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    attachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: typeup-attachments-${opt:stage}-${opt:tag, 'foo'}
+        AccessControl: 'PublicReadWrite'
+        # https://github.com/matthewdfuller/cloudformation-templates/blob/master/infrastructure/S3.json
+        # CorsConfiguration:
+        #   CorsRules:
+        #     - AllowedHeaders: *
+        #     - AllowedMethods: *
+        #     - AllowedOrigins: *
+        #     - MaxAge: 3000
+
+    #   Cognito user pool (current pool arn: arn:aws:cognito-idp:us-west-2:402153944964:userpool/us-west-2_7TooDx4yJ)
+    #   Cognito App client (current id: 2sdk53svubdtll8gigcscjb0an)
+
+functions:
+
+  # POST /statuses
+  status-create:
+    handler: status-create.main
+    events:
+      - http:
+          path: statuses
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  # GET /statuses
+  status-list:
+    handler: status-list.main
+    events:
+      - http:
+          path: statuses
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  # GET /statuses/{statusId}
+  status-get:
+    handler: status-get.main
+    events:
+      - http:
+          path: statuses/{statusId}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  # PUT /statuses/{statusId}
+  status-update:
+    handler: status-update.main
+    events:
+      - http:
+          path: statuses/{statusId}
+          method: put
+          cors: true
+
+  # POST /users
+  user-create:
+    handler: user-create.main
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  # GET /users
+  user-list:
+    handler: user-list.main
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  # GET /users/{userName}
+  user-get:
+    handler: user-get.main
+    events:
+      - http:
+          path: users/{userId}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  # GET /users/{userName}/statuses
+  user-statuses:
+    handler: user-statuses.main
+    events:
+      - http:
+          path: users/{userId}/statuses
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  # DELETE /statuses/{statusId}
+  status-delete:
+    handler: status-delete.main
+    events:
+      - http:
+          path: statuses/{statusId}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+

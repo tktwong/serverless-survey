@@ -1,0 +1,125 @@
+service: aerocene
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+  - serverless-dynamodb-local
+
+custom:
+  scrapeTableName: 'scrape-table-${self:provider.stage}'
+  requestTableName: 'request-table-${self:provider.stage}'
+  instagramPostTableName: 'instagram-post-table-${self:provider.stage}'
+
+  wsgi:
+    app: app.app
+    packRequirements: false
+
+  pythonRequirements:
+    dockerizePip: non-linux
+    zipImport: true
+
+provider:
+  name: aws
+  runtime: python3.6
+  # timeout: 150
+  region: us-east-2
+  iamRoleStatements:
+    # allow all actions on the posts table
+    - Effect: Allow
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - { "Fn::GetAtt": ["InstagramPostDynamoDBTable", "Arn"] }
+        - { "Fn::GetAtt": ["ScrapeDynamoDbTable", "Arn"] }
+        - { "Fn::GetAtt": ["RequestDynamoDbTable", "Arn"] }
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource: "*"
+  environment:
+    SCRAPE_TABLE: ${self:custom.scrapeTableName}
+    REQUEST_TABLE: ${self:custom.requestTableName}
+    INSTAGRAM_POST_TABLE: ${self:custom.instagramPostTableName}
+    STAGE: ${self:provider.stage}
+
+functions:
+  app:
+    handler: wsgi.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+  scrapeStream:
+    handler: functions.scrape_stream_handler
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          arn:
+            Fn::GetAtt:
+              - ScrapeDynamoDbTable
+              - StreamArn
+resources:
+  Resources:
+
+    # a table to store requests made to the
+    # adversarial server
+    RequestDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.requestTableName}
+        AttributeDefinitions:
+          -
+            AttributeName: address
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: address
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    # a table to persist data
+    # between lambda function executing scrapes
+    ScrapeDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.scrapeTableName}
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+
+    # a table to store posts
+    # scraped from instagram
+    InstagramPostDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:custom.instagramPostTableName}
+        AttributeDefinitions:
+          -
+            # the id of the post
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            # these should be unique
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES

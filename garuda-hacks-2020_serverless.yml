@@ -1,0 +1,92 @@
+service: garudahack2020service
+
+provider:
+    name: aws
+    runtime: python3.7
+    memorySize: 128
+    stage: dev
+    region: us-west-2
+    environment:
+        #PATH: /var/task/bin
+        #PYTHONPATH: /var/task/package
+        DYNAMO_TABLE_NAME: 
+            Ref: GarudaHack2020Table
+        ES_DOMAIN: https://9dhfzwk724:49bt6kh1nt@custom-kicks-sandbox-1191858573.us-west-2.bonsaisearch.net:443
+    iamRoleStatements:
+        - Effect: "Allow"
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:DescribeStream
+            - dynamodb:GetRecords
+            - dynamodb:GetShardIterator
+            - dynamodb:ListStreams
+          Resource:
+            - 'arn:aws:dynamodb:us-west-2:600464800124:table/garuda_hacks_2020_table'
+            - 'arn:aws:dynamodb:us-west-2:600464800124:table/garuda_hacks_2020_table/*/*'
+    stackTags:
+        APP: 'garuda_hacks_2020'
+
+
+functions:
+    createNewProfile:
+        handler: handler.submitProfile
+        events:
+            - http:
+                path: profile
+                method: post
+                cors:
+                    origins: 
+                        - '*'
+    getProfile:
+        handler: handler.getProfile
+        events:
+            - http:
+                path: profile
+                method: get
+                cors:
+                    origins: 
+                        - '*'
+    searchProfile:
+        handler: handler.searchForProfile
+        events:
+            - http:
+                path: search
+                method: post
+                cors:
+                    origins: 
+                        - '*'
+    crawlProfile:
+        handler: hooks.crawlUserProfile
+        timeout: 60
+        memorySize: 256
+
+resources:
+    Resources:
+        GarudaHack2020Table:
+            Type: AWS::DynamoDB::Table
+            Properties:
+                TableName: garuda_hacks_2020_table
+                AttributeDefinitions:
+                  - AttributeName: username
+                    AttributeType: S
+                KeySchema:
+                  - AttributeName: username
+                    KeyType: HASH
+                ProvisionedThroughput:
+                    ReadCapacityUnits: 1
+                    WriteCapacityUnits: 1
+                StreamSpecification:
+                    StreamViewType: NEW_IMAGE
+        GarudaHack2020TableStream:
+            Type: AWS::Lambda::EventSourceMapping
+            Properties:
+                BatchSize: 1 #trigger one lambda per document
+                Enabled: True
+                EventSourceArn: #trigger event from the data table
+                    Fn::GetAtt: [ GarudaHack2020Table , StreamArn ]
+                FunctionName: #trigger the echo function previously defined
+                    'garudahack2020service-dev-crawlProfile' # hard coded
+                StartingPosition: LATEST #always start at the tail of the stream

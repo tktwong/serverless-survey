@@ -1,0 +1,405 @@
+service: contract-register
+provider:
+  region:  us-east-1
+  stage:   ${opt:stage}
+  version: v1
+  name:    aws
+  runtime: nodejs10.x
+  tracing:
+    lambda: true
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource: "arn:aws:logs:${self:provider.region}:*:*"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: arn:aws:s3:::*"
+    - Effect: "Allow"
+      Action:
+        - "rekognition:*"
+      Resource: "*"
+      #TODO Improve security by removing dynamodb:* permission
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: 
+        - "*"
+    - Effect: "Allow"
+      Action:
+      - "rds-data:ExecuteSql"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "secretsmanager:GetSecretValue"
+      Resource:
+        Ref: MyRDSSecret
+    
+  environment:
+    db_document: ${self:custom.db_document}
+    s3_document: ${self:custom.s3_document}
+    awsSecretStoreArn:
+      Ref: MyRDSSecret
+    dbClusterOrInstanceArn:
+      Fn::Join:
+      - ':'
+      - - 'arn:aws:rds'
+        - Ref: 'AWS::Region'
+        - Ref: 'AWS::AccountId'
+        - 'cluster'
+        - Ref: RDSCluster
+
+custom:
+  AccountId: 375557874332
+  db_document: ${self:service}-${self:provider.stage}-document
+  s3_document: ${self:service}-${self:provider.stage}-document
+  db_contract: ${self:service}-${self:provider.stage}-db
+  sqs_documents_deleter: ${self:service}-${self:provider.stage}-documents-deleter-queue
+
+plugins:
+  - serverless-plugin-stage-variables
+
+package:
+  exclude:
+    - public
+    - .git
+    - .gitignore
+    - .serverless**
+
+functions:
+  createContract:
+    name:        ${self:service}-${self:provider.stage}-createContract
+    description: Função para criação de contratos
+    handler:     controllers/contract.createContract
+    memorySize:  128
+    timeout:     10
+    events:
+      - http:
+          path:   ${self:provider.version}/contracts
+          method: POST
+          cors:
+            origins:
+                - '*'
+            headers:
+                - Authorization
+                - Content-Type
+                - X-Amz-Date
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - If-Match
+  updateContract:
+    name:        ${self:service}-${self:provider.stage}-updateContract
+    description: Função para criação de contratos
+    handler:     controllers/contract.updateContract
+    memorySize:  128
+    timeout:     10
+    events:
+      - http:
+          path:   ${self:provider.version}/contracts/{contractId}
+          method: PUT
+          cors:
+            origins:
+                - '*'
+            headers:
+                - Authorization
+                - Content-Type
+                - X-Amz-Date
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - If-Match
+  listContracts:
+    name:        ${self:service}-${self:provider.stage}-listContracts
+    description: Função para retorno de contratos
+    handler:     controllers/contract.listContracts
+    memorySize:  128
+    timeout:     10
+    events:
+      - http:
+          path:   ${self:provider.version}/contracts
+          method: GET
+          cors:
+            origins:
+                - '*'
+            headers:
+                - Authorization
+                - Content-Type
+                - X-Amz-Date
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - If-Match
+  getContract:
+    name:        ${self:service}-${self:provider.stage}-getContract
+    description: Função para retorno de contratos
+    handler:     controllers/contract.getContract
+    memorySize:  128
+    timeout:     10
+    events:
+      - http:
+          path:   ${self:provider.version}/contracts/{contractId}
+          method: GET
+          cors:
+            origins:
+                - '*'
+            headers:
+                - Authorization
+                - Content-Type
+                - X-Amz-Date
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - If-Match
+  reviewContract:
+    name:        ${self:service}-${self:provider.stage}-reviewContract
+    description: Função para revisão de contrato define se foi aprovado ou negado
+    handler:     controllers/contract.reviewContract
+    memorySize:  128
+    timeout:     10
+    events:
+      - http:
+          path:   ${self:provider.version}/contracts/{contractId}/review
+          method: PUT
+          cors:
+            origins:
+                - '*'
+            headers:
+                - Authorization
+                - Content-Type
+                - X-Amz-Date
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - If-Match
+
+  createDocumentURL:
+    name:        ${self:service}-${self:provider.stage}-createDocumentURL
+    description: Função para retorno da url assinada para upload de imagem em um contrato
+    handler:     controllers/document.getPresignedURL
+    memorySize:  128
+    timeout:     10
+    events:
+      - http:
+          path:   ${self:provider.version}/contracts/{contractId}/documents/{documentType}
+          method: PUT
+          cors:
+            origins:
+                - '*'
+            headers:
+                - Authorization
+                - Content-Type
+                - X-Amz-Date
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - If-Match
+  getDocument:
+    name:        ${self:service}-${self:provider.stage}-getDocument
+    description: Função para retorno dos dados de uma imagem de um contrato
+    handler:     controllers/document.getDocument
+    memorySize:  128
+    timeout:     10
+    events:
+      - http:
+          path:   ${self:provider.version}/contracts/{contractId}/documents/{documentType}
+          method: GET
+          cors:
+            origins:
+                - '*'
+            headers:
+                - Authorization
+                - Content-Type
+                - X-Amz-Date
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - If-Match
+  listDocuments:
+    name:        ${self:service}-${self:provider.stage}-listDocuments
+    description: Função para retorno dos dados de imagens de um contrato
+    handler:     controllers/document.listDocuments
+    memorySize:  128
+    timeout:     10
+    events:
+      - http:
+          path:   ${self:provider.version}/contracts/{contractId}/documents
+          method: GET
+          cors:
+            origins:
+                - '*'
+            headers:
+                - Authorization
+                - Content-Type
+                - X-Amz-Date
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - If-Match
+  documentProcessor:
+    name: ${self:service}-${self:provider.stage}-documentProcessor
+    description: Função para retorno dos dados de imagens de um contrato
+    handler: controllers/document.imageProcessor
+    memorySize:  128
+    timeout:     10
+
+resources:
+  Resources:
+    dbDocument:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.db_document}
+        AttributeDefinitions:
+          - AttributeName: contractId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: contractId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2
+    AttachmentsBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:custom.s3_document}
+          CorsConfiguration:
+            CorsRules:
+              -
+                AllowedOrigins:
+                  - '*'
+                AllowedHeaders:
+                  - 'Content-Type'
+                  - 'Authorization'
+                  - 'X-Amz-Algorithm'
+                  - 'X-Amz-Credential'
+                  - 'X-Amz-Date'
+                  - 'X-Amz-Security-Token'
+                  - 'Policy'
+                  - 'X-Amz-Signature'
+                  - 'X-Amz-SignedHeaders'
+                  - 'X-Amz-Expires'
+                AllowedMethods:
+                  - GET
+                  - POST
+                  - PUT
+                MaxAge: 3000
+          NotificationConfiguration:
+            LambdaConfigurations:
+              - Event: "s3:ObjectCreated:*"
+                Function:
+                  Fn::GetAtt: [DocumentProcessorLambdaFunction, Arn]
+    AttachmentsBucketPolicy:
+      Type: 'AWS::S3::BucketPolicy'
+      Properties:
+        PolicyDocument:
+          Statement:
+            - Sid: ReadAndPutForGetBucketObjects
+              Effect: Allow
+              Principal:
+                AWS:
+                  - 'arn:aws:iam::${self:custom.AccountId}:role/${self:service}-${self:provider.stage}-${self:provider.region}-lambdaRole'
+              Action:
+                - 's3:GetObject'
+                - 's3:PutObject'
+              Resource: arn:aws:s3:::${self:custom.s3_document}/*
+        Bucket:
+          Ref: AttachmentsBucket
+    documentProcessorPermissionS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          "Fn::GetAtt":
+            - DocumentProcessorLambdaFunction
+            - Arn
+        Principal: "s3.amazonaws.com"
+        Action: "lambda:InvokeFunction"
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: "arn:aws:s3:::${self:custom.s3_document}"
+    ServerlessVPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: "10.0.0.0/16"
+    ServerlessSubnetA:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        AvailabilityZone: ${self:provider.region}a
+        CidrBlock: "10.0.0.0/24"
+    ServerlessSubnetB:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        AvailabilityZone: ${self:provider.region}c
+        CidrBlock: "10.0.1.0/24"
+    ServerlessSubnetC:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: ServerlessVPC
+        AvailabilityZone: ${self:provider.region}d
+        CidrBlock: "10.0.2.0/24"
+    ServerlessSecurityGroup:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SecurityGroup for Serverless Functions
+        VpcId:
+          Ref: ServerlessVPC
+    ServerlessStorageSecurityGroup:
+      DependsOn: ServerlessVPC
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Ingress for RDS Instance
+        VpcId:
+          Ref: ServerlessVPC
+        SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId:
+            Ref: ServerlessSecurityGroup
+    ServerlessRDSSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: "RDS Subnet Group"
+        SubnetIds:
+        - Ref: ServerlessSubnetA
+        - Ref: ServerlessSubnetB
+        - Ref: ServerlessSubnetC
+    MyRDSSecret:
+      DependsOn: ServerlessStorageSecurityGroup
+      Type: "AWS::SecretsManager::Secret"
+      Properties:
+        Description: "This is a Secrets Manager secret for an RDS DB instance"
+        GenerateSecretString:
+          SecretStringTemplate: '{"username": "admin"}'
+          GenerateStringKey: "password"
+          PasswordLength: 16
+          ExcludeCharacters: '"@/\'
+    RDSCluster:
+      DependsOn: MyRDSSecret
+      Type: AWS::RDS::DBCluster
+      Properties:
+        MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref MyRDSSecret, ':SecretString:username}}' ]]
+        MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref MyRDSSecret, ':SecretString:password}}' ]]
+        DatabaseName: ${self:provider.stage}Db
+        Engine: aurora
+        EngineMode: serverless
+        ScalingConfiguration:
+          AutoPause: true
+          MaxCapacity: 2
+          MinCapacity: 1
+        DBSubnetGroupName:
+          Ref: ServerlessRDSSubnetGroup
+    SecretRDSInstanceAttachment:
+      DependsOn: RDSCluster
+      Type: AWS::SecretsManager::SecretTargetAttachment
+      Properties:
+        SecretId: !Ref MyRDSSecret
+        TargetId: !Ref RDSCluster
+        TargetType: AWS::RDS::DBCluster
+    DocumentsDeleter:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:custom.sqs_documents_deleter}-sqs_documents_deleter

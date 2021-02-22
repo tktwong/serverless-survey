@@ -1,0 +1,108 @@
+service: tscricle-boilerplate
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-central-1
+  apiGateway:
+    binaryMediaTypes:
+    - 'application/pdf'
+  logs:
+    restApi: true
+  vpc:
+    securityGroupIds:
+    - Fn::GetAtt: ServerlessVPC.DefaultSecurityGroup
+    subnetIds:
+    - Ref: ServerlessSubnetA
+    - Ref: ServerlessSubnetB
+    - Ref: ServerlessSubnetC
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+    - sqs:SendMessage
+    - sqs:ReceiveMessage
+    Resource: !GetAtt SQSQueue.Arn
+  - Effect: Allow
+    Action:
+    - dynamodb:DescribeTable
+    - dynamodb:Query
+    - dynamodb:Scan
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    - dynamodb:DeleteItem
+    Resource:
+    - "Fn::GetAtt": [ DynamoDB, Arn ]
+  - Effect: Allow
+    Action:
+    - s3:*
+    Resource:
+    - !Join
+      - ''
+      - - "Fn::GetAtt": [ S3Bucket, Arn ]
+        - '/*'
+  - Effect: Allow
+    Action: 'secretsmanager:GetSecretValue'
+    Resource: !Ref DBSecret
+  - Effect: Allow
+    Action: ec2:*
+    Resource: "*"
+  - Effect: Allow
+    Action: kms:*
+    Resource: "*"
+  environment:
+    APP_KEY: !Sub '{{resolve:secretsmanager:${self:custom.UUID}-APP_KEY}}'
+    DB_HOST:
+      Fn::GetAtt: [AuroraRDSCluster, Endpoint.Address]
+    DB_PASSWORD: !Sub '{{resolve:secretsmanager:${self:custom.UUID}-DB_PASSWORD}}'
+    DYNAMODB_CACHE_TABLE: !Ref DynamoDB
+    AWS_BUCKET: !Ref S3Bucket
+    SQS: !Ref SQSQueue
+    ASSET_URL: !Join ['', ['https://', !GetAtt [S3PublicAssetsBucket, DomainName]]]
+
+custom:
+  OFFICE_IP: 0.0.0.0/0
+  VPC_CIDR: 10
+  UUID: ${self:service.name}-${opt:stage, self:provider.stage}
+  REGION: ${opt:region, self:provider.region}
+  STAGE: ${opt:stage, self:provider.stage}
+
+  AURORA:
+    MIN_CAPACITY: 1
+    MAX_CAPACITY: 32
+    AUTO_PAUSE_SECONDS: 600
+    DELETE_PROTECTION: ${self:custom.AURORA.SWITCH.${opt:stage, self:provider.stage}.DELETE_PROTECTION , '${self:custom.AURORA.SWITCH.default.DELETE_PROTECTION}'}
+    AUTO_PAUSE: ${self:custom.AURORA.SWITCH.${opt:stage, self:provider.stage}.AUTO_PAUSE , '${self:custom.AURORA.SWITCH.default.AUTO_PAUSE}'}
+    SWITCH:
+      production:
+        AUTO_PAUSE: false
+        DELETE_PROTECTION: true
+      default:
+        AUTO_PAUSE: 'true'
+        DELETE_PROTECTION: 'false'
+
+  serverless-offline:
+    host: 0.0.0.0
+
+  testHelper:
+    path: '.serverless/stack-output/outputs.json'
+
+  webpack:
+    includeModules: true
+    keepOutputdirectory: true
+
+functions:
+
+  ${file(./application/routes.yml)}
+
+plugins:
+- serverless-webpack
+- serverless-pseudo-parameters
+- serverless-offline
+- deploy-chain
+- serverless-plugin-test-helper
+
+#AWS Resources
+resources:
+- ${file(cloudformation.yml)}
+

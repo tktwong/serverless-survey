@@ -1,0 +1,82 @@
+service:
+  name: petpet
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  settings:
+    POSTS_TABLE: todolist
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: us-east-2
+  environment: ${self:custom.settings}
+  stage: ${opt:stage, 'dev'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.POSTS_TABLE}"
+  # apiGateway:
+  #   minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  # environment:
+  #   AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+
+functions:
+  getAll:
+    handler: handler.getAll
+    events:
+      - http:
+          method: get
+          path: /todos
+  getById:
+    handler: handler.getById
+    events:
+      - http:
+          method: get
+          path: /todos/{id}
+  createToDo:
+    handler: handler.createToDo
+    events:
+      - http:
+          method: post
+          path: /todos
+  updateToDo:
+    handler: handler.updateToDo
+    events:
+      - http:
+          method: put
+          path: /todos/{id}
+  delToDo:
+    handler: handler.delToDo
+    events:
+      - http:
+          method: delete
+          path: /todos     
+
+resources:
+  Resources:
+    PostsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S" 
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.settings.POSTS_TABLE}

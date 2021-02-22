@@ -1,0 +1,90 @@
+service: cqrs-orders
+
+plugins:
+  - serverless-offline-sns
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    start:
+      migrate: true
+  serverless-offline-sns:
+    port: 4002
+    debug: true
+
+provider:
+  name: aws
+  stage: dev
+  region: us-east-1
+  runtime: nodejs8.10
+  environment:
+    AWS_ACCOUNT_ID: '${ssm:accountId}'
+    TOPIC_NAME: 'orders-events'
+    EVENTS_TABLE: 'orders-events-table-${self:provider.stage}'
+    STATE_TABLE: 'orders-state-table-${self:provider.stage}'
+    SERVERLESS_REGION: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - "sns:*"
+      Resource: "*"
+
+functions:
+  commandCreate:
+    handler: commands.create
+    events:
+      - http: 'POST /orders'
+  queryAll:
+    handler: queries.all
+    events:
+      - http: 'GET /orders'
+  queryAllEvents:
+    handler: queries.allEvents
+    events:
+      - http: 'GET /events'
+  saveState:
+    handler: eventHandler.saveState
+    events:
+      - sns:
+          topicName: '${self:provider.environment.TOPIC_NAME}'
+          displayName: "Create events"
+
+resources:
+  Resources:
+    EventsBooksDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: '${self:provider.environment.EVENTS_TABLE}'
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    StateBooksDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: '${self:provider.environment.STATE_TABLE}'
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

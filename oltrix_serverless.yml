@@ -1,0 +1,73 @@
+service:
+  name: oltrix
+
+custom:
+  stage: ${opt:stage, 'dev'}
+  siteName: oltrix.com #HOSTED ZONE ID
+  aliasHostedZoneId: Z21DNDUVLTQW6Q #eu-central-1(Europe Frankfurt)
+  aliasDNSName: s3-website.eu-central-1.amazonaws.com
+  webS3Bucket: ${self:custom.stage}.${self:custom.siteName}
+  s3Sync:
+    - bucketName: ${self:custom.webS3Bucket}
+      localDir: dist/
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-s3-sync
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: eu-central-1
+  profile: serverless
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+
+functions:
+  hello:
+    handler: src/handlers/handler.hello
+    events:
+      - http:
+          method: get
+          path: /
+
+resources:
+  Resources:
+    WebAppS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.webS3Bucket}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    ## Specifying the policies to make sure all files inside the Bucket are available to CloudFront
+    WebAppS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: WebAppS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.webS3Bucket}/*
+    DnsRecord:
+      Type: "AWS::Route53::RecordSet"
+      Properties:
+        AliasTarget:
+          DNSName: ${self:custom.aliasDNSName}
+          HostedZoneId: ${self:custom.aliasHostedZoneId}
+        HostedZoneName: ${self:custom.siteName}.
+        Name:
+          Ref: WebAppS3Bucket
+        Type: 'A'              
+  Outputs:
+    WebAppS3BucketKey:
+      Value: !Ref WebAppS3Bucket          

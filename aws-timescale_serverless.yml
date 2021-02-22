@@ -1,0 +1,49 @@
+service: webhooks-func
+
+custom:
+  dbIntenalHostname: ${env:DB_INTERNAL_HOSTNAME}
+  dbSecurityGroupId: ${env:DB_SECURITY_GROUP}
+  dbSubnetId: ${env:DB_SUBNET}
+  dbPass: ${env:POSTGRES_PASS}
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: ${env:REGION}
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+    - .vscode/**
+    - .terraform/**
+  include:
+    - webhook/**
+    - requirements.txt
+
+plugins:
+  - serverless-python-requirements
+
+resources:
+  Outputs:
+    ApiId:
+      Value:
+        Ref: 'ApiGatewayRestApi'
+
+functions:
+  create:
+    handler: webhook/consumer.consume
+    vpc:
+      securityGroupIds:
+        - ${self:custom.dbSecurityGroupId}
+      subnetIds:
+        - ${self:custom.dbSubnetId}
+    environment:
+      DB_PRIVATE_HOSTNAME: ${self:custom.dbIntenalHostname}
+      POSTGRES_PASS: ${self:custom.dbPass}
+    events:
+      - http:
+          path: consume
+          method: post
+          cors: true
+          integration: lambda

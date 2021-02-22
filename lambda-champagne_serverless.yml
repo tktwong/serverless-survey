@@ -1,0 +1,98 @@
+service: lambda-champagne
+
+plugins:
+  - serverless-offline
+  - serverless-kms-secrets
+  - serverless-domain-manager
+  - serverless-plugin-aws-alerts
+
+
+provider:
+   name: aws
+   runtime: nodejs8.10
+   stage: develop
+   region: us-west-2
+   iamRoleStatements:
+     - Effect: Allow
+       Action:
+         - KMS:Decrypt
+       Resource: ${self:custom.kmsSecrets.keyArn}
+   environment:
+      SECRETS: ${self:custom.kmsSecrets.secrets.SECRETS}
+      VC: ${self:custom.vc.${opt:stage, self:provider.stage}}
+custom:
+  vc:
+    develop: /ipfs/QmZHq1JfVzgz6yDyRPVdzBYS2W5oKDWMHyPgKA7jCZXCMc
+    master: eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NkstUiJ9.eyJpYXQiOjE1NTgwMjY2NzcsInN1YiI6ImRpZDpldGhyOjB4MDBmYmRmNGFjNjE5NGFkMTMzYTViNzM3NzY5MjQ5ZmY0MDE2ODdjNiIsImNsYWltIjp7Im5hbWUiOiJDb25zZW5TeXMgTGVnTCIsInVybCI6Imh0dHBzOi8vbGVnYWwuY29uc2Vuc3lzLm5ldCIsImRlc2NyaXB0aW9uIjoiQ29uc2Vuc3lzIExlZ0wiLCJwcm9maWxlSW1hZ2UiOiJodHRwczovL2FibGUtZ2lyYWZmZS5zdXJnZS5zaC9sZWdsX2xvZ28ucG5nIn0sImlzcyI6ImRpZDpldGhyOjB4MDBmYmRmNGFjNjE5NGFkMTMzYTViNzM3NzY5MjQ5ZmY0MDE2ODdjNiJ9.zbgMWoQT_DWRWEPEqASHinC4fUrF8IHi-tARp59a12JTdtXMMjO8smba8DxN0quK3S4Bn2QAPqXWw8a6DIIqBAE
+  serverless-kms-secrets:
+    secretsFile: kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml
+  kmsSecrets: ${file(kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml)}
+  domainName: 
+    develop: api.uport.space
+    master: api.uport.me
+  customDomain:
+    domainName: ${self:custom.domainName.${opt:stage, self:provider.stage}}
+    basePath: champagne
+    createRoute53Record: false
+    baseUrl: https://${self:custom.customDomain.domainName}/${self:custom.customDomain.basePath}
+  alerts:
+    dashboards: true
+    topics:
+      alarm: arn:aws:sns:us-west-2:113196216558:cloudwatch-alarm-to-slack
+    definitions: 
+      functionDuration:
+        threshold: 6500 # override avereage duration alert
+    alarms:
+      - functionThrottles
+      - functionErrors
+      - functionInvocations
+      - functionDuration
+
+functions:
+ request:
+    handler: src/api_handler.request
+    description: Request an email with the request.
+    events:
+      - http:
+         path: request
+         method: post
+         cors: true
+    environment:
+      AUTHENTICATE_URL: ${self:custom.customDomain.baseUrl}/authenticate
+ authenticate:
+    handler: src/api_handler.authenticate
+    description: Handle disclosed data
+    events:
+      - http:
+         path: authenticate/{requestId}
+         method: post
+         cors: true
+    timeout: 13
+    environment:
+      SIGNATURE_URL: ${self:custom.customDomain.baseUrl}/signature
+      PUSH_URL: ${self:custom.customDomain.baseUrl}/push
+ push:
+    handler: src/api_handler.push
+    description: Handle push
+    events:
+      - http:
+         path: push/{requestId}/{signatureRequest}
+         method: get
+         cors: true
+ signature:
+    handler: src/api_handler.signature
+    description: Handle signature
+    events:
+      - http:
+         path: signature/{requestId}
+         method: post
+         cors: true
+ status:
+    handler: src/api_handler.status
+    description: Get status of requests.
+    events:
+      - http:
+         path: status
+         method: post
+         cors: true
+  

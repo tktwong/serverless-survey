@@ -1,0 +1,64 @@
+service: my-service
+frameworkVersion: '1'
+# For using layer, two articles are good
+# https://www.serverless.com/framework/docs/providers/aws/guide/layers/
+# https://www.serverless.com/blog/publish-aws-lambda-layers-serverless-framework
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ap-southeast-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - "*"
+            - "/*"
+  environment:
+#   Remember to choose unique bucket here
+    BUCKET_NAME: my-example-bucket-002
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - s3:
+          bucket: ${self:provider.environment.BUCKET_NAME}
+          event: s3:ObjectCreated:*
+  # Example rules:
+  #        rules:
+  #          - prefix: uploads/
+  #          - suffix: .jpg
+          existing: true
+resources:
+  Resources:
+    MyBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.BUCKET_NAME} 
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+              AllowedMethods: [PUT, GET, POST]
+    MyBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: MyBucket
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PuttObjectPolicy
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:*
+              Resource:
+                Fn::Join:
+                  ["", ["arn:aws:s3:::", { "Ref": "MyBucket" }, "/*"]]

@@ -1,0 +1,67 @@
+service: candidate-service
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-west-2
+  environment:
+    STAGE: ${self:provider.stage}
+    CANDIDATE_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    CANDIDATE_EMAIL_TABLE: "candidate-email-${opt:stage, self:provider.stage}"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+resources:
+  Resources:
+    CandidatesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.CANDIDATE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+
+functions:
+  candidateSubmission:
+    handler: functions/candidate-submission/candidate-submission.handler
+    memorySize: 128
+    description: Submit candidate information and starts interview process.
+    events:
+      - http: 
+          path: candidates
+          method: post
+  listCandidates:
+    handler: functions/list-candidates/list-candidates.handler
+    memorySize: 128
+    description: List all candidates
+    events:
+      - http: 
+          path: candidates
+          method: get
+  candidateDetails:
+    handler: functions/candidate-details/candidate-details.handler
+    events:
+      - http:
+          path: candidates/{id}
+          method: get
+  healthcheck:
+    handler: functions/healthcheck/healthcheck.handler
+    events:
+      - schedule: rate(1 minute)

@@ -1,0 +1,140 @@
+service: birthday # NOTE: update this with your service name
+#app: birthday
+#tenant: kuddusic
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-mocha-plugin
+  - serverless-plugin-canary-deployments
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+  alerts:
+    dashboards: false
+  deploymentSettings:
+    stages:
+      - dev
+      - prod
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+# you can overwrite defaults here
+#  stage: dev
+  region: ${opt:region, 'us-east-1'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+       - dynamodb:Query
+       - dynamodb:Scan
+       - dynamodb:GetItem
+       - dynamodb:PutItem
+       - dynamodb:UpdateItem
+       - dynamodb:DeleteItem
+      Resource: 
+       - "arn:aws:dynamodb:*:*:table/${self:provider.environment.TABLE_NAME}"    
+    - Effect: Allow
+      Action:
+        - codedeploy:*
+      Resource:
+        - "*"
+  environment:
+    TABLE_NAME: ${self:service}-${opt:stage, self:provider.stage}
+    REGION: ${opt:region, 'us-east-1'}
+
+package:
+  exclude:
+    - .dynamodb/**
+    - node_modules/**
+    - offline/**
+    - test/**
+    - extra/**
+    - migrations/**
+
+functions:
+  getBirthday:
+    handler: src/get.getBirthday
+    events:
+      - http:
+          path: /hello/{id}
+          method: get
+#      - sns: snsTopic-${opt:stage}
+    alarms:
+      - name: GetBirthdayAlarm
+        namespace: 'AWS/Lambda'
+        metric: Errors
+        threshold: 1
+        statistic: Minimum
+        period: 60
+        evaluationPeriods: 1
+        comparisonOperator: GreaterThanOrEqualToThreshold
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+      preTrafficHook: preHook4get
+      postTrafficHook: postHook4get
+      alarms:
+        - name: GetBirthdayAlarm
+
+  saveBirthday:
+    handler: src/create.saveUserBirthday
+    events:
+      - http:
+          path: /hello/{id}
+          method: put
+#      - sns: snsTopic1-${opt:stage}
+      
+    alarms:
+      - name: PutAlarm
+        namespace: 'AWS/Lambda'
+        metric: Errors
+        threshold: 1
+        statistic: Minimum
+        period: 60
+        evaluationPeriods: 1
+        comparisonOperator: GreaterThanOrEqualToThreshold
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+      preTrafficHook: preHook4put
+      postTrafficHook: postHook4put
+      alarms:
+        - name: PutAlarm
+  
+  preHook4get:
+    handler: src/hooks.pre4get
+
+  postHook4get:
+    handler: src/hooks.post4get
+
+  preHook4put:
+    handler: src/hooks.pre4put
+
+  postHook4put:
+    handler: src/hooks.post4put
+
+resources:
+  Resources:
+    BirthdayDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: userId 
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: userId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.TABLE_NAME}

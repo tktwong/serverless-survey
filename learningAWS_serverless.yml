@@ -1,0 +1,66 @@
+service: callcenterstatemachine
+provider:
+  name: aws
+  runtime: nodejs10.x
+functions:
+  opencasefunction:
+    handler: functions/opencase.handler
+  assigncasefunction:
+    handler: functions/assigncase.handler
+  workoncasefunction:
+    handler: functions/workoncase.handler
+  closecasefunction:
+    handler: functions/closecase.handler
+  escalatecasefunction:
+    handler: functions/escalatecase.handler
+stepFunctions:
+  stateMachines:
+    CallCenterStateMachine:
+      events:
+        - http:
+            path: callcenter
+            method: GET
+      definition:
+        Comment: "A Call Center State Machine example of the Amazon States Language using an AWS Lambda Function"
+        StartAt: OpenCase
+        States:
+          OpenCase:
+            Type: Task
+            Resource: 
+              Fn::GetAtt: [opencasefunction, Arn]
+            Next: AssignCase
+          AssignCase:
+            Type: Task
+            Resource: 
+              Fn::GetAtt: [assigncasefunction, Arn]
+            Next: WorkOnCase
+          WorkOnCase:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [workoncasefunction, Arn]
+            Next: IsCaseResolved
+          IsCaseResolved:
+            Type: Choice
+            Choices:
+            - Variable: "$.Status"
+              NumericEquals: 1
+              Next: CloseCase
+            - Variable: "$.Status"
+              NumericEquals: 0
+              Next: EscalateCase            
+          CloseCase:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [closecasefunction, Arn]
+            End: True
+          EscalateCase:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [escalatecasefunction, Arn]
+            Next: Fail
+          Fail:
+            Type: Fail
+            Cause: "Engage Tier 2 Support."
+
+plugins:
+  - serverless-step-functions

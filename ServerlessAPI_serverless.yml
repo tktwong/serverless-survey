@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+
+Resources:
+  LambdaProxy:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_proxy.request_handler
+      Runtime: python3.6
+      CodeUri: './LambdaCode/postgresProxy/'     
+      Events:
+        ApiRequest:
+          Type: Api
+          Properties:
+            Path: /
+            Method: ANY
+            RestApiId: !Ref ServerlessApi
+
+
+  ServerlessApi:
+    Type: 'AWS::Serverless::Api'
+    Properties:
+      StageName: prod
+      DefinitionBody:
+        # ---------------------------------------------
+        # API Gateway Swagger Spec
+        # ---------------------------------------------
+        swagger: '2.0'
+        info:
+          version: '1.0'
+          title: !Join
+            - ' - '
+            - - Serverless Api
+              - !Ref 'AWS::StackName'
+        paths:
+          "/{proxy+}":
+            x-amazon-apigateway-any-method:
+              produces:
+                - application/json
+              parameters:
+                - name: proxy
+                  in: path
+                  required: true
+                  type: string
+              responses:
+                '200':
+                  description: 200 response
+              x-amazon-apigateway-integration:
+                uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaProxy.Arn}/invocations'
+                httpMethod: POST # must be POST for lambda function invocations
+                type: aws_proxy
+
+  ServerlessApiLambdaPermission:
+      DependsOn : LambdaProxy
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        Action: lambda:InvokeFunction
+        SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ServerlessApi}/*"
+        FunctionName: !GetAtt LambdaProxy.Arn
+        Principal: apigateway.amazonaws.com
+
+Outputs:
+  ServerlessAPIUrl:
+    Value: !Sub 
+      - 'https://${api}.execute-api.${region}.amazonaws.com/${stage}/'
+      - { stage: !Ref ServerlessApi.Stage, api: !Ref ServerlessApi, region: !Ref 'AWS::Region' }
+

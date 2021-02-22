@@ -1,0 +1,84 @@
+service: productSearch
+
+package:
+  individually: true
+
+
+plugins:
+  - serverless-bundle-custom
+  - serverless-api-gateway-caching
+  - serverless-prune-plugin
+  - serverless-import-config-plugin
+
+custom:
+  import: ../_shared/resources/common-custom.yml
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 512
+  timeout: 30
+  region: ${file(../../config.js):appConfig.awsRegion}
+  logRetentionInDays: ${self:custom.logRetentionInDays}
+  versionFunctions: false
+  tracing:
+    apiGateway: true
+    lambda: true
+
+  apiGateway:
+    restApiId:
+      "Fn::ImportValue": SharedGW-restApiId
+    restApiRootResourceId:
+      "Fn::ImportValue": SharedGW-rootResourceId
+    minimumCompressionSize: 1024
+
+  usagePlan:
+    quota:
+      limit: 1000
+      offset: 0
+      period: DAY
+    throttle:
+      burstLimit: 2000
+      rateLimit: 1000
+
+  iamRoleStatements:
+    - ${file(../_shared/resources/common-policies.yml):lambdaPolicyXRay}
+    - ${file(../_shared/resources/common-policies.yml):lambdaPolicySecretManager}
+    - ${file(../_shared/resources/common-policies.yml):lambdaPolicyParameterStore}
+
+    - Effect: Allow
+      Action:
+        - es:*
+      Resource:
+        - "arn:aws:es:*:*:*"
+
+    - Effect: Allow
+      Action:
+        - es:ESHttp*
+      Resource:
+        - "arn:aws:es:*:*:*/*"
+
+    - Effect: Allow
+      Action:
+        - sns:*
+      Resource:
+        - "arn:aws:sns:*:*:*"
+
+functions:
+  filterProducts:
+    handler: filterProducts.handler
+    events:
+      - http:
+          path: /products/search/filter
+          method: get
+    environment:
+      ES_HOST: ${file(../../config.js):appConfig.elasticSearchUrl}
+
+  searchAdvancedProducts:
+    handler: searchAdvancedProducts.handler
+    events:
+      - http:
+          path: /products/search/advanced
+          method: get
+    environment:
+      ES_HOST: ${file(../../config.js):appConfig.elasticSearchUrl}

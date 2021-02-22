@@ -1,0 +1,65 @@
+service: twitter-dollar-bot
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+    name: aws
+    stage: ${opt:stage, 'dev'}
+    runtime: nodejs10.x
+    region: us-east-1
+
+    environment: ${file(./.env/${self:provider.stage}.yml)}
+
+    tracing:
+        apiGateway: true
+        lambda: true
+
+    iamRoleStatements:
+        - Effect: "Allow"
+          Action:
+              - "xray:PutTraceSegments"
+              - "xray:PutTelemetryRecords"
+          Resource:
+              - "*"
+        - Effect: Allow
+          Action:
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+          Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.HIST_DOLLAR_TABLE}"
+
+plugins:
+    - serverless-plugin-tracing
+
+functions:
+    tweetDollarJob:
+        handler: functions/tweetDollar.job
+        events:
+            - schedule: cron(13 18 * * ? *)
+
+    tweetDollarEndpoint:
+        handler: functions/tweetDollar.endpoint
+        events:
+            - http:
+                  path: tweet
+                  method: get
+
+resources:
+    Resources:
+        HistoricalDollarDynamoDbTable:
+            Type: "AWS::DynamoDB::Table"
+            DeletionPolicy: Retain
+            Properties:
+                AttributeDefinitions:
+                    - AttributeName: id
+                      AttributeType: S
+                KeySchema:
+                    - AttributeName: id
+                      KeyType: HASH
+                ProvisionedThroughput:
+                    ReadCapacityUnits: 2
+                    WriteCapacityUnits: 2
+                TableName: ${self:provider.environment.HIST_DOLLAR_TABLE}

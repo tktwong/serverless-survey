@@ -1,0 +1,161 @@
+service: ${file(./saruni.json):projectName}
+
+provider:
+  name: aws
+  apiName: ${file(./saruni.json):apiName}
+  region: eu-west-1
+  stage: dev
+  memorySize: 256
+  runtime: nodejs12.x
+  role: LambdaRole
+  environment:
+    ACCESS_TOKEN_SECRET: hello
+    DATABASE_URL:
+      {
+        "Fn::Join":
+          [
+            "",
+            [
+              "postgres://",
+              "${self:custom.USERNAME}",
+              ":",
+              "${self:custom.PASSWORD}",
+              "@",
+              "${self:custom.POSTGRESQL.HOST}",
+              ":",
+              "${self:custom.POSTGRESQL.PORT}",
+              "/",
+              "${self:custom.DB_NAME}",
+              "?schema=public",
+            ],
+          ],
+      }
+    #postgresql
+    POSTGRESQL_HOST: ${self:custom.POSTGRESQL.HOST}
+    POSTGRESQL_PORT: ${self:custom.POSTGRESQL.PORT}
+    #common
+    DB_NAME: ${self:custom.DB_NAME}
+    USERNAME: ${self:custom.USERNAME}
+    PASSWORD: ${self:custom.PASSWORD}
+
+custom:
+  webpack:
+    webpackConfig: "packages/api/webpack.config.js" # Name of webpack configuration file
+    includeModules: false # Node modules configuration for packaging
+    packager: "yarn" # Packager that will be used to package your external modules
+    excludeFiles: src/**/*.test.js # Provide a glob for files to ignore
+  DB_NAME: test
+  USERNAME: master
+  PASSWORD: password
+  POSTGRESQL:
+    HOST:
+      Fn::GetAtt: [PostgreSqlRDSInstance, Endpoint.Address]
+    PORT:
+      Fn::GetAtt: [PostgreSqlRDSInstance, Endpoint.Port]
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-webpack
+
+resources:
+  Resources:
+    LambdaRole: ${file(./resource/LambdaRole.yml)}
+    LambdaSecurityGroup: ${file(./resource/LambdaSecurityGroup.yml)}
+
+    ServerlessVPC: ${file(./resource/ServerlessVPC.yml)}
+    ServerlessVPCGA: ${file(./resource/ServerlessVPCGA.yml)}
+    ServerlessSubnetA: ${file(./resource/ServerlessSubnetA.yml)}
+    ServerlessSubnetB: ${file(./resource/ServerlessSubnetB.yml)}
+    ServerlessSubnetC: ${file(./resource/ServerlessSubnetC.yml)}
+    ServerlessSubnetGroup: ${file(./resource/ServerlessSubnetGroup.yml)}
+    ServerlessInternetGateway: ${file(./resource/ServerlessInternetGateway.yml)}
+    ServerlessSecurityGroup: ${file(./resource/ServerlessSecurityGroup.yml)}
+
+    BastionRouteTable: ${file(./resource/BastionRouteTable.yml)}
+    BastionRoute: ${file(./resource/BastionRoute.yml)}
+    PublicSubnet: ${file(./resource/PublicSubnet.yml)}
+    PublicSubnetAssociation: ${file(./resource/PublicSubnetAssociation.yml)}
+
+    PostgreSqlRDSInstance: ${file(./resource/PostgreSqlRDSInstance.yml)}
+    BastionInstance: ${file(./resource/BastionInstance.yml)}
+    BastionSSH: ${file(./resource/BastionSSH.yml)}
+    DBSSH: ${file(./resource/DBSSH.yml)}
+
+    BastionConnectivity: ${file(./resource/BastionConnectivity.yml)}
+
+    ImageStorage: ${file(./resource/ImageStorageBucket.yml)}
+
+functions:
+  graphql:
+    vpc:
+      securityGroupIds:
+        - !GetAtt LambdaSecurityGroup.GroupId
+      subnetIds:
+        - Ref: ServerlessSubnetA
+        - Ref: ServerlessSubnetB
+        - Ref: ServerlessSubnetC
+    handler: packages/api/src/functions/graphql.handler
+    events:
+      - http:
+          path: /graphql
+          method: post
+          cors: true
+      - http:
+          path: /graphql
+          method: get
+          cors: true
+  create_cookie_handler:
+    handler: packages/api/src/functions/cookie_manager.handler
+    events:
+      - http:
+          path: /cookie_manager
+          method: post
+          cors:
+            origin:
+              - "http://localhost:3000"
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: true
+      - http:
+          path: /cookie_manager
+          method: delete
+          cors:
+            origin:
+              - "http://localhost:3000"
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: true
+  refresh_token:
+    handler: packages/api/src/functions/refresh_token.handler
+    events:
+      - http:
+          path: /refresh_token
+          method: post
+          cors:
+            origin:
+              - "http://localhost:3000"
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: true
+  image_upload:
+    handler: packages/api/src/functions/image_upload.handler
+    events:
+      - http:
+          path: /image_upload
+          method: post
+          cors: true

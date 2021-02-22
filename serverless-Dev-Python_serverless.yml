@@ -1,0 +1,68 @@
+service: rotation-round-count-poc
+
+provider:
+  name: aws
+  runtime: python3.6
+  timeout: 300
+  region: us-west-2
+  environment:
+    rotationRoundTable: "tblRotationRound"
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+#        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+#        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.rotationRoundTable}"
+
+functions:
+  rotationRoundCreate:
+    name: ${opt:stage}-rotationRoundCreate
+    handler: rotation_round/create.create
+    events:
+      - http:
+          path: rotationRound
+          method: POST
+          cors: true
+
+  rotationRoundGet:
+    name: ${opt:stage}-rotationRoundGet
+    handler: rotation_round/get.get
+    events:
+      - http:
+          path: rotationRound/{week_id}
+          method: GET
+          cors: true
+
+  rotationRoundUpdate:
+    name: ${opt:stage}-rotationRoundUpdate
+    handler: rotation_round/update.update
+    events:
+      - http:
+          path: rotationRound/{week_id}
+          method: PUT
+          cors: true
+
+resources:
+  Resources:
+    RotationRoundTable:
+      Type: 'AWS::DynamoDB::Table'
+      # DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: week_id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: week_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.rotationRoundTable}
+

@@ -1,0 +1,151 @@
+service: smgco-360-uploader
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  runtime: nodejs8.10
+  resourcePolicy:
+   - Effect: Allow
+     Principal: "*"
+     Action: execute-api:Invoke
+     Resource:
+       - execute-api:/*/*/*
+     Condition:
+       IpAddress:
+         aws:SourceIp:
+          - 167.98.25.201
+          - 54.154.192.59
+          - 34.253.155.4
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Scan
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["360ImagesDynamoDBTable", "Arn" ] }
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:PutObjectAcl
+        - s3:PutObjectTagging
+        - s3:PutObjectVersionAcl
+        - s3:PutObjectVersionTagging
+        - s3:DeleteObject
+      Resource:
+        - "arn:aws:s3:::${opt:bucket, 'smgco-360'}/*"
+  environment:
+    TABLE_NAME: { "Ref": "360ImagesDynamoDBTable" }
+    S3_BUCKET: ${opt:bucket, 'smgco-360'}
+    REGION: ${self:provider.region}
+    STAGE: ${self:provider.stage}
+  stackTags:
+    System: CollectionsOnline
+
+functions:
+  listObjects:
+    handler: lambda/listObjects/index.handler
+    timeout: 90
+    events:
+      - http:
+          path: list-objects
+          method: get
+          cors: true
+
+  processFile:
+    handler: lambda/processFile/index.handler
+    timeout: 90
+
+  toggleStatus:
+    handler: lambda/toggleStatus/index.handler
+    timeout: 90
+    events:
+      - http:
+          path: toggle-status
+          method: post
+          cors: true
+
+  uploadForm:
+    handler: lambda/uploadForm/index.handler
+    timeout: 90
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true
+
+  deleteObject:
+    handler: lambda/deleteObject/index.handler
+    timeout: 90
+    events:
+      - http:
+          path: /delete-object
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    360ImagesDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    S3Bucket360:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: ${opt:bucket, 'smgco-360'}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+              AllowedOrigins:
+                - "*"
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: "s3:ObjectCreated:*"
+              Function:
+                "Fn::GetAtt": [ ProcessFileLambdaFunction, Arn ]
+    ProcessFileLambdaPermissionS3Bucket360:
+      DependsOn:
+        - ProcessFileLambdaFunction
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          "Fn::GetAtt": [ ProcessFileLambdaFunction, Arn ]
+        Action: "lambda:InvokeFunction"
+        Principal: "s3.amazonaws.com"
+        SourceArn: "arn:aws:s3:::${opt:bucket, 'smgco-360'}"
+    360BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: S3Bucket360
+        PolicyDocument:
+          Statement:
+            Action: "s3:GetObject"
+            Effect: "Allow"
+            Resource:
+              Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - Ref: S3Bucket360
+                  - "/*"
+            Principal: "*"
+
+plugins:
+  - serverless-offline

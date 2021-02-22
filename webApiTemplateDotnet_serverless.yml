@@ -1,0 +1,101 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: # NOTE: update this with your service name
+    name: willy-focus-day-${self:provider.region}-${self:provider.stage}
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: dotnetcore2.1
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  stackName: ${self:service.name}
+  apiName: ${self:service.name}
+
+
+#for custom dns
+custom:
+  loggingAccountId: ${opt:loggingAccountId, "803627284203"}
+  dnsPrefix: wh-public-api
+  environmentType: ${opt:environmentType, 'devtest'}
+  subDomain: ${opt:subDomain, 'cava-rd-dev'}
+  customDomain:
+    domainName: "${self:custom.dnsPrefix}.${self:custom.subDomain}.${self:custom.environmentType}.aws.scania.com"
+    stage:  ${opt:stage, 'dev'}
+    basePath: "api"    
+    certificateName: "*.${self:custom.subDomain}.${self:custom.environmentType}.aws.scania.com"
+    createRoute53Record: true
+    endpointType: 'regional'
+
+
+package:
+  artifact: deploy-package.zip
+
+functions:
+  WillyTestApi:
+    name: #${self:service.name}
+    handler: webApi::webApi.LambdaEntryPoint::FunctionHandlerAsync
+    role: WillyServiceAPIRole
+    events:
+      - http:
+          path: /{proxy+}
+          method: post
+      - http:
+          path: /{proxy+}
+          method: get
+      - http:
+          path: /{proxy+}
+          method: head
+    timeout: 30
+
+resources:
+  Resources:
+
+    WillyServiceAPIRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        RoleName: ${self:service.name}-role
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement: 
+            -
+              Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+              
+        Policies:
+          - PolicyName: ${self:service.name}-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                      - ':'
+                      - - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/${self:service.name}*:*:*'
+plugins:
+  - serverless-domain-manager

@@ -1,0 +1,257 @@
+# serverless.yml
+service:
+  name: nlpjs-serverless
+
+package:
+  #  artifact: https://s3.amazonaws.com/www.dixonaws.com/nlpjs.zip
+  excludeDevDependencies: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: dev
+  role: !GetAtt nlpjsLambdaExecutionRole.Arn
+
+plugins:
+  - lalalambda
+  - serverless-finch
+
+custom:
+  client:
+    bucketName: "nlp-training-app-bucket-9april2020-2"
+    distributionFolder: "public"
+    indexDocument: "index.html"
+    errorDocument: "error.html"
+    manageResources: false
+
+resources:
+  Resources:
+    TrainingAppBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - "*"
+              AllowedMethods:
+                - POST
+                - GET
+                - PUT
+                - DELETE
+                - HEAD
+              AllowedHeaders:
+                - "*"
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        AccessControl: Private
+        BucketName: nlp-training-app-bucket-9april2020-2
+
+    CloudFrontOriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: !Sub 'CloudFront OAI for nlp.js training app hosting bucket'
+
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          DefaultCacheBehavior:
+            Compress: true
+            ForwardedValues:
+              QueryString: false
+            TargetOriginId: nlp-training-app-bucket-9april2020-2
+            ViewerProtocolPolicy: redirect-to-https
+            CachedMethods:
+              - GET
+              - HEAD
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+          DefaultRootObject: index.html
+          Enabled: true
+          HttpVersion: http2
+          Origins:
+            - DomainName: !Join ['', [!Ref TrainingAppBucket, '.s3.amazonaws.com']]
+              Id: nlp-training-app-bucket-9april2020-2
+              S3OriginConfig:
+                OriginAccessIdentity:
+                  !Join ['', ['origin-access-identity/cloudfront/', !Ref CloudFrontOriginAccessIdentity]]
+          PriceClass: PriceClass_All
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref TrainingAppBucket
+        PolicyDocument:
+          Statement:
+            - Action:
+                - s3:GetObject
+              Effect: Allow
+              Resource: !Join ['', ['arn:aws:s3:::', !Ref TrainingAppBucket, '/*']]
+              Principal:
+                CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+
+    agentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: agents
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH # partition key
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    domainsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: domains
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH # partition key
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    entitysTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: entitys
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH # partition key
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    intentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: intents
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH # partition key
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    scenariosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: scenarios
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH # partition key
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    sessionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: sessions
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH # partition key
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    settingsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: settings
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH # partition key
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    trainingsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: trainings
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH # partition key
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    nlpjsLambdaExecutionRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - "sts:AssumeRole"
+        Path: /
+        Policies:
+          - PolicyName: nlpjsLambdaExecutionPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "dynamodb:GetItem"
+                    - "dynamodb:UpdateItem"
+                    - "dynamodb:PutItem"
+                    - "dynamodb:Query"
+                    - "dynamodb:Scan"
+                  Resource:
+                    - !GetAtt agentsTable.Arn
+                    - !GetAtt domainsTable.Arn
+                    - !GetAtt entitysTable.Arn
+                    - !GetAtt intentsTable.Arn
+                    - !GetAtt scenariosTable.Arn
+                    - !GetAtt sessionsTable.Arn
+                    - !GetAtt settingsTable.Arn
+                    - !GetAtt trainingsTable.Arn
+                - Effect: Allow
+                  Action:
+                    - "logs:CreateLogGroup"
+                    - "logs:CreateLogStream"
+                    - "logs:PutLogEvents"
+                  Resource:
+                    - "arn:aws:logs:*:*:*"
+
+
+
+#    Outputs:
+#      agentsTableArn:
+#        Description: The ARN for the agents table
+#        Value:
+#          'Fn::GetAtt': [agentsTable,Arn]
+#        Export:
+#          Name: ${self.service):${opt:stage}:agentsTableArn
+#
+
+

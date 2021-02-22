@@ -1,0 +1,54 @@
+service: kiwiyou-bot
+provider:
+  name: aws
+  runtime: rust
+  memorySize: 128
+  region: ${opt:region, 'eu-west-2'}
+  environment:
+    # Telegram bot token follows this format:
+    # 01234567890:ABCDEFGHIJKLMabcdefghijklm123456789
+    # /token/head represents the left side to the colon (01234567890)
+    # /token/body represents the right side to the colon (ABCDEFGHIJKLMabcdefghijklm123456789)
+    BOT_TOKEN: ${ssm:/kiwiyou-bot/token/head~true}:${ssm:/kiwiyou-bot/token/body~true}
+    # Bot username, used to identify bot commands in a group chat.
+    BOT_NAME: '@kiwiyou_bot'
+    REGION: ${self:provider.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        - "Fn::GetAtt": [ ChatLanguageTable, Arn ]
+
+package:
+  individually: true
+
+plugins:
+  - serverless-rust
+
+functions:
+  kiwiyou-bot:
+    handler: kiwiyou-bot
+    events:
+      - http:
+          path: '/${ssm:/kiwiyou-bot/token/head~true}/${ssm:/kiwiyou-bot/token/body~true}'
+          method: POST
+
+custom:
+  rust:
+    dockerTag: 0.2.6-rust-1.41.0
+
+resources:
+  Resources:
+    ChatLanguageTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ChatLanguage
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: chatId
+            AttributeType: 'N'
+        KeySchema:
+          - AttributeName: chatId
+            KeyType: HASH

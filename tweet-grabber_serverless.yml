@@ -1,0 +1,79 @@
+service: tweet-grabber
+
+plugins:
+  - serverless-offline
+
+provider:
+  profile: serverless-admin
+  name: aws
+  runtime: nodejs8.10
+  region: us-east-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 
+        - "Lambda:InvokeFunction"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "rds:*"
+      Resource: "*"
+package:
+  exclude:
+    - lib/**
+    - data-local
+    - node_modeules
+  include:
+    - routes/**
+    - models/**
+
+functions:
+  refresh-tweet-count:
+      handler: tweet-count/refresh.refresh
+      events:
+        - schedule: rate(3 hours)
+      environment:
+          CONSUMER_KEY: ${file(./serverless.env.yml):dev.CONSUMER_KEY}
+          CONSUMER_SECRET : ${file(./serverless.env.yml):dev.CONSUMER_SECRET}
+          CONSUMER_TOKEN : ${file(./serverless.env.yml):dev.CONSUMER_TOKEN}
+          CONSUMER_TOKEN_SECRET : ${file(./serverless.env.yml):dev.CONSUMER_TOKEN_SECRET}
+  add-app:
+    handler: apps/post.post
+    events:
+      - http:
+          path: apps/post
+          method: post
+          cors: true
+          headers:
+              Content-Type: "'application/json'"
+  list-apps:
+      handler: apps/list.list
+      events:
+       - http:
+          path: apps/list
+          method: get
+          cors: true
+          headers:
+              Content-Type: "'application/json'"
+  get-app:
+      handler: apps/get.get
+      events:
+       - http:
+          path: apps/{id}
+          method: get
+          request:
+           template:
+            application/json: '{ "id" : "$input.params(''app'')" }'
+            parameters:
+              querystrings:
+                url: true
+          cors: true
+          headers:
+              Content-Type: "'application/json'"
+  refresh-top-ten:
+      handler: top-ten/refresh.refresh
+      events:
+        - schedule: 
+          enabled: false
+          rate: cron( 1 day )
+
+        

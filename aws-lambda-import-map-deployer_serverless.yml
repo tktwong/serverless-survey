@@ -1,0 +1,62 @@
+service: import-map-deployer
+
+custom:
+  bucket: 'YOUR_BUCKET'
+
+package:
+  exclude:
+    - 'bin/*'
+    - 'examples/**'
+    - 'spec/**'
+    - '.vscode/**'
+    - '*'
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: 'arn:aws:s3:::${self:custom.bucket}/*'
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-typescript
+
+functions:
+  authorizer:
+    handler: src/handlers/authorizer.handler
+  http:
+    handler: src/handlers/express.handler
+    timeout: 2
+    events:
+      - http: ANY /
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors:
+            origin: '*'
+            allowCredentials: false
+            cacheControl: 'max-age=600, s-maxage=600, proxy-revalidate'
+          authorizer:
+            name: authorizer
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+
+resources:
+  Resources:
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.WWW-Authenticate: "'Basic'"
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'

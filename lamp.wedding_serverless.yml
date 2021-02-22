@@ -1,0 +1,202 @@
+service:
+  name: lamp-wedding
+
+custom:
+  apiGateway:
+    binaryMediaTypes:
+      - image/png
+      - image/jpeg
+      - image/svg
+      - font/woff
+      - font/woff2
+      - font/ttf
+      - font/svg
+      - "*/*" # Using */* doesn't have side effects that I can tell. The HTML response works fine.
+#  customDomain:
+#    domainName: lamp.wedding
+#    certificateArn: arn:aws:acm:us-east-1:984077873871:certificate/b0189c40-fed4-474f-82fd-689a8290f2cf
+##    basePath: ''
+#    stage: ${self:provider.stage}
+#    createRoute53Record: false
+#    endpointType: edge
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-webpack
+  - serverless-aws-static-file-handler/plugins/BinaryMediaTypes
+#  - serverless-domain-manager
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+      - dynamodb:DescribeTable
+      - dynamodb:Query
+      - dynamodb:Scan
+      - dynamodb:GetItem
+      - dynamodb:PutItem
+      - dynamodb:BatchWriteItem
+      - dynamodb:UpdateItem
+      - dynamodb:DeleteItem
+      Resource: arn:aws:dynamodb:eu-west-2:*:*
+
+resources:
+  Resources:
+    guestsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: lamp.wedding.guests
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    rsvpTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: lamp.wedding.rsvp
+        AttributeDefinitions:
+        - AttributeName: guestId
+          AttributeType: S
+        KeySchema:
+        - AttributeName: guestId
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+functions:
+  searchGuestByName:
+    handler: server.searchGuestByName
+    events:
+    - http:
+        path: api/guests/find
+        method: get
+        cors: true
+  getGuest:
+    handler: server.getGuestById
+    events:
+    - http:
+        path: api/guests/{id}
+        method: get
+        cors: true
+        request:
+          parameters:
+            paths:
+              id: true
+  getResponse:
+    handler: server.getResponseData
+    events:
+    - http:
+        path: api/guests/{id}/response
+        method: get
+        cors: true
+        request:
+          parameters:
+            paths:
+              id: true
+  putRsvp:
+    handler: server.putRsvp
+    events:
+    - http:
+        path: api/guests/{id}/rsvp
+        method: put
+        cors: true
+        request:
+          parameters:
+            paths:
+              id: true
+  getAllResponses:
+    handler: server.getAllResponses
+    events:
+    - http:
+        path: api/response/all
+        method: get
+  putGuests:
+    handler: server.guestsPutAll
+    events:
+    - http:
+        cors: true
+        method: put
+        path: guests
+  updateSingleGuest:
+    handler: server.guestsPutSingle
+    events:
+    - http:
+        method: put
+        path: guests/{id}
+  logView:
+    handler: server.logView
+    events:
+    - http:
+        cors: true
+        method: put
+        path: view
+  sendTestEmail:
+    handler: server.sendTestEmail
+    events:
+    - http:
+        method: post
+        path: email/test
+  sendSaveTheDate:
+    handler: server.sendSaveTheDate
+    events:
+    - http:
+        method: post
+        path: email/save-the-date
+  sendSaveTheDate2:
+    handler: server.sendSaveTheDate2
+    events:
+    - http:
+        method: post
+        path: email/save-the-date-2
+  sendSaveTheDate3:
+    handler: server.sendSaveTheDate3
+    events:
+    - http:
+        method: post
+        path: email/save-the-date-3
+  sendRsvpReminders:
+    handler: server.sendRsvpReminders
+    events:
+      - http:
+          method: post
+          path: email/send-rsvp-reminder
+  sendOneMonthUpdate:
+    handler: server.sendOneMonthUpdate
+    events:
+      - http:
+          method: post
+          path: email/send-one-month-update
+  sendThankYouEmails:
+    handler: server.sendThankYouEmails
+    events:
+      - http:
+          method: post
+          path: email/send-thank-yous
+  sendSorryEmail:
+    handler: server.sendSorryEmail
+    events:
+      - http:
+          method: post
+          path: email/send-sorry-partner
+  serveStatic:
+    handler: server.serveStatic
+    events:
+    - http:
+        method: get
+        path: /assets/{proxy+}
+    - http:
+        method: get
+        path: /
+    - http:
+        method: get
+        path: /{proxy+}

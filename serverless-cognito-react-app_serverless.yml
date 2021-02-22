@@ -1,0 +1,77 @@
+service: serverless-cognito-react-app
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: eu-west-1
+  profile: personal-serverless
+
+functions:
+  createJob:
+    handler: api/handlers/job.create
+    events: 
+      - http:
+          path: job/create 
+          method: get
+          cors: true 
+
+# you can add packaging information here
+package:
+  exclude:
+    - app/**
+
+resources:
+  Resources:
+    appUserPool:
+      Type: 'AWS::Cognito::UserPool'
+      Properties:
+        UserPoolName: app-user-pool
+    reactAppClient:
+      Type: 'AWS::Cognito::UserPoolClient'
+      Properties:
+        ClientName: react-app-client
+        GenerateSecret: false
+        UserPoolId: 
+          Ref: appUserPool
+    appIdentityPool:
+      Type: 'AWS::Cognito::IdentityPool'
+      Properties:
+        IdentityPoolName: appidentitypool
+        AllowUnauthenticatedIdentities: true
+        CognitoIdentityProviders:
+          - ClientId: 
+              Ref: reactAppClient
+            ProviderName: 
+              'Fn::GetAtt': [ appUserPool, ProviderName ]
+    cognitoDefaultRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument: 
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal: 
+                Federated: "cognito-identity.amazonaws.com"
+              Action: 
+                - "sts:AssumeRoleWithWebIdentity"
+    identityPoolRoleMapping:
+      Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+      Properties:
+        IdentityPoolId: 
+          Ref: appIdentityPool
+        Roles:
+          authenticated:
+              'Fn::GetAtt': [ cognitoDefaultRole, Arn ]
+          unauthenticated:
+              'Fn::GetAtt': [ cognitoDefaultRole, Arn ]
+
+  Outputs:
+    userPoolId:
+      Value:
+        Ref: appUserPool
+    userPoolWebClientId:
+      Value:
+        Ref: reactAppClient
+    identityPoolId:
+      Value:
+        Ref: appIdentityPool

@@ -1,0 +1,115 @@
+service: capterra-lambchop-ui-service
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+  tracing: true
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  timeout: 30
+  layers:
+    - arn:aws:lambda:::awslayer:AmazonLinux1803
+  environment:
+    region: ${self:custom.region}
+    ROLLBAR_SERVER_TOKEN: ${self:custom.rollbarConfig.ROLLBAR_SERVER_TOKEN}
+    ROLLBAR_ENVIRONMENT: ${self:custom.rollbarConfig.ROLLBAR_ENVIRONMENT}
+    GTM_CONTAINER_ID: ${self:custom.analyticsConfig.GTM_CONTAINER_ID}
+    OPTIMIZE_CONTAINER_ID: ${self:custom.analyticsConfig.OPTIMIZE_CONTAINER_ID}
+    GA_TRACKING_ID: ${self:custom.analyticsConfig.GA_TRACKING_ID}
+  iamRoleStatements:
+    - Effect: "Allow" # xray permissions (required)
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+    - Effect: "Allow" # lambda invoking another lambda permissions (required)
+      Action:
+        - "lambda:InvokeFunction"
+      Resource:
+        - "*"
+functions:
+  uiServer:
+    handler: demo/dist/lambchop/uiServer.handler
+    memorySize: 3008
+    package:
+      # We're including this file so it will be in the final package of this function only
+      include:
+        - demo/dist/lambchop/uiServer.js
+        - demo/dist/lambchop/uiServer.js.map
+    environment:
+      ROLLBAR_CLIENT_TOKEN: ${self:custom.rollbarConfig.ROLLBAR_CLIENT_TOKEN}
+      MAIN_SITE_URL: ${self:custom.urls.MAIN_SITE_URL}
+      IMAGE_BASE_URL: ${self:custom.urls.IMAGE_BASE_URL}
+      WRITE_REVIEW_BASE_URL: ${self:custom.urls.WRITE_REVIEW_BASE_URL}
+      REDIS_URL: ${self:custom.redis.REDIS_URL}
+      REDIS_PORT: ${self:custom.redis.REDIS_PORT}
+      REDIS_PASS: ${self:custom.redis.REDIS_PASS}
+    events:
+      - http:
+          method: get
+          path: lambchop/{id}
+          request:
+            parameters:
+              path:
+                id: true
+          response:
+            headers:
+              Content-Type: "'text/html'"
+  api:
+    handler: demo/dist/lambchop/api.handler
+    memorySize: 3008
+    package:
+      # We're including this file so it will be in the final package of this function only
+      include:
+        - demo/dist/lambchop/api.js
+        - demo/dist/lambchop/api.js.map
+    environment:
+      ROLLBAR_CLIENT_TOKEN: ${self:custom.rollbarConfig.ROLLBAR_CLIENT_TOKEN}
+      MAIN_SITE_URL: ${self:custom.urls.MAIN_SITE_URL}
+      IMAGE_BASE_URL: ${self:custom.urls.IMAGE_BASE_URL}
+      WRITE_REVIEW_BASE_URL: ${self:custom.urls.WRITE_REVIEW_BASE_URL}
+      REDIS_URL: ${self:custom.redis.REDIS_URL}
+      REDIS_PORT: ${self:custom.redis.REDIS_PORT}
+      REDIS_PASS: ${self:custom.redis.REDIS_PASS}
+    events:
+    - http:
+          method: get
+          path: api/{id}
+          request:
+            parameters:
+              path:
+                id: true
+          response:
+            headers:
+              Content-Type: "'application/json'"
+plugins:
+  - serverless-offline
+  - serverless-finch
+  - serverless-plugin-tracing
+  - serverless-plugin-common-layers
+custom:
+  defaultRegion: us-east-1
+  defaultStage: dev
+  profiles:
+    dev: search-dev
+    staging: search-staging
+    prod: search-prod
+  region: ${opt:region, self:custom.defaultRegion}
+  rollbarConfig: ${file(demo/config/rollbar.yml):${self:custom.stage}}
+  analyticsConfig: ${file(demo/config/analytics.yml):${self:custom.stage}}
+  s3Config: ${file(demo/config/s3.yml):${self:custom.stage}}
+  stage: ${opt:stage, self:custom.defaultStage}
+  urls: ${file(demo/config/urls.yml):${self:custom.stage}}
+  redis: ${file(demo/config/redis.yml):${self:custom.stage}}
+  client:
+    bucketName: ${self:custom.s3Config.CLIENT_BUCKET_NAME}
+    distributionFolder: ${self:custom.s3Config.CLIENT_DIST_FOLDER}
+  serverless-offline:
+    port: 4005
+package:
+  individually: true
+  exclude:
+    - '**'
+  include:
+    - 'demo/dist/public/lambchop/assets/manifest.json'

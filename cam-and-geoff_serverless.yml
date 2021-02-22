@@ -1,0 +1,159 @@
+service:
+  name: cam-and-geoff
+
+plugins:
+  - serverless-webpack
+  - fullstack-serverless
+
+provider:
+  name: aws
+  region: us-east-1
+  stage: ${opt:stage,'dev'}
+  runtime: nodejs10.x
+  logs:
+    restApi: true
+    websocket: true
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "cloudwatch:PutMetricData"
+#      Resource: "*"
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - Fn::GetAtt: [ConnectionTable, Arn]
+        - Fn::GetAtt: [RoomTable, Arn]
+        - Fn::GetAtt: [WordTable, Arn]
+        - Fn::Join:
+          - '/'
+          - - Fn::GetAtt: [ConnectionTable, Arn]
+            - 'index'
+            - 'RoomCodeIdIndex'
+
+custom:
+  webpack:
+    webpackConfig: "config/webpack/server.js"
+  fullstack:
+    bucketName: goerff-games
+    distributionFolder: dist
+    singlePageApp: true
+
+functions:
+  # TODO: Add request body validation
+  create-room:
+    handler: src/server/lambda/create-room.handle
+    events:
+      - http:
+          method: post
+          path: rooms
+          cors: true
+  connect:
+    handler: src/server/lambda/connect.handle
+    events:
+      - websocket:
+          route: $connect
+  disconnect:
+    handler: src/server/lambda/disconnect.handle
+    events:
+      - websocket:
+          route: $disconnect
+  join-room:
+    handler: src/server/lambda/join-room.handle
+    events:
+      - websocket:
+          route: join-room
+  update-word:
+    handler: src/server/lambda/update-word.handle
+    events:
+      - websocket:
+          route: update-word
+  push-words:
+    handler: src/server/lambda/push-words.handle
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - WordTable
+              - StreamArn
+
+resources:
+  Resources:
+    # Room table, a room has a code and is any type of game
+    RoomTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Room
+        AttributeDefinitions:
+          - AttributeName: code
+            AttributeType: S
+        KeySchema:
+          - AttributeName: code
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+    # Word table for a collabetry room.
+    # Do not add words as an attribute to a room,
+    # this will lead to high contention
+    WordTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Word
+        AttributeDefinitions:
+          - AttributeName: roomCode
+            AttributeType: S
+          - AttributeName: value
+            AttributeType: S
+        KeySchema:
+          - AttributeName: roomCode
+            KeyType: HASH
+          - AttributeName: value
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+
+    # Connection table for websocket connections
+    ConnectionTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Connection
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: roomCode
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: RoomCodeIdIndex
+            KeySchema:
+              - AttributeName: roomCode
+                KeyType: HASH
+              - AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+

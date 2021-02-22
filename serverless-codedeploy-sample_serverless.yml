@@ -1,0 +1,65 @@
+service: sls-canary-example
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  # profile: aws1
+  region: ap-northeast-2
+  tracing: true
+  stage: ${opt:stage, 'dev'}
+  memorySize: 256
+  iamRoleStatements:
+    - Effect: Allow # xray permissions (required)
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - codedeploy:*
+      Resource: "*"
+  environment:
+    NODE_ENV: ${self:provider.stage}
+
+package:
+  individually: true
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  alerts:
+    dashboards: true
+
+functions:
+  app:
+    handler: app/lambda.handler
+    events:
+      - http:
+          path: api
+          method: get
+    alarms:
+      - name: foo
+        namespace: 'AWS/Lambda'
+        metric: Errors
+        threshold: 1
+        statistic: Minimum
+        period: 60
+        evaluationPeriods: 1
+        comparisonOperator: GreaterThanOrEqualToThreshold
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+      preTrafficHook: preHook
+      postTrafficHook: postHook
+      alarms:
+        - AppFooAlarm
+  preHook:
+    handler: hooks/pre.handler
+  postHook:
+    handler: hooks/post.handler
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-plugin-optimize
+  - serverless-plugin-tracing
+  - serverless-plugin-canary-deployments
+  - serverless-plugin-aws-alerts

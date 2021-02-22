@@ -1,0 +1,181 @@
+service: aws-zombie-hackathon
+
+plugins:
+  - serverless-webpack
+  - serverless-single-page-app-plugin
+
+custom:
+  webpackIncludeModules: true
+  s3Bucket: aws-zombie-hackathon
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: prod
+  region: eu-central-1
+
+  # 'iamRoleStatement' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:eu-central-1:*:*"
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /notes
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate the api via Cognito User Pool. Update the 'arn'
+  #     with your own User Pool ARN
+  postSignup:
+    handler: controllerPostSignup.main
+    events:
+      - http:
+          path: postSignup
+          method: get
+          cors: true
+
+  contactsSearch:
+    handler: controllerContacts.search
+    events:
+      - http:
+          path: contacts/search/{query}
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:eu-central-1:650194926406:userpool/eu-central-1_GLfi27cfZ
+
+  contacts:
+    handler: controllerContacts.manip
+    events:
+      - http:
+          path: contacts/{contactId}
+          method: any
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:eu-central-1:650194926406:userpool/eu-central-1_GLfi27cfZ
+
+  chats:
+    handler: controllerChats.get
+    events:
+      - http:
+          path: chats
+          method: get
+          cors: true
+          authorizer:
+            arn: arn:aws:cognito-idp:eu-central-1:650194926406:userpool/eu-central-1_GLfi27cfZ
+
+
+  # chatsGet:
+  #   handler: controllerChat.get
+  #   events:
+  #     - http:
+  #         path: chats
+  #         method: get
+  #         cors: true
+          # authorizer:
+          #   arn: arn:aws:cognito-idp:eu-central-1:650194926406:userpool/eu-central-1_GLfi27cfZ
+
+  # chatsDelete:
+  #   handler: controllerChat.delete
+  #   events:
+  #     - http:
+  #         path: chat/{chatId}
+  #         method: delete
+  #         cors: true
+          # authorizer:
+          #   arn: arn:aws:cognito-idp:eu-central-1:650194926406:userpool/eu-central-1_GLfi27cfZ
+
+  # postSignup:
+  #   handler: controllerPostSignup.main
+  #   events:
+  #     - http:
+  #         path: postSignup
+  #         method: get
+  #         cors: true
+  #         authorizer:
+  #           arn: arn:aws:cognito-idp:eu-central-1:650194926406:userpool/eu-central-1_lwp8OxFG8
+
+  # postSignup:
+  #   handler: controllerPostSignup.main
+  #   events:
+  #     - http:
+  #         path: postSignup
+  #         method: get
+  #         cors: true
+  #         authorizer:
+  #           arn: arn:aws:cognito-idp:eu-central-1:650194926406:userpool/eu-central-1_lwp8OxFG8
+
+  # postSignup:
+  #   handler: controllerPostSignup.main
+  #   events:
+  #     - http:
+  #         path: postSignup
+  #         method: get
+  #         cors: true
+  #         authorizer:
+  #           arn: arn:aws:cognito-idp:eu-central-1:650194926406:userpool/eu-central-1_lwp8OxFG8
+  
+
+resources:
+  Resources:
+    ## Specifying the S3 Bucket
+    WebAppS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3Bucket}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    ## Specifying the policies to make sure all files inside the Bucket are avaialble to CloudFront
+    WebAppS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: WebAppS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.s3Bucket}/*
+    # DynamoDbTableUser:
+    #   Type: AWS::DynamoDB::Table
+    #   Properties:
+    #     TableName: User
+    #     AttributeDefinitions:
+    #       - AttributeName: id
+    #         AttributeType: S
+    #     KeySchema:
+    #       - AttributeName: id
+    #         KeyType: HASH
+    #     ProvisionedThroughput:
+    #       ReadCapacityUnits: 5
+    #       WriteCapacityUnits: 5
+    DynamoDBIamPolicy:
+      Type: AWS::IAM::Policy
+      # DependsOn: DynamoDbTableUser
+      Properties:
+        PolicyName: lambda-dynamodb
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: arn:aws:dynamodb:*:*:*/*
+        Roles:
+          - Ref: IamRoleLambdaExecution

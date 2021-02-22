@@ -1,0 +1,78 @@
+service: example-backend-api
+
+package:
+  individually: true
+
+custom:
+  # custom variable
+  stage: ${opt:stage, self:provider.stage}
+  appName: example-backend-api
+  environmentConfig:
+    CUSTOM_DOMAIN_NAME:
+      offline: 'localhost'
+    CUSTOM_BUCKET_DOMAIN_NAME:
+      offline: 'localhost'
+  # Webpack config
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    packager: 'npm'
+    includeModules:
+      forceExclude:
+        - aws-sdk
+        - '@types/aws-lambda'
+  # serverless-offline
+  serverless-offline:
+    noPrependStageInUrl: true
+    httpPort: 4001
+  # dynamodb for offline use
+  dynamodb:
+    start:
+      seed: true
+      migrate: true
+      dbPath: './'
+    stages:
+      - offline
+    seed:
+      domain:
+        sources:
+          - table: ${self:custom.appName}-${self:custom.stage}-example
+            sources: [./serverless/resources/seeds/example-seed.json]
+
+provider:
+  name: aws
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 's3:PutObject'
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:s3:::'
+            - Ref: ServerlessDeploymentBucket
+  runtime: nodejs12.x
+  stage: dev # offline / dev / prod
+  region: cn-north-1
+  httpApi:
+    cors: true
+    payload: '2.0'
+  apiGateway:
+    minimumCompressionSize: 1024
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    EXAMPLE_TABLE: ${self:custom.appName}-${self:custom.stage}-example
+
+plugins:
+  - serverless-plugin-ifelse
+  - serverless-dynamodb-local
+  - serverless-offline
+  - ./serverless/plugins/offline-invalidate
+  - serverless-webpack
+  - serverless-domain-manager
+functions:
+  - ${file(serverless/resources/routes/example-route.yml)}
+
+resources:
+  # Dynamodb
+  - ${file(serverless/resources/dynamodb.yml)}
+  # Role for all example lambda
+  - ${file(serverless/resources/example-lambda-role.yml)}

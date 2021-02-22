@@ -1,0 +1,67 @@
+service: serveless-chat
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+       - "execute-api:*"
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:execute-api:*:*:'
+            - Ref: 'WebsocketsApi'
+            - '/*/*/*'
+    - Effect: Allow
+      Action:
+        # - dynamodb:Query
+        - dynamodb:Scan
+        #- dynamodb:GetItem
+        - dynamodb:PutItem
+        # - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        Fn::Join:
+          - ''
+          - - 'arn:aws:dynamodb:'
+            - '${self:provider.region}:*:table/'
+            - ${self:provider.environment.DYNAMODB_TABLE}         
+  environment:
+    DYNAMODB_TABLE: '${self:service}-${self:provider.stage}-connections'
+
+functions:
+  run:
+    handler: src/handler.run
+    events: 
+      - websocket:
+          route: $connect
+          routeResponseSelectionExpression: $default
+      - websocket:
+          route: $disconnect
+          # routeResponseSelectionExpression: $default
+      - websocket: 
+          route: $default
+          # routeResponseSelectionExpression: $default
+
+resources:
+  Resources:
+    ConnectionsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      # DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: connectionId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: connectionId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

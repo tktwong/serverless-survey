@@ -1,0 +1,83 @@
+service: messages-api
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:PutItem
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}/index/*"
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+      Resource: 
+        - "*"
+
+functions:
+  create:
+    handler: message_write.write
+    events:
+      - http:
+          path: messages
+          method: post
+          cors: true
+
+  query:
+    handler: message_query.query
+    events:
+      - http:
+          path: messages/{recipient}
+          method: get
+          cors: true
+
+  notify:
+    handler: notifier.notify
+    events:
+      - stream: 
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - MyDynamoDbTable
+              - StreamArn
+          batchSize: 1
+          startingPosition: LATEST
+          enabled: true
+  
+resources:
+  Resources:
+    MyDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: recipient
+            AttributeType: S 
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+        - IndexName: recipient-index
+          KeySchema:
+          - AttributeName: recipient
+            KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1                
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE

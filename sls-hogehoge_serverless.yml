@@ -1,0 +1,64 @@
+service: hogehoge
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage,"dev"}
+  # region: ap-northeast-1 # SLL 証明書がバージニア北部にあるため、証明書を東京リージョンに作成すれば設定可能
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+  apiKeys:
+    - free:
+      - name: ${self:provider.stage}-free-key
+        value: a1234567890123456789012345678aaa
+    - mogemoge:
+      - ${self:provider.stage}-mogemoge-key
+  usagePlan:
+    - free:
+        quota:
+          limit: 100
+          offset: 2
+          period: MONTH
+        throttle:
+          rateLimit: 2
+          burstLimit: 3
+    - mogemoge:
+        quota:
+          limit: 50000
+          offset: 1
+          period: MONTH
+        throttle:
+          burstLimit: 2000
+          rateLimit: 1000
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+plugins:
+  - serverless-domain-manager
+
+functions: ${file(./resources/functions.yml)}
+
+resources:
+  # DynamoDB
+  - ${file(./resources/dynamo-db.yml)}
+
+custom:
+  endpoint:
+    dev: "dev.suguru-takahashi.com"
+    prd: "suguru-takahashi.com"
+  customDomain:
+    domainName: ${self:custom.endpoint.${self:provider.stage}}
+    stage: ${self:provider.stage}
+    basePath: api
+    certificateName: '*.suguru-takahashi.com'
+    createRoute53Record: true
+    endpointType: 'regional'
+    securityPolicy: tls_1_2

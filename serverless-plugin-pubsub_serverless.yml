@@ -1,0 +1,75 @@
+service: advanced-config-pubSub
+
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-east-1
+  profile: ${opt:profile,''}
+
+plugins:
+  # Import local plugins from the localPath directory
+  localPath: '../../src'
+  modules:
+    - index
+
+package:
+  excludeDevDependencies: false
+
+functions:
+
+  foo:
+    handler: handler.foo
+    environment:
+      PUBLISH_TOPIC: ${pubSubTopic:foo-happened}
+
+  bar:
+    handler: handler.bar
+    events:
+      - pubSub:
+          topic: foo-happened
+          queue:
+            subscription:
+              BatchSize: 1
+    environment:
+      PUBLISH_TOPIC: ${pubSubTopic:bar-happened}
+
+  baz:
+    handler: handler.baz
+    events:
+      - pubSub:
+          topic:
+            name: foo-happened
+            subscription:
+              DeliveryPolicy:
+                throttlePolicy:
+                  maxReceivesPerSecond: 18
+          queue: false
+    environment:
+      PUBLISH_TOPIC: ${pubSubTopic:baz-happened}
+
+  handleExtEvent:
+    handler: handler.handleExtEvent
+    events:
+      - pubSub:
+          topic:
+            name: external-event-happened
+            arn:
+              Fn::Join:
+                - ':'
+                - - arn
+                  - aws
+                  - sns
+                  - Ref: 'AWS::Region'
+                  - Ref: 'AWS::AccountId'
+                  - external-event-happened
+          queue: true
+
+custom:
+  pubSub:
+    topics:
+      foo-happened:
+        DisplayName: 'FooDefinitelyHappened'
+    queues:
+      bar-queue:
+        DelaySeconds: 5

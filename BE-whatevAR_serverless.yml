@@ -1,0 +1,69 @@
+service: whatevar
+region: eu-3
+package:
+  exclude:
+    - node_modules/**
+    - __mocks__/**
+    - __tests__/**
+  include:
+    - node_modules/axios/**
+    - node_modules/debug/**
+    - node_modules/follow-redirects/**
+    - node_modules/is-buffer/**
+    - node_modules/ms/**
+provider:
+  name: aws
+  runtime: nodejs8.10
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}'
+functions:
+  getYelp:
+    handler: handler.deviceData
+    events:
+      - http:
+          path: api/device/businesses/{lat}/{long}
+          method: get
+  getBusiness:
+    handler: handler.getBusiness
+    events:
+      - http:
+          path: api/device/business/{id}/{name}
+          method: get
+  createUser:
+    handler: handler.addUser
+    events:
+      - http:
+          path: api/login
+          method: post
+  getUser:
+    handler: handler.getUser
+    events:
+      - http:
+          path: api/login/{id}
+          method: get
+resources:
+  Resources:
+    UserDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

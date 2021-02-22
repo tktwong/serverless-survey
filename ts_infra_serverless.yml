@@ -1,0 +1,63 @@
+service: ts-infra
+tenant: fortniteclipz
+app: fortniteclipz
+
+provider:
+  name: aws
+  profile: sls-fortniteclipz
+  region: ${self:custom.config.region}
+  runtime: python3.7
+  stage: ${self:custom.config.stage}
+  versionFunctions: false
+  iamRoleStatements:
+    ${self:custom.config.iam.role-statement}
+  environment:
+    TS_ENV: ${self:custom.config.stage}
+
+  memorySize: 128
+  timeout: 30
+
+package:
+  exclude:
+    - '*/**'
+  include:
+    - modules/**/run.py
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  config: ${file(../ts_shared/ts_config/ts_config/ts_config_${opt:stage, 'dev'}.yml)}
+  pythonRequirements:
+    dockerFile: ./config/Dockerfile
+    dockerizePip: true
+    dockerSsh: true
+    noDeploy:
+      - botocore
+      - boto3
+      - docutils
+      - jmespath
+      - pip
+      - python-dateutil
+      - s3transfer
+      - setuptools
+      - six
+    pipCmdExtraArgs:
+      - --process-dependency-links
+    slim: true
+    strip: false
+
+resources:
+  - ${file(./config/vpc.yml)}
+  - ${file(./config/rds.yml)}
+  - ${file(./config/queue.yml)}
+  - ${file(./config/cognito.yml)}
+  - ${file(./config/output.yml)}
+
+functions:
+  infra--user--presignup:
+    handler: modules/user__presignup/run.run
+    events:
+      - cognitoUserPool:
+          pool: UserPool
+          trigger: PreSignUp

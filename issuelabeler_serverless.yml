@@ -1,0 +1,83 @@
+service: issuelabler-bot
+
+frameworkVersion: "2"
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  lambdaHashingVersion: 20201221
+  httpApi:
+    cors:
+      allowedOrigins:
+        - '*'
+      allowedHeaders:
+        - '*'
+      allowedMethods:
+        - get
+        - options
+        - post
+      allowCredentials: false
+
+  stage: ${opt:stage, 'development'}
+  region: ${opt:region, 'ap-southeast-1'}
+
+  environment:
+    NODE_ENV: ${opt.stage, 'development'}
+    APP_ID: ${file(env.yml):secrets.APP_ID, ''}
+    WEBHOOK_SECRET: ${file(env.yml):secrets.WEBHOOK_SECRET, ''}
+    PRIVATE_KEY_PATH: ${file(env.yml):secrets.PRIVATE_KEY_PATH, ''}
+    DISABLE_STATS: true
+    LOG_LEVEL: error
+
+plugins:
+  - serverless-plugin-scripts
+
+custom:
+  scripts:
+    hooks:
+      'package:initialize': make
+      'deploy:finalize': make clean
+
+package:
+  individually: true
+  include:
+    - 'src/**'
+    - 'package.json'
+    - 'package-lock.json'
+  exclude:
+    - '**/*'
+
+layers:
+  modulesLib:
+    package:
+      artifact: modules.zip
+    compatibleRuntimes:
+      - nodejs14.x
+  privateKey:
+    package:
+      artifact: key.zip
+
+functions:
+  labelerbot:
+    handler: 'src/handler.bot'
+    name: issuelabeler-bot-${self:provider.stage}
+    memorySize: 256
+    timeout: 15
+    layers:
+      - { Ref: ModulesLibLambdaLayer }
+      - { Ref: PrivateKeyLambdaLayer }
+    events:
+      - httpApi:
+          path: /api/webhooks/github
+          method: post
+  catch:
+    handler: 'src/static.catch'
+    name: issuelabeler-bot-catch-${self:provider.stage}
+    memorySize: 128
+    timeout: 5
+    layers:
+      - { Ref: ModulesLibLambdaLayer }
+    events:
+      - httpApi:
+          path: /ping
+          method: get

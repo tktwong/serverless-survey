@@ -1,0 +1,59 @@
+service: aws-lambda-lab
+
+frameworkVersion: ">=1.28.0 <2.0.0"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  tableName: ${self:custom.stage}-notes
+  bucketName: ${self:custom.stage}-jpcedenog-sample-bucket
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+
+provider:
+  name: aws
+  runtime: go1.x
+  memorySize: 128
+  versionFunctions: false
+  stage: dev
+  region: us-east-1
+#  tracing:
+#    apiGateway: true
+#    lambda: true
+  environment:
+    tableName: ${self:custom.tableName}
+    bucketName: ${self:custom.bucketName}
+
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+
+functions:
+  upload:
+    role: uploadFileRole
+    handler: bin/upload
+    events:
+      - http:
+          path: upload
+          method: post
+          cors: true
+          authorizer: aws_iam
+  savenote:
+    role: saveNoteRole
+    handler: bin/savenote
+    events:
+      - s3:
+          bucket: ${self:custom.bucketName}
+          event: s3:ObjectCreated:*
+          existing: true
+
+resources:
+  - ${file(resources/api-gateway-errors.yml)}
+  - ${file(resources/iam-roles.yml)}
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/s3-bucket.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

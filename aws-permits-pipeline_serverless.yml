@@ -1,0 +1,91 @@
+service: aws-permits-pipeline
+# service: aws-permits-pipeline-vpc # When deploying with VPC
+
+plugins:
+  - serverless-python-requirements
+
+package:
+  individually: true
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+    dockerFile: ./Dockerfile
+  cfn_stack: ${self:service.name}
+  bucket: ${cf:${self:custom.cfn_stack}.DataBucket}
+  s3_raw_folder: "data/raw/"
+  permits_url: "https://data.lacity.org/api/views/yv23-pmwf/rows.csv"
+  filename: "permits"
+  db_name: ${ssm:/permits/db_name}
+  db_user: ${ssm:/permits/db_user}
+  db_password: ${ssm:/permits/db_password~true}
+  db_master_port: ${cf:${self:custom.cfn_stack}.MasterPortDB}
+  db_master_endpoint: ${cf:${self:custom.cfn_stack}.MasterEndpointDB}
+  db_replica_port: ${cf:${self:custom.cfn_stack}.ReplicaPortDB} # VPC only
+  db_replica_endpoint: ${cf:${self:custom.cfn_stack}.ReplicaEndpointDB} # VPC only
+  
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+        - s3:PutBucketNotification
+        - s3:GetObject
+        - s3:ListBucket
+        - s3:GetObjectAcl
+      Resource: arn:aws:s3:::${self:custom.bucket}/*
+functions:
+  initDatabase:
+    name: ${self:provider.stage}-${self:custom.cfn_stack}-initDatabase
+    handler: init_db.init_db
+    package:
+      include:
+          - libs/sql_queries.py
+    timeout: 30
+    memorySize: 128
+    environment:
+      DB_NAME: ${self:custom.db_name}
+      DB_USER: ${self:custom.db_user}
+      DB_PASSWORD: ${self:custom.db_password}
+      DB_PORT: ${self:custom.db_master_port}
+      DB_ENDPOINT: ${self:custom.db_master_endpoint}
+  fetchData:
+    name: ${self:provider.stage}-${self:custom.cfn_stack}-fetchData
+    handler: fetch_data.fetch_data
+    timeout: 200
+    memorySize: 3008
+    environment:
+      S3_BUCKET: ${self:custom.bucket}
+      S3_RAW_FOLDER: ${self:custom.s3_raw_folder}
+      PERMITS_URL: ${self:custom.permits_url}
+      FILENAME: ${self:custom.filename}
+    events:
+      - schedule: rate(24 hours)
+  loadData:
+    name: ${self:provider.stage}-${self:custom.cfn_stack}-loadData
+    handler: load_data.load_data
+    package:
+      include:
+          - libs/sql_queries.py
+    timeout: 120
+    memorySize: 128
+    environment:
+      DB_NAME: ${self:custom.db_name}
+      DB_USER: ${self:custom.db_user}
+      DB_PASSWORD: ${self:custom.db_password}
+      DB_PORT: ${self:custom.db_master_port}
+      DB_ENDPOINT: ${self:custom.db_master_endpoint}
+      S3_BUCKET: ${self:custom.bucket}
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: ${self:custom.s3_raw_folder}
+            - suffix: .csv
+          existing: true

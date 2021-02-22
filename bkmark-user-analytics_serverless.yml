@@ -1,0 +1,147 @@
+service: bkmark-user-analytics
+
+plugins:
+  - serverless-offline-ssm
+  - serverless-plugin-optimize
+  - serverless-domain-manager
+  - serverless-offline
+  
+resources:
+  - ${file(./resources/databases.yml)}
+  - ${file(./resources/queues.yml)}
+  - ${file(./resources/event-buses.yml)}
+  - ${file(./resources/api-gateway.yml)}
+  - ${file(./resources/roles.yml)}
+
+package:
+  individually: true
+
+custom:
+  logLevel:
+    offline: "debug"
+    dev: "debug"
+    prod: "info"
+  customDomain:
+    domainName: "api.${file(./${opt:stage}.yml):domain}"
+    basePath: 'analytics'
+    apiType: rest
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    endpointType: 'edge'
+    securityPolicy: tls_1_2
+  authorizer: 
+    arn: 
+      !ImportValue Auth
+    resultTtlInSeconds: 300
+    name: UserAnalyticsAuth
+    identitySource: method.request.header.Authorization
+    type: token
+  serverless-offline-ssm:
+    stages:
+      - offline
+    ssm:
+      '/boristane/bkmark/algolia/api-key-offline': 'algolia-key'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 256
+  stage: ${opt:stage}
+  deploymentBucket:
+    name: boristane-lambdas-deployments-${opt:stage}
+  region: ${file(./${opt:stage}.yml):region}
+  logRetentionInDays: 7
+  versionFunctions: false
+  tracing:
+    apiGateway: true
+    lambda: true
+  logs:
+    restApi:
+      accessLogging: false
+      executionLogging: false
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sts:AssumeRole
+      Resource:
+        - !GetAtt ServiceRole.Arn
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "rds-data:ExecuteSql"
+        - "rds-data:ExecuteStatement"
+        - "rds-data:BatchExecuteStatement"
+        - "rds-data:BeginTransaction"
+        - "rds-data:RollbackTransaction"
+        - "rds-data:CommitTransaction"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:DescribeTable
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+      Resource:
+        - !GetAtt EventStoreTable.Arn
+    - Effect: "Allow"
+      Action:
+      - "sqs:SendMessage"
+      Resource: !GetAtt CommandsQueue.Arn
+    - Effect: "Allow"
+      Action: "secretsmanager:GetSecretValue"
+      Resource: 
+        - !Join ['', [!Ref RDSAuroraClusterMasterSecret]]
+        - !Join ['', [!Ref RDSAuroraClusterMasterSecret, ':*']]
+
+  environment:
+    ENV: ${opt:stage}
+    LOG_LEVEL: ${self:custom.logLevel.${self:provider.stage}}
+    DB_NAME: !Ref DatabaseName
+    DB_CLUSTER_ARN: 
+      !Join
+        - ''
+        -
+          - !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:'
+          - !Ref RDSAuroraServerlessCluster
+    DB_SECRET_STORE_ARN: !Join ['', [!Ref RDSAuroraClusterMasterSecret]]
+    EVENT_STORE_TABLE:
+      Ref: EventStoreTable
+
+functions:
+  command:
+    handler: .build/main.command
+    reservedConcurrency: 10
+    memorySize: 512
+    description: ${opt:stage} - Hanlde commands
+    events:
+      - sqs:
+          arn: !GetAtt CommandsQueue.Arn
+  
+  synchronize:
+    handler: .build/src/controllers/synchronize.handler
+    description: ${opt:stage} - synchronize - DON'T RUN THIS IN PROD - IT WILL WIPE THE DB
+    events:
+      - http:
+          path: /synchronize
+          method: get
+          cors: true
+  fanin:
+    handler: .build/main.fanin
+    environment:
+      SQS_QUEUE_URL: !Ref CommandsQueue
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 10
+          startingPosition: LATEST
+          maximumRetryAttempts: 2
+          arn:
+            Fn::GetAtt:
+              - EventStoreTable
+              - StreamArn

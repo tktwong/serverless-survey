@@ -1,0 +1,81 @@
+service:
+  name: aws-node-typescript-nest
+
+plugins:
+  # 기타 주요한 의존성은 버전 관리를 잘하자
+  # 써드파티 말고 순정 타입스크립트 모듈을 사용했음
+  - serverless-plugin-typescript
+  - serverless-plugin-optimize
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-domain-manager
+  # - serverless-plugin-warmup
+
+custom:
+  # 스테이지 환경 설정
+  stage: ${opt:stage, self:provider.stage}
+  # 핫 리로드를 위해 설정함
+  # https://github.com/dherault/serverless-offline/issues/931
+  serverless-offline:
+    useChildProcesses: true
+#   # Enable warmup on all functions (only for production and staging)
+#   warmup:      
+#       - production
+#       - staging
+  dynamodb:
+  # If you only want to use DynamoDB Local in some stages, declare them here
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+    # Uncomment only if you already have a DynamoDB running locally
+    # noStart: true
+  customDomain:
+    domainName: api.kimyoungho.ml
+    basePath: ''
+    stage: ${self:custom.stage}
+    createRoute53Record: true
+# 자꾸 끊기던건 socket hang up error 헤더 문제였음
+# 예를들어 Get 요청인데 헤더에 application/json등을 넣은 경우
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  # 아래 내용 추가
+  stage: dev
+  region: ap-northeast-2
+  environment:
+    stage: ${self:custom.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Resource:
+      #   - "Fn::GetAtt": [ StoriesTable, Arn ]
+      Resource: 'arn:aws:dynamodb:ap-northeast-2:*:*'
+
+# resources:
+#   - ${file(resources/dynamodb-table.yml)}
+
+package:
+  individually: true
+
+functions:
+  main:
+    handler: src/main.handler
+    events:
+      - http:
+          method: any
+          path: /{proxy+}

@@ -1,0 +1,67 @@
+service: osrs-serverless-api
+
+custom:
+  tableName: 'osrs-${self:provider.stage}'
+  dynamodb:
+    start:
+      migrate: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource:
+        - { "Fn::GetAtt": ["OSRSDynamoDBTable", "Arn"] }
+  environment:
+    OSRS_TABLE: ${self:custom.tableName}
+
+functions:
+  inventory:
+    handler: inventory.handler
+    events:
+      - http:
+          path: inventory
+          method: post
+          cors: true
+  actions:
+    handler: actions.handler
+    events:
+      - http:
+          path: actions
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    OSRSDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: cognitoUID
+            AttributeType: S
+
+          - AttributeName: stateName
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: cognitoUID
+            KeyType: HASH
+
+          - AttributeName: stateName
+            KeyType: RANGE
+
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline

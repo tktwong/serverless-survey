@@ -1,0 +1,133 @@
+---
+service: es-aggregation-sg
+provider:
+  name: aws
+  versionFunctions: false
+  deploymentBucket:
+    name: spp-results-${self:custom.environment}-serverless
+  role: arn:aws:iam::#{AWS::AccountId}:role/lambda_invoke_lambda
+  vpc:
+    securityGroupIds:
+      - ${file(../json_outputs/security_groups_output.json):SecurityGroups.0.GroupId}
+    subnetIds:
+      - ${file(../json_outputs/subnets_output.json):Subnets.0.SubnetId}
+      - ${file(../json_outputs/subnets_output.json):Subnets.1.SubnetId}
+  runtime: python3.7
+  region: eu-west-2
+  memorySize: 1024
+  timeout: 20
+  tracing:
+    lambda: true
+  package:
+    individually: true
+
+custom:
+  environment: ${env:ENVIRONMENT}
+  environmentType: ${env:environment_type}
+
+functions:
+  deploy-bricks-splitter-wrangler:
+    name: es-aggregation-bricks-splitter-wrangler
+    handler: aggregation_bricks_splitter_wrangler.lambda_handler
+    package:
+      include:
+        - aggregation_bricks_splitter_wrangler.py
+      exclude:
+        - ./**
+      individually: true
+    layers:
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:es_python_layer:latest
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:dev-es-common-functions:latest
+    tags:
+      app: results
+    environment:
+      bucket_name: spp-results-${self:custom.environment}
+      method_name: es-add-regionless-method
+
+  deploy-column-wrangler:
+    name: es-aggregation-column-wrangler
+    handler: aggregation_column_wrangler.lambda_handler
+    package:
+      include:
+        - aggregation_column_wrangler.py
+      exclude:
+        - ./**
+      individually: true
+    layers:
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:es_python_layer:latest
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:dev-es-common-functions:latest
+    tags:
+      app: results
+    environment:
+      bucket_name: spp-results-${self:custom.environment}
+      method_name: es-aggregation-column-method
+
+  deploy-column-method:
+    name: es-aggregation-column-method
+    handler: aggregation_column_method.lambda_handler
+    package:
+      include:
+        - aggregation_column_method.py
+      exclude:
+        - ./**
+      individually: true
+    layers:
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:es_python_layer:latest
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:dev-es-common-functions:latest
+    tags:
+      app: results
+
+  deploy-top2-wrangler:
+    name: es-aggregation-top2-wrangler
+    handler: aggregation_top2_wrangler.lambda_handler
+    package:
+      include:
+        - aggregation_top2_wrangler.py
+      exclude:
+        - ./**
+      individually: true
+    layers:
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:es_python_layer:latest
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:dev-es-common-functions:latest
+    tags:
+      app: results
+    environment:
+      bucket_name: spp-results-${self:custom.environment}
+      method_name: es-aggregation-top2-method
+
+  deploy-top2-method:
+    name: es-aggregation-top2-method
+    handler: aggregation_top2_method.lambda_handler
+    package:
+      include:
+        - aggregation_top2_method.py
+      exclude:
+        - ./**
+      individually: true
+    layers:
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:es_python_layer:latest
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:dev-es-common-functions:latest
+    tags:
+      app: results
+
+  deploy-combiner:
+    name: es-aggregation-combiner
+    handler: combiner.lambda_handler
+    package:
+      include:
+        - combiner.py
+      exclude:
+        - ./**
+      individually: true
+    layers:
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:es_python_layer:latest
+      - arn:aws:lambda:eu-west-2:#{AWS::AccountId}:layer:dev-es-common-functions:latest
+    tags:
+      app: results
+    environment:
+      bucket_name: spp-results-${self:custom.environment}
+      run_environment: ${self:custom.environmentType}
+
+plugins:
+  - serverless-latest-layer-version
+  - serverless-pseudo-parameters

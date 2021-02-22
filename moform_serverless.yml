@@ -1,0 +1,142 @@
+service: moform
+
+plugins:
+  - serverless-domain-manager
+  - serverless-finch
+  - serverless-plugin-simulate
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  client:
+    bucketName: www.pho.im
+    distributionFolder: frontend
+  customDomain:
+    domainName: www.pho.im
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  simulate:
+    services: docker-compose.yml
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: us-east-1
+  memorySize: 128
+  timeout: 5
+  environment:
+    USER_DYNAMODB_TABLE: ${self:service}-user-${opt:stage, self:provider.stage}
+    FORM_DYNAMODB_TABLE: ${self:service}-form-${opt:stage, self:provider.stage}
+    FORM_DATA_DYNAMODB_TABLE: ${self:service}-form-data-${opt:stage, self:provider.stage}
+    SLS_STAGE: ${self:custom.stage}
+  iamRoleStatements:
+    - Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.USER_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.FORM_DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.FORM_DATA_DYNAMODB_TABLE}"
+      Effect: Allow
+
+functions:
+  index:
+    handler: backend/index.handler
+    events:
+      - http:
+          path: ''
+          method: get
+
+  formCreate:
+    handler: backend/form/create.handler
+    events:
+      - http:
+          path: f/
+          method: post
+
+  formGet:
+    handler: backend/form/get.handler
+    events:
+      - http:
+          path: f/{formId}
+          method: get
+
+  formSubmit:
+    handler: backend/form/submit.handler
+    events:
+      - http:
+          path: f/{formId}
+          method: post
+
+  formResults:
+    handler: backend/form/results.handler
+    events:
+      - http:
+          path: f/{formId}/results
+          method: get
+
+  userGet:
+    handler: backend/user/get.handler
+    events:
+      - http:
+          path: user/{userId}
+          method: get
+
+resources:
+  Resources:
+    FormDb:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.FORM_DYNAMODB_TABLE}
+    FormDataDb:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.FORM_DATA_DYNAMODB_TABLE}
+    UserDb:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.USER_DYNAMODB_TABLE}
+
+package:
+  exclude:
+    - frontend/js
+    - frontend/css
+    - doc/**
+    - package.json
+    - README.md
+    - LICENSE
+    - .idea
+    - .editorconfig
+    - .adr.json

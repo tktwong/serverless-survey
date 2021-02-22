@@ -1,0 +1,155 @@
+service: checkout
+
+plugins: 
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom: 
+  serverless-offline:
+    port: 4000
+  dynamodb:
+    start:
+      port: 8000
+      migrate: true
+      seed: true
+      inMemory: true
+    seed:
+      domain:
+        sources:
+          - table: Product
+            sources: [./db/seed/products.json]
+          - table: Client
+            sources: [./db/seed/clients.json]
+          - table: DiscountDeal
+            sources: [./db/seed/discountDeals.json]
+          - table: CheaperQuantitiesDeal
+            sources: [./db/seed/cheaperQuantitiesDeals.json]
+          - table: QuantityDiscountDeal
+            sources: [./db/seed/quantityDiscountDeals.json]
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: ap-southeast-2
+  iamRoleStatements: # permissions for all of your functions can be set here
+    - Effect: Allow
+      Action: # Gives permission to DynamoDB tables in a specific region
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:ap-southeast-2:*:*"
+
+functions:
+  getClients:
+    handler: handlers/getClients.default
+    events:
+      - http:
+           path: /api/client
+           method: GET
+           cors: true
+  
+  getProducts:
+    handler: handlers/getProducts.default
+    events:
+      - http:
+           path: /api/product
+           method: GET  
+           cors: true
+
+  getPricingDealsByClientId:
+    handler: handlers/getPricingDealsByClientId.default
+    events:
+      - http:
+           path: /api/pricing-deal/{clientId}
+           method: GET
+           cors: true
+           request:
+            parameters:
+              paths:
+                clientId: true
+
+resources:
+  Resources:
+    productTable:
+        Type: AWS::DynamoDB::Table
+        Properties:
+          TableName: Product
+          AttributeDefinitions:
+            - AttributeName: sku
+              AttributeType: S
+          KeySchema:
+            - AttributeName: sku
+              KeyType: HASH
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+    clientTable:
+        Type: AWS::DynamoDB::Table
+        Properties:
+          TableName: Client
+          AttributeDefinitions:
+            - AttributeName: id
+              AttributeType: S
+          KeySchema:
+            - AttributeName: id
+              KeyType: HASH
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+    discountDealTable:
+        Type: AWS::DynamoDB::Table
+        Properties:
+          TableName: DiscountDeal
+          AttributeDefinitions:
+            - AttributeName: clientId
+              AttributeType: S
+            - AttributeName: sku
+              AttributeType: S
+          KeySchema:
+            - AttributeName: clientId
+              KeyType: HASH
+            - AttributeName: sku
+              KeyType: RANGE
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+    cheaperQuantitiesDealTable:
+        Type: AWS::DynamoDB::Table
+        Properties:
+          TableName: CheaperQuantitiesDeal
+          AttributeDefinitions:
+            - AttributeName: clientId
+              AttributeType: S
+            - AttributeName: sku
+              AttributeType: S
+          KeySchema:
+            - AttributeName: clientId
+              KeyType: HASH
+            - AttributeName: sku
+              KeyType: RANGE
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+    quantityDiscountDealTable:
+        Type: AWS::DynamoDB::Table
+        Properties:
+          TableName: QuantityDiscountDeal
+          AttributeDefinitions:
+            - AttributeName: clientId
+              AttributeType: S
+            - AttributeName: sku
+              AttributeType: S
+          KeySchema:
+            - AttributeName: clientId
+              KeyType: HASH
+            - AttributeName: sku
+              KeyType: RANGE
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+  

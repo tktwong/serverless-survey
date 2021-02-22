@@ -1,0 +1,101 @@
+service:
+  name: saga-ec-orders
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  profile: saga-ec-developer
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  apiKeys:
+    - myApiKey
+  environment:
+    NODE_ENV: ${opt:env, 'development', SLS_DEBUG=*}
+    DYNAMODB_TABLE: orders
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+package:
+  include:
+    - api/**
+    - models/**
+    - utils/**
+
+functions:
+  getOrders:
+    handler: api/orderHandlers.getOrders
+    events:
+      - http:
+          method: get
+          path: orders
+          private: true
+  getOrder:
+    handler: api/orderHandlers.getOrder
+    events:
+      - http:
+          path: orders/{id}
+          method: get
+          private: true
+  addOrder:
+    handler: api/orderHandlers.addOrder
+    events:
+      - http:
+          path: orders
+          method: post
+          private: true
+  removeOrder:
+    handler: api/orderHandlers.removeOrder
+    events:
+      - http:
+          path: orders/{id}
+          method: delete
+          private: true
+  updateOrder:
+    handler: api/orderHandlers.updateOrder
+    events:
+      - http:
+          path: orders/{id}
+          method: patch
+          private: true
+
+resources:
+  Resources:
+    ordersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+      test:
+        sources:
+          - table: ${self:provider.environment.DYNAMODB_TABLE}
+            sources: [./seeds/fake-orders.json]

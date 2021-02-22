@@ -1,0 +1,100 @@
+service: dissobot
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-plugin-scripts
+  - serverless-offline # this needs to be last in the list
+
+custom:
+  ilmoTableName: "ilmos-table-${self:provider.stage}"
+  userTableName: "users-table-${self:provider.stage}"
+  dynamodb:
+    start:
+      migrate: true
+  webpack:
+    # Enable auto-packing of external modules
+    includeModules:
+      forceExclude:
+        # aws-sdk is provided already in the AWS Lambda environment, so
+        # we don't need to package it separately.
+        - aws-sdk
+        # We only use a small portion of core-js, so we should let
+        # webpack bundle it instead of having to zip the entire core-js
+        # package to the AWS Lambda output.
+        - core-js
+  scripts:
+    hooks:
+      "deploy:finalize": >
+        curl "https://api.telegram.org/bot${ssm:${self:provider.stage}.telegramToken}/setWebhook?url=${cf:${self:provider.stackName}.ServiceEndpoint,'deploy-first'}/telegram/${ssm:${self:provider.stage}.telegramUrlSecret}"
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  defaultStage: dev
+  stage: ${opt:stage, self:provider.defaultStage}
+  region: eu-central-1
+  stackName: ${self:service}-${self:provider.stage}
+  profile: nurmilaakso-dissonanssi
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["IlmosDynamoDBTable", "Arn"] }
+        - { "Fn::GetAtt": ["UsersDynamoDBTable", "Arn"] }
+  environment:
+    ILMOS_TABLE: ${self:custom.ilmoTableName}
+    USERS_TABLE: ${self:custom.userTableName}
+    # aws --profile nurmilaakso-dissonanssi \
+    #   ssm put-parameter --name dev.telegramToken --type String --value abc123
+    TELEGRAM_BOT_NAME: ${ssm:${self:provider.stage}.telegramBotName}
+    TELEGRAM_TOKEN: ${ssm:${self:provider.stage}.telegramToken}
+    TELEGRAM_URL_SECRET: ${ssm:${self:provider.stage}.telegramUrlSecret}
+    ILMO_SPREADSHEET_URL: ${ssm:${self:provider.stage}.ilmoSheetUrl}
+    ILMO_SPREADSHEET_API_URL: ${ssm:${self:provider.stage}.ilmoSheetApiUrl}
+
+functions:
+  telegram:
+    handler: telegram.handler
+    events:
+      - http: ANY /telegram
+      - http: "ANY /telegram/{proxy+}"
+  gsheet:
+    handler: gsheet.handler
+    events:
+      - http: ANY /refresh_treeni_ilmoke
+
+resources:
+  Resources:
+    IlmosDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: date
+            AttributeType: S
+        KeySchema:
+          - AttributeName: date
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.ilmoTableName}
+    UsersDynamoDBTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: "N"
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.userTableName}

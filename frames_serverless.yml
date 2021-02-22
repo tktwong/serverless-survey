@@ -1,0 +1,511 @@
+service:
+  name: serverless-frames
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-aws-documentation
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+
+  # configuration for running the an the serverless application offline
+  serverless-offline:
+    port: 3003
+
+  # configuration for running a dynamodb emulator
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    stages:
+      - dev
+
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: frames application
+        description: Serverless application for framees
+    models:
+      - name: SendMessageRequest
+        contentType: application/json
+        schema: ${file(models/send-message-request.json)}
+      - name: SendFileRequest
+        contentType: application/json
+        schema: ${file(models/send-file-request.json)}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  environment:
+    USER_TABLE: users-${self:provider.stage}
+    USER_EMAIL_INDEX_NAME: users-email-index-${self:provider.stage}
+    FRIEND_TABLE: friends-${self:provider.stage}
+    S3_BUCKET_NAME: frames-udacity-bucket-${self:provider.stage}
+    S3_UPLOAD_URL_EXPIRATION: 300
+    ES_USERS_INDEX: 'users-index'
+    ES_USERS_INDEX_TYPE: 'users'
+    ES_MESSAGE_INDEX_TYPE: 'message'
+    JWKS_URL: https://uptodolist.auth0.com/.well-known/jwks.json
+
+  iamRoleStatements:
+    # enabling codeploy across everything
+    - Effect: Allow
+      Action:
+        - codedeploy:*
+      Resource:
+        - '*'
+
+
+functions:
+
+  # Authorizer lambda function
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  # Get/Create current user lambda function
+  GetCurrentUser:
+    handler: src/lambda/http/getCurrentUser.handler
+    environment:
+      # since ES is a managed resource, we need the domain from the resource
+      ES_ENDPOINT: !GetAtt UserSearchElasticsearchStream.DomainEndpoint
+    events:
+      - http:
+          method: get
+          path: current-user
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Get current user information
+            description: Gets the user information for the current logged in user
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*
+      # enabling tracing
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+        Resource:
+          - '*'
+
+  # Search user lambda function
+  SearchUser:
+    handler: src/lambda/http/searchUser.handler
+    environment:
+      # since ES is a managed resource, we need the domain from the resource
+      ES_ENDPOINT: !GetAtt UserSearchElasticsearchStream.DomainEndpoint
+    events:
+      - http:
+          method: get
+          path: search-user
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Search a user
+            description: Searches users by performing free text search in elasticsearch
+    iamRoleStatements:
+      # need access to friend table to add friendship to search result
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.FRIEND_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*
+      # enabling tracing
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+        Resource:
+          - '*'
+
+  # Add friend lambda function
+  AddFriend:
+    handler: src/lambda/http/addFriend.handler
+    environment:
+      # since ES is a managed resource, we need the domain from the resource
+      ES_ENDPOINT: !GetAtt UserSearchElasticsearchStream.DomainEndpoint
+    events:
+      - http:
+          method: post
+          path: friends/{friendId}
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Add a new friend
+            description: Adds a new user as a friend and sends a request to add to the other person
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.FRIEND_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*
+      # enabling tracing
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+        Resource:
+          - '*'
+
+  # Get friends lambda function
+  GetFriends:
+    handler: src/lambda/http/getFriends.handler
+    environment:
+      # since ES is a managed resource, we need the domain from the resource
+      ES_ENDPOINT: !GetAtt UserSearchElasticsearchStream.DomainEndpoint
+    events:
+      - http:
+          method: get
+          path: friends
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Get friends
+            description: Gets all the friends for the current user along with the friendship
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.FRIEND_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*
+      # enabling tracing
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+        Resource:
+          - '*'
+
+  # Elastic search sync
+  UserElasticSearchSync:
+    environment:
+      # since ES is a managed resource, we need the domain from the resource
+      ES_ENDPOINT: !GetAtt UserSearchElasticsearchStream.DomainEndpoint
+    handler: src/lambda/dynamodb/userElasticSearchSync.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn: !GetAtt UsersTable.StreamArn
+          documentation:
+            summary: Elastic Search sync for user table
+            description: Syncs the user table to an elastic search stream using dynamodb streams
+    iamRoleStatements:
+      # enabling tracing
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+        Resource:
+          - '*'
+
+  # Send Message lambda function
+  SendMessage:
+    handler: src/lambda/http/sendMessage.handler
+    environment:
+      # since ES is a managed resource, we need the domain from the resource
+      ES_ENDPOINT: !GetAtt UserSearchElasticsearchStream.DomainEndpoint
+    events:
+      - http:
+          method: post
+          path: send-message
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Send message
+            description: Sends a message to the friend in the request from the current logged in user
+          request:
+            schema:
+              application/json: ${file(models/send-message-request.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.FRIEND_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*
+      # enabling tracing
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+        Resource:
+          - '*'
+
+  # Send File lambda function
+  SendFile:
+    handler: src/lambda/http/sendFile.handler
+    environment:
+      # since ES is a managed resource, we need the domain from the resource
+      ES_ENDPOINT: !GetAtt UserSearchElasticsearchStream.DomainEndpoint
+    events:
+      - http:
+          method: post
+          path: send-file
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Send file
+            description: Sends a file to the friend in the request from the current logged in user
+          request:
+            schema:
+              application/json: ${file(models/send-file-request.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.FRIEND_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*
+      # enabling tracing
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+        Resource:
+          - '*'
+
+  # Get conversation with a friend
+  GetMessages:
+    handler: src/lambda/http/getMessages.handler
+    environment:
+      # since ES is a managed resource, we need the domain from the resource
+      ES_ENDPOINT: !GetAtt UserSearchElasticsearchStream.DomainEndpoint
+    events:
+      - http:
+          method: get
+          path: friends/{friendId}/{from}/{to}
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Get messages
+            description: Gets the conversation with a friend
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.FRIEND_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.USER_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*
+      # enabling tracing
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+          - xray:GetSamplingRules
+          - xray:GetSamplingTargets
+          - xray:GetSamplingStatisticSummaries
+        Resource:
+          - '*'
+
+resources:
+  Resources:
+
+    # API Gateway default response configuration
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    # Dynamodb table for storing users
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+        TableName: ${self:provider.environment.USER_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.USER_EMAIL_INDEX_NAME}
+            KeySchema:
+              - AttributeName: email
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    # Dynamodb table for storing users
+    FriendsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: friendId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: friendId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.FRIEND_TABLE}
+
+    # Elasticsearch cluster for storing users to enable searching
+    UserSearchElasticsearchStream:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        ElasticsearchVersion: '6.3'
+        DomainName: user-search-${self:provider.stage}
+        ElasticsearchClusterConfig:
+          DedicatedMasterEnabled: false
+          InstanceCount: '1'
+          ZoneAwarenessEnabled: false
+          InstanceType: t2.small.elasticsearch
+        EBSOptions:
+          EBSEnabled: true
+          Iops: 0
+          VolumeSize: 10
+          VolumeType: 'gp2'
+        AccessPolicies:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: '*'
+              Action: 'es:*'
+              Resource: '*'
+
+    # S3 Bucket for attachment messages
+    AttachmentsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET_NAME}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    # Bucket policy for the s3 bucket (AttachmentBucket) using References
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*'
+        Bucket: !Ref AttachmentsBucket

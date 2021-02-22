@@ -1,0 +1,70 @@
+service: serverless-apollo-datasource-dynamodb
+
+frameworkVersion: ">=1.21.0 <2.0.0"
+
+provider:
+  profile: ${opt:stage}
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage}
+  region: ${opt:region}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+  environment:
+    SERVERLESS_PROJECT: serverless-apollo-datasource-dynamodb
+    SERVERLESS_STAGE: ${opt:stage}
+    SERVERLESS_REGION: ${opt:region}    
+    AWS_XRAY_CONTEXT_MISSING: LOG_ERROR
+    # SLS_DEBUG: true
+plugins:
+  - serverless-dynamodb-local
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    port: 4200
+  webpackIncludeModules: true
+  dynamodb:
+    noStart: false
+    start:
+      # host: localhost
+      port: 8000
+      sharedDb: true
+      migrate: true
+      seed: false
+
+functions:
+  graphql:
+    handler: handler.graphqlHandler
+    events:
+    - http:
+        path: graphql
+        method: post
+        cors: true
+    - http:
+        path: graphql
+        method: get
+        cors: true       
+
+
+Resources:
+  psqTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: psq
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1

@@ -1,0 +1,104 @@
+service:
+  name: pruebaTecnica
+  
+provider:
+  name: aws
+  runtime: python3.8
+  stage: ${opt:stage, 'dev'} 
+  region: ${opt:region, 'us-east-2'} 
+  stackName: cloud-prueba-tecnica 
+  apiName: api-prueba-tecnica 
+  memorySize: 128 
+  timeout: 3 
+  
+  iamManagedPolicies: 
+    - arn:aws:iam::aws:policy/AWSLambdaFullAccess
+    - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+    - arn:aws:iam::aws:policy/AWSLambdaExecute
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource:
+        Fn::Join:
+          - 'arn:aws:lambda:us-east-2:516010089884:function:AgregarDato'
+          - - 'arn:aws:s3:::'
+            - Ref: ServerlessDeploymentBucket
+  
+functions:
+  agregarDatoServerless: 
+    handler: src/agregarDato/agregarDato.lambda_handler 
+    name: agregarDatoServerless 
+    package:
+      exclude: 
+        - /**
+      include: 
+        - src/agregarDato/agregarDato.py
+        - create_request.json
+      individually: true 
+    events: 
+      - http: 
+          path: dynamo 
+          method: post 
+          integration: lambda
+          cors: true 
+          request: 
+            schema: 
+              application/json: ${file(src/agregarDato/create_request.json)} 
+            passThrough: WHEN_NO_TEMPLATES 
+  
+  leerDatoServerless: 
+    handler: src/leerDato/leerDato.lambda_handler 
+    name: leerDatoServerless 
+    package:
+      exclude: 
+        - /**
+      include: 
+        - src/leerDato/leerDato.py
+        - src/leerDato/vacio.py
+      individually: true 
+    events: 
+      - http: 
+          path: dynamo 
+          method: get 
+          cors: true 
+          integration: lambda
+          request: 
+            template: 
+              application/json: '{ "tipo" : "$input.params(''tipo'')", "fechainicial" : "$input.params(''fi'')", "fechafinal" : "$input.params(''ff'')" }'
+            passThrough: WHEN_NO_TEMPLATES 
+ 
+  staffServerless: 
+    handler: src/staff/staff.lambda_handler 
+    name: staffServerless 
+    package:
+      exclude: 
+        - /**
+      include: 
+        - src/staff/staff.py
+      individually: true 
+    events: 
+      - schedule:
+          name: auto-script
+          rate: rate(5 minutes)
+          enabled: true
+
+resources:
+  Resources:
+    myDynamoDB:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: pruebaTecnicaDB
+        AttributeDefinitions: 
+        - AttributeName: "id"
+          AttributeType: "S"
+        - AttributeName: "nId"
+          AttributeType: "S"
+        KeySchema: 
+        - AttributeName: "id"
+          KeyType: "HASH"
+        - AttributeName: "nId"
+          KeyType: "RANGE"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 2
+          WriteCapacityUnits: 2

@@ -1,0 +1,119 @@
+service: trove-on-the-go
+
+frameworkVersion: '>=1.1.0'
+
+package:
+  exclude:
+    - ./node_modules/sharp/**
+  include:
+    - ./**.ts
+
+plugins:
+  - '@kingdarboja/serverless-plugin-typescript'
+  - serverless-dotenv-plugin
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    httpsProtocol: 'dev-certs'
+    useChildProcesses: true
+
+provider:
+  name: aws
+  lambdaHashingVersion: 20201221
+  logs:
+    httpApi: true
+  runtime: nodejs12.x
+  stage: dev
+  region: ap-southeast-2
+  httpApi:
+    cors: true
+    payload: '2.0'
+    # cors:
+    #   allowedOrigins:
+    #     - https://url1.com
+    #     - https://url2.com
+    #   allowedHeaders:
+    #     - Content-Type
+    #     - Authorization
+    #   allowedMethods:
+    #     - GET
+    #   allowCredentials: true
+    #   exposedResponseHeaders:
+    #     - Special-Response-Header
+    #   maxAge: 6000 # In seconds
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource: 'arn:aws:s3:::${env:S3_BUCKET_NAME}/*'
+
+functions:
+  trove_result:
+    handler: src/handler.trove_result
+    description: Wrap around the Trove API to improve handling of photographs.
+    memorySize: 512 # optional, in MB, default is 1024
+    timeout: 28 # optional, in seconds, default is 6
+    layers:
+      - { Ref: SharpLambdaLayer }
+    events:
+      - httpApi:
+          method: GET
+          path: /${env:API_VERSION}/trove_result
+  trove_date_result:
+    handler: src/handler.trove_date_result
+    description: Wrap around the Trove API to build a timeline of dates for all of the works that satisfy a given search term.
+    memorySize: 512 # optional, in MB, default is 1024
+    timeout: 28 # optional, in seconds, default is 6
+    # Sharp is still required because it gets imported via handler.ts
+    layers:
+      - { Ref: SharpLambdaLayer }
+    events:
+      - httpApi:
+          method: GET
+          path: /${env:API_VERSION}/trove_date_result
+  slwa_image_builder:
+    handler: src/handler.slwa_image_builder
+    description: Build (slightly) higher resolution versions of SLWA's photographs.
+    memorySize: 512 # optional, in MB, default is 1024
+    timeout: 28 # optional, in seconds, default is 6
+    # Sharp is still required because it gets imported via handler.ts
+    layers:
+      - { Ref: SharpLambdaLayer }
+    events:
+      - httpApi:
+          method: GET
+          path: /${env:API_VERSION}/slwa_image_builder
+
+layers:
+  sharp:
+    package:
+      # https://github.com/Umkus/lambda-layer-sharp
+      artifact: layers/sharp-layer-0.26.0.zip
+
+resources:
+  Resources:
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${env:S3_BUCKET_NAME}
+        AccessControl: PublicRead
+      DeletionPolicy: Retain
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: ${env:S3_BUCKET_NAME}
+        PolicyDocument:
+          Id: MyPolicy
+          Version: '2012-10-17'
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: !Join
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref S3Bucket
+                  - '/photos/*'

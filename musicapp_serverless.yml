@@ -1,0 +1,97 @@
+service: musicapp
+
+custom:
+  bucket: streamingmusicapps
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+
+
+functions:
+  musicupload:
+    handler: streamingmusic/musicupload.musicupload
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:*
+      
+  read:
+      handler: streamingmusic/read.read
+      events:
+        - http:
+            path: streamingmusic
+            method: get
+            cors: true
+
+  readone:
+      handler: streamingmusic/readone.readone
+      events:
+        - http:
+            path: streamingmusic/{name}
+            method: get
+            cors: true
+
+  makeplaylist:
+      handler: musiclist/makeplaylist.makeplaylist
+      events:
+        - http:
+            path: musiclist
+            method: post
+            cors: true
+
+  getplaylist:
+      handler: musiclist/getplaylist.getplaylist
+      events:
+        - http:
+            path: musiclist
+            method: get
+            cors: true
+
+resources:
+  Resources:
+    musicappDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: 'Retain'
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: name
+          AttributeType: S
+        KeySchema:
+        - AttributeName: name
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'musicapp'
+
+    musicapplistDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: 'Retain'
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: 'musicapplist'
+

@@ -1,0 +1,72 @@
+service: trlambda
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+provider:
+  name: aws
+  tracing: true
+  logRetentionInDays: 30
+  timeout: 30
+  logs:
+    restApi: true
+  httpApi:
+    cors: true
+
+  iamManagedPolicies:
+    - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+    - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+    - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+    - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+
+  runtime: nodejs12.x
+  region: ap-southeast-2
+  memorySize: 512
+  stage: staging
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  authorizer:
+    name: customAuthorizer
+    type: request
+    resultTtlInSeconds: 0
+    identitySource: method.request.querystring.allow
+
+functions:
+  customAuthorizer:
+    handler: lib/authorizer.index
+  getEC2SecGroups:
+    timeout: 30
+    handler:  lib/getEC2SecGroups.index
+    events:
+      - http:
+          path: /ec2/secgroups
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                allow: false
+          authorizer: ${self:custom.authorizer}
+
+  getEC2SecGroupsCompatible:
+    timeout: 30
+    handler:  lib/getEC2SecGroups.indexJSONApi
+    events:
+      - http:
+          path: /jsonapi/ec2/secgroups
+          method: get
+          cors: true
+          request:
+            parameters:
+              querystrings:
+                allow: false
+          authorizer: ${self:custom.authorizer}

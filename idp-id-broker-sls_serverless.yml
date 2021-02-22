@@ -1,0 +1,106 @@
+service: idp-id-broker
+
+frameworkVersion: ">=1.21.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  memorySize: 512
+  apiKeys:
+    - ${self:custom.namespace}_sync
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-1:*:*"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  namespace: ${env:IDP_NAME}_${self:service}_${self:custom.stage}
+  userTable: ${self:custom.namespace}_user
+
+package:
+  exclude:
+    - node_modules/aws-sdk/**
+
+functions:
+  userCreate:
+    handler: user/create.create
+    name: ${self:custom.namespace}_userCreate
+    environment:
+      TABLE_NAME: ${self:custom.userTable}
+    events:
+      - http:
+          path: user
+          method: post
+          cors: true
+          private: true
+  userDelete:
+    handler: user/delete.delete
+    name: ${self:custom.namespace}_userDelete
+    environment:
+      TABLE_NAME: ${self:custom.userTable}
+    events:
+      - http:
+          path: user/{employee_id}
+          method: delete
+          cors: true
+          private: true
+  userGet:
+    handler: user/get.get
+    name: ${self:custom.namespace}_userGet
+    environment:
+      TABLE_NAME: ${self:custom.userTable}
+    events:
+      - http:
+          path: user/{employee_id}
+          method: get
+          cors: true
+          private: true
+  userList:
+    handler: user/list.list
+    name: ${self:custom.namespace}_userList
+    environment:
+      TABLE_NAME: ${self:custom.userTable}
+    events:
+      - http:
+          path: user
+          method: get
+          cors: true
+          private: true
+  userUpdate:
+    handler: user/update.update
+    name: ${self:custom.namespace}_userUpdate
+    environment:
+      TABLE_NAME: ${self:custom.userTable}
+    events:
+      - http:
+          path: user/{employee_id}
+          method: put
+          cors: true
+          private: true
+
+resources:
+  Resources:
+    UserDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: employee_id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: employee_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: '${self:custom.userTable}'

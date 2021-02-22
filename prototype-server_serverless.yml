@@ -1,0 +1,46 @@
+service: tdr-rest-service
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: test
+  region: eu-west-2
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+
+
+plugins:
+  - serverless-python-requirements
+  - serverless-offline-python
+
+package:
+  individually: false
+  exclude:
+    - node_modules/**
+
+
+functions:
+  serverAuthoriser:
+    handler: auth.handler
+  create_collection:
+    handler: create_collection.handler
+    events:
+      - http:
+          path: collections
+          method: post
+          authorizer: ${self:custom.authorizer.server}
+
+  get_collections:
+    handler: get_collections.handler
+    events:
+      - http:
+          path: collections
+          method: get
+          authorizer: ${self:custom.authorizer.server}
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  authorizer:
+    server:
+      name: serverAuthoriser
+      type: REQUEST
+      identitySource: method.request.header.Cookie
+      resultTtlInSeconds: 0

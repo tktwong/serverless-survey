@@ -1,0 +1,110 @@
+service:
+  name: random-process-generator
+
+plugins:
+  - serverless-stage-manager
+  - serverless-webpack
+  - serverless-s3-remover
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  timeout: 40
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:GetQueueUrl
+        - sqs:SendMessage
+      Resource: {Fn::Join: ["", [ "arn:aws:sqs:", { "Ref": "AWS::Region" }, ":", { Ref: "AWS::AccountId" }, ":", "${self:custom.processQueueName.${self:provider.stage}}" ]]}
+
+functions:
+  randomProcessGenerator:
+    handler: handler.doSomething
+    environment:
+      REGION: { "Ref": "AWS::Region" }
+      PROCESS_SQS_QUEUE_NAME: ${self:custom.processQueueName.${self:provider.stage}}
+
+custom:
+  stages:
+    - dev
+    - test
+  randomProcessGeneratorBucketName: random-process-generator-${self:provider.stage}
+  processQueueName:
+    test: process-reporter-test-create-process-queue-${sls:instanceId}
+    dev: process-reporter-dev-create-process-queue
+  remover:
+    buckets:
+      - ${self:custom.randomProcessGeneratorBucketName}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+resources:
+  Conditions:
+    CreateTestQueue:
+      Fn::Equals:
+        - ${opt:stage}
+        - test
+
+  Resources:
+    TestProcessQueue:
+      Type: "AWS::SQS::Queue"
+      Condition: CreateTestQueue
+      Properties:
+        QueueName: ${self:custom.processQueueName.${self:provider.stage}}
+        MessageRetentionPeriod: 120
+        VisibilityTimeout: 60
+
+    TestProcessQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Condition: CreateTestQueue
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sqs-messages"
+              Effect: Allow
+              Principal: "*"
+              Resource: !GetAtt
+                - TestProcessQueue
+                - Arn
+              Action: "SQS:SendMessage"
+              Condition:
+                StringEquals:
+                  aws:SourceAccount: !Ref "AWS::AccountId"
+        Queues:
+          - Ref: TestProcessQueue
+
+    RandomProcessGeneratorBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.randomProcessGeneratorBucketName}
+        AccessControl: Private
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: 's3:ObjectCreated:*'
+              Function:
+                "Fn::GetAtt":
+                  - RandomProcessGeneratorLambdaFunction
+                  - Arn
+    RandomProcessGeneratorBucketInvokeLambda:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        FunctionName:
+          "Fn::GetAtt":
+            - RandomProcessGeneratorLambdaFunction
+            - Arn
+        Principal: "s3.amazonaws.com"
+        Action: "lambda:InvokeFunction"
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: "arn:aws:s3:::${self:custom.randomProcessGeneratorBucketName}"
+
+  Outputs:
+    QueueName:
+      Value: ${self:custom.processQueueName.${self:provider.stage}}
+    BucketName:
+      Value: ${self:custom.randomProcessGeneratorBucketName}

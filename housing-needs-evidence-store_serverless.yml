@@ -1,0 +1,165 @@
+service: hn-evidence-store
+
+provider:
+  name: aws
+  region: eu-west-2
+  stage: ${opt:stage}
+  runtime: nodejs12.x
+  memorySize: 512
+  timeout: 10
+  tracing:
+    lambda: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject
+        - s3:ListBucket
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - es:ESHttpPost
+        - es:ESHttpPut
+        - es:ESHttpDelete
+        - es:ESHttpGet
+      Resource:
+        - { 'Fn::GetAtt': ['ElasticSearchInstance', 'DomainArn'] }
+        - {
+            'Fn::Join':
+              [
+                '',
+                ['Fn::GetAtt': ['ElasticSearchInstance', 'DomainArn'], '/*'],
+              ],
+          }
+  environment:
+    BUCKET_NAME: '${self:service}-${self:provider.stage}-documents'
+    ES_CLIENT_ENDPOINT:
+      Fn::Join:
+        ['', ['https://', Fn::GetAtt: [ElasticSearchInstance, DomainEndpoint]]]
+    ES_INDEX_NAME: documents
+
+plugins:
+  - serverless-domain-manager
+
+package:
+  individually: true
+  exclude:
+    - ./**
+
+functions:
+  hn-evidence-store-api:
+    name: ${self:service}-${self:provider.stage}-api
+    handler: lib/handler.handler
+    package:
+      include:
+        - package.json
+        - lib/**
+        - node_modules/**
+    events:
+      - http:
+          path: '{proxy+}'
+          method: ANY
+          authorizer: ${self:custom.authorizer.${self:service}-authorizer}
+          cors:
+            origin: '*'
+            cacheControl: 'max-age=600, s-maxage=600, proxy-revalidate'
+
+  hn-evidence-store-s3-upload:
+    name: ${self:service}-${self:provider.stage}-indexer
+    handler: lib/s3/objectCreated.handler
+    package:
+      include:
+        - package.json
+        - lib/**
+        - node_modules/**
+    events:
+      - s3:
+          bucket: ${self:service}-${self:provider.stage}-documents
+          event: s3:ObjectCreated:*
+          existing: true
+
+  hn-evidence-store-authorizer:
+    name: ${self:service}-${self:provider.stage}-authorizer
+    handler: authorizer.handler
+    package:
+      include:
+        - authorizer.js
+        - node_modules/**
+    environment:
+      ALLOWED_GROUPS: 'housingneeds-singleview-beta'
+      JWT_SECRET: ${ssm:/common/hackney-jwt-secret}
+
+resources:
+  Resources:
+    StoreBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.BUCKET_NAME}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+    ElasticSearchInstance:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        EBSOptions:
+          EBSEnabled: true
+          VolumeType: gp2
+          VolumeSize: ${self:custom.elasticsearch.${self:provider.stage}.volumeSize}
+        ElasticsearchClusterConfig:
+          InstanceType: ${self:custom.elasticsearch.${self:provider.stage}.instanceSize}
+          InstanceCount: ${self:custom.elasticsearch.${self:provider.stage}.instanceCount}
+          DedicatedMasterEnabled: false
+          ZoneAwarenessEnabled: false
+        ElasticsearchVersion: 7.4
+        AccessPolicies:
+          Version: '2012-10-17'
+          Statement:
+            Action:
+              - es:ESHttpGet
+              - es:ESHttpPut
+              - es:ESHttpPost
+              - es:ESHttpHead
+            Principal:
+              AWS:
+                [
+                  'arn:aws:iam::402949050862:role/${self:service}-${self:provider.stage}-eu-west-2-lambdaRole',
+                ]
+            Effect: Allow
+
+custom:
+  authorizer:
+    hn-evidence-store-authorizer:
+      name: ${self:service}-authorizer
+      type: request
+      identitySource: ''
+      resultTtlInSeconds: 0
+  domains:
+    base: evidence-store.api.hackney.gov.uk
+    test: test-${self:custom.domains.base}
+    staging: staging-${self:custom.domains.base}
+    prod: ${self:custom.domains.base}
+  customDomain:
+    domainName: ${self:custom.domains.${self:provider.stage}, '${env:TEMP_STAGING_NAME, 'TEMP'}-${self:custom.domains.base}'}
+    basePath: ''
+    certificateName: '*.api.hackney.gov.uk'
+    createRoute53Record: false
+  elasticsearch:
+    test:
+      instanceSize: t2.small.elasticsearch
+      instanceCount: 1
+      volumeSize: 10
+    staging:
+      instanceSize: t2.small.elasticsearch
+      instanceCount: 1
+      volumeSize: 10
+    prod:
+      instanceSize: t2.small.elasticsearch
+      instanceCount: 1
+      volumeSize: 10

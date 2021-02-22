@@ -1,0 +1,442 @@
+service: crds-serverless
+
+custom:
+  splitStacks:
+    perFunction: false
+    perType: true
+    perGroupFunction: false
+  prune:
+    automatic: true
+    number: 10
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-split-stacks
+  - serverless-prune-plugin
+
+functions:
+  content-durations:
+    handler: lib/content-durations/handler.contentDurations
+    environment:
+      CONTENTFUL_ACCESS_TOKEN: ${env:CONTENTFUL_DELIVERY_ACCESS_TOKEN}
+      CONTENTFUL_ENV: ${env:CONTENTFUL_ENV}
+      CONTENTFUL_MANAGEMENT_TOKEN: ${env:CONTENTFUL_MANAGEMENT_TOKEN}
+      CONTENTFUL_PREVIEW_ACCESS_TOKEN: ${env:CONTENTFUL_PREVIEW_ACCESS_TOKEN}
+      CONTENTFUL_SPACE_ID: ${env:CONTENTFUL_SPACE_ID}
+      GOOGLE_API_KEY: ${env:GOOGLE_API_KEY}
+    events:
+      - http:
+          path: content-duration
+          method: post
+          cors: true
+  content-interactions:
+    handler: lib/content-interactions/handler.contentInteractions
+    environment:
+      CONTENTFUL_ACCESS_TOKEN: ${env:CONTENTFUL_DELIVERY_ACCESS_TOKEN}
+      CONTENTFUL_ENV: ${env:CONTENTFUL_ENV}
+      CONTENTFUL_MANAGEMENT_TOKEN: ${env:CONTENTFUL_MANAGEMENT_TOKEN}
+      CONTENTFUL_PREVIEW_ACCESS_TOKEN: ${env:CONTENTFUL_PREVIEW_ACCESS_TOKEN}
+      CONTENTFUL_SPACE_ID: ${env:CONTENTFUL_SPACE_ID}
+    events:
+      - http:
+          path: content-interactions
+          method: post
+          cors: true
+  environment-redirection:
+    handler: lib/environment-redirection/handler.environmentRedirection
+    description: redirect for /giving that is environmentally aware
+    events:
+      - http:
+          path: /giving-redirect
+          method: get
+          cors: true
+  video-views:
+    handler: lib/video-views/handler.videoViews
+    environment:
+      CONTENTFUL_LOCALE: ${env:CONTENTFUL_LOCALE}
+      CONTENTFUL_ACCESS_TOKEN: ${env:CONTENTFUL_ACCESS_TOKEN_VIDEO}
+      CONTENTFUL_SPACE_ID: ${env:CONTENTFUL_SPACE_ID}
+      CONTENTFUL_ENV: ${env:CONTENTFUL_ENV}
+      GOOGLE_API_KEY: ${env:GOOGLE_API_KEY}
+    events:
+      - schedule: rate(1 day)
+  feature-flags-user:
+    handler: lib/feature-flags/handler.hasAccess
+    description: return whether or not user has access to feature (MP role)
+    environment:
+      MP_REST_API_ENDPOINT: ${env:MP_REST_API_ENDPOINT}
+      MP_OAUTH_BASE_URL: ${env:MP_OAUTH_BASE_URL}
+      MP_CLIENT_ID: ${env:MP_CLIENT_ID}
+      MP_CLIENT_SECRET: ${env:MP_CLIENT_SECRET}
+      REDIS_HOST: ${env:REDIS_HOST}
+      REDIS_PASSWORD: ${env:REDIS_PASSWORD}
+      REDIS_PORT: ${env:REDIS_PORT}
+    events:
+      - http:
+          path: feature-flags/feature/{featureName}/contact/{contactId}
+          method: get
+          cors: true
+          parameters:
+            paths:
+              featureName: true
+              contactId: true
+  feature-flags-product:
+    handler: lib/feature-flags/handler.featureActive
+    description: return whether or not feature is live (MP role)
+    environment:
+      MP_REST_API_ENDPOINT: ${env:MP_REST_API_ENDPOINT}
+      MP_OAUTH_BASE_URL: ${env:MP_OAUTH_BASE_URL}
+      MP_CLIENT_ID: ${env:MP_CLIENT_ID}
+      MP_CLIENT_SECRET: ${env:MP_CLIENT_SECRET}
+      REDIS_HOST: ${env:REDIS_HOST}
+      REDIS_PASSWORD: ${env:REDIS_PASSWORD}
+      REDIS_PORT: ${env:REDIS_PORT}
+    events:
+      - http:
+          path: feature-flags/feature/{featureName}
+          method: get
+          cors: true
+          parameters:
+            paths:
+              featureName: true
+  feature-flags-clear-cache:
+    handler: lib/feature-flags/handler.clear
+    description: clear 5 minute redis cache for all feature flag data
+    environment:
+      REDIS_HOST: ${env:REDIS_HOST}
+      REDIS_PASSWORD: ${env:REDIS_PASSWORD}
+      REDIS_PORT: ${env:REDIS_PORT}
+    events:
+      - http:
+          path: feature-flags
+          method: delete
+  pushpay-webhook-save:
+    handler: lib/pushpay/handler.writeBody
+    description: saves off webhooks sent by pushpay to mongodb, useful for debugging but not used by anything in particular
+    environment:
+      MONGO_URL: ${env:MONGO_URL}
+    events:
+      - http:
+          path: /save
+          method: post
+          cors: true
+  # daily job that pulls in new payments from pushpay and sticks them in a mongo db. useful
+  #  for querying that is hard to do through pushpay's api (for instance, querying by transactionId or
+  #  other fields). used by pushpay-webhook-save to generate a webhook
+  pushpay-pull-new-payments:
+    handler: lib/pushpay/handler.pullNewPayments
+    description: pulls in new payments from pushpay
+    timeout: 30 # set to 30 seconds as may take a while and only runs daily
+    environment:
+      MONGO_URL: ${env:MONGO_URL}
+      PUSHPAY_API_ENDPOINT: ${env:PUSHPAY_API_ENDPOINT}
+      PUSHPAY_AUTH_ENDPOINT: ${env:PUSHPAY_AUTH_ENDPOINT}
+      PUSHPAY_CLIENT_ID: ${env:PUSHPAY_CLIENT_ID}
+      PUSHPAY_CLIENT_SECRET: ${env:PUSHPAY_CLIENT_SECRET}
+      PUSHPAY_MERCHANT_KEY: ${env:PUSHPAY_MERCHANT_KEY}
+    events:
+      - http:
+          path: /payments
+          method: post
+          cors: true
+      - schedule: cron(0 9 * * ? *) # run at 9:00 UTC every day
+  # similar to pushpay-pull-new-payments, but for new recurring gifts. not used by anything programmatically currently
+  pushpay-pull-new-gifts:
+    handler: lib/pushpay/handler.pullNewRecurringGifts
+    description: pulls in new recurring gifts from pushpay
+    timeout: 30 # set to 30 seconds as may take a while and only runs daily
+    environment:
+      MONGO_URL: ${env:MONGO_URL}
+      PUSHPAY_API_ENDPOINT: ${env:PUSHPAY_API_ENDPOINT}
+      PUSHPAY_AUTH_ENDPOINT: ${env:PUSHPAY_AUTH_ENDPOINT}
+      PUSHPAY_CLIENT_ID: ${env:PUSHPAY_CLIENT_ID}
+      PUSHPAY_CLIENT_SECRET: ${env:PUSHPAY_CLIENT_SECRET}
+      PUSHPAY_MERCHANT_KEY: ${env:PUSHPAY_MERCHANT_KEY}
+    events:
+      - http:
+          path: /gifts
+          method: post
+          cors: true
+      - schedule: cron(15 9 * * ? *) # run at 9:15 UTC every day
+  # this is used as a "one off" to re-run a payment_created/payment_updated webhook
+  #  if it is a recent payment, be sure to re-run pushpay-pull-new-payments job below
+  pushpay-donation-update:
+    handler: lib/pushpay/handler.updateDonation
+    description: re-run a payment_created/payment_updated webhook
+    environment:
+      MONGO_URL: ${env:MONGO_URL}
+      MP_REST_API_ENDPOINT: ${env:MP_REST_API_ENDPOINT}
+      MP_OAUTH_BASE_URL: ${env:MP_OAUTH_BASE_URL}
+      MP_CLIENT_ID: ${env:MP_CLIENT_ID}
+      MP_CLIENT_SECRET: ${env:MP_CLIENT_SECRET}
+      CRDS_API_ENDPOINT: ${env:CRDS_API_ENDPOINT}
+    events:
+      - http:
+          path: /donation/{mpDonationId}
+          method: put
+          cors: true
+          parameters:
+            paths:
+              mpDonationId: true
+  create-journal-entries:
+    handler: lib/export-handler-jobs/handler.createJournalEntries
+    description: Creates journal entries from distribution adjustments.
+    timeout: 120
+    environment:
+      CRDS_API_ENDPOINT: ${env:CRDS_API_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+    events:
+      - http:
+          path: /export/journalentries/adjust
+          method: POST
+          cors: true
+      - schedule: cron(55 21 * * ? *) # run at 21:55 UTC / 4:55 Eastern every day
+  export-journal-entries:
+    handler: lib/export-handler-jobs/handler.exportJournalEntries
+    description: Export journal entries to external vendor.
+    timeout: 120
+    environment:
+      CRDS_API_ENDPOINT: ${env:CRDS_API_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+    events:
+      - http:
+          path: /export/journalentries/adjust
+          method: POST
+          cors: true
+      - schedule: cron(0 22 * * ? *) # run at 22:00 UTC / 5pm Eastern every day
+  job-pushpay-sync-settlements:
+    handler: lib/jobs/handler.syncPushpaySettlements
+    description: sync pushpay settlements into MP
+    timeout: 120
+    environment:
+      CRDS_API_ENDPOINT: ${env:CRDS_API_ENDPOINT}
+      SLACK_WEBHOOK_ENDPOINT: ${env:SLACK_WEBHOOK_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+    events:
+      - http:
+          path: /jobs/pushpay/settlements
+          method: POST
+          cors: true
+      - schedule: cron(0 17 * * ? *) # run at 17:00 UTC every day
+  job-attendance-sync:
+    handler: lib/jobs/handler.syncAttendance
+    description: sync attendance data from Sensource cameras into Attendance Tracker app
+    timeout: 120
+    environment:
+      CRDS_SERVICES_SERVER_ENDPOINT: ${env:CRDS_SERVICES_SERVER_ENDPOINT}
+      SLACK_WEBHOOK_ENDPOINT: ${env:SLACK_WEBHOOK_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+    events:
+      - http:
+          path: /jobs/attendance
+          method: POST
+          cors: true
+      - schedule: cron(30 9 * * ? *) # run at 9:30 UTC every day
+  job-signup-to-serve-birthday-reports:
+    handler: lib/jobs/handler.runSignupToServeBirthdayReports
+    description: send group birthday reports for next month
+    timeout: 120
+    environment:
+      CRDS_SERVICES_SERVER_ENDPOINT: ${env:CRDS_SERVICES_SERVER_ENDPOINT}
+      SLACK_WEBHOOK_ENDPOINT: ${env:SLACK_WEBHOOK_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+    events:
+      - http:
+          path: /jobs/signup-to-serve/birthday
+          method: POST
+          cors: true
+      - schedule: cron(45 7 15 * ? *) # run 15th of the month at 7:45 UTC
+  job-signup-to-serve-inactivity-reports:
+    handler: lib/jobs/handler.runSignupToServeInactivityReports
+    description: send group inactivity reports
+    timeout: 120
+    environment:
+      CRDS_SERVICES_SERVER_ENDPOINT: ${env:CRDS_SERVICES_SERVER_ENDPOINT}
+      SLACK_WEBHOOK_ENDPOINT: ${env:SLACK_WEBHOOK_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+    events:
+      - http:
+          path: /jobs/signup-to-serve/inactivity
+          method: POST
+          cors: true
+      - schedule: cron(50 7 ? * 2#1 *) # run first monday of the month at 7:50 UTC
+  job-hubspot-sync:
+    handler: lib/jobs/handler.runHubspotSync
+    description: sync ministry platform and hubspot
+    timeout: 120
+    environment:
+      CRDS_SERVICES_SERVER_ENDPOINT: ${env:CRDS_SERVICES_SERVER_ENDPOINT}
+      SLACK_WEBHOOK_ENDPOINT: ${env:SLACK_WEBHOOK_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+    events:
+      - http:
+          path: /jobs/hubspot/sync
+          method: POST
+          cors: true
+      - schedule: rate(2 hours) # run every two hours
+  job-corkboard-sync:
+    handler: lib/jobs/handler.runCorkboardSync
+    description: call endpoint to remove expired corkboard posts from Amazon search index
+    timeout: 120
+    environment:
+      CRDS_SERVICES_SERVER_ENDPOINT: ${env:CRDS_SERVICES_SERVER_ENDPOINT}
+      SLACK_WEBHOOK_ENDPOINT: ${env:SLACK_WEBHOOK_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+    events:
+      - http:
+          path: /jobs/corkboard/sync
+          method: POST
+          cors: true
+      - schedule: cron(30 5 * * ? *) # run 5:30 UTC every day
+  job-groups-cleanup:
+    handler: lib/groups-cleanup/handler.runGroupCleanup
+    description: gets all groups with null end date and sets them to X days out
+    timeout: 120
+    environment:
+      CRDS_SERVICES_SERVER_ENDPOINT: ${env:CRDS_SERVICES_SERVER_ENDPOINT}
+      SLACK_WEBHOOK_ENDPOINT: ${env:SLACK_WEBHOOK_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+      CRDS_GROUPS_USER: ${env:CRDS_GROUPS_USER}
+      CRDS_GROUPS_PASSWORD: ${env:CRDS_GROUPS_PASSWORD}
+      OKTA_SIGN_IN_URL: ${env:OKTA_SIGN_IN_URL}
+      OKTA_CLIENT_ID: ${env:OKTA_CLIENT_ID}
+      OKTA_CLIENT_SECRET: ${env:OKTA_CLIENT_SECRET}
+      CRDS_GQL_ENDPOINT: ${env:CRDS_GQL_ENDPOINT}
+      GROUP_EXPIRATION_DAYS: ${env:GROUP_EXPIRATION_DAYS}
+      CRDS_SEARCH_INDEX_SERVICE: ${env:CRDS_SEARCH_INDEX_SERVICE}
+    events:
+      - http:
+          path: /jobs/groups/cleanup
+          method: POST
+          cors: true
+      - schedule: cron(30 4 * * ? *) # run 4:30 UTC every day
+  job-groups-notify:
+    handler: lib/groups-notify/handler.runGroupNotify
+    description: gets all groups with null end date and sets them to X days out
+    timeout: 600
+    environment:
+      CRDS_SERVICES_SERVER_ENDPOINT: ${env:CRDS_SERVICES_SERVER_ENDPOINT}
+      SLACK_WEBHOOK_ENDPOINT: ${env:SLACK_WEBHOOK_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+      CRDS_GROUPS_USER: ${env:CRDS_GROUPS_USER}
+      CRDS_GROUPS_PASSWORD: ${env:CRDS_GROUPS_PASSWORD}
+      CRDS_GQL_ENDPOINT: ${env:CRDS_GQL_ENDPOINT}
+      GROUP_EXPIRATION_DAYS: ${env:GROUP_EXPIRATION_DAYS}
+      GROUP_EMAIL_SENDER_ID: ${env:GROUP_EMAIL_SENDER_ID}
+      GROUP_DAYS_BEFORE_NOTIFICATION: ${env:GROUP_DAYS_BEFORE_NOTIFICATION}
+      GROUP_EMAIL_AUTHOR_ID: ${env:GROUP_EMAIL_AUTHOR_ID}
+      CRDS_APP_SERVER_ENDPOINT: ${env:CRDS_APP_SERVER_ENDPOINT}
+      OKTA_SIGN_IN_URL: ${env:OKTA_SIGN_IN_URL}
+      OKTA_CLIENT_ID: ${env:OKTA_CLIENT_ID}
+      OKTA_CLIENT_SECRET: ${env:OKTA_CLIENT_SECRET}
+      PLURAL_EXPIRED_TEMPLATE_ID: ${env:PLURAL_EXPIRED_TEMPLATE_ID}
+      PLURAL_NOTIFY_TEMPLATE_ID: ${env:PLURAL_NOTIFY_TEMPLATE_ID}
+      SINGULAR_EXPIRED_TEMPLATE_ID: ${env:SINGULAR_EXPIRED_TEMPLATE_ID}
+      SINGULAR_NOTIFY_TEMPLATE_ID: ${env:SINGULAR_NOTIFY_TEMPLATE_ID}
+    events:
+      - http:
+          path: /jobs/groups/cleanup
+          method: POST
+          cors: true
+      - schedule: cron(30 9 * * ? *) # run 9:30 UTC every day
+  stream-scheduler:
+    handler: lib/stream-scheduler/handler.streamScheduler
+    description: get event schedule
+    environment:
+      CRDS_AWS_SECRET: ${env:CRDS_AWS_SECRET}
+      CROSSROADS_MEDIA_BUCKET: ${env:CROSSROADS_MEDIA_BUCKET}
+      SCHEDULE_ENDPOINT: ${env:SCHEDULE_ENDPOINT}
+    events:
+      - http:
+          path: /streamSchedule/
+          method: get
+          cors: true
+  prerender-bust:
+    handler: lib/prerender-bust/handler.prerenderBust
+    description: bust prerender.io cache for pages on meta publish
+    environment:
+      CONTENTFUL_ACCESS_TOKEN: ${env:CONTENTFUL_DELIVERY_ACCESS_TOKEN}
+      CONTENTFUL_ENV: ${env:CONTENTFUL_ENV}
+      CONTENTFUL_MANAGEMENT_TOKEN: ${env:CONTENTFUL_MANAGEMENT_TOKEN}
+      CONTENTFUL_PREVIEW_ACCESS_TOKEN: ${env:CONTENTFUL_PREVIEW_ACCESS_TOKEN}
+      CONTENTFUL_SPACE_ID: ${env:CONTENTFUL_SPACE_ID}
+      CRDS_APP_SERVER_ENDPOINT: ${env:CRDS_APP_SERVER_ENDPOINT}
+      PRERENDER_TOKEN: ${env:PRERENDER_TOKEN}
+    events:
+      - http:
+          path: /prerender-bust/
+          method: post
+          cors: true
+  printnode_api_status:
+    handler: lib/printnode/handler.getStatus
+    description: check printnode api status
+    timeout: 120
+    environment:
+      PRINTNODE_SLACK_ENDPOINT: ${env:PRINTNODE_SLACK_ENDPOINT}
+      PRINTNODE_PING_ENDPOINT: ${env:PRINTNODE_PING_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+    events:
+      - schedule: rate(1 hour)
+  kc_checkin_get_todays_events:
+    handler: lib/kc-checkin/handler.getTodaysEvents
+    description: get all kc events for the day
+    environment:
+      CRDS_API_ENDPOINT: ${env:CRDS_API_ENDPOINT}
+      KC_CONFIG: ${env:KC_CONFIG}
+    events:
+      - schedule: cron(0 7 * * ? *) # run 7:00 UTC every day
+  vault-secret-refresh:
+    handler: lib/vault-secret-refresh/handler.runVaultSecretRefresh
+    description: renews tokens stored in vault
+    timeout: 120
+    environment:
+      CRDS_SERVICES_SERVER_ENDPOINT: ${env:CRDS_SERVICES_SERVER_ENDPOINT}
+      SLACK_WEBHOOK_ENDPOINT: ${env:SLACK_WEBHOOK_ENDPOINT}
+      AWS_STAGE: ${env:AWS_STAGE}
+      VAULT_ROLE_ID: ${env:VAULT_ROLE_ID}
+      VAULT_SECRET_ID: ${env:VAULT_SECRET_ID}
+      VAULT_ENDPOINT: ${env:VAULT_ENDPOINT}
+      VAULT_SECRET_FOLDER: ${env:VAULT_SECRET_FOLDER}
+    events:
+      - http:
+          path: /jobs/vault/renew
+          method: POST
+          cors: true
+      - schedule: cron(00 7 1 * ? *) # run 1st of the month at 7:00 UTC
+  social-media-post:
+    handler: lib/social-media-post/handler.socialMediaPost
+    description: copy social posts to CosmosDB
+    environment:
+      MONGO_URL: ${env:MONGO_URL}
+      COSMOS_DB_ENDPOINT: ${env:COSMOS_DB_ENDPOINT}
+      COSMOS_DB_KEY: ${env:COSMOS_DB_KEY}
+    events:
+      - http:
+          path: /social-media-post/
+          method: post
+  zoom-meetings-cleanup:
+    handler: lib/zoom-meetings-cleanup/handler.zoomMeetingsCleanup
+    description: manages zoom user pool when meetings end
+    environment:
+      MONGO_URL: ${env:MONGO_URL}
+      ZOOM_JWT_TOKEN: ${env:ZOOM_JWT_TOKEN}
+      ZOOM_JOURNEY_ROLE_ID: ${env:ZOOM_JOURNEY_ROLE_ID}
+      ZOOM_THRESHOLD: ${env:ZOOM_THRESHOLD}
+      ZOOM_SLACK_URL: ${env:ZOOM_SLACK_URL}
+      ZOOM_SLACK_STATS_URL: ${env:ZOOM_SLACK_STATS_URL}
+      CRDS_ENV: ${env:CRDS_ENV}
+      OKTA_CLIENT_ID: ${env:OKTA_CLIENT_ID}
+      OKTA_CLIENT_SECRET: ${env:OKTA_CLIENT_SECRET}
+      OKTA_SIGN_IN_URL: ${env:OKTA_SIGN_IN_URL}
+      CRDS_GROUPS_USER: ${env:CRDS_GROUPS_USER}
+      CRDS_GROUPS_PASSWORD: ${env:CRDS_GROUPS_PASSWORD}
+      CRDS_GQL_ENDPOINT: ${env:CRDS_GQL_ENDPOINT}
+    events:
+      - http:
+          path: /zoom-meetings-cleanup/
+          method: post
+      - schedule: rate(10 minutes)

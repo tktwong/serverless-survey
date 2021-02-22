@@ -1,0 +1,101 @@
+service: jscore-app-api
+
+# Create an optimized package for our functions
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-west-2
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableNameJScore: jscore
+    userPrimaryKey: jscore
+    userPoolId: eu-west-2_0xzoObEoi
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:PostItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:eu-west-2:*:*"
+    - Effect: 'Allow'
+      Action:
+        - logs:*
+      Resource: "arn:aws:logs:*:*:*"
+    - Effect: 'Allow'
+      Action: 
+        - cognito-idp:ListUsers
+      Resource: "arn:aws:cognito-idp:eu-west-2:523070501937:userpool/eu-west-2_0xzoObEoi"
+
+functions:
+  read:
+    handler: read.main
+    events:
+      - http:
+          path: users/{username}
+          method: get
+          cors: true
+  search:
+    handler: search.main
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+  searchFollowing:
+    handler: searchFollowing.main
+    events:
+      - http:
+          path: users/{username}/following
+          method: get
+          cors: true
+  createMatch:
+    handler: createMatch.main
+    events:
+      - http:
+          path: users/{username}/matches
+          method: post
+          cors: true
+  searchMatches:
+    handler: searchMatches.main
+    events:
+      - http:
+          path: users/{username}/matches
+          method: get
+          cors: true
+          authorizer: aws_iam
+  updateFollowing:
+    handler: updateFollowing.main
+    events:
+      - http:
+          path: users/{username}/following
+          method: put
+          cors: true
+  deleteFollowing:
+    handler: deleteFollowing.main
+    events:
+      - http:
+          path: users/{username}/following/{followingUsername}
+          method: delete
+          cors: true
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}  

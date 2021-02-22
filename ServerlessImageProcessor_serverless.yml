@@ -1,0 +1,91 @@
+
+service: imageprocessor
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: python3.6
+  stage: ${opt:stage, 'dev'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 
+       - s3:GetObject
+      Resource:
+       - arn:aws:s3:::images.findawayworld.com/*
+
+plugins:
+  - serverless-domain-manager
+  - serverless-plugin-aws-alerts
+  - serverless-plugin-lambda-dead-letter
+  - serverless-python-requirements
+  - serverless-apigw-binary
+  - serverless-apigwy-binary
+
+custom:
+  config: ${file(config-${self:provider.stage}.yml)}
+  apigwBinary:
+    types:
+      - 'image/*'
+      - 'image/png'
+      - 'image/jpeg'
+  customDomain:
+    domainName: ${self:custom.config.domainName}
+    certificateName: "*.findaway.com"
+
+  alerts:
+    alerts:
+      - functionErrors
+      - functionThrottles
+      - functionInvocations
+      - functionDuration
+
+  pythonRequirements:
+    dockerizePip: true
+    dockerSsh: true
+
+functions:
+  get_image:
+    handler: handler.handler
+    events:
+      - http:
+          path: /image/{image_name}
+          method: get
+          contentHandling: CONVERT_TO_BINARY
+          #authorizer: aws_iam
+    environment:
+      LogLevel: ${self:custom.config.LogLevel, "INFO"}
+    deadLetter:
+      sqs: true
+  get_website:
+    handler: handler.handler2
+    events:
+      - http:
+          path: /
+          method: get
+    environment:
+      LogLevel: ${self:custom.config.LogLevel, "INFO"}
+    deadLetter:
+      sqs: true
+
+
+resources:
+  Outputs:
+    ApiGatewayRestApiArn:
+      Value:
+        'Fn::Join':
+         - ''
+         -
+          - 'Fn::Join':
+            - ':'
+            -
+              - 'arn:saw:execute-api'
+              - Ref: 'AWS::Region'
+              - Ref: 'AWS::AccountId'
+              - Ref: ApiGatewayRestApi
+          - '/${self:provider.stage}/*'
+      Export:
+        Name: ${self:service}-${self:provider.stage}-ApiGatewayRestApiArn
+    ServiceUrl:
+      Value: https://${self:custom.customDomain.domainName}
+      Export:
+        Name: ${self:service}-${self:provider.stage}-ServiceUrl

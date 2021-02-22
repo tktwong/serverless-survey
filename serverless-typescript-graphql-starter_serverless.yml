@@ -1,0 +1,58 @@
+service:
+  name: app
+
+custom:
+  env: ${file(env.${self:provider.stage}.json)}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    NODE_ENV: ${self:custom.env.NODE_ENV}
+    JWT_SECRET: ${self:custom.env.JWT_SECRET}
+    DB_NAME: ${self:custom.env.DB_NAME}
+    SECRET_ARN: ${self:custom.env.SECRET_ARN}
+    RESOURCE_ARN: ${self:custom.env.RESOURCE_ARN}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'rds-data:ExecuteSql'
+        - 'rds-data:ExecuteStatement'
+        - 'rds-data:BatchExecuteStatement'
+        - 'rds-data:BeginTransaction'
+        - 'rds-data:RollbackTransaction'
+        - 'rds-data:CommitTransaction'
+      Resource: ${self:custom.env.RESOURCE_ARN}
+    - Effect: 'Allow'
+      Action:
+        - 'secretsmanager:GetSecretValue'
+      Resource: ${self:custom.env.SECRET_ARN}
+functions:
+  graphql:
+    handler: src/graphql/serverless.handler
+    events:
+      - http:
+          cors: true
+          method: any
+          path: '/{proxy+}'
+  websocket:
+    handler: src/websocket/serverless.handler
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+      - websocket:
+          route: $default

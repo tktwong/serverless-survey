@@ -1,0 +1,87 @@
+service: products-api
+
+frameworkVersion: '2'
+
+custom:
+  version: ${file(version.yml)}
+
+provider:
+  name: aws
+  runtime: java8
+  region: eu-north-1
+  environment:
+    DDB_AWS_REGION: eu-north-1
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource: "arn:aws:dynamodb:${self:provider.environment.DDB_AWS_REGION}:*:table/Products" # Set AWS Account in lieu of '*' if needed
+
+package:
+  artifact: build/distributions/${self:service}-${self:custom.version.v}.zip
+
+functions:
+  createProduct:
+    handler: com.serverless.feature.product.create.CreateProductHandler
+    events:
+      - http:
+          method: post
+          path: /products
+          integration: lambda
+          request:
+            template:
+              application/json: '$input.body'
+  getProduct:
+    handler: com.serverless.feature.product.get.GetProductHandler
+    events:
+      - http:
+          method: get
+          path: /products/{id}
+          integration: lambda
+          request:
+            template:
+              application/json: >
+                {
+                  "id": "$input.params('id')",
+                  "name": "$input.params('name')"
+                }
+  listProducts:
+    handler: com.serverless.feature.product.list.ListProductsHandler
+    events:
+      - http:
+          method: get
+          path: /products
+          integration: lambda
+  deleteProduct:
+    handler: com.serverless.feature.product.delete.DeleteProductHandler
+    events:
+      - http:
+          method: delete
+          path: /products/{id}
+          integration: lambda
+          request:
+            template:
+              application/json: >
+                {
+                  "id": "$input.params('id')",
+                  "name": "$input.params('name')"
+                }
+
+resources:
+  Resources:
+    productsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Products
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: name
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST

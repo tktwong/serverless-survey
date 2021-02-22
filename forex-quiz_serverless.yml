@@ -1,0 +1,58 @@
+service: forex-quiz
+
+frameworkVersion: "<=1.26.0"
+
+custom:
+  namespace: ${self:service}-${self:custom.stage}
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: ap-southeast-1
+  environment:
+    CLIENT_ID: '309289811893.320803115606'
+    CLIENT_SECRET: ae209a65290ee7826b445e47d5f3c07a
+    VERIFICATION_TOKEN: 8jeH5Mjxh33OUlR4AVNtcGSL
+    INSTALL_ERROR_URL: http://forex-quiz.s3-website-ap-southeast-1.amazonaws.com/#error
+    INSTALL_SUCCESS_URL: http://forex-quiz.s3-website-ap-southeast-1.amazonaws.com/#success
+    NAMESPACE: ${self:custom.namespace}
+    TEAMS_TABLE: ${self:custom.namespace}-teams
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        - arn:aws:dynamodb:*:*:table/${self:provider.environment.TEAMS_TABLE}
+
+functions:
+  events:
+    handler: events.handler
+    events:
+      - http:
+          path: events
+          method: post
+  install:
+    handler: install.handler
+    events:
+      - http:
+          path: install
+          method: get
+
+resources:
+  Resources:
+    TeamsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.TEAMS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: team_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: team_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

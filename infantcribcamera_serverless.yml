@@ -1,0 +1,118 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: infantcribcamera
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: python2.7
+
+# you can overwrite defaults here
+  stage: dev
+  region: ${file(.build/cloud_config.yml):hostRegion}
+
+# IAM role for all Lambda functions in this service
+  iamRoleStatements:
+    $ref: ./iamRoleStatements.json
+
+functions:
+  detectUnsafeSleepingPosture:
+    handler: lambda/detectUnsafeSleepingPosture.lambda_handler
+    name: infantcribcamera-detectUnsafeSleepingPosture
+    environment:
+      PARENTS_TABLE_NAME: ${file(.build/cloud_config.yml):parents}
+    events:
+      - s3:
+          bucket: ${file(.build/cloud_config.yml):bucketForImages}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: image
+
+
+resources:
+  Resources:
+    Parents:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(.build/cloud_config.yml):parents}
+        AttributeDefinitions:
+          - AttributeName: ParentId
+            AttributeType: N
+        KeySchema:
+          - AttributeName: ParentId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    # InfantCribCameraLogGroup:
+    #   Type: "AWS::Logs::LogGroup"
+    #   Properties:
+    #     LogGroupName: 'sns/${file(.build/cloud_config.yml):hostRegion}/${file(.build/cloud_config.yml):accountId}/DirectPublishToPhoneNumber'
+    #     RetentionInDays: 14
+    # InfantCribCameraFailureLogGroup:
+    #   Type: "AWS::Logs::LogGroup"
+    #   Properties:
+    #     LogGroupName: 'sns/${file(.build/cloud_config.yml):hostRegion}/${file(.build/cloud_config.yml):accountId}/DirectPublishToPhoneNumber/Failure'
+    #     RetentionInDays: 14
+    InfantCribCameraThing:
+      Type: "AWS::IoT::Thing"
+      Properties:
+        ThingName: "${file(.build/cloud_config.yml):thingName}"
+    InfantCribCameraThingPolicy:
+      Type: "AWS::IoT::Policy"
+      Properties:
+        PolicyName: "${file(.build/cloud_config.yml):thingName}_Policy"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Action:
+                -
+                  "iot:*"
+              Resource:
+                -
+                  "*"
+    InfantCribCameraSNSSuccessFeedback:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "InfantCribCameraSNSSuccessFeedback"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Service:
+                  - "sns.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          -
+            PolicyName: "InfantCribCameraSNSSuccessFeedbackInlinePolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action:
+                    - "logs:CreateLogGroup"
+                    - "logs:CreateLogStream"
+                    - "logs:PutLogEvents"
+                    - "logs:PutMetricFilter"
+                    - "logs:PutRetentionPolicy"
+                  Resource: "*"

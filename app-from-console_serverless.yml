@@ -1,0 +1,152 @@
+# serverless.yml
+# https://github.com/serverless/serverless/blob/master/docs/providers/aws/guide/serverless.yml.md
+service: aws-lambda-function-nodejs-template
+
+plugins:
+  - serverless-aws-alias
+  # https://serverless.com/plugins/serverless-plugin-aws-alerts/
+  - serverless-plugin-aws-alerts
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  timeout: 20
+  stage: prod
+  versionFunctions: true # default is false
+  region: us-east-1
+  memorySize: 128
+  # role: arn:aws:iam::ACCOUNT_NUMBER:role/YOUR_ROLE_NAME # Overwrite the default IAM role which is used for all functions
+  # vpc:
+  #   subnetIds:
+  #     - subnet-bd4b0e5f
+  #     - subnet-05127fea
+  #     - subnet-9267f9a8
+  #   securityGroupIds:
+  #     - sg-35b5c9e0
+  #     - sg-bd532b82
+  aliasStage:
+    loggingLevel: "ERROR"
+    dataTraceEnabled: true
+
+package:
+  individually: true
+  exclude:
+    - "*"
+    - ".*"
+    - ".*/**"
+    - archives/**
+    - coverage/**
+    - temp/**
+    - test/**
+  include:
+    - package.json
+    - lib/
+
+functions:
+  api-app:
+    handler: handler-for-api-gateway-events.handler
+    description: your function description here
+    environment: ${file(./dotenv-loader.js)}
+    reservedConcurrency: 6 # optional, reserved concurrency limit for this function. By default, AWS uses account concurrency limit
+    package:
+      include:
+        - handler-for-api-gateway-events.js
+    # layers: # An optional list Lambda Layers to use
+      # - arn:aws:lambda:region:XXXXXX:layer:LayerName:Y
+    # events:
+    #   - http: # This creates an API Gateway HTTP endpoint which can be used to trigger this function.  Learn more in "events/apigateway"
+    #       path: my-api/action # Path for this endpoint
+    #       method: get # HTTP method for this endpoint
+    #       cors: true # Turn on CORS for this endpoint, but don't forget to return the right header in your response
+
+  s3-app:
+    handler: handler-for-s3-events.handler
+    description: your function description here
+    environment: ${file(./dotenv-loader.js)}
+    memorySize: 256 # memorySize for this specific function.
+    package:
+      include:
+        - handler-for-s3-events.js
+    # events:
+    #   - s3:
+    #       enabled: false
+    #       bucket: someBucketName
+    #       event: s3:ObjectCreated:*
+    #       rules:
+    #         - prefix: uploads/
+    #         - suffix: .csv
+
+  alb-app:
+    handler: handler-for-load-balancer-events.handler
+    description: your function description here
+    environment: ${file(./dotenv-loader.js)}
+    reservedConcurrency: 5 # optional, reserved concurrency limit for this function. By default, AWS uses account concurrency limit
+    package:
+      include:
+        - handler-for-load-balancer-events.js
+    # events:
+    #   - alb:
+    #       listenerArn: arn:aws:elasticloadbalancing:us-east-1:12345:listener/app/my-load-balancer/50dc6c495c0c9188/
+    #       priority: 1
+    #       conditions:
+    #         host: example.com
+    #         path: /hello
+
+  kinesis-app:
+    handler: handler-for-kinesis-streams-events.handler
+    description: your function description here
+    environment: ${file(./dotenv-loader.js)}
+    package:
+      include:
+        - handler-for-kinesis-streams-events.js
+    # events:
+    #   - stream:
+    #       arn: arn:aws:kinesis:us-west-2:ACCOUNT_NUMBER:stream/KINESIS_STREAM_NAME
+    #       batchSize: 500
+    #       # startingPosition: TRIM_HORIZON
+    #       startingPosition: LATEST
+    #       enabled: false
+
+custom:
+  # https://serverless.com/plugins/serverless-plugin-aws-alerts/
+  alerts:
+    definitions:
+      functionInvocations:
+        namespace: 'AWS/Lambda'
+        metric: Invocations
+        threshold: 100
+        statistic: Sum
+        period: 60
+        evaluationPeriods: 1
+        datapointsToAlarm: 1
+        comparisonOperator: GreaterThanOrEqualToThreshold
+        treatMissingData: missing
+      functionErrors:
+        namespace: 'AWS/Lambda'
+        metric: Errors
+        threshold: 1
+        statistic: Sum
+        period: 60
+        evaluationPeriods: 1
+        datapointsToAlarm: 1
+        comparisonOperator: GreaterThanOrEqualToThreshold
+        treatMissingData: missing
+      functionDuration:
+        namespace: 'AWS/Lambda'
+        metric: Duration
+        threshold: 500
+        statistic: Average
+        period: 60
+        evaluationPeriods: 1
+        comparisonOperator: GreaterThanOrEqualToThreshold
+        treatMissingData: missing
+      functionThrottles:
+        namespace: 'AWS/Lambda'
+        metric: Throttles
+        threshold: 1
+        statistic: Sum
+        period: 60
+        evaluationPeriods: 1
+        datapointsToAlarm: 1
+        comparisonOperator: GreaterThanOrEqualToThreshold
+        treatMissingData: missing

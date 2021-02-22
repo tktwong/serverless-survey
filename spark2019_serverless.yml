@@ -1,0 +1,122 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: spark-template-spark-stack
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-west-2
+
+# The `functions` block defines what code to deploy
+functions:
+  helloworld:
+    handler: helloworld.helloworld
+    # The `events` block defines how to trigger the handler.helloWorld code
+    events:
+      - http:
+          path: hello-world
+          method: get
+          cors: true
+  tokencallback:
+    handler: tokencallback.tokencallback
+    timeout: 10
+    # The `events` block defines how to trigger the handler.helloWorld code
+    events:
+      - http:
+          path: tokencallback
+          method: get
+          cors: true        
+  ltilogin:
+    handler: ltilogin.ltilogin
+    # The `events` block defines how to trigger the handler.helloWorld code
+    events:
+      - http:
+          path: ltilogin
+          method: post
+          cors: true
+
+plugins:
+  - serverless-s3-sync
+
+custom:
+  siteName: ${self:service}-sn #serverless-public-uatest
+  s3Sync:
+    - bucketName: ${self:custom.siteName}
+      localDir: static
+resources:
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.siteName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "StaticSite"
+                    },
+                    "/*"
+                  ]
+                ] 
+    MainApiBasePath:
+      Type: AWS::ApiGateway::Resource
+      Properties:
+        ParentId:
+          Fn::GetAtt:
+            - ApiGatewayRestApi
+            - RootResourceId
+        PathPart: 'public'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+    MainApiProxyPath:
+      Type: AWS::ApiGateway::Resource 
+      Properties:
+        ParentId:
+          Ref: MainApiBasePath
+        PathPart: '{proxy+}'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+    MainApiProxyAnyMethod:
+      Type: AWS::ApiGateway::Method 
+      Properties:
+        AuthorizationType: NONE
+        HttpMethod: ANY
+        Integration: 
+          IntegrationHttpMethod: ANY
+          Type: HTTP_PROXY
+          Uri: https://${self:custom.siteName}.s3.amazonaws.com/{proxy}
+          PassthroughBehavior: WHEN_NO_MATCH
+          RequestParameters:
+            'integration.request.path.proxy': 'method.request.path.proxy'
+        MethodResponses:
+          - StatusCode: 200
+        RequestParameters:
+            'method.request.path.proxy': true
+        ResourceId:
+          Ref: MainApiProxyPath
+        RestApiId:
+          Ref: ApiGatewayRestApi                       
+
+

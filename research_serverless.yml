@@ -1,0 +1,70 @@
+service: galnetpedia
+
+frameworkVersion: ">=1.80.0 <1.81.0"
+
+plugins:
+  - serverless-webpack
+
+custom:
+  webpack:
+    packager: 'yarn'
+    includeModules: false
+    webpackConfig: ./webpack.config.js
+
+  sharedConfig: ${file(./config.${opt:stage}.json)}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage}
+  region: ${self.custom.sharedConfig.aws.region}
+  profile: galnetpedia
+  environment:
+    ENVIRONMENT: ${opt:stage}
+  memorySize: 256
+  timeout: 30 # in seconds
+  versionFunctions: false
+  deploymentBucket:
+    name: galnetpedia
+    serverSideEncryption: AES256
+  deploymentPrefix: lambdaDeploy
+  role: arn:aws:iam::${self.custom.sharedConfig.aws.account}:role/lambda-galnetArticleFetch
+  package:
+   individually: true
+  logRetentionInDays: 7
+
+functions:
+  galnetArticleFetch:
+    handler: backend/lambda/functions/galnetArticleFetch.run
+    name: galnetpedia-galnetArticleFetch
+    description: Fetches new galnet articles
+    memorySize: 256
+    timeout: 20
+    reservedConcurrency: 1
+    events:
+      - schedule:
+          rate: cron(0 12,18 ? * * *)
+  galnetArticleSave:
+    handler: backend/lambda/functions/galnetArticleSave.run
+    name: galnetpedia-galnetArticleSave
+    description: Updates DB with new galnet articles
+    memorySize: 128
+    timeout: 20
+    reservedConcurrency: 2
+    events:
+      - sqs:
+          arn:
+            Fn::Join:
+              - ":"
+              - - "arn:aws:sqs"
+                - ${self:provider.region}
+                - ${self.custom.sharedConfig.aws.account}
+                - "galnetArticleUpdate"
+
+          batchSize: 8
+    vpc:
+      securityGroupIds:
+        - sg-061465791db03a3cc
+      subnetIds:
+        - subnet-6d97c962
+

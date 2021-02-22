@@ -1,0 +1,119 @@
+org: vitkon
+app: portfolios
+service: portfolio-services
+
+plugins:
+  - serverless-domain-manager
+  - serverless-plugin-typescript
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  domains:
+    production: api.appfocused.com
+    dev: api-dev.appfocused.com
+  tableName: "portfolios-${self:custom.stage}"
+  dynamodb:
+    start:
+      migrate: true
+    stages:
+      - dev
+      - production
+  customDomain:
+    domainName: ${self:custom.domains.${self:custom.stage}}
+    certificateName: "www.appfocused.com"
+    basePath: "api-finance"
+    stage: ${self:custom.stage}
+    createRoute53Record: true
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["PortfoliosDynamoDbTable", "Arn"] }
+        - Fn::Join:
+            - "/"
+            - - { "Fn::GetAtt": ["PortfoliosDynamoDbTable", "Arn"] }
+              - "index/*"
+  environment:
+    PORTFOLIOS_TABLE: ${self:custom.tableName}
+    SERVICE_NAME: ${self:service}
+
+functions:
+  createPortfolio:
+    handler: index.handler
+    events:
+      - http:
+          path: portfolios
+          method: post
+          cors: true
+  getPortfolios:
+    handler: index.handler
+    events:
+      - http:
+          path: portfolios
+          method: get
+          cors: true
+  deletePortfolio:
+    handler: index.handler
+    events:
+      - http:
+          path: portfolios/{id}
+          method: delete
+          cors: true
+  version:
+    handler: index.handler
+    events:
+      - http:
+          path: portfolios/version
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    PortfoliosDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: data
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
+        GlobalSecondaryIndexes:
+          - IndexName: portfoliosGSI
+            KeySchema:
+              - AttributeName: sk
+                KeyType: HASH
+              - AttributeName: data
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - createdAt
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

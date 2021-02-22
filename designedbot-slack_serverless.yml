@@ -1,0 +1,63 @@
+# NOTE: update this with your service name
+service: designedbot-slack
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+custom:
+  bundle:
+    linting: false
+  api_urls:
+    production: ${env:PROD_API_URL}
+    staging: ${env:STAGGING_API_URL}
+  webhook_urls:
+    production: ${env:PROD_WEBHOOK_URL}
+    staging: ${env:STAGGING_WEBHOOK_URL}
+
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+provider:
+  stage: dev
+  region: us-east-1
+  name: aws
+  runtime: nodejs10.x
+  environment:
+    WEBHOOK_URL: ${self:custom.webhook_urls.${opt:stage}}
+    API_URL: ${self:custom.api_urls.${opt:stage}}
+    SIGNING_SECRET: ${env:SIGNING_SECRET}
+    BOT_USER_OAUTH_ACCESS_TOKEN: ${env:BOT_USER_OAUTH_ACCESS_TOKEN}
+
+  deploymentPrefix: serverless
+  memorySize: 256
+  timeout: 30
+  logRetentionInDays: 14
+  versionFunctions: true
+
+functions:
+  # This function is WIP (preparing our bot for distribution).
+  dispatcher:
+    handler: bot.main
+    events:
+      - httpApi: POST /event-handler
+  sendJobToSeeker:
+    handler: sendJobToSeeker.main
+    events:
+      - httpApi: POST /sendJobToSeeker
+  # This function fetches jobs via webhooks. It's ready.
+  interact:
+    handler: interact.main
+    events:
+      - httpApi: POST /interact
+  fetchJobs:
+    handler: handler.hello
+    events:
+      - http: get postJobsToSlack
+      - schedule:
+          rate: cron(40 */3 * * ? *)
+          enabled: true
+

@@ -1,0 +1,95 @@
+service: itGlue
+
+plugins:
+  - serverless-offline
+  - serverless-prune-plugin
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  timeout: 10
+  region: us-west-2
+  environment:
+    ${file(${self:provider.stage}.yml)}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ec2:CreateNetworkInterface
+        - ec2:DescribeNetworkInterfaces
+        - ec2:DeleteNetworkInterface
+        - ec2:AttachNetworkInterface
+        - ec2:DescribeInstances
+        - ec2:DescribeSecurityGroups
+        - ec2:DescribeSubnets
+        - ec2:DescribeVpcs
+        - states:StartExecution
+      Resource: "*"
+
+  # vpc:
+  #   <<: *VPC_DEFAULT
+
+# Define common default HTTP settings
+httpDefault: &HTTP_DEFAULT
+  cors:
+    origin: '*'
+    headers:
+      - Content-Type
+      - X-Amz-Date
+      - Authorization
+      - X-Api-Key
+      - X-Amz-Security-Token
+      - X-Amz-User-Agent
+      - Access-Control-Allow-Credentials
+      - Access-Control-Allow-Origin
+      - Access-Control-Allow-Headers
+      - Access-Control-Allow-Methods
+    allowCredentials: false
+  # authorizer:
+  #   name: ARN of common auth λ
+
+package:
+  include:
+    - ../shared/**
+
+functions:
+# Admin actions
+  initDB:
+    handler: handlers/admin.init
+    events:
+      - http:
+          path: dbsetup/init
+          method: post
+          private: false
+  healthCheck:
+    handler: handlers/admin.healthCheck
+    events:
+      - http:
+          path: healthcheck
+          method: get
+          private: false
+  paymentAmount:
+    handler: handlers/calculator.getPaymentAmount
+    events:
+      - http:
+          path: payment-amount
+          method: get
+          private: false
+  updateInterestRate:
+    handler: handlers/calculator.updateInterestRate
+    events:
+      - http:
+          path: interest-rate
+          method: patch
+          private: false
+  mortgageAmount:
+    handler: handlers/calculator.mortgageAmount
+    events:
+      - http:
+          path: mortgage-amount
+          method: get
+          private: false
+
+exclude:
+    - ".git/**"
+    - ".serverless/*.zip"
+    - "node_modules/**"

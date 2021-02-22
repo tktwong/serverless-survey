@@ -1,0 +1,82 @@
+service: CryptocurrencyPortfolioAPI
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  runtime: nodejs8.10
+  memorySize: 128
+  iamRoleStatements:
+     - Effect: "Allow"
+       Action:
+         - "dynamodb:UpdateItem"
+         - "dynamodb:PutItem"
+         - "dynamodb:UpdateItem"
+         - "dynamodb:GetItem"
+         - "dynamodb:Query"
+       Resource:
+         - "arn:aws:dynamodb:*:*:table/${self:resources.Resources.portfoliosTable.Properties.TableName}"
+         - "arn:aws:dynamodb:*:*:table/${self:resources.Resources.portfoliosTable.Properties.TableName}*"
+
+functions:
+  createPortfolio:
+    handler: portfolioService.createPortfolio
+    events:
+      - http:
+          path: createPortfolio
+          method: post
+    environment:
+      stage: ${self:provider.stage}
+      table: ${self:resources.Resources.portfoliosTable.Properties.TableName}
+
+  editPortfolio:
+    handler: portfolioService.editPortfolio
+    events:
+      - http:
+          path: editPortfolio
+          method: post
+    environment:
+      stage: ${self:provider.stage}
+      table: ${self:resources.Resources.portfoliosTable.Properties.TableName}
+
+  getPortfolio:
+    handler: portfolioService.getPortfolio
+    events:
+      - http:
+          path: portfolio/{id}
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+    environment:
+      stage: ${self:provider.stage}
+      table: ${self:resources.Resources.portfoliosTable.Properties.TableName}
+
+resources:
+ Resources:
+   portfoliosTable:
+     Type: AWS::DynamoDB::Table
+     Properties:
+       TableName: portfoliosTbl_${self:provider.stage}
+       BillingMode: PAY_PER_REQUEST
+       AttributeDefinitions:
+        - AttributeName: identifier
+          AttributeType: S
+        - AttributeName: editSecretTokenHashed
+          AttributeType: S
+       KeySchema:
+          - AttributeName: identifier
+            KeyType: HASH
+       GlobalSecondaryIndexes:
+         - IndexName: EditToken
+           KeySchema:
+            - AttributeName: editSecretTokenHashed
+              KeyType: HASH
+           Projection:
+             ProjectionType: KEYS_ONLY
+
+ Outputs:
+    portfoliosTableArn:
+      Description: The ARN for the portfolio table
+      Value:
+        "Fn::GetAtt": [ portfoliosTable, Arn ]

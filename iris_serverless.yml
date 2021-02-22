@@ -1,0 +1,93 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: iris
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  memorySize: 1536
+  environment:
+    API_GATEWAY: { "Fn::Join": ["", [{ "Ref": "ApiGatewayRestApi" }, ".execute-api.${self:provider.region}.amazonaws.com"]]}
+    BUCKET: { "Ref": "MediaServer" }
+    BUCKET_DOMAIN: { "Fn::Join": ["", [{ "Ref": "MediaServer" }, ".s3-website-${self:provider.region}.amazonaws.com"]]}
+    CLOUDFRONT_URL: { "Fn::Join": ["", ["https://", { "Fn::GetAtt": ["MediaCDN", "DomainName"] }]]}
+    ERROR_DOCUMENT: 404.html
+    #CERT_DOMAIN: *.example.com
+    #CERT_VALIDATION_DOMAIN: example.com
+    #CERT_ARN: { "Ref": "CDNCert" }
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "*"
+
+package:
+  artifact: dist/iris.zip
+
+functions:
+  resizeImage:
+    handler: handler.resizeImage
+    events:
+      - http: GET resizeImage
+
+resources:
+  Resources:
+    #CDNCert:
+    #  Type: AWS::CertificateManager::Certificate
+    #  Properties:
+    #    DomainName: ${self:provider.environment.CERT_DOMAIN}
+    #    DomainValidationOptions:
+    #      - DomainName: ${self:provider.environment.CERT_DOMAIN}
+    #        ValidationDomain: ${self:provider.environment.CERT_VALIDATION_DOMAIN}
+    MediaServer:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      Properties:
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: ${self:provider.environment.ERROR_DOCUMENT}
+          RoutingRules:
+            - RedirectRule:
+                HttpRedirectCode: 307
+                Protocol: https
+                HostName: ${self:provider.environment.API_GATEWAY}
+                ReplaceKeyPrefixWith: ${self:provider.stage}/resizeImage?key=
+              RoutingRuleCondition:
+                HttpErrorCodeReturnedEquals: 404
+    MediaCDN:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName: ${self:provider.environment.BUCKET_DOMAIN}
+              Id: MediaServerS3Origin
+              CustomOriginConfig:
+                HTTPPort: '80'
+                HTTPSPort: '443'
+                OriginProtocolPolicy: http-only
+          Enabled: 'true'
+          DefaultCacheBehavior:
+            Compress: 'true'
+            DefaultTTL: 0
+            ForwardedValues:
+              QueryString: 'false'
+            TargetOriginId: MediaServerS3Origin
+            ViewerProtocolPolicy: redirect-to-https
+          #Aliases:
+          #  - ${self:provider.environment.CERT_DOMAIN}
+          #ViewerCertificate:
+          #  AcmCertificateArn: ${self:provider.environment.CERT_ARN}
+          #  SslSupportMethod: sni-only

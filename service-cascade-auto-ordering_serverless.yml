@@ -1,0 +1,77 @@
+# serverless.yml
+
+service: service-acme-auto
+
+custom:
+  tableName: 'orders-table-${self:provider.stage}'
+  stage: ${opt:stage, self:provider.stage}
+  authorizer:
+    users:
+      name: authorizerUser
+      type: TOKEN
+      identitySource: method.request.header.Authorization
+      identityValidationExpression: Bearer (.*)
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["UsersDynamoDBTable", "Arn" ] }
+  environment:
+    ORDERS_TABLE: ${self:custom.tableName}
+
+functions:
+  getOrder:
+    handler: index.handler
+    events:
+      - http:
+          path: /orders/{proxy+}
+          method: get
+  createOrder:
+    handler: index.handler
+    events:
+      - http:
+          path: /order_id
+          method: post
+  getAllOrders:
+    handler: index.handler
+    events:
+      - http:
+          path: /orders
+          method: 'get'
+          authorizer: ${self:custom.authorizer.users}
+  authorizerUser:
+    handler: authorizer.user
+  supplierv2:
+    handler: supplier.handler
+    events:
+      - stream: arn:aws:dynamodb:us-east-1:022673376606:table/orders-table-dev/stream/2018-03-13T21:31:10.091
+
+resources:
+  Resources:
+    UsersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: order_id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: order_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

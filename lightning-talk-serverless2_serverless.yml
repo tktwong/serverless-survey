@@ -1,0 +1,71 @@
+app: rd-serverless2
+service: rd-serverless2
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+custom:
+  REGION: us-east-1
+  STAGE: "${env:STAGE, opt:stage, 'dev'}"
+  BASE_PATH: demo
+  # Buckets
+  PRODUCT_LISTS_BUCKET_NAME: "product-lists-${opt:stage, self:provider.stage}"
+  PRODUCT_LISTS_BUILD_BUCKET_NAME: "product-lists-web-${opt:stage, self:provider.stage}"
+  BUILD:
+    ARTIFACTS_BUCKET_NAME: "productlists-build-${opt:stage, self:provider.stage}"
+    CACHE_BUCKET_NAME: "productlists-build-cache-${opt:stage, self:provider.stage}"
+    LOGS_BUCKET_NAME: "productlists-build-logs-${opt:stage, self:provider.stage}"
+    LOGS_GROUP_NAME: "codebuild-${opt:stage, self:provider.stage}"
+    LOGS_STREAM_NAME: "codebuildbuild-logs-${opt:stage, self:provider.stage}"
+    GITHUB_REPO: "${env:BUILD_GITHUB_REPO}"
+    GITHUB_BRANCH: "${env:BUILD_GITHUB_BRANCH}"
+    PROJECT_ID: !Ref 'CodeBuild'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: "${self:custom.REGION}"
+  stage: "${self:custom.STAGE}"
+  profile: "${env:AWS_PROFILE}"
+  timeout: 30
+  tags:
+    Client: WP
+    Project: RD
+  # identity and permissions
+  iamManagedPolicies:
+    - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+    - "arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess"
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - s3:*
+      Resource:
+        - "Fn::Join": ["",[ { "Fn::GetAtt": [ ProductListsBucket , Arn ] }, "/*" ]]
+    - Effect: "Allow"
+      Action:
+        - codebuild:*
+      Resource:
+        - "Fn::GetAtt": [ CodeBuild , Arn ]
+  environment:
+    STAGE: "${opt:stage, self:provider.stage}"
+    REGION: "${self:custom.REGION}"
+    BUILD_SOURCE_VERSION: "${self:custom.BUILD.GITHUB_BRANCH}"
+    BUILD_PROJECT_ID: "${self:custom.BUILD.PROJECT_ID}"
+    PRODUCT_LISTS_BUCKET: "${self:custom.PRODUCT_LISTS_BUCKET_NAME}"
+    NODE_ENV: ${env:NODE_ENV}
+
+functions: ${file(resources/LambdaFunctions.yml)}
+
+resources:
+  Resources:
+    # S3 Buckets
+    ProductListsBucket: ${file(./resources/buckets/ProductListsBucket.yml)}
+    ProductListsBuildBucket: ${file(./resources/buckets/ProductListsBuildBucket.yml)}
+    CodeBuildArtifactsBucket: ${file(./resources/buckets/CodeBuildArtifactsBucket.yml)}
+    CodeBuildCacheBucket: ${file(./resources/buckets/CodeBuildCacheBucket.yml)}
+    CodeBuildLogsBucket: ${file(./resources/buckets/CodeBuildLogsBucket.yml)}
+
+    # Codebuild
+    CodeBuildRole: ${file(./resources/CodeBuildRole.yml)}
+    CodeBuild: ${file(./resources/CodeBuild.yml)}

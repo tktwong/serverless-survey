@@ -1,0 +1,96 @@
+service: frulle
+
+plugins:
+  - serverless-offline-scheduler
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+
+  slack: ${file(./config.${self:provider.stage}.json):slack}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 512
+  timeout: 10
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-1
+  environment:
+    DYNAMODB_LISTS_TABLE: ${self:service}-lists-${self:provider.stage}
+    SLACK_BOT_OAUTH_TOKEN: ${self:custom.slack.token}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_LISTS_TABLE}"
+
+functions:
+  hello:
+    handler: lib/handler.hello
+    events:
+      - http:
+          path: /slack/component
+          method: post
+      - http:
+          path: /slack/event
+          method: post
+      - http:
+          path: /actions/breakfastDone
+          method: get
+      - http:
+          path: /actions/planBreakfast
+          method: get
+
+      - http:
+          path: /web/list/{channel}
+          method: get
+          request:
+            parameters:
+              paths:
+                channel: true
+      - http:
+          path: /web/list/{channel}
+          method: post
+          request:
+            parameters:
+              paths:
+                channel: true
+
+  planBreakfast:
+    handler: lib/handlers/planBreakfast.handler
+    events:
+      - schedule: cron(0 7 ? * 4 *)
+  breakfastDone:
+    handler: lib/handlers/breakfastDone.handler
+    events:
+      - schedule: cron(30 7 ? * 6 *)
+
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: channel
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: channel
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_LISTS_TABLE}

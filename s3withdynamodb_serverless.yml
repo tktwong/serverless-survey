@@ -1,0 +1,61 @@
+service: upload-to-s3-and-postprocess
+
+frameworkVersion: ">=1.1.0"
+
+custom:
+  bucket: mybharatchhabra.site
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  environment:
+     ACCOUNT_SID: 'ssid'
+     AUTH_TOKEN: 'auth token'
+     PHONE_NUMBER: 'phone number'
+     RECEIVER_NO: 'receiver phone number'
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+         - s3:*
+         - dynamodb:DescriptionTable
+         - dynamodb:PutItem
+      Resource: "*"
+
+functions:
+  postprocess:
+    handler: handler.postprocess
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .jpg
+  
+  remove:
+    handler: handler.remove
+    events:
+      - s3:
+          bucket: ${self:custom.bucket}
+          event: s3:ObjectRemoved:*
+          rules:
+            - suffix: .jpg
+
+resources:
+  Resources:
+    S3RecorDynamoDbTable:
+       Type: 'AWS::DynamoDB::Table'
+       DeletionPolicy: Retain
+       Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+        TableName: 'S3table'
+            

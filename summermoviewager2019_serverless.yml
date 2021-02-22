@@ -1,0 +1,80 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: summovwag-serverless
+
+custom: ${file(./env.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - s3:putObject
+      Resource: "arn:aws:s3:::${self:custom.S3_BUCKET_NAME}/*"
+  stage: prod
+  region: us-east-1
+  profile: serverless
+
+functions:
+  hello:
+    handler: handler.scraper
+    memorySize: 1536MB
+    timeout: 15
+    events:
+      - schedule: ${self:custom.globalSchedule}
+      # - http:
+      #     path: /
+      #     method: get
+    environment:
+      S3_BUCKET_NAME: ${self:custom.S3_BUCKET_NAME}
+      SUMMER_MOVIE_PAGE: ${self:custom.SUMMER_MOVIE_PAGE}
+      SUMMER_MOVIE_FILE_NAME: ${self:custom.SUMMER_MOVIE_FILE_NAME}
+
+resources:
+  Resources:
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.S3_BUCKET_NAME}
+        AccessControl: PublicRead
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+              - GET
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+    UploadBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: UploadBucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.S3_BUCKET_NAME}/*
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-chrome
+
+package:
+  exclude:
+    - node_modules/puppeteer/.local-chromium/**

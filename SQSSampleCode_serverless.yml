@@ -1,0 +1,114 @@
+# serverless.yml
+service: sqspoctry
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage,'dev'}
+  region: ${opt:region,'us-east-1'}
+  endpointType: REGIONAL
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:*
+        - s3:*
+        - logs:*
+        - cloudwatch:*
+        - ssm:GetParameter
+        - kms:Decrypt
+        - sqs:*
+      Resource:
+        - "*"
+ 
+functions:
+  sqsHandler:
+    handler: src/sqsHandler.handler
+    events: 
+       - sqs: 
+          queueName: MyFirstQueue
+          arn:
+            Fn::GetAtt:
+              - MyFirstQueue
+              - Arn
+
+  sqsListQueue:
+    handler: src/listQueue.handler  
+    events:
+      - http:  
+          path: /list
+          method: GET
+          private: true
+
+  sqsSendMessage:
+    handler: src/sendMessage.handler
+    events:
+      - http:  
+          path: /send
+          method: POST
+          private: true    
+          
+  sqsSetAttribute:
+    handler: src/setAttribute.handler
+    events:
+      - http:  
+          path: /set
+          method: POST
+          private: true           
+
+  sqsMessageAttribute:
+    handler: src/messageAttribute.handler
+    events:
+      - http:  
+          path: /attribute
+          method: GET
+          private: true
+
+  sqsReceiveMessage:
+    handler: src/receiveMessage.handler
+    events:
+      - http:  
+          path: /read
+          method: GET
+          private: true     
+
+#this will create a queue if it doesnt exist
+resources:
+  Resources:
+    MyFirstQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "MyFirstQueue"
+        MessageRetentionPeriod: 120
+        RedrivePolicy:
+          deadLetterTargetArn:
+            "Fn::GetAtt":
+              - queue1
+              - Arn
+          maxReceiveCount: 1
+    queue1:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "queue1"
+        MessageRetentionPeriod: 600 # 14 days in seconds
+prune:
+  automatic: true
+  number: 2
+
+custom:
+  serverless-offline-sqs:
+    autoCreate: true   
+    endpoint: http://0.0.0.0:9324
+    region: us-east-1
+    accessKeyId: root
+    secretAccessKey: root  
+  
+
+plugins:
+  localPath: '../..'
+  modules:
+    - serverless-offline-sqs
+    - serverless-offline   
+    - serverless-plugin-typescript 
+    - serverless-prune-plugin
+  

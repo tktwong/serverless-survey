@@ -1,0 +1,92 @@
+service: nextjs
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-apigw-binary
+  - serverless-dynamodb-local
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+        - 'lambda:InvokeFunction'
+      Resource:
+        - { "Fn::GetAtt": ["PostsDynamoDBTable", "Arn" ] }
+        - '*'
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/*"
+  environment:
+    POSTS_TABLE: ${self:custom.postsTableName}
+    NODE_ENV: production
+    LAMBDA: true
+    STAGE: ${self:provider.stage}
+
+functions:
+  index:
+    handler: index.handler
+    events:
+      - http: ANY /
+      - http: ANY /{proxy+}
+      - cors: true
+    layers:
+        - arn:aws:lambda:us-east-1:143255761006:layer:dependencies-layer:1
+
+resources:
+  Resources:
+    PostsDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: postId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: postId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:custom.postsTableName}
+
+custom:
+  webpack:
+    webpackConfig: 'webpack.config.js'
+    keepOutputDirectory: false
+    includeModules: false
+    packager: 'npm'
+    excludeFiles:
+      - .serverless
+      - .webpack 
+      - .dynamodb
+
+  postsTableName: 'posts-${self:provider.stage}'
+  dynamodb:
+    stages:
+      - dev
+    start:
+      migrate: true
+      port: ${env:DYNAMODB_PORT, '8000'}
+      seed: true
+      inMemory: true
+      convertEmptyValues: true
+
+    seed:
+        dev:
+          sources:
+            - table: ${self:custom.postsTableName}
+              sources: [seeds/posts.json]
+
+  apigwBinary:
+    types:
+      - '*/*'
+
+package:
+  individually: true

@@ -1,0 +1,64 @@
+
+service: step-function-rolldice
+
+plugins:
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: us-east-1
+
+  environment:
+    ROLL_DICE_SF: arn:aws:states:#{AWS::Region}:#{AWS::AccountId}:stateMachine:RollDiceCoinflip
+
+  iamRoleStatements:
+  - Effect: "Allow"
+    Action:
+      - "states:StartExecution"
+    Resource: "arn:aws:states:*:*:*"
+
+functions:
+  rollDice:
+    handler: dist/handler.rollDice
+    events:
+      - http:
+          path: roll
+          method: get
+  isEven:
+    handler: dist/handler.isEven
+  evenNumber:
+    handler: dist/handler.evenNumber
+  oddNumber:
+    handler: dist/handler.oddNumber
+
+stepFunctions:
+  stateMachines:
+    rollDiceCoinflip:
+      name: RollDiceCoinflip
+      definition:
+        Comment: "Roll Dice"
+        StartAt: isEven
+        States:
+          isEven:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-isEven
+            Next: ChoiceState
+          ChoiceState:
+            Type: Choice
+            Choices:
+            - Variable: "$.result"
+              NumericEquals: 1
+              Next: oddNumber
+            - Variable: "$.result"
+              NumericEquals: 0
+              Next: evenNumber
+          evenNumber:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-evenNumber
+            End: true
+          oddNumber:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-oddNumber
+            End: true

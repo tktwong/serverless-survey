@@ -1,0 +1,112 @@
+# XXX WARNING
+# XXX WARNING
+# There are some dragons here. 
+# a) The certificate ARN comes in via option, you need to set that up ahead of time
+#     --certarn
+#     XXX XXX XXX
+#      us-east-1 is where cloudfront certs must be in us-east-1
+#     XXX XXX XXX
+# b) The altername names on the cloudfront are full of jiggery pokery
+#     See resources.Resources.CloudFrontDis.Properties.DistributionConfig.Aliases
+#     --altname1 foo.alternate.com
+#     --altname2 bar.alternate.com
+# c) The CloudFront distribution takes 20m+ to deploy when it changes
+#    This appears to be a cloudformation thing
+# d) the options are also required:
+#     --stage dev # or whatever
+#     --region us-west-2 # or whatever
+# XXX WARNING
+# XXX WARNING
+
+service: lambda-redirect-www
+
+provider:
+  name: aws
+  runtime: python2.7
+  stage: dev
+  region: us-west-2
+
+functions:
+  responder_with_path:
+    handler: handler.redirect
+    events:
+      - http:
+         path: /{passed_path+}
+         method: get
+  responder_no_path:
+    handler: handler.redirect
+    events:
+      - http:
+         path: /
+         method: get
+
+resources:
+  Resources:
+    CloudFrontDis:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - ${opt:altname1}
+            - ${opt:altname2}
+          ViewerCertificate:
+            AcmCertificateArn: ${opt:certarn}
+            SslSupportMethod: sni-only
+          DefaultRootObject: ''
+          Enabled: true
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - HEAD
+              - DELETE
+              - GET
+              - HEAD
+              - POST
+              - PUT
+              - PATCH
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+            ForwardedValues:
+              QueryString: true
+            MinTTL: 0
+            TargetOriginId: { "Ref" : "ApiGatewayRestApi" }
+            ViewerProtocolPolicy: allow-all
+          CacheBehaviors:
+          - AllowedMethods:
+            - HEAD 
+            - DELETE
+            - POST
+            - GET
+            - HEAD
+            - POST
+            - PUT
+            - PATCH
+            - OPTIONS
+            CachedMethods:
+            - GET
+            - HEAD
+            ForwardedValues:
+              QueryString: true
+            MinTTL: 0
+            PathPattern: "*"
+            TargetOriginId: { "Ref" : "ApiGatewayRestApi" }
+            ViewerProtocolPolicy: allow-all
+          Origins:
+          - CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+            DomainName: { "Fn::Join" : ["", [ { "Ref" : "ApiGatewayRestApi" }, ".execute-api.", "${opt:region}", ".amazonaws.com" ] ]  }
+            Id: { "Ref" : "ApiGatewayRestApi" }
+            OriginPath: { "Fn::Join" : ["", [ "/", "${opt:stage}" ] ]  }
+          PriceClass: PriceClass_100
+  Outputs:
+    CloudFrontId:
+      Description: "CloudFront Id"
+      Value: { "Ref": "CloudFrontDis" }
+    CloudFrontUrl:
+      Description: "CloudFront URL"
+      Value: { "Fn::GetAtt": [ "CloudFrontDis" , "DomainName" ] }
+
+#### References
+#### serverless.com reference: http://forum.serverless.com/t/use-cloudfront-proxy-to-access-lambda-apis/357/4

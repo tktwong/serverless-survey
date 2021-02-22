@@ -1,0 +1,205 @@
+
+service: transactions
+package:
+  individually: true
+  exclude:
+    - ./**
+provider:
+  name: aws  
+  runtime: nodejs10.x
+  region: eu-central-1
+  environment:
+    PGDATABASE: "${self:custom.config.dbName}"
+    PGHOST: collector-manager-db.cs1yuxavq9wp.eu-central-1.rds.amazonaws.com
+    PGPASSWORD: "${self:custom.secrets.POSTGRES_PASS}"
+    PGPORT: 5432
+    PGUSER: root
+  vpc:
+    securityGroupIds:
+      - sg-0fed9e6c      
+    subnetIds:
+      - subnet-afa1afd2
+      - subnet-3818cb52
+  role: arn:aws:iam::345413125048:role/lambdaRDSDataAccess
+
+# layers:  
+#   pgFormat:    
+#     path: ../layers/pg-format
+#     package:
+#       include:
+#         - ../layers/pg-format/node-modules
+#     compatibleRuntimes:
+#       - nodejs10.x
+
+functions:
+  create:
+    handler: create.handler
+    package:
+      include: # Specify the directories and files which should be included in the deployment package for this specific function.      
+        - create.js
+    layers:
+      - arn:aws:lambda:eu-central-1:345413125048:layer:postgres-nodejs:1
+      - arn:aws:lambda:eu-central-1:345413125048:layer:pgFormat:1
+    events:
+      - http:
+          path: transactions
+          method: post
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            arn: ${self:custom.config.authorizerArn}
+
+  list:
+    handler: list.handler
+    package:
+      include: # Specify the directories and files which should be included in the deployment package for this specific function.      
+        - list.js
+    layers:
+      - arn:aws:lambda:eu-central-1:345413125048:layer:postgres-nodejs:1
+    events:
+      - http:
+          path: transactions
+          method: get
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            #origin: '*.gabay-notebook.com' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            arn: ${self:custom.config.authorizerArn}
+  settings:
+      handler: settings.handler
+      package:
+        include: # Specify the directories and files which should be included in the deployment package for this specific function.      
+          - settings.js
+      layers:
+        - arn:aws:lambda:eu-central-1:345413125048:layer:postgres-nodejs:1
+      events:
+        - http:
+            path: transactions/settings
+            method: get
+            cors:
+              origin: '*' # <-- Specify allowed origin
+              headers: # <-- Specify allowed headers
+                - Content-Type
+                - X-Amz-Date
+                - Authorization
+                - X-Api-Key
+                - X-Amz-Security-Token
+                - X-Amz-User-Agent
+              allowCredentials: false
+            authorizer:
+              arn: ${self:custom.config.authorizerArn}
+
+  get:
+    handler: get.handler
+    package:
+      include: # Specify the directories and files which should be included in the deployment package for this specific function.      
+        - get.js
+    layers:
+      - arn:aws:lambda:eu-central-1:345413125048:layer:postgres-nodejs:1
+    events:
+      - http:
+          path: transactions/{id}
+          method: get
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            arn: ${self:custom.config.authorizerArn}
+
+  update:
+    handler: update.handler
+    package:
+      include: # Specify the directories and files which should be included in the deployment package for this specific function.      
+        - update.js
+    layers:
+      - arn:aws:lambda:eu-central-1:345413125048:layer:postgres-nodejs:1
+    events:
+      - http:
+          path: transactions/{id}
+          method: put
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            arn: ${self:custom.config.authorizerArn}
+
+  delete:
+    handler: delete.handler
+    package:
+      include: # Specify the directories and files which should be included in the deployment package for this specific function.      
+        - delete.js
+    layers:
+      - arn:aws:lambda:eu-central-1:345413125048:layer:postgres-nodejs:1
+    events:
+      - http:
+          path: transactions/{id}
+          method: delete
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            arn: ${self:custom.config.authorizerArn}
+  reports:
+    handler: reports.handler
+    package:
+      include: # Specify the directories and files which should be included in the deployment package for this specific function.      
+        - reports.js
+    layers:
+      - arn:aws:lambda:eu-central-1:345413125048:layer:postgres-nodejs:1
+    events:
+      - http:
+          path: transactions/reports
+          method: get
+          cors:
+            origin: '*' # <-- Specify allowed origin
+            headers: # <-- Specify allowed headers
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+          authorizer:
+            arn: ${self:custom.config.authorizerArn}
+custom:
+  stage: ${opt:stage, 'dev'}
+  secrets: ${file(../../../secrets.yml):${self:custom.stage}}
+  config: ${file(../../../config.yml):${self:custom.stage}}  

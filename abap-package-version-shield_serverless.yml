@@ -1,0 +1,66 @@
+service: abap-package-version-shield
+# org: sbcgua
+# app: abapversionshield
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-1
+  stage: ${opt:stage, 'dev'}
+
+package:
+  exclude:
+    - secrets
+    - docs/**
+    - bin/**
+    - coverage/**
+    - .github/**
+    - '*.md'
+    - localtest*
+    - '*.http'
+    - playground*
+
+functions:
+  getAbapVersionShieldJson:
+    handler: handler.getShieldJson
+    memorySize: 128
+    events:
+      - http:
+          path: version-shield-json/{sourcePath+}
+          method: get
+          cors: true
+      - http:
+          path: /
+          # cors: true
+          method: get
+          integration: mock
+          request:
+            template:
+              application/json: '{"statusCode": 301}'
+          response:
+            template: redirect
+            headers:
+              Location: "'https://sbcgua.github.io/abap-package-version-shield'"
+            statusCodes:
+              301:
+                pattern: ''
+
+plugins:
+  - serverless-domain-manager
+
+custom:
+  stageDomainName:
+    dev: dev.shield.abap.space
+    qa: qa.shield.abap.space
+    prod: shield.abap.space
+  stageCertificateName:
+    dev: '*.shield.abap.space'
+    qa: '*.shield.abap.space'
+    prod: '*.abap.space'
+  customDomain:
+    domainName: ${self:custom.stageDomainName.${self:provider.stage}}
+    certificateName: ${self:custom.stageCertificateName.${self:provider.stage}}
+    endpointType: 'regional'
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true

@@ -1,0 +1,65 @@
+service: foliobot
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["PagesDynamoDBTable", "Arn" ] }
+  environment:
+    PAGES_TABLE: ${self:custom.tableName}
+    BOT_TOKEN: ${file(./env.${self:provider.stage}.json):BOT_TOKEN}
+    WEBHOOK_URL: ${file(./env.${self:provider.stage}.json):WEBHOOK_URL}
+
+functions:
+  app:
+    handler: src/index.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+      # Ping every 5 minutes to avoid cold starts
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: true
+    
+resources:
+  Resources:
+    PagesDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: pageId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: pageId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
+
+plugins:
+  - serverless-webpack
+  - '@jimdo/serverless-dotenv'
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  webpackIncludeModules: true
+  tableName: 'pages-table-${self:provider.stage}'
+  dynamodb:
+    start:
+      migrate: true
+

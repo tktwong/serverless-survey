@@ -1,0 +1,145 @@
+service: drummon
+
+package:
+  artifact: target/drummon-1.0-lambda-package.zip
+
+provider:
+  name: aws
+  runtime: java8
+  region: us-west-1
+  stage: ${opt:stage, 'dev'}
+  stackName: drummon-${opt:stage, 'dev'}
+  timeout: 30
+  memorySize: 128
+  role: ${file(config.json):drummon-iam-role}
+  deploymentBucket:
+    name: ${file(config.json):drummon-bucket-id}
+  vpc:
+    securityGroupIds:
+      - ${file(config.json):drummon-security-group}
+    subnetIds: ${file(config.json):drummon-subnet-ids}
+  usagePlan:
+    quota:
+      limit: ${self:custom.quota.${opt:stage, 'dev'}}
+      period: MONTH
+    throttle:
+      rateLimit: ${self:custom.rate.${opt:stage, 'dev'}}
+  resourcePolicy:
+    - Effect: Allow
+      Principal: "*"
+      Action: execute-api:Invoke
+      Resource:
+        - execute-api:/*/*/*
+
+functions:
+  proxy:
+    handler: org.mozilla.mixedreality.Drummon::handleRequest
+    environment:
+      ProxyHost:
+        Fn::Join:
+          - ""
+          - - ${file(config.json):drummon-dns-prefix}
+            - ${file(config.json):drummon-domain}
+      AllowedOrigins: "*"
+    events:
+      - http:
+          method: get
+          path: "/{proxy+}"
+          request:
+            parameters:
+              paths:
+                proxy: true
+          contentHandling: CONVERT_TO_BINARY
+
+resources:
+  Resources:
+    DrummonCloudfrontDNS:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        Name:
+          Fn::Join:
+            - ""
+            - - ${file(config.json):drummon-dns-prefix}
+              - ${file(config.json):drummon-domain}
+        HostedZoneId: ${file(config.json):drummon-zone-id}
+        Type: A
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt: [ DrummonCloudfrontDistribution, DomainName ]
+          HostedZoneId: Z2FDTNDATAQYW2
+
+    DrummonCloudfrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - Id: ApiGateway
+              DomainName:
+                Fn::Join:
+                  - ""
+                  - - Ref: ApiGatewayRestApi
+                    - ".execute-api."
+                    - Ref: AWS::Region
+                    - ".amazonaws.com"
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+                OriginSSLProtocols: [ "TLSv1", "TLSv1.1", "TLSv1.2" ]
+              OriginPath:
+                Fn::Join:
+                  - ""
+                  - - "/"
+                    - ${self:provider.stage}
+          Enabled: true
+          HttpVersion: http2
+          PriceClass: PriceClass_All
+          Aliases:
+            -
+              Fn::Join:
+                - ""
+                - - ${file(config.json):drummon-dns-prefix}
+                  - ${file(config.json):drummon-domain}
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+            TargetOriginId: ApiGateway
+            ForwardedValues:
+              QueryString: true
+              Headers: []
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+            MinTTL: '0'
+            DefaultTTL: '3600'
+
+          ViewerCertificate:
+            AcmCertificateArn: ${file(config.json):drummon-cert-arn}
+            SslSupportMethod: sni-only
+            # CloudFrontDefaultCertificate: 'true'
+
+plugins:
+  - serverless-offline
+  - serverless-apigw-binary
+  - serverless-apigwy-binary
+
+custom:
+  quota:
+    dev: 100000
+    prod: 1
+  rate:
+    dev: 100
+    prod: 1
+  apigwBinary:
+    types:
+      - '*/*'
+
+Outputs:
+  DrummonCloudfrontDistribution:
+    Value:
+      Fn::GetAtt: [ DrummonCloudfrontDistribution, DomainName ]

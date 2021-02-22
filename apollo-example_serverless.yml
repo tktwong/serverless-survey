@@ -1,0 +1,118 @@
+service: apollo-example
+
+plugins:
+  - serverless-offline
+  - serverless-dynamodb-local
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-west-1
+  environment: ${self:custom.settings.${self:custom.myStage}}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:Scan"
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:ListStreams"
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.${self:custom.myStage}.AUTHORS_TABLE}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.settings.${self:custom.myStage}.BOOKS_TABLE}"
+custom:
+  serverless-offline:
+    host: 0.0.0.0 # important to reach localhost from outside the docker container  
+    httpPort: 15000 # 3000 and 3002 are taken
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 15001
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+    seed:
+      domain:
+        sources:
+          - table: ${self:custom.settings.${self:custom.myStage}.AUTHORS_TABLE}
+            sources: [./mock/authorSeed.json]
+          - table: ${self:custom.settings.${self:custom.myStage}.BOOKS_TABLE}
+            sources: [./mock/bookSeed.json]
+  myStage: ${opt:stage, self:provider.stage}
+  settings:
+    dev:
+      AUTHORS_TABLE: authors-dev
+      BOOKS_TABLE: books-dev
+      IS_OFFLINE: true
+    prod:
+      AUTHORS_TABLE: authors-prod
+      BOOKS_TABLE: books-prod
+  auth:
+    type: COGNITO_USER_POOLS
+    authorizerId:
+      Ref: ApolloExampleAuth
+
+functions:
+  graphql:
+    handler: handler.graphqlHandler
+    events:
+    - http:
+        path: graphql
+        method: post
+        cors: true
+        authorizer: ${self:custom.auth}
+
+resources:
+  Resources:
+    ApolloExampleCognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: wishy-prod
+    ApolloExampleCognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: wishy-fe
+        GenerateSecret: false
+        UserPoolId:
+          Ref: "ApolloExampleCognitoUserPool"
+    ApolloExampleAuth:
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: ApolloExampleCognitoUserPool
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [ ApolloExampleCognitoUserPool, Arn ]
+        IdentitySource: method.request.header.Authorization
+    authorsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.settings.${self:custom.myStage}.AUTHORS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    booksTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.settings.${self:custom.myStage}.BOOKS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1  

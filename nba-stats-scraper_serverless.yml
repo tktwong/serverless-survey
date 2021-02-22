@@ -1,0 +1,57 @@
+service: nba-stats-scraper
+
+custom:
+  tableName: 'nbastats-${self:provider.stage}'
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  lambdaHashingVersion: 20201221
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: arn:aws:dynamodb:*:*:table/nbastats
+
+  environment:
+    STATS_TABLE: ${self:custom.tableName}
+
+functions:
+  getstats:
+    handler: handler.getstats
+
+    environment:
+      scores: https://www.basketball-reference.com/boxscores/
+      teams: https://www.basketball-reference.com/leagues/NBA_2021_standings.html
+      players: https://www.basketball-reference.com/leagues/NBA_2021_leaders.html
+
+resources:
+  Resources:
+    nbastats:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: statId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: statId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

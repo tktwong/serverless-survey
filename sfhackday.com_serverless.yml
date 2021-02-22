@@ -1,0 +1,46 @@
+frameworkVersion: ">=2.19.0 <3.0.0"
+service: sfhackday
+#useDotenv: false
+
+provider:
+  name: aws
+  region: eu-central-1
+  runtime: provided.al2
+  stage: prod
+  memorySize: 1792
+  deploymentBucket:
+    name: nyholm-lambda-applications
+  deploymentPrefix: com.sfhackday/${sls:instanceId}
+  environment:
+    # Symfony environment variables
+    APP_ENV: prod
+    APP_SECRET: ${ssm:/com.sfhackday/secret}
+    CONTRIBUTIONS_FROM_DATE: '2021-06-17'
+
+plugins:
+  - ./vendor/bref/bref
+  - serverless-domain-manager
+
+custom:
+  customDomain:
+    domainName: sfhackday.com
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+functions:
+  website:
+    handler: public/index.php
+    timeout: 20
+    layers:
+      - ${bref:layer.php-80-fpm}
+    events:
+      -   http: 'GET /'
+      -   http: 'ANY /{proxy+}'
+
+
+# Exclude files from deployment
+package:
+    exclude:
+        - 'node_modules/**'
+        - 'tests/**'

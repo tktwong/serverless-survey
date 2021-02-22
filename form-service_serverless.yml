@@ -1,0 +1,146 @@
+service: form-service
+
+provider:
+  name: aws
+  stage: dev
+  region: us-west-2
+  stackPolicy:
+    - Effect: Allow
+      Principal: "*"
+      Action: "Update:*"
+      Resource: "*"
+
+    # Don't allow deletion of RDS instance (otherwise we could lose data).
+    # See docs for how to get around this.
+    - Effect: Deny
+      Principal: "*"
+      Action:
+        - Update:Replace
+        - Update:Delete
+      Resource: LogicalResourceId/RDSInstance
+  runtime: nodejs4.3
+
+package:
+  include:
+    - project
+  exclude:
+    - project/package.json
+    - project/env/config.json.dev
+    - project/env/config.json.prod
+    - project/npm-debug.log
+
+functions:
+  createContactFormFunction:
+    name: ${file(./serverless.env.json):${opt:stage}.prefix}-createContactForm
+    handler: project/main.createContactForm
+    events:
+      - http:
+          path: contact_forms
+          method: POST
+          cors: true
+          integration: lambda
+    vpc:
+      securityGroupIds:
+        -
+          Ref: LambdaSecurityGroup
+      subnetIds:
+        -
+          Ref: LambdaSubnet1
+        -
+          Ref: LambdaSubnet2
+        -
+          Ref: LambdaSubnet3
+  deleteContactFormFunction:
+    name: ${file(./serverless.env.json):${opt:stage}.prefix}-deleteContactForm
+    handler: project/main.deleteContactForm
+    events:
+      - http:
+          path: contact_forms
+          method: DELETE
+          cors: true
+          integration: lambda
+    vpc:
+      securityGroupIds:
+        -
+          Ref: LambdaSecurityGroup
+      subnetIds:
+        -
+          Ref: LambdaSubnet1
+        -
+          Ref: LambdaSubnet2
+        -
+          Ref: LambdaSubnet3
+  listContactFormsFunction:
+    name: ${file(./serverless.env.json):${opt:stage}.prefix}-listContactForms
+    handler: project/main.listContactForms
+    events:
+      - http:
+          path: contact_forms
+          method: GET
+          cors: true
+          integration: lambda
+    vpc:
+      securityGroupIds:
+        -
+          Ref: LambdaSecurityGroup
+      subnetIds:
+        -
+          Ref: LambdaSubnet1
+        -
+          Ref: LambdaSubnet2
+        -
+          Ref: LambdaSubnet3
+  sendMessageFunction:
+    name: ${file(./serverless.env.json):${opt:stage}.prefix}-sendMessage
+    handler: project/main.sendMessage
+    events:
+      - http:
+          path: messages/send
+          method: POST
+          cors: true
+          integration: lambda
+    vpc:
+      securityGroupIds:
+        -
+          Ref: LambdaSecurityGroup
+      subnetIds:
+        -
+          Ref: LambdaSubnet1
+        -
+          Ref: LambdaSubnet2
+        -
+          Ref: LambdaSubnet3
+  processMessagesFunction:
+    name: ${file(./serverless.env.json):${opt:stage}.prefix}-processMessages
+    handler: project/main.processMessages
+    events:
+      - schedule: rate(2 hours)
+    vpc:
+      securityGroupIds:
+        -
+          Ref: LambdaSecurityGroup
+      subnetIds:
+        -
+          Ref: LambdaSubnet1
+        -
+          Ref: LambdaSubnet2
+        -
+          Ref: LambdaSubnet3
+  setupDatabaseFunction:
+    name: ${file(./serverless.env.json):${opt:stage}.prefix}-setupDatabase
+    handler: project/main.setupDatabase
+    vpc:
+      securityGroupIds:
+        -
+          Ref: LambdaSecurityGroup
+      subnetIds:
+        -
+          Ref: LambdaSubnet1
+        -
+          Ref: LambdaSubnet2
+        -
+          Ref: LambdaSubnet3
+
+resources:
+  Resources:
+    $ref: custom_resources/resources.json

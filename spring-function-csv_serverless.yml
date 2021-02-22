@@ -1,0 +1,51 @@
+service: tip-ingest
+
+plugins:
+  - serverless-pseudo-parameters
+
+package:
+  artifact: target/lambda-csv-1.0.0-SNAPSHOT-aws.jar
+
+custom:
+  bucketName: example-csv-files-#{AWS::AccountId}
+  streamName: test-stream
+
+provider:
+  name: aws
+  runtime: java11
+  stage: ${opt:stage, 'ci'}
+  region: us-west-2
+  timeout: 300
+  versionFunctions: false
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:GetObjectVersion
+      Resource:
+        - arn:#{AWS::Partition}:s3:::${self:custom.bucketName}/*
+    - Effect: Allow
+      Action:
+        - kinesis:PutRecord
+      Resource:
+        - arn:#{AWS::Partition}:kinesis:#{AWS::Region}:#{AWS::AccountId}:stream/${self:custom.streamName}
+  iamManagedPolicies:
+    - arn:aws:iam::aws:policy/AWSLambdaExecute
+
+functions:
+  ingestTips:
+    handler: com.example.csv.S3EventHandler
+    timeout: 30
+    memorySize: 512
+    events:
+      - s3: ${self:custom.bucketName}
+        event: s3:ObjectCreated:*
+
+resources:
+  Resources:
+    KinesisTipsStream:
+      Type: 'AWS::Kinesis::Stream'
+      Properties:
+        Name: ${self:custom.streamName}
+        ShardCount: 1

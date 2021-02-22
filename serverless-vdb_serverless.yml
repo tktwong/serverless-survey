@@ -1,0 +1,74 @@
+
+
+service:
+  name: vem-de-bolo-backend
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+custom:
+  serverless-offline:
+    useChildProcesses: true
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  bucketName: 'vem-de-bolo-${self:provider.stage}'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    # IS_OFFLINE: true
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    MONGO_URL: ${ssm:/vem-de-bolo/mongo-connection-${self:provider.stage}}
+    BUCKET: ${self:custom.bucketName}
+    SECRET: ${ssm:/vem-de-bolo/secret}}
+
+functions:
+  app:
+    handler: ./src/server.run
+    events:
+      - http:
+          path: /
+          method: "any"
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: "any"
+          cors: true
+
+resources:
+  Resources:
+    VemDeBoloBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:custom.bucketName}
+    VemDeBoloBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: VemDeBoloBucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadWriteObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - "s3:*"
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "VemDeBoloBucket"
+                    },
+                    "/*"
+                  ]
+                ]
+

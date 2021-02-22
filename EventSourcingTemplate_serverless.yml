@@ -1,0 +1,101 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: commonCommands
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: "=1.15.3"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: ap-southeast-2
+  profile: TradeIT
+  iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:*
+        Resource: arn:aws:dynamodb:*:*:table/event-source
+      -  Effect: "Allow"
+         Action:
+           - "sns:publish"
+           - "sns:subscribe"
+         Resource: "arn:aws:sns:ap-southeast-2:296927073230:*"
+                
+functions:
+  errorMessageHanlder:
+    handler: handler.errorMessageHanlder
+    events:
+      - sns: arn:aws:sns:ap-southeast-2:296927073230:ErrorMessageSNSTopic
+  entityDenormalizer:
+    handler: handler.entityDenormalizer
+    events:
+      - sns: arn:aws:sns:ap-southeast-2:296927073230:DeNormalizerSNSTopic
+  entityCommandHandler:
+    handler: handler.entityCommandHandler
+    events:
+      - sns: arn:aws:sns:ap-southeast-2:296927073230:GeneralCommandSNSTopic
+  commandHandler:
+    handler: handler.commandHandler
+    events: # The Events that trigger this Function
+      - http:
+          path: tradeit/command
+          method: post
+  eventHandler:
+    handler: handler.eventHandler   
+    events:
+      - stream:
+          type: dynamodb
+          arn: 
+            Fn::GetAtt:
+              - EventSource
+              - StreamArn   
+          batchSize: 100
+          startingPosition: LATEST
+          enabled: true
+
+resources:  
+  Resources:
+    GeneralCommandSNSTopic:
+      Type: "AWS::SNS::Topic"
+      Properties:
+        DisplayName: 'General Common Message Dispacher'
+        TopicName: GeneralCommandSNSTopic
+    DeNormalizerSNSTopic:
+      Type: "AWS::SNS::Topic"
+      Properties:
+        DisplayName: 'DeNormalizer Message Dispacher'
+        TopicName: DeNormalizerSNSTopic
+    ErrorMessageSNSTopic:
+      Type: "AWS::SNS::Topic"
+      Properties:
+        DisplayName: 'Error Message Dispacher'
+        TopicName: ErrorMessageSNSTopic
+    EventSource:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: event-source
+        AttributeDefinitions:
+          - AttributeName: sequence
+            AttributeType: S
+        KeySchema:
+          - AttributeName: sequence
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+    

@@ -1,0 +1,76 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+
+service: correlaid-slackbot-js
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+package:
+  exclude:
+    - node_modules/** # no need to add this yourself, this plugin does it for you
+
+plugins:
+  - serverless-plugin-include-dependencies
+  - serverless-offline
+  - serverless-pseudo-parameters
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-central-1
+  profile: personal-admin
+  stage: ${opt:stage, 'dev'}
+  env_file: ${file(./.env_${self:provider.stage}.yml)
+  environment: 
+    SLACK_API_TOKEN: ${self:provider.env_file}:default.SLACK_API_TOKEN}
+    SLACK_SIGNING_SECRET: ${self:provider.env_file}:default.SLACK_SIGNING_SECRET}
+    SLACK_DEBUG_CHANNEL: ${self:provider.env_file}:default.SLACK_DEBUG_CHANNEL}
+    SLACK_PROJECTS_CHANNEL: ${self:provider.env_file}:default.SLACK_PROJECTS_CHANNEL}
+    GITHUB_PAT: ${self:provider.env_file}:default.GITHUB_PAT}
+    GITHUB_OWNER: ${self:provider.env_file}:default.GITHUB_OWNER}
+    GITHUB_REPO: ${self:provider.env_file}:default.GITHUB_REPO}
+    GITHUB_PROJECT_ID: ${self:provider.env_file}:default.GITHUB_PROJECT_ID}
+    PROJECTUPDATE_ARN: "arn:aws:lambda:${self:provider.region}:#{AWS::AccountId}:function:correlaid-slackbot-js-${self:provider.stage}-project-update"
+  iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - lambda:InvokeFunction
+        Resource: "arn:aws:lambda:${self:provider.region}:#{AWS::AccountId}:function:correlaid-slackbot-js-${self:provider.stage}-project-update"
+functions:
+  events:
+    handler: src/events/react.handler
+    events:
+      - http:
+          path: correlaid-slackbot-js/slack-events
+          method: post
+          cors: false
+  slash-telko:
+    handler: src/slash/telko.handler
+    events:
+      - http:
+          path: correlaid-slackbot-js/slash-telko
+          method: post
+          cors: false
+  project-update-entrypoint:
+    handler: src/slash/projectupdateEntrypoint.handler
+    events:
+      - schedule: cron(0 10 ? * MON *)
+      - http:
+          path: correlaid-slackbot-js/slash-projectupdate-entrypoint
+          method: post
+          cors: false
+  project-update:
+    handler: src/slash/projectupdate.handler
+    timeout: 20

@@ -1,0 +1,60 @@
+service: scan-Dynamodb
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-east-1
+  stage: ${opt:stage, 'dev'} # Set the default stage used. Default is dev
+  
+# Define IAM Roles 
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTelemetryRecords
+        - xray:PutTraceSegments
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource: "*"
+# Define service wide environment variables
+  environment:
+    STAGE: ${self:provider.stage}
+    # access_key: ${ssm:key}
+
+plugins:
+  - serverless-webpack
+  - serverless-plugin-tracing
+  - serverless-iam-roles-per-function  
+  - serverless-offline
+
+custom:
+  webpack:
+    packager: 'yarn'
+    includeModules:
+      forceExclude:
+        - aws-sdk
+  
+  translatedStage: "${file(./translatedStage.js): translatedStage}"      
+        
+functions:
+  scanDynamoDb:
+    handler: src/handler.workHandler
+    tracing: true
+    memorySize: 128
+    iamRoleStatementsInherit: true
+    events:
+      # - schedule:
+      #     rate: cron(0 14,16,18,20,22 ? * MON-FRI *) # cron job runs lambda at 2,4,6,8,10 pm of UTC, equates to 8,10 AM and 12,2,4 PM Central Time
+      #     enabled: true
+      - http:
+          path: scans
+          method: Get
+

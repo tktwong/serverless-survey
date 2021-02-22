@@ -1,0 +1,81 @@
+service: spotfire
+
+plugins:
+  - serverless-kms-secrets
+  - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: java8
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - KMS:Decrypt
+      Resource: ${self:custom.kmsSecrets.keyArn}
+  environment:
+    SPOTIFY_REDIRECT_URI: https://${self:custom.config.ROOT_DOMAIN}/spotify/callback
+    SPOTIFY_CLIENT_ID_ENC: ${self:custom.kmsSecrets.secrets.SPOTIFY_CLIENT_ID}
+    SPOTIFY_CLIENT_SECRET_ENC: ${self:custom.kmsSecrets.secrets.SPOTIFY_CLIENT_SECRET}
+
+package:
+  artifact: build/libs/spotfire-dev-all.jar
+
+custom:
+  config: ${file(config.yml)}
+  customDomain:
+    domainName: spotfire.io
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    certificateName: "*.spotfire.io"
+  kmsSecrets: ${file(kms-secrets.${opt:stage, self:provider.stage}.${opt:region, self:provider.region}.yml)}
+
+
+functions:
+  hello:
+    handler: com.serverless.Handler
+  spotifyLoginRedirect:
+    handler: com.github.divideby0.spotfire.web.SpotifyLoginRedirectHandler
+    events:
+      - http:
+          path: /spotify/login
+          method: get
+  spotifyLoginCallback:
+    handler: com.github.divideby0.spotfire.web.SpotifyLoginCallbackHandler
+    events:
+      - http:
+          path: /spotify/callback
+          method: get
+
+resources:
+  Resources:
+    PlaylistBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.config.PLAYLIST_BUCKET_NAME}
+    SpotfireUserTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: SpotifyUser
+        AttributeDefinitions:
+          - AttributeName: RefreshTokenHash
+            AttributeType: S
+          - AttributeName: UserId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: RefreshTokenHash
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: ById
+            KeySchema:
+              - AttributeName: UserId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

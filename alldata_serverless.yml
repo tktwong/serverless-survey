@@ -1,0 +1,962 @@
+service: paqqets
+
+plugins:
+  - serverless-plugin-tracing
+  - serverless-stage-manager
+  - serverless-stack-output
+  - serverless-iam-roles-per-function
+  - serverless-deployment-bucket
+  - serverless-plugin-authorizer
+  - serverless-pseudo-parameters
+
+  
+
+custom:
+  stages:
+    - dev
+    - prod
+  myStage: ${opt:stage, self:provider.stage, 'dev'}
+  myEnvironment:
+    MESSAGE:
+      prod: "This is production environment"
+      dev: "This is development environment"
+
+ 
+  CognitoAddCustomAttributes: 
+    -
+      CognitoUserPoolIdOutputKey: "CognitoUserPoolApplicationUserPoolId"              # The key of the outputted UserPool Ref 
+      CognitoUserPoolClientIdOutputKey: "CognitoUserPoolApplicationUserPoolClientId"  # The key of the outputted UserPoolClient Ref
+      CustomAttributes: 
+        - 
+          AttributeDataType: String
+          DeveloperOnlyAttribute: False
+          Mutable: True
+          Name: "lastName" # this will end up being custom:lastName
+          Required: True
+    -
+      CognitoUserPoolIdOutputKey1: "CognitoUserPoolApplicationUserPoolId"
+      CognitoUserPoolClientIdOutputKey: "CognitoUserPoolApplicationUserPoolClientId2"
+      CustomAttributes:
+        -
+          AttributeDataType: String
+          DeveloperOnlyAttribute: False
+          Mutable: True
+          Name: "middleName" # this will end up being custom:middleName
+          Required: True
+
+
+provider:   
+  name: aws
+  apiName: Paqqets
+  payload: '1.0' 
+  stackName: PaqqetsLambda
+  runtime: nodejs10.x
+  region: ${opt:region, 'us-west-2'}
+  stage: ${opt:stage, 'dev'}
+  memorySize: 1024MB
+  deploymentBucket:
+    name: paqqets-dev
+    serverSideEncryption: AES256
+
+resources:
+  Resources:
+    CognitoUserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        MfaConfiguration: OFF
+        UserPoolName: PaqqetsConsumerUserPool
+        UsernameAttributes:
+          - email
+        UsernameConfiguration:
+          CaseSensitive: false
+        AutoVerifiedAttributes:
+          - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireNumbers: true
+            RequireUppercase: true
+            RequireSymbols: true
+
+        Schema:
+
+          - AttributeDataType: String
+            Mutable: true
+            Name: email
+            Required: true
+            StringAttributeConstraints:
+              MinLength: "1"
+
+    CognitoUserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: my-user-pool-client
+        SupportedIdentityProviders: ["COGNITO"]
+        GenerateSecret: True
+        UserPoolId:
+          Ref: CognitoUserPool
+
+    CognitoUserPoolClient1:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: TestConsumerApp3
+        SupportedIdentityProviders: ["COGNITO"]
+        GenerateSecret: True
+        UserPoolId:
+          Ref: CognitoUserPool
+
+    CognitoUserPoolClient2:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: Paqqets_Liferay_Users
+        SupportedIdentityProviders: ["COGNITO"]
+        GenerateSecret: True
+        UserPoolId:
+          Ref: CognitoUserPool 
+
+    CognitoUserPoolClient3:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: TestConsumerApp2
+        SupportedIdentityProviders: ["COGNITO"]
+        GenerateSecret: True
+        UserPoolId:
+          Ref: CognitoUserPool
+
+    CognitoUserPoolClient4:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: TestConsumerApp
+        SupportedIdentityProviders: ["COGNITO"]
+        GenerateSecret: True
+        UserPoolId:
+          Ref: CognitoUserPool 
+
+    
+    ResourceServer:
+        Type: AWS::Cognito::UserPoolResourceServer
+        Properties:
+          Identifier: server
+          Name: "paqqets-api"
+          Scopes:
+             -   ScopeName: all
+                 ScopeDescription: This scope should be used while requesting access tokens by the consumers/applications that use all the functionality. That is, instead of specifying scope=paqqets-api/paqqet & scope=paqqets-api/userMgmt, Simply specify scope=paqqets-api/all.
+             -   ScopeName: userMgmt
+                 ScopeDescription: This scope should be used while requesting access tokens by the consumers/applications that use only user contact id management functionality (that is, createContact, deleteContact, updateContact, getContact)
+             -   ScopeName: paqqet
+                 ScopeDescription: This scope should be used while requesting access tokens by the consumers/applications that use only paqqets send functionality (that is, createPaqqet, uploadFile, sendPaqqet, abort/cancel, status)
+          UserPoolId: 
+            Ref: CognitoUserPool   
+ 
+    UserPoolDomain: 
+      Type: AWS::Cognito::UserPoolDomain 
+      Properties:
+        UserPoolId: 
+          Ref: CognitoUserPool 
+        Domain: "paqqetssrv"
+
+
+    ApiGatewayRestApi:
+      Type: 'AWS::ApiGateway::RestApi'
+      Properties:
+        Description: This API is main API which contains API urls for CreatePaqqet,UploadFile,SendPaqqet etc
+        Name: Paqqets
+            
+    PaqqetsGWResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'" 
+        ResponseType:
+          EXPIRED_TOKEN
+        RestApiId: 
+          Ref: ApiGatewayRestApi
+        StatusCode: '401'
+
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: cognito-authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+           - Fn::GetAtt: [CognitoUserPool, Arn] 
+
+    apiGatewayAuthorizertest:
+      Type: "AWS::ApiGateway::Authorizer"
+      Properties:
+        Name: "VerifyTokenAuthorizer"
+        AuthorizerUri: "arn:aws:apigateway:us-west-2:lambda:path/2015-03-31/functions/arn:aws:lambda:us-west-2:419572703193:function:Paqqets_VerifyToken_Authorizer/invocations"
+        RestApiId: 
+          Ref: ApiGatewayRestApi
+        Type: "TOKEN"
+        IdentitySource: "method.request.header.Authorization"
+      DependsOn:
+        - "ApiGatewayRestApi"
+
+    apiGatewayAuthorizertest1:
+      Type: "AWS::ApiGateway::Authorizer"
+      Properties:
+        Name: "IdentityAuthorizer"
+        AuthorizerUri: "arn:aws:apigateway:us-west-2:lambda:path/2015-03-31/functions/arn:aws:lambda:us-west-2:419572703193:function:VerifyUserAuthentication/invocations"
+        RestApiId: 
+          Ref: ApiGatewayRestApi
+        Type: "TOKEN"
+        IdentitySource: "method.request.header.Authorization"
+      DependsOn:
+        - "ApiGatewayRestApi"
+
+    
+
+
+           
+  Outputs:
+    CognitoUserPoolApplicationUserPoolId:
+      Value:
+        Ref: CognitoUserPool
+    CognitoUserPoolApplicationUserPoolClientId:
+      Value:
+        Ref: CognitoUserPoolClient
+    CognitoUserPoolApplicationUserPoolClientId2:
+      Value:
+        Ref: CognitoUserPoolClient1
+
+    paqqetsRestApiId:
+      Value:
+        Ref: ApiGatewayRestApi
+      Export:
+        Name: ApiGatewayRestApi-restApiId-${opt:stage, self:provider.stage}
+    paqqetsRestApiRootResourceId:
+      Value:
+        Fn::GetAtt:
+          - ApiGatewayRestApi
+          - RootResourceId
+      Export:
+        Name: ApiGatewayRestApi-rootResourceId-${opt:stage, self:provider.stage}
+
+
+functions:
+  CreatePaqqetLambda:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    timeout: 60
+    package:
+      individually: true
+      artifact: CreatePaqqetLambda.zip
+    events:
+     - http:
+        path: /api/v1/paqqets
+        method: PUT
+        cors: true
+        integration: LAMBDA_PROXY
+        authorizer:
+           type: COGNITO_USER_POOLS
+           scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+           authorizerId:
+             Ref: ApiGatewayAuthorizer
+    
+     - http:
+        path: /api/v1/user/paqqets
+        method: PUT
+        cors: true
+        integration: LAMBDA_PROXY
+        authorizer:
+           type: CUSTOM
+           scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+           authorizerId:
+             Ref: apiGatewayAuthorizertest1            
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''    
+       
+
+  UserAuthentication:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    timeout: 60
+    package:
+      individually: true
+      artifact: UserAuthentication.zip
+    events:
+     - http:
+        path: /api/v1/paqqets/signin
+        cors: true
+        method: PUT
+        integration: LAMBDA_PROXY
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''  
+
+
+  PullPaqqetLambda:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    timeout: 60
+    package:
+      individually: true
+      artifact: PullPaqqetLambda.zip
+    events:
+     - http:
+        path: /api/v1/paqqets/transactions/{transactionId}
+        method: GET
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     - http:
+        path: /api/v1/user/paqqets/transactions/{transactionId}
+        method: GET
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+           type: CUSTOM
+           authorizerId:
+             Ref: apiGatewayAuthorizertest1
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''  
+
+  AbortCancelPaqqet_Batch:  
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    timeout: 60
+    package:
+      individually: true
+      artifact: AbortCancelPaqqet_Batch.zip
+    events:
+     - http:
+        path: /api/v1/paqqets/{batchTransactionId}
+        method: DELETE
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+        cors: true
+     - http:
+        path: /api/v1/paqqets/{batchTransactionId}
+        method: POST
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     - http:
+        path: /api/v1/paqqets/{batchTransactionId}/abort
+        method: DELETE
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     - http:
+        path: /api/v1/user/paqqets/{batchTransactionId}
+        method: DELETE
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: CUSTOM
+          authorizerId:
+            Ref: apiGatewayAuthorizertest1
+
+     - http:
+        path: /api/v1/user/paqqets/{batchTransactionId}/abort
+        method: DELETE
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: CUSTOM
+          authorizerId:
+            Ref: apiGatewayAuthorizertest1
+
+
+     - http:
+        path: /api/v1/user/paqqets/{batchTransactionId}/status
+        method: GET
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: CUSTOM
+          authorizerId:
+            Ref: apiGatewayAuthorizertest1
+     
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''   
+  
+  SendPaqqetLambda:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    timeout: 60
+    package:
+      individually: true
+      artifact: SendPaqqetLambda.zip
+    events:
+     - http:
+        path: /api/v1/user/paqqets/{batchTransactionId}
+        method: POST
+        integration: LAMBDA_PROXY
+        authorizer:
+          type: CUSTOM
+          authorizerId:
+            Ref: apiGatewayAuthorizertest1
+ 
+
+  UploadFileLambda:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    timeout: 60
+    package:
+      individually: true
+      artifact: UploadFileLambda.zip
+    events:
+     - http:
+        path: /api/v1/paqqets/{batchTransactionId}/contents
+        method: PUT
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+
+     - http:
+        path: /api/v1/user/paqqets/{batchTransactionId}/contents
+        method: PUT
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: CUSTOM
+          authorizerId: 
+            Ref: apiGatewayAuthorizertest1
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''  
+
+  GetPaqqetStatus_Batch:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    timeout: 60
+    package:
+      individually: true
+      artifact: GetPaqqetStatus_Batch.zip
+    events:
+     - http:
+        path: /api/v1/paqqets/{batchTransactionId}/status
+        method: GET
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+        cors: true
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: '' 
+
+  AbortCancelPaqqet: 
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    timeout: 60
+    package:
+      individually: true
+      artifact: AbortCancelPaqqet.zip
+    events:
+     - http: 
+        path: /api/v1/paqqets/{batchTransactionId}/transactions/{transactionId}
+        cors: true
+        method: DELETE
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+  
+     - http:
+        path: /api/v1/paqqets/{batchTransactionId}/transactions/{transactionId}/abort
+        method: DELETE
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+
+     - http: 
+        path: /api/v1/user/paqqets/{batchTransactionId}/transactions/{transactionId}
+        cors: true
+        method: DELETE
+        authorizer:
+          type: CUSTOM
+          authorizerId:
+            Ref: apiGatewayAuthorizertest1 
+
+     - http: 
+        path: /api/v1/user/paqqets/{batchTransactionId}/transactions/{transactionId}/abort
+        cors: true
+        method: DELETE
+        authorizer:
+          type: CUSTOM
+          authorizerId:
+            Ref: apiGatewayAuthorizertest1
+
+      
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''  
+
+
+  GetPaqqetStatus:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    timeout: 60
+    package:
+      individually: true
+      artifact: GetPaqqetStatus.zip
+    events:
+     - http:
+        path: /api/v1/paqqets/{batchTransactionId}/transactions/{transactionId}/status
+        method: get
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+
+     - http:
+        path: /api/v1/user/paqqets/{batchTransactionId}/transactions/{transactionId}/status
+        method: get
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: CUSTOM
+          authorizerId:
+            Ref: apiGatewayAuthorizertest1
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: '' 
+
+  GetUser:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    FUNCTION_NAME: GetUser
+    timeout: 60
+    package:
+      individually: true
+      artifact: GetUser.zip
+    events:
+     - http:
+        path: /api/v1/users 
+        method: GET
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     - http:
+        path: /api/v1/users/{userId}  
+        method: GET
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     - http:
+        path: /api/v1/users/{userId}/authcode/contacts
+        method: GET
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     - http:
+        path: /api/v1/users/{userId}/contacts
+        method: GET
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''   
+
+  CreateUser:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    timeout: 60
+    package:
+      individually: true
+      artifact: CreateUser-eb.zip
+    events:
+     - http:
+        path: /api/v1/users
+        method: PUT
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: '' 
+
+  DeleteUser:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    FUNCTION_NAME: DeleteUser
+    timeout: 60
+    package:
+      individually: true
+      artifact: DeleteUser.zip
+    events:
+     - http:
+        path: /api/v1/users/{userId}
+        method: DELETE
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''
+
+  UpdateUser:
+    handler: index.handler
+    Role: arn:aws:iam::419572703193:role/Lambda-Role
+    FUNCTION_NAME: UpdateUser
+    timeout: 60
+    package:
+      individually: true
+      artifact: UpdateUser.zip
+    events:
+     - http:
+        path: /api/v1/users/{userId} 
+        method: PUT
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/paqqet
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+    response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''
+
+  SendUserAuthCode:
+     handler: index.handler
+     Role: arn:aws:iam::419572703193:role/Lambda-Role
+     FUNCTION_NAME: SendUserAuthCode
+     timeout: 60
+     package:
+      individually: true
+      artifact: SendUserAuthCode.zip
+     events:
+     - http:
+        path: /api/v1/users/{userId}/authcode
+        cors: true
+        method: post
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/userMgmt
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     response:
+        template:
+             application/json: '{"data": {}}'
+        statusCodes:
+            200:
+                pattern: ''
+   
+  VerifyUserAuthCode:
+     handler: index.handler
+     Role: arn:aws:iam::419572703193:role/Lambda-Role
+     FUNCTION_NAME: VerifyUserAuthCode
+     timeout: 60
+     package:
+      individually: true
+      artifact: VerifyUserAuthCode.zip
+     events:
+     - http:
+        path: /api/v1/users/{userId}/authcode
+        method: put
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/userMgmt
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer 
+     response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''
+
+  
+
+  CreateContacts:
+     handler: index.handler
+     Role: arn:aws:iam::419572703193:role/Lambda-Role
+     FUNCTION_NAME: CreateContacts
+     timeout: 60
+     package:
+      individually: true
+      artifact: CreateContacts.zip
+     events:
+     - http:
+        path: api/v1/users/{userId}/contacts
+        method: POST
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/userMgmt
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer 
+     response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: '' 
+
+  UpdateContacts:
+     handler: index.handler
+     Role: arn:aws:iam::419572703193:role/Lambda-Role
+     FUNCTION_NAME: UpdateContacts
+     timeout: 60
+     package:
+      individually: true
+      artifact: UpdateContacts.zip
+     events:
+     - http:
+        path: /api/v1/users/{userId}/contacts
+        method: put
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/userMgmt
+             - paqqets-api/all 
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: '' 
+
+  DeleteContacts:
+     handler: index.handler
+     Role: arn:aws:iam::419572703193:role/Lambda-Role
+     FUNCTION_NAME: DeleteContacts
+     timeout: 60
+     package:
+      individually: true
+      artifact: DeleteContacts.zip
+     events:
+     - http:
+        path: /api/v1/users/{userId}/contacts/email/{contactId}
+        method: DELETE
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/userMgmt
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+        cors: true
+
+     - http:
+        path: /api/v1/users/{userId}/contacts/phone/{contactId}
+        method: DELETE
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/userMgmt
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+        cors: true
+
+     - http:
+        path: /api/v1/users/{userId}/contacts
+        method: DELETE
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/userMgmt
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     - http:
+        path: /api/v1/users/{userId}/authcode/contacts
+        method: DELETE
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/userMgmt
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+
+     - http:
+        path: /api/v1/users/{userId}/contacts/phone/{contactId}
+        method: DELETE
+        cors: true
+        integration: LAMBDA_PROXY 
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/userMgmt
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''
+    
+  Paqqet_Cognito_CreateUser:
+     handler: index.handler
+     Role: arn:aws:iam::419572703193:role/Lambda-Role
+     FUNCTION_NAME: Paqqet_Cognito_CreateUser
+     timeout: 60
+     package:
+      individually: true
+      artifact: Paqqet_Cognito_CreateUser.zip
+     events:
+     - http:
+        path: /api/v2/users
+        method: POST
+        cors: true
+        authorizer:
+          type: COGNITO_USER_POOLS
+          scopes:
+             - paqqets-api/userMgmt
+             - paqqets-api/all
+          authorizerId: 
+            Ref: ApiGatewayAuthorizer
+     response:
+       template:
+            application/json: '{"data": {}}'
+       statusCodes:
+           200:
+               pattern: ''  
+
+ 
+
+  
+  
+  
+       
+     
+  

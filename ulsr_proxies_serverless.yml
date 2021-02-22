@@ -1,0 +1,70 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: hello-world
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: us-east-2
+  memorySize: 256
+  # Bits to add DynamoDB
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource:
+        - { "Fn::GetAtt": ["UlsrResInfoDynamoDBTable", "Arn" ] }
+  environment:
+   ULSRRESINFO_TABLE: {"Ref":"UlsrResInfoDynamoDBTable" }
+  apiKeys:
+   - ${opt:stage}-myFirstKey
+
+# The `functions` block defines what code to deploy
+functions:
+  helloWorld:
+    handler: handler.helloWorld
+    # The `events` block defines how to trigger the handler.helloWorld code
+    events:
+      - http:
+          path: hello-world
+          method: get
+          private: true
+  putUlsrResInfo:
+    handler: handler.putUlsrResInfo
+    events:
+      - http:
+          path: ulsr-res-id
+          method: post
+          private: true
+  getUlsrResInfo:
+    handler: handler.getUlsrResInfo
+    events:
+      - http:
+          path: ulsr-res-id/{resid}
+          method: get
+          private: true
+
+
+resources:
+  Resources:
+    UlsrResInfoDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: resId
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: resId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

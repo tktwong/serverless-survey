@@ -1,0 +1,66 @@
+org: fernando
+app: libertyjs-jams
+service: libertyjs-jams
+
+frameworkVersion: ">=1.53.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: us-east-1
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}-voteCounts
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  recordSongVote:
+    handler: backend/record_song_vote.handler
+    events:
+      - http:
+          path: song/vote
+          method: post
+          cors: true
+  getSongVoteCounts:
+    handler: backend/get_song_vote_counts.handler
+    events:
+      - http:
+          path: votes
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: songName
+            AttributeType: S
+        KeySchema:
+          - AttributeName: songName
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+plugins:
+  - serverless-finch
+
+custom:
+  client:
+    bucketName: www.libertyjsjams.com
+    distributionFolder: frontend
+    errorDocument: index.html
+
+package:
+  exclude:
+    - node_modules/**
+    - frontend/**
+    - package-lock.json

@@ -1,0 +1,155 @@
+service: fad
+
+frameworkVersion: ">=1.27.3 <2.0.0"
+
+custom:
+  fadParamArn:
+    Fn::Join:
+    - ":"
+    - - arn
+      - aws
+      - ssm
+      - Ref: AWS::Region
+      - Ref: AWS::AccountId
+      - parameter/fad_*
+  fadTableName: ${self:service}-${self:provider.stage}
+  fadTableArn:
+    Fn::Join:
+    - ":"
+    - - arn
+      - aws
+      - dynamodb
+      - Ref: AWS::Region
+      - Ref: AWS::AccountId
+      - table/${self:custom.fadTableName}
+  fadTableIndexName: updated_at_idx
+  fadTableIndexArn:
+    Fn::Join:
+    - ":"
+    - - arn
+      - aws
+      - dynamodb
+      - Ref: AWS::Region
+      - Ref: AWS::AccountId
+      - table/${self:custom.fadTableName}/index/*
+  fadSecretKeyName: ${self:custom.fadTableName}-key
+  pythonRequirements:
+    dockerizePip: non-linux
+
+plugins:
+  - serverless-python-requirements
+provider:
+  memorySize: 128
+  name: aws
+  region: us-west-2
+  runtime: python3.6
+  stage: dev
+  timeout: 300
+  apiKeys:
+    - ${self:custom.fadSecretKeyName}
+
+  environment:
+    FAD_TABLE_NAME: ${self:custom.fadTableName}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:CreateBackup
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:UpdateItem
+      Resource:
+        - ${self:custom.fadTableArn}
+        - ${self:custom.fadTableIndexArn}
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter
+      Resource:
+        - ${self:custom.fadParamArn}
+
+package:
+  exclude:
+    - node_modules/**
+    - venv/**
+
+functions:
+  # backup db table
+  backup:
+    name: ${self:custom.fadTableName}-backup
+    handler: manifest/backup.handler
+    events:
+      - schedule:
+          rate: cron(0 6 * * ? *)
+          enabled: true
+  # find single record by url
+  find:
+    name: ${self:custom.fadTableName}-find
+    handler: manifest/find.handler
+    cors: true
+    events:
+      - http:
+          path: "{site}/resources/find"
+          method: get
+          private: true
+          request:
+            parameters:
+              paths:
+                site: true
+              querystrings:
+                url: true
+  # list all records updated since timestamp
+  list:
+    name: ${self:custom.fadTableName}-list
+    handler: manifest/list.handler
+    cors: true
+    events:
+      - http:
+          path: "{site}/resources"
+          method: get
+          private: true
+          request:
+            parameters:
+              paths:
+                site: true
+              querystrings:
+                since: true
+  # process manifest csv
+  process:
+    name: ${self:custom.fadTableName}-process
+    handler: manifest/process.handler
+    events: ${file(./config/${self:provider.stage}.yml):process}
+
+resources:
+  Resources:
+    FadTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.fadTableName}
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        AttributeDefinitions:
+          - AttributeName: site
+            AttributeType: S
+          - AttributeName: url
+            AttributeType: S
+          - AttributeName: updated_at
+            AttributeType: N
+        KeySchema:
+          - AttributeName: site
+            KeyType: HASH
+          - AttributeName: url
+            KeyType: RANGE
+        LocalSecondaryIndexes:
+          - IndexName: ${self:custom.fadTableIndexName}
+            KeySchema:
+              - AttributeName: site
+                KeyType: HASH
+              - AttributeName: updated_at
+                KeyType: RANGE
+            Projection:
+              ProjectionType: "ALL"

@@ -1,0 +1,148 @@
+# NOTE: update this with your service name
+service: telos-account-creator-services
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  bundle:
+    linting: false
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  tableName: ${self:custom.stage}-accounts
+  # Set our DynamoDB throughput for prod and all other non-prod stages.
+  tableThroughputs:
+    prod: 2
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-1
+  apiKeys:
+    - ${self:custom.stage}-standard
+    - ${self:custom.stage}-telosWallet
+    - ${self:custom.stage}-dswallet
+  usagePlan:
+    quota:
+      limit: 1500
+      period: DAY
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+
+  environment:
+    tableName: ${self:custom.tableName}
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ AccountsTable, Arn ]
+    - Effect: Allow
+      Action:
+        - secretsmanager:Describe*
+        - secretsmanager:Get*
+        - secretsmanager:List
+      Resource: "*"
+
+functions:
+  register:
+    handler: register.main
+    events:
+      - http:
+          path: register
+          method: post
+          private: true
+          cors: true
+      - http:
+          path: v1/registrations
+          method: post
+          private: true
+          cors: true
+
+  create:
+    handler: create.main
+    events: 
+      - http:
+          path: create
+          method: post
+          private: true
+          cors: true
+      - http:
+          path: v1/accounts
+          method: post
+          private: true
+          cors: true
+
+  keygen:
+    handler: util.keygen
+    events:
+      - http:
+          path: keygen
+          method: get
+          cors: true
+          private: true
+      - http:
+          path: v1/keys
+          method: get
+          cors: true
+          private: true
+
+  exists:
+    handler: util.checkAccount
+    events:
+      - http:
+          path: check
+          method: get
+          cors: true
+          private: true
+
+  exists2:
+    handler: util.checkAccount2
+    events:
+      - http:
+          path: v1/accounts/{telosAccount}
+          method: get
+          cors: true
+          private: true
+  
+  delete:
+    handler: util.deleteRecord
+    events:
+      - http:
+          path: delete
+          method: post
+          cors: true
+          private: true
+      - http:
+          path: v1/registrations
+          method: delete
+          cors: true
+          private: true
+
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}

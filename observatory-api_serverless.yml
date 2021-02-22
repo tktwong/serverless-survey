@@ -1,0 +1,162 @@
+service: observatory-api
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+  stage: dev
+  region: us-east-1
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:GetObject"
+      Resource:
+        - "arn:aws:s3:::o9y.soil.observations/*"
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource:
+        - "arn:aws:s3:::o9y.soil.observations"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+      Resource:
+        - "Fn::GetAtt": [ ReactionsTable, Arn ]
+        - "Fn::GetAtt": [ EventsTable, Arn ]
+        - "Fn::GetAtt": [ EventsDailyRollupTable, Arn ]
+
+plugins:
+  - serverless-domain-manager
+
+custom:
+  customDomain:
+    domainName: api.o9y.soma.farm
+    basePath: ''
+    stage: ${self:provider.stage}
+    certificateName: 'api.o9y.soma.farm'
+    createRoute53Record: false
+
+functions:
+  measureObservationFoliage:
+    handler: src/observation/observation-handler.measureFoliage
+    events:
+      - s3:
+          bucket: o9y.soil.observations
+          event: s3:ObjectCreated:*
+  
+  getObservationFoliage:
+    handler: src/observation/observation-handler.getFoliageTimeSeries
+    events:
+      - http:
+          path: observation/foliage
+          method: get
+          cors: true
+
+  observationGetUploadUrl:
+    handler: src/observation/observation-handler.getUploadURL
+
+    events:
+      - http:
+          path: observation
+          method: get
+          request:
+            template:
+              application/json: >
+                {
+                  "fileType" : "$input.params('fileType')"
+                }
+          cors: true
+
+  observationGetLatest:
+    handler: src/observation/observation-handler.getLatest
+
+    events:
+      - http:
+          path: observation/latest
+          method: get
+          cors: true
+
+  rollupFoliage:
+    handler: src/observation/observation-handler.rollupFoliageTimeSeries
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [ EventsTable, StreamArn ]
+          batchSize: 1
+
+  recordReaction:
+    handler: src/reaction/reaction-handler.recordReaction
+    events:
+      - http:
+          path: reaction
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    EventsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: events
+        AttributeDefinitions:
+          - AttributeName: event_type
+            AttributeType: S
+          - AttributeName: date_time
+            AttributeType: N
+        KeySchema:
+          - AttributeName: event_type
+            KeyType: HASH
+          - AttributeName: date_time
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        
+    EventsDailyRollupTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: events_daily_rollup
+        AttributeDefinitions:
+          - AttributeName: event_type
+            AttributeType: S
+          - AttributeName: date_time
+            AttributeType: N
+        KeySchema:
+          - AttributeName: event_type
+            KeyType: HASH
+          - AttributeName: date_time
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+    ReactionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: reactions
+        AttributeDefinitions:
+          - AttributeName: reaction_type
+            AttributeType: S
+          - AttributeName: datetime
+            AttributeType: N
+        KeySchema:
+          - AttributeName: reaction_type
+            KeyType: HASH
+          - AttributeName: datetime
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

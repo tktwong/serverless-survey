@@ -1,0 +1,153 @@
+service: authentication
+provider:
+  name: aws
+  runtime: python3.6
+  stage: dev
+  region: us-east-2
+  endpointType: REGIONAL
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - "logs:*"
+      Resource: "*"
+
+custom:
+  apiGatewayId: !Ref 'ApiGatewayRestApi'
+
+functions:
+  testFunction:
+    handler: lambda_function.main
+    events:
+      - http:
+          path: test
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+resources:
+  Resources:
+    UserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        UserPoolName:
+          Fn::Join:
+            - ''
+            - - ${opt:region, self:provider.region}
+              - "-"
+              - ${opt:stage, 'dev'}
+        AliasAttributes:
+          - preferred_username
+        AutoVerifiedAttributes:
+          - email
+          - phone_number
+        Schema:
+          - Name: phone_number
+            AttributeDataType: String
+            Mutable: true
+            Required: false
+          - Name: preferred_username
+            AttributeDataType: String
+            Mutable: true
+            Required: false
+        MfaConfiguration: "OFF"
+        SmsConfiguration:
+          ExternalId:
+            Fn::Join:
+              - ''
+              - - ${opt:region, self:provider.region}
+                - "-"
+                - ${opt:stage, 'dev'}
+                - "external"
+          SnsCallerArn:
+            Fn::GetAtt:  SNSRole.Arn
+
+
+    SNSRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - "cognito-idp.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          - PolicyName: "CognitoSNSPolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action: "sns:publish"
+                  Resource: "*"
+
+
+    UserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        GenerateSecret: false
+        UserPoolId:
+          Ref: UserPool
+
+
+    IdentityPool:
+      Type: "AWS::Cognito::IdentityPool"
+      Properties:
+        AllowUnauthenticatedIdentities: false
+        CognitoIdentityProviders:
+          - ClientId:
+              Ref: UserPoolClient
+            ProviderName:
+              "Fn::GetAtt": [UserPool, ProviderName]
+
+
+    CognitoAuthenticatedRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
+              Action:
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: IdentityPool
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": authenticated
+        Policies:
+          - PolicyName: "CognitoAuthenticatedPolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "execute-api:Invoke"
+                  Resource:
+                    - Fn::Join:
+                      - ':'
+                      - - 'arn:aws:execute-api'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - Fn::Join:
+                          - '/'
+                          - - Ref: 'ApiGatewayRestApi'
+                            - 'dev/*'
+
+
+
+
+    IdentityPoolRoleMapping:
+      Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+      Properties:
+        IdentityPoolId:
+          Ref: IdentityPool
+        Roles:
+          authenticated:
+            "Fn::GetAtt": CognitoAuthenticatedRole.Arn
+

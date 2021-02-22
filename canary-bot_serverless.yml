@@ -1,0 +1,77 @@
+service:
+  name: canary-bot
+
+custom: ${file(./secrets-${opt:stage}.yml)}
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-offline-scheduler
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage}
+  environment:
+    BUCKET: ${self:custom.bucket}
+    SLACK_HOOK: ${self:custom.slack-hook}
+    SHEET_ID: ${self:custom.sheet-id}
+    STAGE: ${opt:stage}
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "*"
+
+functions:
+  updateBuildRecord:
+    handler: src/handler.updateBuildRecord
+    events:
+      - schedule: cron(0/1 * * * ? *)
+    environment:
+      BUCKET: ${self:custom.bucket}
+      RECORD_KEY: ${self:custom.record-key}
+      URL: ${self:custom.url}
+
+  getBuildRecord:
+    handler: src/handler.getBuildRecord
+    events:
+      - http:
+          method: get
+          path: buildRecord
+    environment:
+      BUCKET: ${self:custom.bucket}
+      RECORD_KEY: ${self:custom.record-key}
+
+  startPerformanceTest:
+    handler: src/handler.startPerformanceTest
+    events:
+      - schedule: cron(5 4 * * ? *)
+    environment:
+      URL: https://nodeca.${opt:stage}.aplaceformom.com/ca/en/assisted-living/british-columbia/vancouver
+
+  updatePerformanceTest:
+    handler: src/handler.updatePerformanceResults
+    events:
+      - schedule: cron(0/5 * * * ? *)
+
+  getReport:
+    handler: src/handler.getReport
+    events:
+      - http:
+          method: get
+          path: report
+          private: false
+    environment:
+      ENV: ${opt:stage}
+
+  sendReport:
+    handler: src/handler.sendReport
+    events:
+      - schedule: cron(5 4 * * ? *)
+    environment:
+      URL: { "Fn::Join" : ["", [" https://", { "Ref" : "ApiGatewayRestApi" }, ".execute-api.${self:custom.region}.amazonaws.com/${self:custom.stage}" ] ]  }
+    
+  
+  

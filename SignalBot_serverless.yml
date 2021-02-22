@@ -1,0 +1,89 @@
+service: rdsbot
+
+# requires options vpcStack and rdsStack
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  vpcStack: ${opt:vpcStack}
+  rdsStack: ${opt:rdsStack, 'none'}
+
+# TODO - need to pull the  vpc id and subnet groups out
+#   they need to be whatever the RDBMS is in
+
+# REQUIRES vpcStack option (name of stack vpc was created on)
+
+provider:
+  name: aws
+  runtime: python3.6
+
+  environment:
+    RDS_HOST: { 'Fn::ImportValue' : '${self:custom.rdsStack}-DbHost' }
+    RDS_DBNAME: dbname
+    RDS_USERNAME: username
+    RDS_PASSWORD: password
+    RDS_PROP: { 'Fn::ImportValue' : '${self:custom.rdsStack}-DbHost' } # todo see if VpcId can be pulled from rdsStack and used below
+
+  vpc:
+    securityGroupIds:
+      - 'Fn::ImportValue' : '${self:custom.vpcStack}-SecurityGroupId'
+    subnetIds:
+      - "Fn::ImportValue" : "${self:custom.vpcStack}-PrivateSubnet1Id"
+      - "Fn::ImportValue" : "${self:custom.vpcStack}-PrivateSubnet2Id"
+      - "Fn::ImportValue" : "${self:custom.vpcStack}-PrivateSubnet3Id"
+
+package:
+  include:
+    - psycopg2/**
+
+functions:
+  sigbot:
+    handler: handler.handle_bot
+    tags:
+      created: serverless for SignalBot service
+      Name: "${self:service}-${self:custom.stage}-service"
+
+
+    events:
+      - http:
+          path: api/metrics/{bottype}
+          method: get
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+
+      - http:
+          path: api/metrics/{bottype}
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+
+
+
+resources:
+  Outputs:
+     ExportServiceEndpoint:
+       Description: "VPC that the instance in"
+       Value:
+          "Fn::Join":
+            - ""
+            - - "https://"
+              - Ref: "ApiGatewayRestApi"
+              - ".execute-api."
+              - Ref: "AWS::Region"
+              - ".amazonaws.com/"
+              - ${self:custom.stage}
+       Export:
+           Name: "${self:service}-${self:custom.stage}-Endpoint"

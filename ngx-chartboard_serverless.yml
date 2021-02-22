@@ -1,0 +1,66 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: ngx-chartboard-api
+
+package:
+  individually: false
+  excludeDevDependencies: true
+  include:
+    - dist/**
+    - node_modules/**
+  exclude: 
+    - src/**
+
+custom: 
+  file: ${file(./config/serverlessconfig.yml)} 
+# The `provider` block defines where your service will be deployed
+provider:
+  stage: ${opt:stage}
+  name: aws
+  runtime: nodejs8.10
+  region: "eu-central-1"
+  environment:
+    S3BUCKET: ${self:custom.file.S3BUCKET}
+    S3FILE: ${self:custom.file.S3FILE}
+    READONLY: ${self:custom.file.READONLY}
+
+  apiKeys:
+    - ${self:service}.${self:provider.stage}
+  iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - "s3:*"
+       Resource: "*"
+    -  Effect: "Allow"
+       Action:
+         - "s3:*"
+       Resource: 
+         - "arn:aws:s3:::${self:custom.file.S3BUCKET}/*"
+
+# The `functions` block defines what code to deploy
+functions:
+  app:
+    handler: /dist/server.handler
+    # The `events` block defines how to trigger the handler.helloWorld code
+    events:
+      - http: 
+          path: /
+          method: ANY
+          cors: true
+          private: true
+      - http: 
+          path: "{proxy+}"
+          method: ANY
+          cors: true
+          private: true
+resources:
+  Resources:
+    S3BucketStorage:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.file.S3BUCKET}

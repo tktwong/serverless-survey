@@ -1,0 +1,163 @@
+# Welcome to serverless. Read the docs
+# https://serverless.com/framework/docs/
+
+# Serverless.yml is the configuration the CLI
+# uses to deploy your code to your provider of choice
+
+# The `service` block is the name of the service
+service: tweak-challenge
+
+# The `provider` block defines where your service will be deployed
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: us-east-1
+  stackName: tweakImageUploader
+  logs:
+    restApi: true
+  apiGateway:
+    binaryMediaTypes:
+      - 'image/jpg'
+      - 'image/jpeg'
+      - 'image/png'
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action: 
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource:
+        - "arn:aws:logs:*:*:*"
+    - Effect: "Allow"
+      Action:
+        - "s3:List*"
+        - "s3:GetObject"
+        - "s3:PutObject" 
+      Resource:
+        - Fn::GetAtt: [StorageBucket, Arn]
+        - Fn::Join: ['/', [Fn::GetAtt: [StorageBucket, Arn], '*']]
+    - Effect: "Allow"
+      Action:
+        - "cognito-idp:AdminConfirmSignup"
+      Resource:
+        - "arn:aws:cognito-idp:*:*:*"
+
+# The `functions` block defines what code to deploy
+functions:
+  CreateUser:
+    handler: endpoints/users/create.handler
+    # The `events` block defines how to trigger the handler.helloWorld code
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+    environment:
+      ClientId:
+        Ref: CognitoUserPoolClient
+      PoolId: 
+        Ref: CognitoUserPool
+
+  Login:
+    handler: endpoints/users/login.handler
+    events:
+      - http:
+          path: users/login
+          method: post
+          cors: true
+    environment:
+      ClientId:
+        Ref: CognitoUserPoolClient
+      PoolId: 
+        Ref: CognitoUserPool
+    
+  PostImage:
+    handler: endpoints/images/upload.handler
+    events:
+      - http:
+          path: images
+          method: post
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      Bucket:
+        Ref: StorageBucket
+  
+  GetImage:
+    handler: endpoints/images/getImage.handler
+    events:
+      - http:
+          path: images/{filename}
+          method: get
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+          request:
+            parameters:
+              paths:
+                filename: true
+    environment:
+      Bucket:
+        Ref: StorageBucket
+  
+  ListImages:
+    handler: endpoints/images/list.handler
+    events:
+      - http:
+          path: images
+          method: get
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    environment:
+      Bucket:
+        Ref: StorageBucket
+
+resources:
+  Resources:
+    StorageBucket:
+      Type: "AWS::S3::Bucket"
+    
+    CognitoUserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        UserPoolName: tweak-challenge-user-pool
+        # UsernameAttributes:
+        #   - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 6
+            RequireLowercase: False
+            RequireNumbers: True
+            RequireSymbols: False
+            RequireUppercase: False
+
+    CognitoUserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: tweak-challenge-user-pool-client
+        UserPoolId:
+          Ref: CognitoUserPool
+        ExplicitAuthFlows:
+          - ADMIN_NO_SRP_AUTH
+        GenerateSecret: false
+    
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: cognito-authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [CognitoUserPool, Arn]

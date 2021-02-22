@@ -1,0 +1,133 @@
+service: ABP-
+
+package:
+  exclude:
+    - ./**
+  include:
+    - handlers/**
+
+custom:
+  stage: ${opt:stage, ""}
+  region: ${opt:region, "us-east-1"}
+  s3_bucket: image-store-rekog-abp
+  dynamo_rekog: rekog-index
+  dynamo_log: log-registry
+
+
+provider:
+  name: aws
+  runtime: python3.8
+  memorySize: 128
+  timeout: 30
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+  role: arn:aws:iam::945154355127:role/lambda-admin
+
+
+functions:
+  picture-indexation:
+    runtime: python2.7
+    handler: handlers/picture-indexation.lambda_handler
+    events:
+      - s3: ${self:custom.s3_bucket}
+
+  rekognition-ABP:
+    handler: handlers/rekognition-ABP.handle
+    events:
+      - http:
+            path: /rekog
+            method: post
+            cors: true
+ 
+  upload_new_user-ABP:
+    handler: handlers/new_user.handle
+    events:
+      - http:
+            path: /picture
+            method: post
+            cors: true
+  get_logs:
+    handler: handlers/getLogs.handle
+    events:
+      - http:
+            path: /logs
+            method: post
+            cors: true
+  rmv_user:
+    handler: handlers/rmv_user.handle
+    events:
+      - http:
+            path: /rmv
+            method: post
+            cors: true
+
+resources:
+  Resources:
+    RekogIndexation:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: RekognitionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: RekognitionId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.dynamo_rekog}
+
+    LogRegist:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: logId
+            AttributeType: S
+          - AttributeName: RekognitionId
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: N
+          - AttributeName: dumpy
+            AttributeType: S
+        KeySchema:
+          - AttributeName: logId
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: RekognitionId
+            KeySchema: 
+              - AttributeName: RekognitionId
+                KeyType: HASH
+              - AttributeName: timestamp
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes: 
+                - DateTime
+                - FullName
+                - Confidence
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          - IndexName: dumpy
+            KeySchema: 
+              - AttributeName: dumpy
+                KeyType: HASH
+              - AttributeName: timestamp
+                KeyType: RANGE
+            Projection:
+              NonKeyAttributes:
+                - DateTime
+                - FullName
+                - Confidence
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        TableName: ${self:custom.dynamo_log}

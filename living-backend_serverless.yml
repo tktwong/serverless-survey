@@ -1,0 +1,103 @@
+service:
+  name: living-scraper
+
+custom:
+  s3:
+    storageBucketName: living.scraper.storage
+  sns:
+    propagationTopicName: living-propagation-topic-${opt:stage}
+    propagationTopicArn: { "Fn::Join" : ["", ["arn:aws:sns:${self:provider.region}:", { "Ref" : "AWS::AccountId" }, ":${self:custom.sns.propagationTopicName}" ] ]  }
+plugins:
+  - serverless-webpack
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-3
+  stage: ${opt:stage}
+  environment:
+    STORAGE_BUCKET: ${self:custom.s3.storageBucketName}
+    PROPAGATION_TOPIC: "${self:custom.sns.propagationTopicArn}"
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:Put*"
+        - "s3:Get*"
+        - "s3:Describe*"
+        - "s3:List*"
+      Resource:
+        - "arn:aws:s3:::${self:custom.s3.storageBucketName}"
+        - "arn:aws:s3:::${self:custom.s3.storageBucketName}/*"
+    - Effect: "Allow"
+      Action:
+        - "sns:Subscribe"
+        - "sns:Publish"
+      Resource:
+        - "${self:custom.sns.propagationTopicArn}"
+functions:
+  LivingReferencesCrawler:
+    handler: schedulable/lambda.crawlReferences
+    events:
+      - schedule:
+          rate: cron(0 1 * * ? *)
+  LivingReadingsScraper:
+    handler: schedulable/lambda.scrapReadings
+    events:
+      - sns: "${self:custom.sns.propagationTopicName}"
+
+
+resources:
+  Resources:
+    LivingReferencesCrawlerLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: 3
+    LivingReadingsScraperLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: 3
+    LivingScraperReadingsStorage:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3.storageBucketName}
+        AccessControl: PublicRead
+    LivingScraperReadingsStoragePolicy:
+      Type: 'AWS::S3::BucketPolicy'
+      Properties:
+        Bucket:
+            Ref: LivingScraperReadingsStorage
+        PolicyDocument:
+          Id: LivingScraperPublicReadPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource:
+                Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: LivingScraperReadingsStorage
+                    - /*
+  Outputs:
+    LivingPropagationTopicArn:
+      Description: "Living propagation topic arn"
+      Value:
+        'Ref': "SNSTopicLivingpropagationtopic${self:provider.stage}"
+      Export:
+        Name: "${self:service}-${self:provider.stage}-LivingPropagationTopicArn"
+    ScraperWebsiteURL:
+      Value:
+        Fn::GetAtt:
+          - LivingScraperReadingsStorage
+          - WebsiteURL
+      Description: URL for website hosted on S3
+    ScraperStorageSecureURL:
+      Value:
+        Fn::Join:
+          - ''
+          - - 'https://'
+            - Fn::GetAtt:
+                - LivingScraperReadingsStorage
+                - DomainName
+      Description: Name of S3 bucket to hold website content

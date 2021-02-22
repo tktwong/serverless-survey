@@ -1,0 +1,112 @@
+service: cart
+
+custom:
+  ORDER_TOPIC: "orders-${self:provider.stage}"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  stage: dev
+  region: eu-west-1
+  environment:
+    CART_TABLE_NAME: "cart-${self:provider.stage}"
+    ORDER_TABLE_NAME: "order-${self:provider.stage}"
+    ORDER_TOPIC_ARN: { "Fn::Join" : ["", ["arn:aws:sns:", { "Ref" : "AWS::Region"}, ":", { "Ref" : "AWS::AccountId" }, ":${self:custom.ORDER_TOPIC}"]]  }
+  iamRoleStatements:
+    $ref: ./resources/lambda-policy.json
+  apiKeys:
+    - ${self:service}-${self:provider.stage}-api-key
+
+functions:
+  createCart:
+    handler: cart/cart.create
+    timeout: 10
+    memorySize: 128
+    events:
+      - http:
+          path: carts
+          method: post
+          cors: true
+          private: true
+  deleteCart:
+    handler: cart/cart.delete
+    timeout: 10
+    memorySize: 128
+    events:
+      - http:
+          path: carts/{id}
+          method: delete
+          cors: true
+          private: true
+  addRowToCart:
+    handler: cart/cart.add
+    timeout: 10
+    memorySize: 128
+    events:
+      - http:
+          path: carts/{id}/rows/{item_id}
+          method: put
+          cors: true
+          private: true
+  removeRowFromCart:
+    handler: cart/cart.remove
+    timeout: 10
+    memorySize: 128
+    events:
+      - http:
+          path: carts/{id}/rows/{item_id}
+          method: delete
+          cors: true
+          private: true
+  getCart:
+    handler: cart/cart.get
+    timeout: 10
+    memorySize: 128
+    events:
+      - http:
+          path: carts/{id}
+          method: get
+          cors: true
+          private: true
+  gql:
+    handler: gql/handler.handle
+    timeout: 10
+    memorySize: 128
+    events:
+      - http:
+          path: gql
+          method: post
+          cors: true
+          private: true
+  createOrder:
+    handler: cart/order.create
+    timeout: 10
+    memorySize: 128
+    events:
+      - http:
+          path: orders
+          method: post
+          cors: true
+          private: true
+  incomingOrder:
+    handler: listener/incoming.order
+    timeout: 30
+    memorySize: 128
+  sendEmail:
+    handler: listener/consumer.newOrder
+    timeout: 30
+    environment:
+      SENDGRID_API_KEY: ${env:SENDGRID_API_KEY}
+      SENDER_EMAIL: ${env:SENDER_EMAIL}
+    memorySize: 128
+    events:
+      - sns: ${self:custom.ORDER_TOPIC}
+
+resources:
+  Resources:
+    CartTable:
+      $ref: ./resources/cart_table.json
+    OrderTable:
+      $ref: ./resources/order_table.json
+    OrderEvent:
+      $ref: ./resources/order_event_source_mapping.yml

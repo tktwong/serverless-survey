@@ -1,0 +1,75 @@
+service: podcastloudnesswatch-feeds
+app: podcastloudnesswatch
+org: naxxfish
+tenant: naxxfish
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-1
+  stage: ${opt:stage, 'dev'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Resource: "*"
+      Action:
+        - "sns:*"
+
+functions:
+  getFeed:
+    handler: src/getFeed.get
+    events:
+      - http:
+          path: feed/{id}
+          method: get
+  updateFeed:
+    handler: src/updateFeed.update
+    events:
+      - sns: feedUpdateRequested
+  scheduleFeedUpdate:
+    handler: src/scheduleFeedUpdate.scheduler
+    environment:
+      topicArn: 'arn:aws:sns:eu-west-1:123456789012:feedUpdateRequested'
+
+
+plugins:
+  - serverless-offline
+  - serverless-dynamodb-local
+  - serverless-offline-sns
+resources:
+  Resources:
+    feedsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: feeds
+        AttributeDefinitions:
+          - AttributeName: feedId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: feedId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        BillingMode: PAY_PER_REQUEST
+
+custom:
+  serverless-offline-sns:
+    port: 4002 # a free port for the sns server to run on
+    debug: false
+    # host: 0.0.0.0 # Optional, defaults to 127.0.0.1 if not provided to serverless-offline
+    # sns-endpoint: http://127.0.0.1:4567 # Optional. Only if you want to use a custom endpoint
+    # accountId: 123456789012 # Optional
+  dynamodb:
+    stages:
+      - dev
+    start:
+     port: 8000
+     migrate: true
+     seed: true
+     inMemory: true
+    seed:
+      feedsTable:
+        sources:
+          - table: feeds
+            sources: [./resources/feedTableSeed.json]

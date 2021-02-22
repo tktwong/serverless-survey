@@ -1,0 +1,108 @@
+# <DESCRIBE SERVICE>
+service: aws-api-dynamodb-example
+
+plugins:
+  - serverless-python-requirements
+  - serverless-dynamodb-autoscaling
+
+custom:
+  stage: "${opt:stage, env:SLS_STAGE, 'dev'}"
+  profile: "${opt:aws-profile, env:AWS_PROFILE, env:AWS_DEFAULT_PROFILE, 'default'}"
+  log_level: "${env:LOG_LEVEL, 'INFO'}"
+
+  pythonRequirements:
+    dockerizePip: false
+
+  # DynamoDB
+  ddb_table_hash_key: "_id"
+  capacities:
+    - table: ItemsTable
+      read:
+        minimum: 5
+        maximum: 1000
+        usage: 0.75
+      write:
+        minimum: 5
+        maximum: 200
+        usage: 0.5
+
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${self:custom.stage}
+  profile: ${self:custom.profile}
+  environment:
+    LOG_LEVEL: ${self:custom.log_level}
+  stackTags:
+    x-service: aws-api-dynamodb-example
+    x-stack: ${self:service}-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+      Resource:
+        Fn::GetAtt:
+          - ItemsTable
+          - Arn
+
+
+functions:
+  PutItem:
+    handler: handlers/put_item.handler
+    description: "Put item in DynamoDB table"
+    memorySize: 128
+    timeout: 30
+    environment:
+      DDB_TABLE_NAME:
+        Ref: ItemsTable
+    events:
+      - http:
+          method: POST
+          path: /item
+
+  GetItem:
+    handler: handlers/get_item.handler
+    description: "get item in DynamoDB table"
+    memorySize: 128
+    timeout: 30
+    environment:
+      DDB_TABLE_NAME:
+        Ref: ItemsTable
+      DDB_TABLE_HASH_KEY: ${self:custom.ddb_table_hash_key}
+    events:
+      - http:
+          method: GET
+          path: /item/{_id}
+
+resources:
+  Resources:
+    ItemsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: ${self:custom.ddb_table_hash_key}
+            AttributeType: S
+        KeySchema:
+          - AttributeName: ${self:custom.ddb_table_hash_key}
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+  Outputs:
+    ItemUrl:
+      Description: "URL of service"
+      Value:
+        Fn::Join:
+          - ""
+          - - "https://"
+            - Ref: ApiGatewayRestApi
+            - ".execute-api."
+            - Ref: AWS::Region
+            - ".amazonaws.com/${self:custom.stage}"
+            - "/item"
+      Export:
+        Name: "${self:service}-${self:provider.stage}-ItemsUrl"
+

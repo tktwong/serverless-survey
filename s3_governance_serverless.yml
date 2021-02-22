@@ -1,0 +1,63 @@
+service: s3Governance
+provider:
+  name: aws
+  runtime: python3.6
+  region: us-east-1
+  stage: dev
+functions:
+  s3Governance:
+    handler: handler.lambda_handler
+    name: s3_governance
+    memorySize: 128
+    timeout: 60
+    role: RoleForLambdaInMgmtAccount
+    versionFunctions: false
+    environment:
+      mgmt_role_common_name: IAMCrossAccounteRole
+      ToEmail: nikhil.linga@reancloud.com
+      FromEmail: nikhil.linga@reancloud.com
+      Email_Subject: s3 bucket encryption status
+      logLevel: DEBUG
+    events:
+      - cloudwatchEvent:
+          name: s3-governance-cw-events
+          description: Event will trigger lambda function to encrypt s3 bucket
+          event:
+            source:
+              - aws.s3
+            detail-type:
+              - AWS API Call via CloudTrail
+            detail:
+              eventSource:
+                - s3.amazonaws.com
+              eventName:
+                - CreateBucket
+                - DeleteBucketEncryption 
+resources:
+  Resources:
+    RoleForLambdaInMgmtAccount:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        RoleName: s3EncryptionLambda
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: s3EncryptionPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    - ses:SendEmail
+                    - sts:AssumeRole
+                  Resource: "*"

@@ -1,0 +1,97 @@
+service:
+  name: parking-chair
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+custom:
+  name: parking-chair
+
+  apiKey: ${file(./serverless.env.yml):API_KEY}
+
+  awsIOTTopicSend: ${self:custom.name}-iot-topic-send-image
+  awsIOTEndPoint: ${file(./serverless.env.yml):AWS_IOT_ENDPOINT}
+  
+  twilioNumber: ${file(./serverless.env.yml):TWILIO_NUMBER}
+  twilioAuthToken: ${file(./serverless.env.yml):TWILIO_AUTH_TOKEN}
+  twilioAccSID: ${file(./serverless.env.yml):TWILIO_ACC_SID}
+
+  imagesBucketName:  ${self:custom.name}-s3
+
+
+provider:
+  name: aws
+  region: us-east-1
+
+  memorySize: 128
+  runtime: nodejs6.10
+  apiKeys:
+    - ${self:custom.apiKey}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - 'iot:Publish'
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+      Resource: "arn:aws:s3:::${self:custom.imagesBucketName}/*"
+
+
+functions:
+  receivedText:
+    handler: src/receivedText/handler.receivedText
+    events:
+      - http:
+          method: post
+          path: receivedText
+          cors: true
+    environment:
+      awsIOTTopicSend: ${self:custom.awsIOTTopicSend}
+      awsIOTEndPoint: ${self:custom.awsIOTEndPoint}
+
+  sendText:
+    memorySize: 512
+    handler: src/sendText/handler.sendText
+    events:
+      - http:
+          method: post
+          path: sendText
+          cors: true
+          private: true
+    environment:
+      twilioNumber: ${self:custom.twilioNumber}
+      twilioAuthToken: ${self:custom.twilioAuthToken}
+      twilioAccSID: ${self:custom.twilioAccSID}
+      imagesBucketName: ${self:custom.imagesBucketName}
+
+
+resources:
+  Resources:
+    ImagesS3Bucket:
+     Type: AWS::S3::Bucket
+     Properties:
+       BucketName: ${self:custom.imagesBucketName}
+       AccessControl: 'PublicRead'
+    ImagesS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: ImagesS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    { "Ref": "ImagesS3Bucket" },
+                    "/*"
+                  ]
+                ]

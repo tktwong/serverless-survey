@@ -1,0 +1,101 @@
+service: people
+
+plugins:
+  - serverless-offline
+
+custom:
+  allowedHeaders:
+    - Accept
+    - Content-Type
+    - Content-Length
+    - Authorization
+    - X-Amz-Date
+    - X-Api-Key
+    - X-Amz-Security-Token
+    - X-Amz-User-Agent
+    - app_people_id
+    - app_last_people_id
+    - app_editado
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  memorySize: 128
+  timeout: 5
+  endpointType: regional
+  environment:
+    PEOPLE_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.PEOPLE_TABLE}"
+
+functions:
+  get-people:
+    handler: api/get-people.handler
+    description: GET /people/{people_id}
+    events:
+      - http:
+          path: people/{people_id}
+          method: get
+          cors:
+            origin: "*"
+            headers: ${self:custom.allowedHeaders}
+          
+  add-people:
+    handler: api/add-people.handler
+    description: POST /people/
+    events:
+      - http:
+          path: people/
+          method: post
+          cors:
+            origin: "*"
+            headers: ${self:custom.allowedHeaders}
+
+  get-peoples:
+    handler: api/get-peoples.handler
+    description: GET /peoples/
+    events:
+      - http:
+          path: peoples/
+          method: get
+          cors:
+            origin: "*"
+            headers: ${self:custom.allowedHeaders}
+
+resources:
+  Resources:
+    PeopleTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.environment.PEOPLE_TABLE}
+        AttributeDefinitions:
+          - AttributeName: people_id
+            AttributeType: S
+          - AttributeName: editado
+            AttributeType: S
+        KeySchema:
+          - AttributeName: people_id
+            KeyType: HASH
+          - AttributeName: editado
+            KeyType: RANGE 
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: people_id-index
+            KeySchema:
+              - AttributeName: people_id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

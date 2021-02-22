@@ -1,0 +1,65 @@
+app: link-shortener
+service: link-shortener
+
+plugins:
+  - serverless-api-gateway-caching
+
+frameworkVersion: "2"
+
+custom:
+  apiGatewayCaching:
+    enabled: true
+    ttlInSeconds: 3600
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: prod
+  apiGateway:
+    shouldStartNameWithService: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+functions:
+  getLink:
+    handler: handler.getLink
+    events:
+      - http:
+          path: /{link}
+          method: get
+          caching:
+            enabled: true
+            cacheKeyParameters:
+              - name: request.path.link
+
+  shortenLink:
+    handler: handler.shortenLink
+    events:
+      - http:
+          path: /
+          method: post
+
+resources:
+  Resources:
+    CandidatesDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: shortname
+            AttributeType: S
+        KeySchema:
+          - AttributeName: shortname
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: linkShortenerDB

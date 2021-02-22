@@ -1,0 +1,177 @@
+service: vf-app
+app: vf-app
+org: jasonoats
+
+plugins:
+  localPath: ./
+  modules:
+    - serverless-plugin-scripts
+    - serverless-s3-deploy
+    - configureBucket
+    - dbService
+    - serverless-cloudside-plugin
+custom:
+  tableName: users-table
+  bucketName: input-data
+  inputQueueName: input-queue
+  inputTopicName: input-topic
+  filenameQueueName: filename-queue
+  region: us-east-1
+  assets:
+    auto: true
+    targets:
+      - bucket:
+          Ref: InputBucket
+        files:
+          - source: ./
+            globs: 'generated.json'
+  scripts:
+    hooks:
+      after:deploy:finalize: serverless configureBucket
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${self:custom.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:BatchWriteItem
+      Resource:
+        - { "Fn::GetAtt": [ "DynamoDBTable", "Arn" ] }
+    - Effect: Allow
+      Action:
+        - s3:PutBucketNotification
+      Resource:
+        - { "Fn::GetAtt": [ "InputBucket", "Arn" ] }
+    - Effect: Allow
+      Action:
+        - SQS:SendMessage
+      Resource:
+        - { "Fn::GetAtt": [ "InputQueue", "Arn" ] }
+    - Effect: Allow
+      Action:
+        - SQS:SendMessage
+      Resource:
+        - { "Fn::GetAtt": [ "FilenameQueue", "Arn" ] }
+  environment:
+    APP_NAME: ${self:app}
+    TABLE_NAME: ${self:app}-${self:custom.tableName}
+    BUCKET_NAME: ${self:custom.bucketName}
+    INPUT_QUEUE_URL: { "Ref": "InputQueue" }
+    FILENAME_QUEUE_URL: { "Ref": "FilenameQueue" }
+    FILENAME_QUEUE: ${self:custom.filenameQueueName}
+    INPUT_TOPIC_NAME: ${self:custom.inputTopicName}
+    INPUT_TOPIC_ARN: { "Ref": "InputTopic" }
+    REGION: ${self:custom.region}
+
+functions:
+  insertIntoDb:
+    handler: objects.insertIntoDb
+    memorySize: 256
+  configureBucket:
+    handler: notifications.configureBucket
+    memorySize: 256
+  handleInputNotification:
+    dependson: 
+      arn:
+        Fn::GetAtt:
+          - InputQueue
+          - Arn 
+    handler: messages.handleInputNotification
+    memorySize: 256
+    events:
+      - sqs: 
+          arn:
+            Fn::GetAtt:
+              - InputQueue
+              - Arn
+  processFiles:
+    handler: messages.processFiles
+    memorySize: 256
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - FilenameQueue
+              - Arn
+
+resources:
+  Resources:
+    InputBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: 'Retain'
+      Properties:
+        BucketName: ${self:app}-${self:custom.bucketName}
+    InputBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+          PolicyDocument:
+            Statement:
+              Effect: Allow
+              Principal: 
+                Service: lambda.amazonaws.com
+              Action: s3:PutBucketNotification
+              Resource: !GetAtt InputBucket.Arn
+          Bucket: !Ref InputBucket
+    InputTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:app}-${self:custom.inputTopicName}
+    InputTopicSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        Endpoint: !GetAtt InputQueue.Arn
+        TopicArn: !Ref InputTopic
+    InputTopicPolicy:
+      Type: AWS::SNS::TopicPolicy
+      Properties:
+        PolicyDocument:
+          Statement:
+            Effect: Allow
+            Principal: "*"
+            Action: sns:Publish
+            Resource: !Ref InputTopic
+            Condition:
+              StringEquals:
+                "aws:SourceArn": !GetAtt InputBucket.Arn
+        Topics:
+        - Ref: InputTopic
+    DynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: userId
+            AttributeType: S        
+        KeySchema:
+          -
+            AttributeName: userId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:app}-${self:custom.tableName}
+    InputQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:app}-${self:custom.inputQueueName}
+    InputQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+          PolicyDocument:
+            Statement:
+              Effect: Allow
+              Principal: "*"
+              Action: sqs:SendMessage
+              Resource: !GetAtt InputQueue.Arn
+              Condition:
+                StringEquals:
+                  "aws:SourceArn": !Ref InputTopic
+          Queues:
+          - Ref: InputQueue
+    FilenameQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:app}-${self:custom.filenameQueueName}

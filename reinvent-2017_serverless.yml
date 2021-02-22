@@ -1,0 +1,435 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: aws-nodejs # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+plugins:
+  - serverless-domain-manager
+
+custom:
+  customDomain:
+    domainName: gw-${opt:stage}.${self:custom.extvars.BaseDomainName}
+    basePath: ''
+    stage: ${opt:stage}
+    createRoute53Record: true
+  extvars: ${file(variables.yml)}
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: us-east-1
+  environment:
+    APPROVED_ALERTS_TABLE:
+      Ref: DDBTableApproved
+    NOT_APPROVED_ALERTS_TABLE:
+      Ref: DDBTableNotApproved
+    IMAGES_BUCKET:
+      Ref: ImagesBucket
+    STAGE: ${opt:stage}
+
+# you can overwrite defaults here
+#  stage: dev
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:s3:::"
+            - "Ref" : "ServerlessDeploymentBucket"
+            - "/*"
+    - Effect: "Allow"
+      Action:
+        - "s3:PutObject"
+        - "s3:GetObject"
+        - "s3:DeleteObject"
+        - "s3:PubObjectAcl"
+      Resource:
+        Fn::Join:
+          - ""
+          - - Fn::GetAtt: [ImagesBucket, Arn]
+            - "/*"
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+      Resource:
+        Fn::GetAtt: [ImagesBucket, Arn]
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+        - "dax:*"
+        - "cloudwatch:DeleteAlarms"
+        - "cloudwatch:DescribeAlarmHistory"
+        - "cloudwatch:DescribeAlarms"
+        - "cloudwatch:DescribeAlarmsForMetric"
+        - "cloudwatch:GetMetricStatistics"
+        - "cloudwatch:ListMetrics"
+        - "cloudwatch:PutMetricAlarm"
+        - "iam:GetRole"
+        - "iam:ListRoles"
+        - "sns:*"
+        - "lambda:CreateFunction"
+        - "lambda:ListFunctions"
+        - "lambda:ListEventSourceMappings"
+        - "lambda:CreateEventSourceMapping"
+        - "lambda:DeleteEventSourceMapping"
+        - "lambda:GetFunctionConfiguration"
+        - "lambda:DeleteFunction"
+      Resource: "*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  inputApi:
+    handler: inputApi.createAlert
+    events:
+      - http:
+          path: alert/create
+          method: post
+  inputImage:
+    handler: inputApi.linkImage
+    events:
+      - http:
+          path: alert/image
+          method: post
+  getAlert:
+    handler: cap-producer.produceCap
+    events:
+     - http:
+          path: alert/get/{alertId}
+          method: get
+          request:
+            parameters:
+              paths:
+                alertId: true
+  getAlerts:
+      handler: cap-producer.produceAllCaps
+      events:
+       - http:
+            path: alert/rss-feed
+            method: get
+  getStyleXsl:
+    handler: alertStyle.getStyleXsl
+    events:
+      - http:
+          path: alert/alertstyle.xsl
+          method: get
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+resources:
+  Parameters:
+    # Configure the Defaults below to use your configuration
+    Route53HostedZoneID:
+      Type: String
+      Description: The Route53 hosted zone where domain names will be created.
+      Default: "${self:custom.extvars.Route53HostedZoneID}"
+    BaseDomainName:
+      Type: String
+      Description: "The domain under which the application should run. Example: 'base.domain.com'"
+      Default: "${self:custom.extvars.BaseDomainName}"
+    TLSCertificateARN:
+      Type: String
+      Description: The ARN for the TLS certificate to use for the application.
+      Default: "${self:custom.extvars.TLSCertificateARN}"
+  Resources:
+    DDBTableNotApproved:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"
+          -
+            AttributeName: "status"
+            AttributeType: "S"
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        GlobalSecondaryIndexes:
+          -
+            IndexName: "statusIndex"
+            KeySchema:
+              -
+                AttributeName: "status"
+                KeyType: "HASH"
+            Projection:
+              ProjectionType: "ALL"
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+    DDBTableApproved:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    ImagesBucket:
+      Type: AWS::S3::Bucket
+    UserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        AdminCreateUserConfig:
+          AllowAdminCreateUserOnly: true
+          InviteMessageTemplate:
+            EmailMessage: "Your username is {username} and temporary password is {####}."
+            EmailSubject: "Your temporary password"
+            SMSMessage: "Your username is {username} and temporary password is {####}. "
+          UnusedAccountValidityDays: 7 
+        AliasAttributes: [preferred_username, email]
+        AutoVerifiedAttributes: [ email ]
+        UserPoolName: ${opt:stage}-fia
+    UserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: ${opt:stage}-fia-userclient,
+        ExplicitAuthFlows: 
+          - ADMIN_NO_SRP_AUTH
+        GenerateSecret: false
+        UserPoolId:
+          Ref: UserPool
+    IdentityPool:
+      Type: "AWS::Cognito::IdentityPool"
+      Properties:
+        IdentityPoolName: ${opt:stage}fia
+        AllowUnauthenticatedIdentities: false
+        CognitoIdentityProviders: 
+          - ClientId:
+              Ref: UserPoolClient
+            ProviderName:
+              'Fn::GetAtt': [ UserPool, ProviderName]
+    IdentityPoolIAMRole:
+      Type: "AWS::IAM::Role"
+      Properties: 
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement: 
+            - 
+              Sid: ""
+              Effect: "Allow"
+              Principal: 
+                Federated: cognito-identity.amazonaws.com
+              Action: "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  cognito-identity.amazonaws.com:aud:
+                    Fn::Join:
+                      - ""
+                      - - ""
+                        - Ref: IdentityPool
+                ForAnyValue:StringLike:
+                  cognito-identity.amazonaws.com:amr: "authenticated"
+        Path: "/"
+        Policies:
+          - PolicyName: ${opt:stage}-fia-authenticated
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "dynamodb:BatchGetItem"
+                    - "dynamodb:PutItem"
+                    - "dynamodb:DescribeTable"
+                    - "dynamodb:DeleteItem"
+                    - "dynamodb:GetItem"
+                    - "dynamodb:Scan"
+                    - "dynamodb:Query"
+                    - "dynamodb:UpdateItem"
+                  Resource:
+                    - {'Fn::GetAtt': [DDBTableApproved, Arn]}
+                    - {'Fn::GetAtt': [DDBTableNotApproved, Arn]}
+                    - Fn::Join:
+                        - ""
+                        - - Fn::GetAtt: [DDBTableApproved, Arn]
+                          - "/index/*"
+                    - Fn::Join:
+                        - ""
+                        - - Fn::GetAtt: [DDBTableNotApproved, Arn]
+                          - "/index/*"
+        RoleName: ${opt:stage}fia-authenticated
+    IdentityPoolRoleMapping:
+      Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+      Properties:
+        IdentityPoolId:
+          Ref: IdentityPool
+        Roles: 
+          authenticated:
+            Fn::GetAtt: [IdentityPoolIAMRole, Arn]
+    FrontendBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: 404.html
+    FrontendBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: FrontendBucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: "*"
+              Action: 's3:GetObject'
+              Resource:
+                Fn::Join:
+                  - ""
+                  - - Fn::GetAtt: [FrontendBucket, Arn]
+                    - "/*"
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      DependsOn:
+        - FrontendBucket
+      Properties:
+        DistributionConfig:
+          Origins:
+          - DomainName:
+              Fn::GetAtt: [FrontendBucket, DomainName]
+            Id: S3Origin
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+          Enabled: 'true'
+          DefaultRootObject: index.html
+          Aliases: 
+          - Fn::Join:
+              - "."
+              - - ${opt:stage}
+                -
+                  Ref: BaseDomainName
+          ViewerCertificate:
+            AcmCertificateArn:
+              Ref: TLSCertificateARN
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1
+          DefaultCacheBehavior:
+            AllowedMethods:
+            - GET
+            - HEAD
+            TargetOriginId: S3Origin
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: allow-all
+    DNSRecord:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        HostedZoneId:
+          Ref: Route53HostedZoneID
+        Name:
+          Fn::Join:
+            - "."
+            - - ${opt:stage}
+              -
+                Ref: BaseDomainName
+        Type: A
+        AliasTarget:
+          HostedZoneId: Z2FDTNDATAQYW2
+          DNSName:
+            Fn::GetAtt: [CloudFrontDistribution, DomainName]
+  Outputs:
+    IdentityPoolId:
+      Description: "The IdentityPool"
+      Value:
+        Ref: IdentityPool
+    UserPoolId:
+      Description: "The UserPoolId"
+      Value:
+        Ref: UserPool
+    ClientId:
+      Description: "The Client id"
+      Value:
+        Ref: UserPoolClient
+    FrontendBucket:
+      Description: "Frontend bucket name"
+      Value:
+        Ref: FrontendBucket
+    DDBTableApproved:
+      Description: "Table"
+      Value:
+        Ref: DDBTableApproved
+    DDBTableNotApproved:
+      Description: "Table"
+      Value:
+        Ref: DDBTableNotApproved
+    CFDistribution:
+      Description: "CloudFront distribution ID"
+      Value:
+         Ref: CloudFrontDistribution
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

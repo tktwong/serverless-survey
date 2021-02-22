@@ -1,0 +1,101 @@
+service: rover-probes-{service}
+app: fp-apac-gaia-probes-rover
+org: foodpandagaia
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-python-requirements
+package:
+  exclude:
+    - .dynamodb/**
+    - coverage/**
+    - false/**
+    - test_*.py
+    - test_data/**
+    - venv/**
+    - node_modules/**
+
+
+custom:
+  pythonRequirements:
+    zip: true
+  dynamodb:
+    stages:
+      - ${self:provider.stage}
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+  bucket: fp-apac-vci-gaia-rover-condition-${self:provider.stage}
+  tableHead: fp-apac-vci-gaia-rover-scraping
+  
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: ${opt:region,'ap-southeast-1'}
+  stage: ${opt:stage, 'dev'}
+  accountId: ${opt:accountId}
+  memorySize: 512
+  timeout: 30
+  versionFunctions: false
+  logs:
+    restApi: true
+  tracing:
+    apiGateway: true
+    lambda: true
+  deploymentBucket:
+    name: fp-apac-vci-gaia-deploys-${self:provider.stage}
+    maxPreviousDeploymentArtifacts: 3
+    tags: 
+      squad: vci
+  deploymentPrefix: rover-{service}
+  environment:
+    RESTAURANT_TABLE: ${self:custom.tableHead}-restaurant-${self:provider.stage}
+    MENU_TABLE: ${self:custom.tableHead}-menu-${self:provider.stage}
+    SCRAPE_STATUS_TABLE: ${self:custom.tableHead}-scrape-status-${self:provider.stage}
+    DYNAMODB_ENDPOINT_URL: https://dynamodb.${self:provider.region}.amazonaws.com
+    DYNAMODB_REGION: ${self:provider.region}
+    STAGE: ${self:provider.stage}
+    S3_CONDITION_BUCKET: ${self:custom.bucket}
+    TZ: Asia/Singapore
+    SERVICE_NAME: '{service}'
+    OFFSET_NUMBER: 10
+    SCHEDULE_{countrycode}: ${env:SCHEDULE_{countrycode}, 'rate(15 minutes)'}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:DescribeStream
+        - dynamodb:ListStreams
+      Resource:
+        - arn:aws:dynamodb:${self:provider.region}:${self:provider.accountId}:table/${self:custom.tableHead}-restaurant-${self:provider.stage}
+        - arn:aws:dynamodb:${self:provider.region}:${self:provider.accountId}:table/${self:custom.tableHead}-menu-${self:provider.stage}
+        - arn:aws:dynamodb:${self:provider.region}:${self:provider.accountId}:table/${self:custom.tableHead}-scrape-status-${self:provider.stage}
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+        - s3:GetObject
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+
+
+functions:
+  {service_countrycode}:
+    handler: scrape/handler.job
+    events:
+      - schedule: ${self:provider.environment.SCHEDULE_{countrycode}}
+    environment:
+      COUNTRY_CODE: countrycode
+      SCRAPE_NUMBER_PER_EXECUTION: 2

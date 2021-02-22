@@ -1,0 +1,69 @@
+service: iopipe-py-acceptance-test-db-trace
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: master
+  region: us-west-2
+  role: ${env:IAM_ROLE}
+  environment:
+    DB_NAME: ${env:DB_NAME}
+    DB_PASSWORD: ${env:DB_PASSWORD}
+    DB_USERNAME: ${env:DB_USERNAME}
+    IOPIPE_TOKEN: ${env:IOPIPE_TOKEN}
+    MYSQL_HOST: ${self:custom.mysql.host}
+    MYSQL_PORT: ${self:custom.mysql.port}
+    POSTGRES_HOST: ${self:custom.postgres.host}
+    POSTGRES_PORT: ${self:custom.postgres.port}
+
+custom:
+  mysql:
+    host:
+      Fn::GetAtt: [MySQLRDSInstance, Endpoint.Address]
+    port:
+      Fn::GetAtt: [MySQLRDSInstance, Endpoint.Port]
+  postgres:
+    host:
+      Fn::GetAtt: [PostgreSQLRDSInstance, Endpoint.Address]
+    port:
+      Fn::GetAtt: [PostgreSQLRDSInstance, Endpoint.Port]
+
+functions:
+  py36-pymysql:
+    events:
+      - schedule: rate(5 minutes)
+    handler: handler._pymysql
+    runtime: python3.6
+  py36-psycopg2:
+    events:
+      - schedule: rate(5 minutes)
+    handler: handler._psycopg2
+    runtime: python3.6
+
+plugins:
+  - serverless-pseudo-parameters
+  - serverless-python-requirements
+
+resources:
+  Resources:
+    MySQLRDSInstance:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        AllocatedStorage: 10
+        DBInstanceClass: db.t2.micro
+        DBName: ${env:DB_NAME}
+        Engine: mysql
+        EngineVersion: "5.6.41"
+        MasterUserPassword: ${env:DB_PASSWORD}
+        MasterUsername: ${env:DB_USERNAME}
+        PubliclyAccessible: true
+    PostgreSQLRDSInstance:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        AllocatedStorage: 10
+        DBInstanceClass: db.t2.micro
+        DBName: ${env:DB_NAME}
+        Engine: postgres
+        MasterUserPassword: ${env:DB_PASSWORD}
+        MasterUsername: ${env:DB_USERNAME}
+        PubliclyAccessible: true

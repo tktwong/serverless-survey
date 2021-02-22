@@ -1,0 +1,89 @@
+service:
+  name: cw-logs
+
+plugins:
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: python3.6
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "logs:PutSubscriptionFilter"
+      Resource:
+        - "arn:aws:logs:*:*:*"
+
+functions:
+  subscriber:
+    name: ${opt:stage, 'dev'}-${self:service}-subscriber
+    handler: subscriber.handler
+    description: Automatically subscribe CloudWatch Log groups to ship to AWS Elasticsearch via AWS Lambda.
+    memorySize: 128
+    timeout: 60
+    environment:
+      LOG_GROUP_FILTER: ${file(.env.yml):subscriber.environment.LOG_GROUP_FILTER}
+      FILTER_NAME: ${opt:stage, 'dev'}-${self:service}-shipper
+      FILTER_PATTERN: ${file(.env.yml):subscriber.environment.FILTER_PATTERN}
+      DESTINATION_ARN: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${opt:stage, 'dev'}-${self:service}-shipper
+    events:
+      - cloudwatchEvent:
+          event:
+            source:
+              - "aws.logs"
+
+  shipper:
+    name: ${opt:stage, 'dev'}-${self:service}-shipper
+    handler: shipper.handle
+    runtime: nodejs4.3
+    description: Ship logs to Elasticsearch
+    memorySize: 128
+    timeout: 10
+    role:
+        Fn::GetAtt:
+          - LambdaElasticsearchExecutionRole
+          - Arn
+    environment:
+      ES_CLUSTER_ENDPOINT: ${file(.env.yml):shipper.environment.ES_CLUSTER_ENDPOINT}
+      ES_INDEX_PREFIX: ${file(.env.yml):shipper.environment.ES_INDEX_PREFIX}
+
+resources:
+  Resources:
+    ShipperLambdaInvokePermission:
+      Type: AWS::Lambda::Permission
+      DependsOn: ShipperLambdaFunction
+      Properties:
+        FunctionName: ${opt:stage, 'dev'}-${self:service}-shipper
+        Action: 'lambda:InvokeFunction'
+        Principal: 'logs.#{AWS::Region}.amazonaws.com'
+        SourceAccount: '#{AWS::AccountId}'
+        SourceArn: 'arn:aws:logs:#{AWS::Region}:#{AWS::AccountId}:*'
+
+    LambdaElasticsearchExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: sts:AssumeRole
+              Principal:
+                Service: lambda.amazonaws.com
+        Policies:
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:*"
+        - PolicyName: Elasticsearch
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - es:ESHttpPost
+                Resource: "arn:aws:es:*:*:*"

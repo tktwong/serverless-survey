@@ -1,0 +1,163 @@
+service: xpeppers-academy
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-offline
+  - serverless-domain-manager
+
+custom:
+  domainName: xpeppers.com
+  bucketName: academy.${self:custom.domainName}
+  certificateArn: arn:aws:acm:us-east-1:422553113847:certificate/d0e729a4-ce28-461b-aabe-9c6f95414bc2
+  customDomain:
+    domainName: api.academy.xpeppers.com
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    certificateArn: ${self:custom.certificateArn}
+  serverless-offline:
+    port: 8080
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-1
+  environment:
+    BUCKET_NAME: ${self:custom.bucketName}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        Fn::Join: ['', [Fn::GetAtt: [ XpeppersAcademyBucket, Arn ], '/*'] ]
+
+functions:
+  activitiesSave:
+    handler: handler.saveActivity
+    events:
+      - http:
+          path: /activities
+          method: post
+          cors: true
+  activitiesRead:
+    handler: handler.readActivity
+    events:
+      - http:
+          path: /activities
+          method: get
+          cors: true
+  activitiesDelete:
+    handler: handler.deleteActivity
+    events:
+      - http:
+          path: /activities/delete
+          method: post
+          cors: true
+  librarySave:
+    handler: handler.saveLibrary
+    events:
+      - http:
+          path: /library
+          method: post
+          cors: true
+  libraryRead:
+    handler: handler.readLibrary
+    events:
+      - http:
+          path: /library
+          method: get
+          cors: true
+  libraryDelete:
+    handler: handler.deleteLibrary
+    events:
+      - http:
+          path: /library/delete
+          method: post
+          cors: true
+resources:
+  Resources:
+    XpeppersAcademyBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketName}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          RoutingRules:
+            - RedirectRule:
+                HostName: ${self:custom.bucketName}
+                Protocol: https
+                HttpRedirectCode: 307
+                ReplaceKeyPrefixWith: "?p="
+              RoutingRuleCondition:
+                HttpErrorCodeReturnedEquals: 404
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+                - HEAD
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+    XpeppersAcademyBucketPolicy:
+      Type: 'AWS::S3::BucketPolicy'
+      Properties:
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - "s3:GetObject"
+              Resource:
+                Fn::Join: ['', [Fn::GetAtt: [ XpeppersAcademyBucket, Arn ], '/*'] ]
+        Bucket:
+          Ref: XpeppersAcademyBucket
+    CDNXPeppersAcademy:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - ${self:custom.bucketName}
+          Origins:
+            - DomainName: ${self:custom.bucketName}.s3-website-eu-west-1.amazonaws.com
+              Id: myS3Origin
+              CustomOriginConfig:
+                HTTPPort: '80'
+                OriginProtocolPolicy: http-only
+          Enabled: 'true'
+          DefaultRootObject: index.html
+          DefaultCacheBehavior:
+            MaxTTL: 0
+            MinTTL: 0
+            DefaultTTL: 0
+            AllowedMethods:
+            - DELETE
+            - GET
+            - HEAD
+            - OPTIONS
+            - PATCH
+            - POST
+            - PUT
+            TargetOriginId: myS3Origin
+            ForwardedValues:
+              QueryString: 'true'
+              Cookies:
+                Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+          PriceClass: PriceClass_200
+          ViewerCertificate:
+            AcmCertificateArn: ${self:custom.certificateArn}
+            SslSupportMethod: sni-only
+    DNSXPeppersAcademy:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        HostedZoneName: ${self:custom.domainName}.
+        Name: ${self:custom.bucketName}
+        Type: A
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt: [ CDNXPeppersAcademy, DomainName ]
+          HostedZoneId: Z2FDTNDATAQYW2

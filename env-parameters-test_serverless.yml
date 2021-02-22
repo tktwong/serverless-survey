@@ -1,0 +1,59 @@
+service: env-parameters-test
+
+plugins:
+  - serverless-pseudo-parameters
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  NAMES_DYNAMODB_TABLE: greetnames-${self:custom.stage}
+  settings:
+    dev:
+      STAGE: ${self:custom.stage}
+    prod:
+      STAGE: ${self:custom.stage}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  environment: ${self:custom.settings.${self:custom.stage}}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.NAMES_DYNAMODB_TABLE}"
+    - Effect: "Allow"
+      Action: "ssm:GetParameters*"
+      Resource: "arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/env-parameters-test/${self:custom.stage}/value1"
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: hello
+          method: get
+  wasGreeted:
+    handler: handler.wasGreeted
+    events:
+      - http:
+          path: wasGreeted
+          method: get
+
+resources:
+  Resources:
+    GreetNamesTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: "name"
+          AttributeType: "S"
+        KeySchema:
+        - AttributeName: "name"
+          KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.NAMES_DYNAMODB_TABLE}

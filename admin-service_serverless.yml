@@ -1,0 +1,112 @@
+service: admin-service
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${env:GDL_ENVIRONMENT}
+  region: eu-central-1
+  endpointType: PRIVATE
+  role: arn:aws:iam::${env:GDL_ACCOUNT}:role/${env:SERVERLESS_IAM_ROLE}
+  tags:
+    VERSION: "0.3"
+  deploymentBucket:
+    name: ${env:GDL_SERVERLESS_DEPLOYMENT_BUCKET}
+
+  resourcePolicy:
+    - Effect: Allow
+      Principal: "*"
+      Action: execute-api:Invoke
+      Resource:
+        - execute-api:/*/*/*
+      Condition:
+        StringEquals:
+          aws:SourceVpce:
+            - '${env:VPC_ENDPOINT}'
+
+package:
+  individually: true
+  exclude:
+    - ./**
+
+functions:
+  slacknotifier:
+    handler: handler.main
+    module: functions/slacknotifier
+    events:
+      - sns:
+          arn: ${env:GDL_SURVEILLANCE_SNS_ARN}
+    environment:
+      SLACK_WEBHOOK_URL: ${env:SLACK_WEBHOOK_URL}
+    package:
+      include:
+        - functions/slacknotifier/*.py
+        - functions/slacknotifier/gdl/*.py
+      exclude:
+        - "**tests/**"
+
+  mostread:
+    handler: handler.main
+    module: functions/mostread
+    events:
+      - http:
+          path: most-read
+          method: get
+          request:
+            parameters:
+              querystrings:
+                days: false
+                n: false
+
+    environment:
+      ANALYTICS_CREDENTIALS: ${env:ANALYTICS_CREDENTIALS}
+      ANALYTICS_VIEW_ID: ${env:ANALYTICS_VIEW_ID}
+    package:
+      include:
+        - functions/mostread/*.py
+        - functions/mostread/gdl/*.py
+      exclude:
+        - "**tests/**"
+
+  spellcheck:
+    handler: handler.main
+    module: functions/spellcheck
+    timeout: 120
+    events:
+      - http:
+          path: spellcheck
+          method: post
+      - http:
+          path: spellcheck
+          method: get
+          request:
+            parameters:
+              querystrings:
+                text: true
+    environment:
+      BING_API_KEY: ${env:BING_API_KEY}
+    package:
+      include:
+        - functions/spellcheck/*.py
+        - functions/spellcheck/gdl/*.py
+      exclude:
+        - "**tests/**"
+
+plugins:
+  - serverless-vpc-discovery
+  - serverless-python-requirements
+  - serverless-plugin-warmup
+
+custom:
+  vpc:
+    vpcName: ${env:VPC}
+    subnetNames:
+      - '${env:GDL_ENVIRONMENT}.private_a.gdl'
+      - '${env:GDL_ENVIRONMENT}.private_b.gdl'
+    securityGroupNames:
+      - 'serverless-security_group'
+  pythonRequirements:
+    dockerizePip: non-linux
+    slim: true
+  warmup:
+    enabled:
+      - prod

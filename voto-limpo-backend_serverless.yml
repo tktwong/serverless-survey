@@ -1,0 +1,320 @@
+service:
+  name: voto-limpo-authentication
+
+frameworkVersion: '2'
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  secrets: ${ssm:/aws/reference/secretsmanager/voto-limpo/${self:provider.stage}~true}
+  customDomain:
+    domainName: app.diadovoto.com
+    basePath: '${self:provider.stage}'
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+    # certificateArn: arn:aws:acm:eu-west-2:551430625296:certificate/46ae4053-2c2f-4d48-95e2-1d091b4fc914
+    certificateName: app.diadovoto.com
+    # hostedZoneId: ${self:custom.secrets.HOSTED_ZONE_ID}
+
+plugins:
+  - serverless-webpack
+  - serverless-pseudo-parameters
+  - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  timeout: 19
+  region: eu-west-2
+  apiGateway:
+    minimumCompressionSize: 1024
+  environment:
+    GOOGLE_CLIENT_ID: ${self:custom.secrets.GOOGLE_CLIENT_ID}
+    GOOGLE_CLIENT_SECRET_KEY: ${self:custom.secrets.GOOGLE_CLIENT_SECRET_KEY}
+    BASE_URL: ${self:custom.secrets.BASE_URL}
+    STATE_TABLE_NAME: { Ref: statesTable }
+    SUPPORTER_TABLE_NAME: { Ref: supportersTable }
+    EVENTS_TABLE_NAME: { Ref: eventsTable }
+    CONSENT_TABLE_NAME: { Ref: consentsTable }
+    CLIENTS_CONFIGS: ${self:custom.secrets.CLIENTS_CONFIGS}
+    CANDIDATE_EMAIL: ${self:custom.secrets.CANDIDATE_EMAIL}
+    CANDIDATE_NAME: ${self:custom.secrets.CANDIDATE_NAME}
+    CANDIDATE_VOTE_NUMBER: ${self:custom.secrets.CANDIDATE_VOTE_NUMBER}
+    CANDIDATE_REGISTER_NUMBER: ${self:custom.secrets.CANDIDATE_REGISTER_NUMBER}
+    ELECTION_DATE: ${self:custom.secrets.ELECTION_DATE}
+# Functions
+
+functions:
+  signin:
+    handler: src/functions/signin.login
+    role: lambdaRole
+    events:
+      - http:
+          path: signin
+          method: get
+  addScope:
+    handler: src/functions/signin.addScope
+    role: lambdaRole
+    events:
+      - http:
+          path: supporter/{id}/add-scope
+          method: get
+          request:
+            parameters:
+              paths:
+                id: true
+
+  callback:
+    handler: src/functions/callback.handler
+    role: lambdaRole
+    events:
+      - http:
+          path: callback
+          method: get
+  token:
+    handler: src/functions/token.handler
+    role: lambdaRole
+    events:
+      - http:
+          path: token
+          method: post
+          cors: true
+  authorizer:
+    handler: src/functions/authorizer.handler
+  events:
+    handler: src/functions/events.fetch
+    role: lambdaRole
+    events:
+      - http:
+          path: events
+          method: get
+          cors: true
+          authorizer:
+            name: authorizer
+  createEvent:
+    handler: src/functions/events.create
+    role: lambdaRole
+    events:
+      - http:
+          path: events
+          method: post
+          cors: true
+          authorizer:
+            name: authorizer
+  createGoogleMeeting:
+    handler: src/functions/events.createGoogleMeeting
+    role: lambdaRole
+    events:
+      - http:
+          path: events/{id}/google-meeting
+          method: post
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+          authorizer:
+            name: authorizer
+  deleteEvent:
+    handler: src/functions/events.destroy
+    role: lambdaRole
+    events:
+      - http:
+          path: events/{id}
+          method: delete
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+          authorizer:
+            name: authorizer
+  editEvent:
+    handler: src/functions/events.edit
+    role: lambdaRole
+    events:
+      - http:
+          path: events/{id}
+          method: put
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+          authorizer:
+            name: authorizer
+  inviteEvent:
+    handler: src/functions/events.invite
+    role: lambdaRole
+    events:
+      - http:
+          path: events/{id}/invite
+          method: post
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+          authorizer:
+            name: authorizer
+  joinEvent:
+    handler: src/functions/events.join
+    role: lambdaRole
+    events:
+      - http:
+          path: supporter/{id}/events/{eventId}/join
+          method: post
+          cors: true
+          request:
+            parameters:
+              paths:
+                eventId: true
+                id: true
+
+  profile:
+    handler: src/functions/supporter.currentProfileScope
+    role: lambdaRole
+    events:
+      - http:
+          path: profile/scopes
+          method: get
+          cors: true
+          authorizer:
+            name: authorizer
+  contacts:
+    handler: src/functions/supporter.contacts
+    role: lambdaRole
+    events:
+      - http:
+          path: profile/contacts
+          method: get
+          cors: true
+          authorizer:
+            name: authorizer
+
+resources:
+  Resources:
+    statesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: state-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    supportersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: supporters-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+    eventsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: events-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: supporterId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: supporterId
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+    consentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: consents-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+          - AttributeName: supporterId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: supporterId
+            KeyType: HASH
+          - AttributeName: email
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+    GatewayResponseDefault5XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_5XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+    lambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service.name}-${self:provider.stage}-lambda-role
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Action: sts:AssumeRole
+              Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+        Description: ''
+        Policies:
+          - PolicyName: ${self:service.name}-${self:provider.stage}-lambda-logs-policy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+              - Effect: Allow
+                Action:
+                - "xray:PutTraceSegments"
+                - "xray:PutTelemetryRecords"
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+                Resource: "*"
+
+
+          - PolicyName: ${self:service.name}-${self:provider.stage}-lambda-dynamodb-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+              - Action:
+                - dynamodb:DeleteItem
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:UpdateItem
+                - dynamodb:BatchGetItem
+                - dynamodb:BatchWriteItem
+                Effect: Allow
+                Resource:
+                - "#{statesTable.Arn}"
+                - "#{statesTable.Arn}/*"
+                - "#{supportersTable.Arn}"
+                - "#{supportersTable.Arn}/*"
+                - "#{eventsTable.Arn}"
+                - "#{eventsTable.Arn}/*"
+                - "#{consentsTable.Arn}"
+                - "#{consentsTable.Arn}/*"

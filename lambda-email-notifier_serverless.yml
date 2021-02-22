@@ -1,0 +1,96 @@
+service: dashboard
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+cors: &cors
+  origin: '*'
+  allowCredentials: true
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-east-1
+  role: clpPrototypeRole
+
+functions:
+  retrieveDashboardData:
+    handler: api/index.fetchTopUsageDataAndSendEmail
+    memorySize: 256
+    timeout: 30
+    description: Retrieve Top Usage Data from API
+    events:
+      - http:
+          method: get
+          path: /fetchDataAndSendEmail
+  sendEmail:
+    handler: api/index.sendEmail
+    memorySize: 128
+    timeout: 20
+    description: Send email with data fetched from API to email address
+    events:
+      - http:
+          method: post
+          path: /sendEmail
+          cors: *cors
+  verifyEmail:
+    handler: api/index.verifyEmail
+    memorySize: 128
+    timeout: 30
+    description: Send email to SES and trigger verification process
+    events:
+      - http:
+          method: post
+          path: /verifyEmail
+          cors: *cors
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-aws-authorizer'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PUT'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+    GatewayResponseDefault5XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-aws-authorizer'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PUT'"
+        ResponseType: DEFAULT_5XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+    clpPrototypeRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: clp-prototype-role-dev
+        Policies:
+          - PolicyName: clp-prototype-fullstack-policy-dev
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - lambda:InvokeFunction
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                    - logs:DescribeLogStreams
+                    - ses:SendEmail
+                    - ses:ListIdentities
+                    - ses:GetIdentityVerificationAttributes
+                    - ses:VerifyEmailIdentity
+                  Resource: "*"
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - sts:AssumeRole

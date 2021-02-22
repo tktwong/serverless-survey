@@ -1,0 +1,98 @@
+service: bnti
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: eu-west-2
+
+package:
+  individually: true
+
+functions:
+  hello:
+    handler: index.hello
+    events:
+      - http:
+          path: hello
+          method: get
+  helloAuth:
+    handler: index.helloAuth
+    events:
+      - http:
+          path: hello-auth
+          method: get
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: SiteApiGatewayAuthorizer
+
+resources:
+  Resources:
+    SiteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.siteName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    SiteBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: SiteBucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: '*'
+              Action:
+                - s3:GetObject
+              Resource:
+                Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: SiteBucket
+                    - '/*'
+    SiteUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:custom.stageName}
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+    SiteUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: ${self:custom.stageName}
+        UserPoolId:
+          Ref: SiteUserPool
+        GenerateSecret: false
+    SiteApiGatewayAuthorizer:
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: ${self:custom.stageName}
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [SiteUserPool, Arn]
+        IdentitySource: method.request.header.Authorization
+
+plugins:
+  - serverless-functions-base-path
+  - serverless-plugin-optimize
+  - serverless-s3-sync
+  - serverless-offline
+
+custom:
+  siteName: www.bnti.com
+  stageName: ${self:service}-${self:provider.stage}
+  functionsBasePath: src/functions
+  optimize: true
+  s3Sync:
+    - bucketName: ${self:custom.siteName}
+      localDir: build
+  serverless-offline:
+    port: 3001

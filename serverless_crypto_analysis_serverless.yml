@@ -1,0 +1,114 @@
+service: serverless-crypto-analysis
+
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: eu-central-1
+  stage: ${opt:stage, "dev"}
+  role: arn:aws:iam::077590795309:role/serverless-crypto-analysis-prd-eu-central-1-lambdaRole
+
+package:
+  excludeDevDependencies: true
+  exclude:
+    - "node_modules/**"
+    - "serverless_crypto_analysis_tests/**"
+    - "layers/**"
+
+custom:
+  unique_stack_name: ${self:service}-${self:provider.stage}
+  bucket_glue: ${self:custom.unique_stack_name}-glue
+  bucket_data: ${self:custom.unique_stack_name}
+  key_raw_coinmarketcap: raw
+  key_stg_filter_for_newcomers: stg/filter_for_newcomers
+  key_stg_newcomers: stg/newcomers
+  glue_role: arn:aws:iam::077590795309:role/glue-admin
+
+  bucket_glue_url: s3://${self:custom.bucket_glue}
+  
+  glue_get_coinmarketcap_data:  ${self:custom.unique_stack_name}-get_coinmarketcap_data
+  glue_get_coinmarketcap_data_script: ${self:custom.bucket_glue_url}/get_coinmarketcap_data.py
+  
+  glue_newcomers: ${self:custom.unique_stack_name}-newcomers
+  glue_newcomers_script: ${self:custom.bucket_glue_url}/newcomers.py
+  glue_get_coinmarketcap_data_libs: ${self:custom.bucket_glue_url}/libs
+
+
+plugins:
+  - serverless-s3-remover
+  - serverless-s3-sync
+  - serverless-python-requirements
+
+functions:
+  get_coinmarketcap_data:
+    handler: serverless_crypto_analysis/lambda_function/get_coinmarketcap_data.lambda_handler
+    events:
+      - schedule: rate(1 hour)
+    environment:
+      DESTINATION_BUCKET: ${self:custom.bucket_data}
+      DESTINATION_KEY: raw
+    timeout: 3
+    memorySize: 128
+
+  filter_for_newcomers:
+    handler: serverless_crypto_analysis/lambda_function/filter_for_newcomers.lambda_handler
+    events:
+      - s3:
+          bucket: ${self:custom.bucket_data}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: ${self:custom.key_raw_coinmarketcap}
+            - suffix: .json
+    environment:
+      DESTINATION_BUCKET: ${self:custom.bucket_data}
+      DESTINATION_KEY: ${self:custom.key_stg_filter_for_newcomers}
+    timeout: 30
+    memorySize: 1500
+    layers:
+      # we reference the version that is manually uploaded
+      - arn:aws:lambda:eu-central-1:077590795309:layer:awswrangler:2
+
+  newcomers:
+    handler: serverless_crypto_analysis/lambda_function/newcomers.lambda_handler
+    events:
+      - schedule: rate(6 hours)
+    environment:
+      ATHENA_DB: coinmarketcap
+      ATHENA_TABLE: stg_filter_for_newcomers
+      BUCKET_DATA: ${self:custom.bucket_data}
+      KEY_DATA: ${self:custom.key_stg_newcomers}
+      RANK: "[200,100,75,50,25,10]"
+      LOOKBACK_PERIOD: 21600 # 6 hours
+    timeout: 100
+    memorySize: 128
+
+  tweet_newcomers:
+    handler: serverless_crypto_analysis/lambda_function/tweets.lambda_handler
+    events:
+      - s3:
+          bucket: ${self:custom.bucket_data}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: ${self:custom.key_stg_newcomers}
+            - suffix: .json
+    environment:
+      TWITTER_TOKEN: twitter_token
+      COINMARKETCAP_TOKEN: coinmarketcap_token
+      SKIPTWEET: False
+    timeout: 2
+    memorySize: 128
+
+  backfill_newcomers:
+    handler: serverless_crypto_analysis/lambda_function/backfill_newcomers.lambda_handler
+    environment:
+      ATHENA_DB: coinmarketcap
+      ATHENA_TABLE: stg_filter_for_newcomers
+      FUNCTION_NAME: ${self:custom.glue_newcomers}
+      YEAR: 2020
+      MONTH: 4
+      DAY: 1
+      LOOKBACK_PERIOD: 86400 # 24 hours
+    timeout: 900
+    layers:
+      # we reference the version that is manually uploaded
+      - arn:aws:lambda:eu-central-1:077590795309:layer:awswrangler:1

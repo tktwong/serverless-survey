@@ -1,0 +1,70 @@
+service: sc-sqs-example
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-2
+
+functions:
+  receiveMessage:
+    handler: handler.receiveMessage
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [ScQueue, Arn]
+  sendMessage:
+    handler: handler.sendMessage
+    role: SendSqsMessageRole
+    environment:
+      QUEUE_URL:
+        Ref: ScQueue
+    events:
+      - http:
+          path: sendMessage
+          method: post
+          cors: true
+
+
+resources:
+  Resources:
+    ScQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-queue
+    SendSqsMessageRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-SendMessageRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:service}-SendSQSMessageRole
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "sqs:SendMessage"
+                  Resource: "arn:aws:sqs:${self:provider.region}:*:*"
+          - PolicyName: ${self:service}-LogPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - "logs:CreateLogStream"
+                    - "logs:PutLogEvents"
+                  Resource: "arn:aws:logs:${self:provider.region}:*:*"
+                  # Resource: "arn:aws:logs:${self:provider.region}:${self:custom.environment.AWS_ACCOUNT_ID}:*"
+  Outputs:
+    ScQueueARN:
+      Description: 'ARN of sc-queue'
+      Value:
+        Fn::GetAtt: [ScQueue, Arn]

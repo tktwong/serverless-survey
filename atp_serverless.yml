@@ -1,0 +1,199 @@
+service: ATP-Downloader
+provider:
+  name: aws
+  runtime: go1.x
+  stage: prod
+  region: ${env:AWS_DEFAULT_REGION, "us-east-1"}
+  versionFunctions: false
+  memorySize: 128
+  timeout: 30
+  logRetentionInDays: 1
+  role: lambdaDefaultRole
+
+package:
+ exclude:
+   - ./**
+ include:
+   - ./bin/**
+
+functions:
+  RSS:
+    handler: bin/RSS
+    environment:
+      BASE_URL: https://atp-episodes.s3.amazonaws.com # can't use reference because that creates a circular reference
+    events:
+      - s3: 
+          bucket: atp-episodes
+          event: "s3:ObjectCreated:*"
+          rules:
+            - prefix: incoming/
+            - suffix: .mp3
+      - s3: 
+          bucket: atp-episodes
+          event: "s3:ObjectRemoved:*"
+          rules:
+            - prefix: processed/
+            - suffix: .mp3
+  StreamStatus:
+    handler: bin/StreamStatus
+    environment:
+      CLUSTER:
+        "Fn::GetAtt": [ECSCluster, Arn]
+      TASK_DEFINITION:
+        Ref: DownloadTask
+      SECURITY_GROUP:
+        "Fn::GetAtt": [VPCSecurityGroup, GroupId]
+      SUBNET:
+        Ref: VPCSubnet
+    events:
+      - schedule: rate(1 minute)
+resources:
+  Resources:
+    lambdaDefaultRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - arn:aws:iam::aws:policy/AmazonECS_FullAccess
+          - arn:aws:iam::aws:policy/AmazonS3FullAccess
+          - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+    S3BucketAtpepisodes: # name must be this for serverless to wire up the events
+      Type: AWS::S3::Bucket
+      Properties: 
+        BucketName: atp-episodes
+    RSSLambdaPermissionAtpepisodesS3: # name must be this for serverless to wire up the events
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          "Fn::GetAtt": [RSSLambdaFunction, Arn]
+        Action: lambda:InvokeFunction
+        Principal: s3.amazonaws.com
+        SourceArn: # must be this exact value or serverless will append garbage
+          Fn::Join:
+            - ''
+            - - 'arn:'
+              - Ref: AWS::Partition
+              - ":s3:::atp-episodes"
+    DockerRepo:
+      Type: AWS::ECR::Repository
+      Properties: 
+        RepositoryName: atp-downloader-repo
+        LifecyclePolicy:
+          LifecyclePolicyText: '{"rules": [{ "rulePriority": 10, "description": "Delete old images", "selection": { "tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 10 }, "action": { "type": "expire" }}]}'
+    TaskExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - ecs-tasks.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AmazonECS_FullAccess
+          - arn:aws:iam::aws:policy/AmazonS3FullAccess
+          - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+    TaskLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties: 
+        LogGroupName: ATP-Downloader-Task
+        RetentionInDays: 7
+    DownloadTask:
+      Type: AWS::ECS::TaskDefinition
+      Properties: 
+        ExecutionRoleArn: 
+          "Fn::GetAtt": [TaskExecutionRole, Arn]
+        TaskRoleArn:
+          "Fn::GetAtt": [TaskExecutionRole, Arn]
+        Cpu: 256
+        Memory: 512
+        NetworkMode: awsvpc
+        RequiresCompatibilities:
+          - FARGATE
+        ContainerDefinitions:
+          - Name: ATP-Stream-Downloader
+            Environment:
+              - Name: OUTPUT_S3_PATH
+                Value: 
+                  Fn::Join: [ "/", [ Ref: S3BucketAtpepisodes, "incoming/" ] ]
+                  
+            Image: 
+              Fn::Join: [ "", [ Fn::Join: [ ".", [ Ref: "AWS::AccountId", "dkr.ecr", Ref: "AWS::Region", Fn::Join: [ "/", [ "amazonaws.com", Ref: "DockerRepo" ] ] ] ] ] ]
+            MemoryReservation: 512
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: ATP-Downloader-Task
+                awslogs-region: ${opt:region, self:provider.region}
+                awslogs-stream-prefix: ecs
+    ECSCluster:
+      Type: AWS::ECS::Cluster
+      Properties:
+        ClusterName: ATP-Downloader-Cluster
+    VPC:
+      Type: "AWS::EC2::VPC"
+      Properties:
+        CidrBlock: 10.123.0.0/16
+        Tags:
+          - Key: Name
+            Value: AtpDownloaderVpc
+    VPCGateway:
+      Type: "AWS::EC2::InternetGateway"
+    VPCGatewayAttachment:
+      Type: "AWS::EC2::VPCGatewayAttachment"
+      Properties:
+        InternetGatewayId:
+          Ref: VPCGateway
+        VpcId:
+          Ref: VPC
+    VPCSubnet:
+      Type: "AWS::EC2::Subnet"
+      Properties:
+        CidrBlock: 10.123.0.0/20
+        MapPublicIpOnLaunch: true
+        VpcId:
+          Ref: VPC
+        Tags:
+          - Key: Name
+            Value: ATPDownloaderSubnet
+    VPCRouteTableAssociation:
+      Type: "AWS::EC2::SubnetRouteTableAssociation"
+      Properties:
+        RouteTableId:
+          Ref: VPCRouteTable
+        SubnetId:
+          Ref: VPCSubnet
+    VPCRouteTable:
+      Type: "AWS::EC2::RouteTable"
+      Properties:
+        VpcId:
+          Ref: VPC
+    VPCIPv4Route:
+      Type: "AWS::EC2::Route"
+      DependsOn: VPCGatewayAttachment
+      Properties:
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId:
+          Ref: VPCGateway
+        RouteTableId:
+          Ref: VPCRouteTable
+    VPCSecurityGroup:
+      Type: "AWS::EC2::SecurityGroup"
+      Properties:
+        GroupDescription: ATP Downloader Container
+        VpcId:
+          Ref: VPC
+  Outputs:
+      EcrRepoUrl:
+        Value:
+          Fn::Join: [ "", [ Fn::Join: [ ".", [ Ref: "AWS::AccountId", "dkr.ecr", Ref: "AWS::Region", Fn::Join: [ "/", [ "amazonaws.com", Ref: "DockerRepo" ] ] ] ] ] ]

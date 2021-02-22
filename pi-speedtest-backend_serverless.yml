@@ -1,0 +1,223 @@
+service: pi-speedtest-sls
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, self:custom.defaultStage}
+  profile: ${self:custom.profiles.${self:provider.stage}}
+  region: us-east-1
+  memorySize: 512
+  timeout: 15
+  deploymentBucket: sls-depl-${self:provider.region}-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:Query
+      Resource: { "Fn::Join" : [ ":", [ "arn:aws:dynamodb:${self:provider.region}", { "Ref" : "AWS::AccountId" }, "table/${self:custom.sampleTable}" ] ] }
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: { "Fn::Join" : [ ":", [ "arn:aws:dynamodb:${self:provider.region}", { "Ref" : "AWS::AccountId" }, "table/${self:custom.userTable}" ] ] }
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource: { "Fn::Join" : [ ":", [ "arn:aws:dynamodb:${self:provider.region}", { "Ref" : "AWS::AccountId" }, "table/${self:custom.accessTokenTable}" ] ] }
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: { "Fn::Join" : [ ":", [ "arn:aws:dynamodb:${self:provider.region}", { "Ref" : "AWS::AccountId" }, "table/${self:custom.sampleTokenTable}" ] ] }
+    - Effect: Allow
+      Action: SNS:Publish
+      Resource: ${self:custom.cleanupTopicArn}
+  environment:
+    ACCESS_TOKEN_TABLE: ${self:custom.accessTokenTable}
+    AT_SECRET: ${self:custom.config.AT_SECRET}
+    CLEANUP_TOPIC_ARN: ${self:custom.cleanupTopicArn}
+    CLIENT_ID: ${self:custom.config.CLIENT_ID}
+    CLIENT_SECRET: ${self:custom.config.CLIENT_SECRET}
+    GQL_SECRET: ${self:custom.config.GQL_SECRET}
+    JWT_SECRET: ${self:custom.config.JWT_SECRET}
+    SAMPLE_TABLE: ${self:custom.sampleTable}
+    SAMPLE_TOKEN_TABLE: ${self:custom.sampleTokenTable}
+    USER_TABLE: ${self:custom.userTable}
+
+functions:
+  #
+  # Authenticate user by requesting an access token from GitHub
+  #
+  authenticate:
+    timeout: 10
+    handler: index.authGitHub
+    events:
+      - http:
+          path: auth/github
+          method: get
+          cors: true
+
+  #
+  # Logout by removing the current access token
+  #
+  logout:
+    handler: index.logout
+    events:
+      - http:
+          path: auth/logout
+          method: get
+          cors: true
+          authorizer: authorizer
+
+  #
+  # Delete account of the user that's currently "logged in" (based on token)
+  #
+  deleteUser:
+    handler: index.deleteUser
+    events:
+      - http:
+          path: user/{sub}
+          method: delete
+          cors: true
+          authorizer: authorizer
+
+  #
+  # Single endpoint for all GraphQL related queries/mutations
+  #
+  graphql:
+    handler: index.graphql
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+          authorizer: authorizer
+
+  #
+  # Authoriser function for user authorisation
+  #
+  authorizer:
+    handler: index.authorizer
+
+  ###################################################################
+  # The functions below are for posting samples only
+  ###################################################################
+
+  #
+  # Post measurement sample
+  #
+  postSample:
+    handler: samples.postSample
+    events:
+      - http:
+          path: sample
+          cors: true
+          method: post
+          authorizer: sampleAuthorizer
+
+  sampleAuthorizer:
+    timeout: 10
+    handler: samples.authorizer
+
+#
+# Resources (e.g., database tables)
+#
+resources:
+  Resources:
+    #
+    # Access token table contains the access tokens for GitHub
+    #
+    AccessTokenTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:custom.accessTokenTable}
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: "1"
+          WriteCapacityUnits: "1"
+
+    #
+    # Samples table contains the samples uploaded by the client
+    #
+    SamplesTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:custom.sampleTable}
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+          - AttributeName: "created"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+          - AttributeName: "created"
+            KeyType: "RANGE"
+        ProvisionedThroughput:
+          ReadCapacityUnits: "1"
+          WriteCapacityUnits: "1"
+        TimeToLiveSpecification:
+          AttributeName: expires
+          Enabled: true
+
+    #
+    # Sample token table contains the tokens needed for posting samples
+    #
+    sampleTokenTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:custom.sampleTokenTable}
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: "1"
+          WriteCapacityUnits: "1"
+
+    #
+    # User table contains the user objects
+    #
+    UserTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:custom.userTable}
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: "1"
+          WriteCapacityUnits: "1"
+
+#
+# Custom section
+#
+custom:
+  defaultStage: dev
+  profiles:
+    dev: development
+    prod: production
+  postfixes:
+    dev: "-dev"
+    prod: "-prod"
+  common: ${file(../conf/common.json)}
+  config: ${file(../conf/config-${self:provider.stage}.json)}
+  postfix: ${self:custom.postfixes.${self:provider.stage}}
+  accessTokenTable: ${self:custom.common.accessTokenTable}${self:custom.postfix}
+  cleanupTopic: ${self:custom.common.cleanupTopic}${self:custom.postfix}
+  cleanupTopicArn: { "Fn::Join" : [":", ["arn:aws:sns:${self:provider.region}", { "Ref" : "AWS::AccountId" }, "${self:custom.cleanupTopic}" ] ] }
+  sampleTable: ${self:custom.common.sampleTable}${self:custom.postfix}
+  sampleTokenTable: ${self:custom.common.sampleTokenTable}${self:custom.postfix}
+  userTable: ${self:custom.common.userTable}${self:custom.postfix}

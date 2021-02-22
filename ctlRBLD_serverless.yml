@@ -1,0 +1,174 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+
+service: ctlRBLD
+
+
+provider:
+  name: aws
+  runtime: python3.6
+
+  region: us-east-2
+
+functions:
+  ctlrbld:
+    handler: python/ctlrbld.handler
+    role: arn:aws:iam::063617668815:role/LambdaDBA
+    events:
+      - http:
+          path: api/ctlrbld
+          method: post
+          integration: lambda_proxy
+  hello:
+    handler: python/handler.hello
+    role: arn:aws:iam::063617668815:role/lambdarole
+    events:
+      - http:
+          path: api/hello
+          method: post
+          integration: lambda_proxy
+          cors: true
+  mkuser:
+    handler: python/mkuser.lambda_handler
+    role: arn:aws:iam::063617668815:role/LambdaDBA
+    environment:
+      test: 'asdf'
+    events:
+      - http:
+          path: api/mkuser
+          method: post
+          integration: lambda_proxy
+          cors: true
+  getURL:
+    handler: getURL.handler
+    role: arn:aws:iam::063617668815:role/service-role/S3GET
+    runtime: nodejs6.10
+    events:
+      - http:
+          path: api/geturl
+          method: get
+          integration: lambda_proxy
+          authorizer:
+            type: aws_iam
+          cors: true
+
+
+resources:
+  Resources:
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: S3htmlBucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "S3htmlBucket"
+                    },
+                    "/*"
+                  ]
+                ]
+    S3htmlBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(deploymentOptions.yml):publics3}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          ErrorDocument: error.html
+          IndexDocument: index.html
+    S3privateBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(deploymentOptions.yml):privates3}
+        AccessControl: AuthenticatedRead
+    TemplateTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Templates
+        AttributeDefinitions:
+          -
+            AttributeName: Platform
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: Platform
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 4
+          WriteCapacityUnits: 1
+    DDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Users
+        AttributeDefinitions:
+          -
+            AttributeName: username
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    myDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Aliases:
+          - login.ctlrbld.de
+          Origins:
+          -
+            DomainName: ${file(deploymentOptions.yml):publics3}.s3-website.us-east-2.amazonaws.com
+            Id: S3-Website-${file(deploymentOptions.yml):publics3}.s3-website.us-east-2.amazonaws.com
+            CustomOriginConfig:
+              HTTPPort: '80'
+              HTTPSPort: '443'
+              OriginProtocolPolicy: http-only
+          Enabled: 'true'
+          Comment: Somecomment
+          DefaultRootObject: index.html
+          DefaultCacheBehavior:
+            TargetOriginId: S3-Website-ctlrbld-dev-s3bucket-1jdlcprz5b7zu.s3-website.us-east-2.amazonaws.com
+            SmoothStreaming: 'false'
+            ForwardedValues:
+              QueryString: 'false'
+              Cookies:
+                Forward: all
+            ViewerProtocolPolicy: redirect-to-https
+          PriceClass: PriceClass_100
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: 'true'
+            MinimumProtocolVersion: TLSv1
+
+
+plugins:
+  - serverless-python-requirements
+  - serverless-plugin-scripts
+  - serverless-s3-sync
+custom:
+  pythonRequirements:
+    dockerizePip: true
+  s3Sync:
+    - bucketName: ${file(deploymentOptions.yml):publics3}
+      localDir: public
+    - bucketName: ${file(deploymentOptions.yml):privates3}
+      localDir: private

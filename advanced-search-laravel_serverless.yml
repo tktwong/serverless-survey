@@ -1,0 +1,81 @@
+service: bref-demo-laravel
+
+provider:
+  name: aws
+  region: eu-west-3
+  runtime: provided
+  environment:
+    # Laravel environment variables
+    APP_STORAGE: '/tmp'
+
+plugins:
+  - ./vendor/bref/bref
+  # This lets us use `#{Assets.Arn}` variables
+  - serverless-pseudo-parameters
+
+functions:
+  website:
+    handler: public/index.php
+    timeout: 28 # in seconds (API Gateway has a timeout of 29 seconds)
+    layers:
+      - ${bref:layer.php-74-fpm}
+    events:
+      -   http: 'ANY /'
+      -   http: 'ANY /{proxy+}'
+  artisan:
+    handler: artisan
+    timeout: 120 # in seconds
+    layers:
+      - ${bref:layer.php-74} # PHP
+      - ${bref:layer.console} # The "console" layer
+package:
+  exclude:
+    - node_modules/**
+    - '!node_modules/node-fetch/**'
+    - '.git/**'
+resources:
+  Resources:
+    WebsiteCDN:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          # Cheapest option by default (https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_DistributionConfig.html)
+          PriceClass: PriceClass_100
+          # Enable http2 transfer for better performances
+          HttpVersion: http2
+          # Origins are where CloudFront fetches content
+          Origins:
+            # The website (AWS Lambda)
+            -   Id: Website
+                DomainName: '#{ApiGatewayRestApi}.execute-api.#{AWS::Region}.amazonaws.com'
+              # This is the stage, if you are using another one (e.g. prod), you will need to change it here too
+                OriginPath: '/dev'
+                CustomOriginConfig:
+                  OriginProtocolPolicy: 'https-only' # API Gateway only supports HTTPS
+          # The default behavior is to send everything to AWS Lambda
+          DefaultCacheBehavior:
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            TargetOriginId: Website # the PHP application
+            # Disable caching for the PHP application https://aws.amazon.com/premiumsupport/knowledge-center/prevent-cloudfront-from-caching-files/
+            DefaultTTL: 0
+            MinTTL: 0
+            MaxTTL: 0
+            # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-forwardedvalues.html
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: all # Forward cookies to use them in PHP
+              # We must *not* forward the `Host` header else it messes up API Gateway
+              Headers:
+                - 'Accept'
+                - 'Accept-Language'
+                - 'Origin'
+                - 'Referer'
+            ViewerProtocolPolicy: redirect-to-https
+          CustomErrorResponses:
+            # Do not cache HTTP errors
+            -   ErrorCode: 500
+                ErrorCachingMinTTL: 0
+            -   ErrorCode: 504
+                ErrorCachingMinTTL: 0

@@ -1,0 +1,63 @@
+# merge fixer
+service: projects-nikitas-link # NOTE: update this with your service name
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, 'staging'}
+  region: ${opt:region, 'us-east-1'}
+custom:
+  account: ${opt:account}
+  cloudfront-app:
+    region: us-east-1
+    bucketName: ${opt:bucket}
+    useragentsecret: ${opt:uasecret}
+    acm-region: us-east-1
+    certid: ${opt:certid}
+    logbucket: "${opt:logbucket}.s3.amazonaws.com"
+    logbucket-prefix: "${self:provider.stage}-${self:service}"
+    alias: ${opt:bucket}
+    hostedzonename: ${opt:hzname}
+  report-bucket: "${opt:bucket}-reports"
+resources:
+  Resources:
+    WebRedirectS3Bucket: ${file(cloudfront-app.yml):WebRedirectS3Bucket}
+    RedirectCloudFrontDistribution: ${file(cloudfront-app.yml):RedirectCloudFrontDistribution}
+    WWWWebAppRecord: ${file(cloudfront-app.yml):WWWWebAppRecord}
+    WebAppRecord: ${file(cloudfront-app.yml):WebAppRecord}
+    WebAppS3Bucket: ${file(cloudfront-app.yml):WebAppS3Bucket}
+    WebAppS3BucketPolicy: ${file(cloudfront-app.yml):WebAppS3BucketPolicy}
+    WebAppDistribution: ${file(cloudfront-app.yml):WebAppDistribution}
+    ReportS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.report-bucket}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - "*"
+              AllowedMethods:
+                - "GET"
+              AllowedHeaders:
+                - "*"
+    ReportBucketOAI:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: "${self:provider.stage}-${self:service}"
+    ReportS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: ReportS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal:
+                CanonicalUser:
+                  Fn::GetAtt:
+                    - ReportBucketOAI
+                    - S3CanonicalUserId
+              Action:
+                - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.report-bucket}/*

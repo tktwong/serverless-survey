@@ -1,0 +1,106 @@
+service: oh-bot
+
+package: 
+  individually: true
+
+frameworkVersion: ">=1.4.0 <2.0.0"
+
+plugins:
+  - serverless-package-python-functions
+
+custom:
+  pkgPyFuncs: # plugin configuration
+    buildDir: _build
+    requirementsFile: 'requirements.txt'
+    cleanup: true
+
+provider:
+  name: aws
+  runtime: python3.6
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    DYNAMODB_TABLE_TOPICS: '${self:service}-${opt:stage, self:provider.stage}-topics'
+    CLIENT_SECRET: ${file(local.yml):slack.clientSecret}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}-topics"
+
+functions:
+  set_office_hours:
+    name: set_office_hours-${opt:stage}
+    handler: set_office_hours.set_office_hours
+    package:
+      include:
+        - set_office_hours
+      artifact: ${self:custom.pkgPyFuncs.buildDir}/set_office_hours-${opt:stage}.zip
+  get_office_hours:
+    name: get_office_hours-${opt:stage}
+    handler: get_office_hours.get_office_hours
+    package:
+      include:
+        - get_office_hours
+      artifact: ${self:custom.pkgPyFuncs.buildDir}/get_office_hours-${opt:stage}.zip
+  add_discussion_topic:
+    name: add_discussion_topic-${opt:stage}
+    handler: add_discussion_topic.add_discussion_topic
+    package:
+      include:
+        - add_discussion_topic
+      artifact: ${self:custom.pkgPyFuncs.buildDir}/add_discussion_topic-${opt:stage}.zip
+  lookup_discussion_topics:
+    name: lookup_discussion_topics-${opt:stage}
+    handler: lookup_discussion_topics.lookup_discussion_topics
+    package:
+      include:
+        - lookup_discussion_topics
+      artifact: ${self:custom.pkgPyFuncs.buildDir}/lookup_discussion_topics-${opt:stage}.zip
+
+resources:
+  Resources:
+    OfficeHoursTopicsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: date
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+          -
+            AttributeName: date
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: '${self:provider.environment.DYNAMODB_TABLE}-topics'
+    OfficeHoursDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: team
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: team
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

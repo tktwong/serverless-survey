@@ -1,0 +1,183 @@
+service: gladnews
+frameworkVersion: ">=1.8.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: ${file(resources/config.${self:custom.stage}.yml):gladnews.profile}
+  environment:
+    ARTICLES_TABLE: {Ref: ArticlesDB}
+    COMMENTS_TABLE: {Ref: CommentsDB}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Scan
+        - dynamodb:Query
+      Resource:
+       - Fn::GetAtt:
+           - ArticlesDB
+           - Arn
+       - Fn::Join:
+          - ""
+          -
+            - Fn::GetAtt:
+                - ArticlesDB
+                - Arn
+            - "/index/*"
+       - Fn::GetAtt:
+           - CommentsDB
+           - Arn
+       - Fn::Join:
+          - ""
+          -
+            - Fn::GetAtt:
+                - CommentsDB
+                - Arn
+            - "/index/*"
+
+
+functions:
+  presign:
+    handler: backend/pre_signup.handler
+    events:
+      - cognitoUserPool:
+          pool: ${self:custom.userPool}
+          trigger: PreSignUp
+          existing: true
+  gql:
+    handler: backend/gql_endpoint.handler
+    events:
+      - http:
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+          cors: true
+          path: /gql
+          method: post
+      - http:
+          cors: true
+          path: /readgql
+          method: post
+  test:
+    handler: backend/test_auth.handler
+    events:
+      - http:
+          cors: true
+          authorizer:
+              type: COGNITO_USER_POOLS
+              authorizerId:
+                Ref: ApiGatewayAuthorizer
+              #name: ${self:custom.userPool}
+              #arn: arn:aws:cognito-idp:us-east-1:637555073356:userpool/us-east-1_jAyev5Y3J
+          path: /test
+          method: get
+
+
+plugins:
+  - serverless-finch
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  rootDomain: ${file(resources/config.${self:custom.stage}.yml):gladnews.rootDomain}
+  userPool: ${file(resources/config.${self:custom.stage}.yml):gladnews.UserPool}
+  userPoolArn:
+    Fn::GetAtt:
+      - CognitoUserPool
+      - Arn
+  devDomains:
+    - gladnewstest.${file(resources/config.${self:custom.stage}.yml):gladnews.rootDomain}
+  prodDomains:
+    - www.gladnews.${file(resources/config.${self:custom.stage}.yml):gladnews.rootDomain}
+    - gladnews.${file(resources/config.${self:custom.stage}.yml):gladnews.rootDomain}
+  bucketName: ${file(resources/config.${self:custom.stage}.yml):gladnews.bucketName}
+  client:
+    bucketName: ${self:custom.bucketName}
+    distributionFolder: ${file(resources/config.${self:custom.stage}.yml):gladnews.distributionFolder}
+resources:
+  Mappings: ${file(resources/mappings.yml)}
+  Outputs:
+    UserPoolId:
+      Value:
+        Ref: CognitoUserPool
+
+    UserPoolClientId:
+      Value:
+        Ref: CognitoUserPoolClient
+
+  Resources:
+    ApiGatewayAuthorizer:
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: CognitoUserPool
+        Type: COGNITO_USER_POOLS
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ProviderARNs:
+          - Fn::GetAtt:
+              - CognitoUserPool
+              - Arn
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:custom.userPool}
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+          # Generate an app client name based on the stage
+        ClientName: ${self:custom.userPool}-client
+        UserPoolId:
+           Ref: CognitoUserPool
+        ExplicitAuthFlows:
+          - ADMIN_NO_SRP_AUTH
+        GenerateSecret: false
+    ArticlesDB: ${file(resources/article-db.yml)}
+    CommentsDB: ${file(resources/comment-db.yml)}
+    SSLCert: ${file(resources/${self:custom.stage}.ssl.yml)}
+    DnsRecords: ${file(resources/${self:custom.stage}.dns.yml)}
+    CDN:
+      Type: "AWS::CloudFront::Distribution"
+      Properties:
+        DistributionConfig:
+          ViewerCertificate:
+            AcmCertificateArn: {Ref: SSLCert}
+            SslSupportMethod: sni-only
+          Enabled: true
+          HttpVersion: http2
+          Aliases: ${self:custom.${self:custom.stage}Domains}
+          DefaultRootObject: index.html
+          Origins:
+            - DomainName: {"Fn::Join": ["", [ "${self:custom.bucketName}", ".", {"Fn::FindInMap": [RegionMap, {Ref: "AWS::Region"}, websiteendpoint]}]]}
+              Id: S3Origin
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: http-only
+          DefaultCacheBehavior:
+            ViewerProtocolPolicy: allow-all
+            TargetOriginId: S3Origin
+            AllowedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            DefaultTTL: 30
+            MinTTL: 10
+            ForwardedValues:
+              QueryString: true
+package:
+  exclude:
+    - bin/**
+    - static/**
+    - resources/**
+    - package.json
+    - node_modules/**
+  include:
+    - node_modules/uuid/**
+    - node_modules/lodash/**
+    - node_modules/graphql/**
+    - node_modules/iterall/**

@@ -1,0 +1,303 @@
+service: blogposthandler
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-1  
+  stage: ${opt:stage, 'dev'}
+  environment:
+    buildNum: 1
+    blogPostTableName: blogPosts-${self:provider.stage}-${self:provider.environment.buildNum}
+    testAppsyncDdbTableName: testAppsyncDdbTable-${self:provider.stage}
+    region: localhost
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-appsync-plugin
+  - serverless-appsync-offline
+  - serverless-offline
+
+package:
+  excludeDevDependencies: false
+  exclude:
+    - node_modules/**
+
+custom: 
+  appsync-offline:
+    port: 62222
+    dynamodb:
+      # client:
+      #   endpoint: "http://localhost:38000"
+      #   region: localhost
+      #   accessKeyId: a
+      #   secretAccessKey: a
+      server:
+        port: 8000
+        inMemory: false
+        sharedDb: false
+        delayTransientStatuses: false
+        optimizeDbBeforeStartup: false
+  dynamodb:
+    stages:
+      - dev
+    start: 
+      port: "8000"
+      seed: true
+      inMemory: true
+      migrate: true
+    seed:
+      domain:
+        sources:
+          - table: ${self:provider.environment.blogPostTableName}
+            sources: [./ddbTables/blogPosts.json]
+  appSync:
+    name: testAppsync
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      awsRegion: eu-west-1
+      defaultAction: ALLOW
+      userPoolId: !Ref CognitoUserPool
+    mappingTemplates:
+      - dataSource: appsyncLambda
+        type: Query #Query, Mutation, Subscription
+        field: helloWorld
+        request: "request_mapping.txt"
+        response: "response_mapping.txt"
+    dataSources:
+      - type: AWS_LAMBDA
+        name: appsyncLambda
+        config:
+          functionName: testAppsync
+          # serviceRoleArn:
+          #   Fn::GetAtt:
+          #     - AppsyncLambdaServiceRole
+          #     - Arn
+      # - type: HTTP
+      #   name: appsyncHttp
+      #   config:
+      #     endpoint: "http://localhost:3000/graphql"
+  # appSync:
+  #   name: sls-appsync-api
+  #   authenticationType: AMAZON_COGNITO_USER_POOLS
+  #   userPoolConfig:
+  #     awsRegion:  us-east-1
+  #     defaultAction: ALLOW
+  #     userPoolId:  { Ref: CognitoUserPool } 
+    # mappingTemplates:
+    #   - dataSource: awsLambdaDataSource
+    #     type: Query #Query, Mutation, Subscription
+    #     field: helloWorld
+    #     request: "request_mapping.txt"
+    #     response: "response_mapping.txt"
+  #   schema: # defaults schema.graphql
+  #   serviceRole: "AppSyncServiceRole"
+  #   dataSources:
+  #     - type: AWS_LAMBDA
+  #       name: awsLambdaDataSource
+  #       description: 'Lambda DataSource'
+  #       config:
+  #         functionName: testAppsync
+  #         # lambdaFunctionArn: { Fn::GetAtt: [GraphqlLambdaFunction, Arn] } # Where GraphqlLambdaFunction is the lambda function cloudformation resource created by serverless for the serverless function named graphql
+  #         # serviceRoleArn: { Fn::GetAtt: [AppSyncLambdaServiceRole, Arn] }
+            
+
+functions:
+  updateOrCreateBlogPost:
+    handler: updateOrCreateBlogPost/handler.updateOrCreateBlogPost
+    events:
+      - http:
+          path: /blogpost/update
+          method: post
+          cors: true
+          # private: true
+  getBlogPost:
+    handler: getBlogPost/handler.getBlogPost
+    events:
+      - http:
+          path: /blogpost/get
+          method: get
+          cors: true
+  getBlogPostRange:
+    handler: getBlogPostRange/handler.getBlogPostRange
+    events:
+      - http:
+          path: /blogpost/range/get
+          method: get
+          cors: true
+          private: true
+  testAppsync:
+    handler: testAppsync/handler.testAppsync
+    
+      
+      
+      
+resources:
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.blogPostTableName}
+        AttributeDefinitions:
+          - AttributeName: BlogPostId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: BlogPostId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: cognito_sls_appsync_user_pool
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: cognito_sls_appsync_client
+        UserPoolId:
+          Ref: CognitoUserPool
+    CognitoIdentityPool:
+      Type: AWS::Cognito::IdentityPool
+      Properties:
+        IdentityPoolName: cognito_sls_appsync_identity_pool
+        AllowUnauthenticatedIdentities: false
+        CognitoIdentityProviders:
+          - ClientId:
+              Ref: CognitoUserPoolClient
+            ProviderName:
+              Fn::GetAtt: [CognitoUserPool, ProviderName]
+    # Cognito roles
+    CognitoIdentityPoolRoles:
+      Type: AWS::Cognito::IdentityPoolRoleAttachment
+      Properties:
+        IdentityPoolId:
+          Ref: CognitoIdentityPool
+        Roles:
+          authenticated:
+            Fn::GetAtt: [CognitoAuthRole, Arn]
+          unauthenticated:
+            Fn::GetAtt: [CognitoUnauthRole, Arn]
+    CognitoAuthRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: cognito_sls_appsync_appAuthRole
+        Path: /
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
+              Action:
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: CognitoIdentityPool
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": authenticated
+        Policies:
+          - PolicyName: "CognitoAuthorizedPolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "mobileanalytics:PutEvents"
+                    - "cognito-sync:*"
+                    - "cognito-identity:*"
+                  Resource: "*"
+                - Effect: "Allow"
+                  Action:
+                    - "execute-api:Invoke"
+                  Resource: "*"
+    CognitoUnauthRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: cognito_sls_appsync_appUnauthRole
+        Path: /
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
+              Action:
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: CognitoIdentityPool
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": unauthenticated
+        Policies:
+          - PolicyName: "CognitoUnauthorizedPolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "mobileanalytics:PutEvents"
+                    - "cognito-sync:*"
+                    - "cognito-identity:*"
+                  Resource: "*"
+    testAppsyncDdbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.testAppsyncDdbTableName}
+        AttributeDefinitions:
+          - AttributeName: Id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    AppsyncDdbServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+                Action: sts:AssumeRole
+        Policies:
+          - PolicyName: AppsyncDdbServicePolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                  Resource:
+                    Fn::GetAtt:
+                      - testAppsyncDdbTable
+                      - Arn
+    AppsyncLambdaServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+                Action: sts:AssumeRole
+        Policies:
+          - PolicyName: AppsyncLambdaServicePolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - lambda:invokeFunction
+                  Resource:
+                    - Fn::GetAtt:
+                      - testAppsync
+                      - Arn
+                    

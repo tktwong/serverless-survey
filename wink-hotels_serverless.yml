@@ -1,0 +1,110 @@
+---
+service: prismic-webhook
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-plugin-optimize
+  - serverless-plugin-scripts
+  - serverless-s3-local
+  - serverless-offline-sns
+  - serverless-offline
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 128
+  stage: ${opt:stage,self:custom.stage}
+  region: ${opt:region,self:custom.region}
+  profile: ${opt:profile,self:custom.profile}
+
+  environment:
+    CACHE_BUCKET_NAME: ${self:custom.buckets.cache-bucket}
+    SNS_TOPIC_NAME: ${self:custom.sns.topic-name}
+    PROJECT_DIRECTORY_NAME: ${self:custom.directory-name}
+
+  iamRoleStatements:
+    # to be able to create and publish SNS topic
+    - Effect: Allow
+      Action:
+        - sns:ListTopics
+        - sns:CreateTopic
+        - sns:Publish
+        - sns:Subscribe
+      Resource:
+        - arn:aws:sns:${self:provider.region}:*:${self:custom.sns.topic-name}
+
+    # to access the cache S3 bucket from lambdas
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:DeleteObject
+        - s3:ListBucket
+      Resource:
+        - { "Fn::Join": ["", [{ "Fn::GetAtt": ["CacheBucket", "Arn"] }]] }
+        - { "Fn::Join": ["", [{ "Fn::GetAtt": ["CacheBucket", "Arn"] }, "/*"]] }
+
+custom:
+  stage: dev
+  region: ap-southeast-1
+  profile: default
+  directory-name: "website-${self:provider.stage}"
+
+  sns:
+    topic-name: PRISMIC_WEBHOOK
+
+  buckets:
+    cache-bucket: "cache.${self:provider.stage}.${env:SITE_DOMAIN}"
+
+  # scripts:
+  #   commands:
+  #     cache: npm install && ./bin/cache.sh
+  #   hooks:
+  #     "deploy:createDeploymentArtifacts": serverless cache
+
+  serverless-offline-sns:
+    port: 4002 # a free port for the sns server to run on
+    debug: false
+    accountId: 865234782184
+
+  s3:
+    host: 0.0.0.0
+    port: 4003
+    directory: /tmp/s3
+
+functions:
+  webhook:
+    description: Handle Prismic.io webhook post and send SNS notification
+    handler: functions/webhook.handler
+    events:
+      - http: POST webhook
+
+  build:
+    description: Build and deploy gatsby static files triggered by SNS event
+    handler: functions/build.handler
+    events:
+      - sns: ${self:custom.sns.topic-name}
+    # layers:
+    #   - arn:aws:lambda:${self:provider.region}:553035198032:layer:git:3 # git layer
+
+resources:
+  Resources:
+    CacheBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.cache-bucket}
+        AccessControl: Private
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - HEAD
+              AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"

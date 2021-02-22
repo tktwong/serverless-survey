@@ -1,0 +1,76 @@
+---
+service: cinema-catalog-service
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, "dev"}
+  region: ap-northeast-1
+  environment:
+    DATABASE_HOST: ${cf.${self:provider.region}:shared-infra-${opt:stage, self:provider.stage}.ServerlessAuroraEndpointAddress}
+    DATABASE: cinema_catalog
+    DATABASE_USER: foo
+    DATABASE_PASSWORD: bar
+    MOVIES_SERVICE_HOST: ${cf.${self:provider.region}:movies-service-${opt:stage, self:provider.stage}.ServiceEndpoint}
+    ESCLOUD_SECRET_TOKEN: ${self:custom.escloudSecretToken.${opt:stage, self:provider.stage}}
+    ESCLOUD_SERVER_URL: ${self:custom.escloudSecretUrl.${opt:stage, self:provider.stage}}
+    DEBUG: app:*,fetch-circuit-breaker
+    COGNITO_REGION: ${env:COGNITO_REGION}
+    COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID}
+    COGNITO_CLIENT_ID: ${env:COGNITO_CLIENT_ID}
+
+custom:
+  stages:
+    - dev
+    - stg
+    - prd
+  escloudSecretToken:
+    dev: ${ssm:/essearch/dev/escloud-secret-token} #get from ssm parameter store
+  escloudSecretUrl:
+    dev: ${ssm:/essearch/dev/escloud-secret-url} #get from ssm parameter store
+
+package:
+  exclude:
+    - "**/*.ts"
+    - "test/**"
+    - "scripts/**"
+    - ".vscode/**"
+    - "node_modules/**"
+    - "*"
+    - "!package.json"
+
+plugins:
+  - serverless-plugin-warmup
+
+functions:
+  app:
+    handler: dist/src/lambda.http
+    events:
+      - http:
+          path: /
+          method: any
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: any
+          cors: true
+    vpc:
+      securityGroupIds:
+        - ${cf.${self:provider.region}:shared-infra-${opt:stage, self:provider.stage}.ServerlessDefaultSecurityGroup}
+      subnetIds:
+        - ${cf.${self:provider.region}:shared-infra-${opt:stage, self:provider.stage}.ServerlessPrivateSubnetA}
+        - ${cf.${self:provider.region}:shared-infra-${opt:stage, self:provider.stage}.ServerlessPrivateSubnetB}
+        - ${cf.${self:provider.region}:shared-infra-${opt:stage, self:provider.stage}.ServerlessPrivateSubnetC}
+    warmup:
+      enabled:
+        - dev
+
+  db-migrate-up:
+    handler: dist/src/lib/db-migrate.migrate
+    vpc:
+      securityGroupIds:
+        - ${cf.${self:provider.region}:shared-infra-${opt:stage, self:provider.stage}.ServerlessDefaultSecurityGroup}
+      subnetIds:
+        - ${cf.${self:provider.region}:shared-infra-${opt:stage, self:provider.stage}.ServerlessPrivateSubnetA}
+        - ${cf.${self:provider.region}:shared-infra-${opt:stage, self:provider.stage}.ServerlessPrivateSubnetB}
+        - ${cf.${self:provider.region}:shared-infra-${opt:stage, self:provider.stage}.ServerlessPrivateSubnetC}

@@ -1,0 +1,79 @@
+
+service: vf-demo
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+    - serverless-plugin-typescript
+    - serverless-s3-sync
+    - ./plugins/populatedb
+    
+
+custom:
+  deploymentName: vf-demo
+  s3BucketName: ${self:custom.deploymentName}-customer-upload-${self:provider.stage}
+  dynamoDbTableName: ${self:custom.deploymentName}-customer-table-${self:provider.stage}
+  extractFunctionName: ${self:custom.deploymentName}-${self:provider.stage}-extractCustomerData
+  s3Sync:
+    - bucketName: ${self:custom.s3BucketName}
+      localDir: customerdata
+
+provider:
+  name: aws
+  tracing:
+    lambda: true
+  runtime: nodejs10.x
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  # Required if you have multiple AWS Named Profiles
+  profile: speckle
+  environment:
+      ENVIRONMENT: ${self:provider.stage}
+      DYNAMO_TABLE_NAME: ${self:custom.dynamoDbTableName}
+      S3_BUCKET_NAME: ${self:custom.s3BucketName}
+      REGION: ${self:provider.region}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:custom.dynamoDbTableName}"
+    - Effect: Allow
+      Resource: "arn:aws:s3:::${self:custom.s3BucketName}/*"
+      Action:
+        - s3:getObject
+        - s3:listObjects
+        - s3:putObject
+
+
+
+functions:
+  extractCustomerData:
+    handler: handler.extractCustomerData
+
+resources:
+  Resources:
+  
+    # S3
+    CustomerDataBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+            BucketName: ${self:custom.s3BucketName}
+
+    # Dynamo
+    CustomerDataTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.dynamoDbTableName}

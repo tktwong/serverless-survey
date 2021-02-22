@@ -1,0 +1,153 @@
+org: bargenson
+app: versionify
+service: versionify
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'local'}
+  environment: ${file(./env.yml):${self:provider.stage}}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+        - lambda:InvokeAsync
+      Resource: arn:aws:lambda:*:*:function:${self:service}-${self:provider.stage}-*
+    - Effect: "Allow"
+      Action:
+       - dynamodb:Query
+       - dynamodb:Scan
+       - dynamodb:GetItem
+       - dynamodb:PutItem
+       - dynamodb:UpdateItem
+      Resource: arn:aws:dynamodb:*:*:table/ProductVersions*
+
+functions:
+  auth:
+    handler: server/functions/auth.handler
+    events:
+      - http:
+          path: /auth
+          method: GET
+
+  auth-callback:
+    handler: server/functions/auth-callback.handler
+    events:
+      - http:
+          path: /auth/callback
+          method: GET
+
+  install-webhooks:
+    handler: server/functions/install-webhooks.handler
+
+  on-product-update:
+    handler: server/functions/on-product-update.handler
+    events:
+      - http:
+          path: /webhooks/product/create
+          method: POST
+      - http:
+          path: /webhooks/product/update
+          method: POST
+
+  shopify-auth:
+    handler: server/functions/shopify-auth.handler
+    events:
+      - http:
+          path: /shopify
+          method: GET
+          cors: true
+
+  products:
+    handler: server/functions/products.handler
+    events:
+      - http:
+          path: /products
+          method: GET
+
+  product-versions:
+    handler: server/functions/product-versions.handler
+    events:
+      - http:
+          path: /products/{productId}/versions
+          method: GET
+
+  product-version:
+    handler: server/functions/product-version.handler
+    events:
+      - http:
+          path: /products/{productId}/versions/{productVersionDate}
+          method: GET
+
+  restore-product-version:
+    handler: server/functions/restore-product-version.handler
+    events:
+      - http:
+          path: /products/{productId}/versions/{productVersionDate}/restore
+          method: GET
+
+plugins:
+  - serverless-finch
+  - serverless-dynamodb-local
+  - serverless-offline-lambda
+  - serverless-offline
+  - serverless-localtunnel
+
+custom:
+  serverless-offline:
+    port: 8080
+
+  client:
+    bucketName: versionify-client-${self:provider.stage}
+    distributionFolder: client/build
+    indexDocument: index.html
+    errorDocument: index.html
+
+  localtunnel:
+    subdomain: versionify
+    port: 8080
+
+  lambda:
+    host: 0.0.0.0
+    port: 4000
+
+  dynamodb:
+    stages:
+      - local
+    start:
+      migrate: true
+      port: 8000
+
+resources:
+  Resources:
+    productVersions:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ProductVersions
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: updated_at
+            KeyType: RANGE
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: N
+          - AttributeName: updated_at
+            AttributeType: S
+          - AttributeName: shop
+            AttributeType: S
+        GlobalSecondaryIndexes:
+          - IndexName: ShopIndex
+            KeySchema:
+              - AttributeName: shop
+                KeyType: HASH
+              - AttributeName: id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

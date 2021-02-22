@@ -1,0 +1,251 @@
+service: BugatchiMobile
+
+package:
+  individually: true
+  excludeDevDependencies: false
+  exclude:
+    - node_modules/**
+
+plugins
+  - serverless-pseudo-parameters
+  - serverless-dynamodb-local
+  - serverless-appsync-plugin
+  - serverless-appsync-offline
+  - aws-amplify-serverless-plugin
+  - serverless-offline
+
+provider:
+  name: aws
+  stage: dev
+  region: us-east-1
+  profile: serverless-admin
+  runtime: nodejs8.10
+  apiname: products
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - "arn:aws:dynamodb:*:*"
+
+custom:
+  accountId: { Ref: AWS::AccountId }
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+#      noStart: true
+      convertEmptyValues: true
+    seed:
+      domain:
+        sources:
+          - table: bugatchi
+            sources: [./seed-data/Bugatchi.json]
+          - table: categories
+            sources: [./seed-data/Categories.json]
+          - table: subcategories
+            sources: [./seed-data/Subcategories.json]
+  capacities:
+    - table: BugatchiTable  # DynamoDB Resource
+      index:              # List or single index name
+        - CategoryIndex
+      read:
+        minimum: 25        # Minimum read capacity
+        maximum: 1000     # Maximum read capacity
+        usage: 0.75       # Targeted usage percentage
+      write:
+        minimum: 75       # Minimum write capacity
+        maximum: 200      # Maximum write capacity
+        usage: 0.5        # Targeted usage percentage
+  appsync-offline:
+    port: 62222
+    dynamodb:
+      client:
+        endpoint: "http://localhost:8000"
+        region: localhost
+        accessKeyId: a
+        secretAccessKey: a
+  amplify:
+    - filename: src/aws-exports.js
+      type: javascript
+      appClient: WebUserPoolClient
+    - filename: src/graphql/schema.json
+      type: schema.json
+    - filename: schema.graphql
+      type: graphql
+
+  appSync:
+    name: ${self:provider.apiname}
+    region: ${self:provider.region}
+    authenticationType: API_KEY
+    schema: schema.graphql
+    serviceRole: "AppSyncServiceRole"
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: "BugatchiTableDS"
+        description: "DynamoDB Bugatchi Table"
+        config:
+          tableName: bugatchi
+          iamRoleStatements:
+            - Effect: Allow
+              Action:
+                - "dynamodb:Query"
+                - "dynamodb:Scan"
+                - "dynamodb:GetItem"
+                - "dynamodb:PutItem"
+                - "dynamodb:UpdateItem"
+                - "dynamodb:DeleteItem"
+              Resource:
+                - { Fn::GetAtt: [ BugatchiTable, Arn ]}
+                - { Fn::Join: [ '', [ { Fn::GetAtt: [ BugatchiTable, Arn ] }, '/*' ] ] }
+      - type: AMAZON_DYNAMODB
+        name: "CategoriesTableDS"
+        description: "DynamoDB Categories Table"
+        config:
+          tableName: categories
+          iamRoleStatements:
+            - Effect: Allow
+              Action:
+                - "dynamodb:Query"
+                - "dynamodb:Scan"
+                - "dynamodb:GetItem"
+                - "dynamodb:PutItem"
+                - "dynamodb:UpdateItem"
+                - "dynamodb:DeleteItem"
+              Resource:
+                - { Fn::GetAtt: [ CategoriesTable, Arn ]}
+                - { Fn::Join: [ '', [ { Fn::GetAtt: [ CategoriesTable, Arn ] }, '/*' ] ] }
+      - type: AMAZON_DYNAMODB
+        name: "SubcategoriesTableDS"
+        description: "DynamoDB Subcategories Table"
+        config:
+          tableName: subcategories
+          iamRoleStatements:
+            - Effect: Allow
+              Action:
+                - "dynamodb:Query"
+                - "dynamodb:Scan"
+                - "dynamodb:GetItem"
+                - "dynamodb:PutItem"
+                - "dynamodb:UpdateItem"
+                - "dynamodb:DeleteItem"
+              Resource:
+                - { Fn::GetAtt: [ Subcategories, Arn ]}
+                - { Fn::Join: [ '', [ { Fn::GetAtt: [ Subcategories, Arn ] }, '/*' ] ] }
+    mappingTemplates:
+      - dataSource: BugatchiTableDS
+        type: Query
+        field: getBugachi
+        request: "getbugachi-request.vtl"
+        response: "common-response.vtl"
+      - dataSource: CategoriesTableDS
+        type: Query
+        field: getCategories
+        request: "getcategories-request.vtl"
+        response: "common-response.vtl"
+      - dataSource: SubcategoriesTableDS
+        type: Query
+        field: getSubcategories
+        request: "getsubcategories-request.vtl"
+        response: "common-response.vtl"
+      - dataSource: BugatchiTableDS
+        type: Query
+        field: listBugatchis
+        request: "listbugatchis-request.vtl"
+        response: "common-response.vtl"
+      - dataSource: CategoriesTableDS
+        type: Query
+        field: listCategories
+        request: "listcategories-request.vtl"
+        response: "common-response.vtl"
+      - dataSource: SubcategoriesTableDS
+        type: Query
+        field: listSubcategories
+        request: "listsubcategories-request.vtl"
+        response: "common-response.vtl"
+      - dataSource: BugatchiTableDS
+        type: Query
+        field: queryBugatchiByCategoryIndex
+        request: "querybugatchibycategoryindex-request.vtl"
+        response: "common-response.vtl"
+
+resources:
+  Resources:
+    # DynamoDB Tables
+    BugatchiTable:
+      Type: "AWS::DynamoDB::Table"
+      Description: "Data Store for AWS AppSync Bugatchi Type"
+      Properties:
+        TableName: "bugatchi"
+        KeySchema:
+          - AttributeName: "product_id"
+            KeyType: "HASH"
+          - AttributeName: "category"
+            KeyType: "RANGE"
+        AttributeDefinitions:
+          - AttributeName: "product_id"
+            AttributeType: "S"
+          - AttributeName: "category"
+            AttributeType: "S"
+          - AttributeName: "subcategory"
+            AttributeType: "S"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 25
+          WriteCapacityUnits: 75
+        GlobalSecondaryIndexes:
+          - IndexName: "CategoryIndex"
+            KeySchema:
+              - AttributeName: "category"
+                KeyType: "HASH"
+              - AttributeName: "subcategory"
+                KeyType: "RANGE"
+            Projection:
+              ProjectionType: "INCLUDE"
+              NonKeyAttributes:
+                - "name"
+                - "description"
+                - "sale_price"
+                - "retail_price"
+                - "productimage_url"
+            ProvisionedThroughput:
+              ReadCapacityUnits: 25
+              WriteCapacityUnits: 75
+
+    SubCategoriesTable:
+      Type: "AWS::DynamoDB::Table"
+      Description: "Data Store for AWS AppSync Subcategories Type"
+      Properties:
+        TableName: "subcategories"
+        KeySchema:
+          - AttributeName: "subcategory"
+            KeyType: "HASH"
+          - AttributeName: "category"
+            KeyType: "RANGE"
+        AttributeDefinitions:
+          - AttributeName: "subcategory"
+            AttributeType: "S"
+          - AttributeName: "category"
+            AttributeType: "S"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 25
+          WriteCapacityUnits: 25
+
+    CategoriesTable:
+      Type: "AWS::DynamoDB::Table"
+      Description: "Data Store for AWS AppSync Categories Type"
+      Properties:
+        TableName: "categories"
+        KeySchema:
+          - AttributeName: "categories"
+            KeyType: "HASH"
+        AttributeDefinitions:
+          - AttributeName: "categories"
+            AttributeType: "S"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 25
+          WriteCapacityUnits: 25
+

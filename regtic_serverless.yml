@@ -1,0 +1,167 @@
+# For full config options, check the docs: docs.serverless.com
+
+service: regtic-main-service
+# app and org for use with dashboard.serverless.com
+# app: regtic-app
+# org: regtic
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-1
+  memorySize: 256
+  endpointType: regional
+  stage: beta
+  minimumCompressionSize: 1024
+  apiGateway:
+    minimumCompressionSize: 1024
+  timeout: 30
+
+package:
+  individually: true
+  exclude:
+    - "*/**"
+    - "*.*"
+    - ".*"
+
+plugins:
+  - serverless-offline
+  # - serverless-python-requirements
+  - serverless-iam-roles-per-function
+custom:
+  version: /v2/
+
+  vpc:
+    securityGroupIds:
+      - sg-0f3a386d9cb8b3e70
+    subnetIds:
+      - subnet-4237130a
+      - subnet-2de87e77
+  REGTIC_DATABASE_URL: ${env:REGTIC_DATABASE_URL,  "postgres://admin:admin@localhost:5432/regtic"}
+  ENVIRONMENT: ${env:ENVIRONMENT, "development"}
+  ORIGIN:
+    development: "http://localhost:8080"
+    production: "https://demo.regtic.com"
+    beta: "https://dev--affectionate-swartz-baae10.netlify.com"
+
+  pythonRequirements:
+    dockerizePip: true
+    slim: true
+    # In some cases, stripping binaries leads to problems like "ELF load command address/offset not properly aligned", even when done in the Docker environment. You can still slim down the package without *.so files with if we face this case we have to comment out the following:
+    # strip: false
+    useDownloadCache: true
+    useStaticCache: true
+    dockerEnv:
+      - REGTIC_DATABASE_URL
+      - SANCTIONS_LIST
+    individually: true
+    staticCacheMaxVersions: 10
+
+environment:
+  ENVIRONMENT: ${self:custom.ENVIRONMENT}
+  NODE_ENV: ${self:custom.ENVIRONMENT}
+  REGTIC_DATABASE_URL: ${self:custom.REGTIC_DATABASE_URL}
+
+functions:
+  #####
+  # Pep worker
+  #####
+  pepworker:
+    runtime: python3.7
+    events:
+      - http:
+          method: get
+          path: ${self:custom.version}pepworker
+    handler: workers/pepworker/pepworker.upsert_run
+    module: workers/pepworker
+    vpc: ${self:custom.vpc}
+    package:
+      exclude:
+        - "!workers/pythondbtools/**"
+        - "!workers/pepworker/**"
+    environment:
+      ENVIRONMENT: ${self:custom.ENVIRONMENT}
+      REGTIC_DATABASE_URL: ${self:custom.REGTIC_DATABASE_URL}
+
+  #####
+  # Sanction worker
+  #####
+  sanctionworker:
+    runtime: python3.7
+    events:
+      - http:
+          method: get
+          path: ${self:custom.version}sanctionworker
+    handler: workers/sanctionworker/sanctionworker.run
+    module: workers/sanctionworker
+    package:
+      exclude:
+        - "!workers/pythondbtools/**"
+        - "!workers/pepworker/**"
+    vpc: ${self:custom.vpc}
+    environment:
+      ENVIRONMENT: ${self:custom.ENVIRONMENT}
+      REGTIC_DATABASE_URL: ${self:custom.REGTIC_DATABASE_URL}
+      SANCTIONS_LIST: https://webgate.ec.europa.eu/europeaid/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content?token=n002wvni
+
+  #####
+  # CVR worker
+  #####
+  cvr-parse:
+    runtime: nodejs12.x
+    events:
+      - http:
+          method: post
+          path: ${self:custom.version}cvr-parse
+    handler: workers/vat-dk/index.scrollAndParse
+    package:
+      exclude:
+        - "!workers/vat-dk/**"
+    vpc: ${self:custom.vpc}
+    environment:
+      ENVIRONMENT: ${self:custom.ENVIRONMENT}
+      NODE_ENV: ${self:custom.ENVIRONMENT}
+      REGTIC_DATABASE_URL: ${self:custom.REGTIC_DATABASE_URL}
+      CVR_BASE_URL: ${env:CVR_BASE_URL, "https://shared-cvr.herokuapp.com/"}
+      CVR_AUTH_TOKEN: ${env:CVR_AUTH_TOKEN}
+
+  #####
+  # API
+  #####
+  api:
+    handler: api/bin/main
+    runtime: go1.x
+    events:
+      - http:
+          path: ${self:custom.version}find_companies
+          cors: true
+          method: get
+      - http:
+          path: ${self:custom.version}validate_company
+          cors: true
+          method: get
+    vpc: ${self:custom.vpc}
+    package:
+      exclude:
+        - "!api/bin/main"
+    environment:
+      ENVIONMENT: ${self:custom.ENVIRONMENT}
+      REGTIC_DATABASE_URL: ${self:custom.REGTIC_DATABASE_URL}
+      ORIGIN: ${self:custom.ORIGIN.${self:provider.stage}}
+
+  signup:
+    runtime: nodejs12.x
+    events:
+      - http:
+          method: get
+          cors: true
+          path: ${self:custom.version}signup
+    handler: api/signup/index.signup
+    package:
+      exclude:
+        - "!api/signup/**"
+    environment:
+      ENVIONMENT: ${self:custom.ENVIRONMENT}
+      NODE_ENV: ${self:custom.ENVIRONMENT}
+      SLACK_WEBHOOK_URL: ${env:SLACK_WEBHOOK_URL}
+      ORIGIN: ${self:custom.ORIGIN.${self:provider.stage}}

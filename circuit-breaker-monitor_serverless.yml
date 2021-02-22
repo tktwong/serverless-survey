@@ -1,0 +1,93 @@
+service: circuit-breaker-serverless-monitor
+
+plugins:
+  - serverless-python-requirements
+  - serverless-stack-output
+  - serverless-appsync-plugin
+  - serverless-pseudo-parameters
+  - serverless-s3-sync
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: '${opt:stage, ''dev''}'
+  region: eu-west-1
+  profile: circuit_breaker
+  cfLogs: true
+  environment:
+    REDIS_HOST:
+      "Fn::GetAtt": [ElastiCacheCluster, RedisEndpoint.Address]
+
+custom:
+  dns: '${file(resources/dns.yml)}'
+  userPoolName: '${self:service}UserPool${self:provider.stage}'
+  accountId: #{AWS::AccountId}
+  output:
+    handler: output.handler
+    file: outputs.yaml
+  pythonRequirements:
+    dockerizePip: non-linux
+    slim: true
+    strip: false
+    fileName: requirements.txt
+  appSync: '${file(resources/appsync.yml)}'
+  s3Sync:
+    - bucketName: ${self:custom.dns.customDomain.domainName}
+      localDir: web/build
+      acl: public-read
+      followSymlinks: true
+      defaultContentType: text/html
+      params:
+        - index.html:
+            CacheControl: 'no-cache'
+        - "*.js":
+            CacheControl: "public, max-age: 3600"
+
+package:
+  exclude:
+    - node_modules/**
+    - tests/**
+    - web/**
+    - .idea/**
+    - .ipynb_checkpoints/**
+    - .pytest_cache/**
+
+functions:
+  liveCircuitBreakerState:
+    handler: app.monitor.handle
+    role: CircuitBreakerDataSourceLambdaIamRole
+    memorySize: 128
+    timeout: 2
+    vpc:
+      securityGroupIds:
+        - "Fn::GetAtt": PrivateLambdaSecurityGroup.GroupId
+      subnetIds:
+        - Ref: PrivateSubnetA
+
+resources:
+  - ${file(resources/dynamodb.yml)}
+  - ${file(resources/iam.yml)}
+  - ${file(resources/network.yml)}
+  - ${file(resources/internetGWForVpc.yml)}
+  - ${file(resources/static.yml)}
+  - ${file(resources/logGroups.yml)}
+  - Resources:
+      ElastiCacheCluster:
+        DependsOn: CacheStorageSecurityGroup
+        Type: AWS::ElastiCache::CacheCluster
+        Properties:
+          AutoMinorVersionUpgrade: true
+          Engine: redis
+          CacheNodeType: ${file(resources/config.yml):CACHE_INSTANCE_SIZE}
+          NumCacheNodes: 1
+          VpcSecurityGroupIds:
+            - "Fn::GetAtt": CacheStorageSecurityGroup.GroupId
+          CacheSubnetGroupName:
+            Ref: CacheSubnetGroup
+
+Outputs:
+  RedisHost:
+    Value:
+      Fn::GetAtt:
+        - ElastiCacheCluster
+        - RedisEndpoint.Address

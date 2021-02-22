@@ -1,0 +1,186 @@
+service: example-local-env
+
+plugins:
+  - "@moe-tech/serverless-plugin-local-env"
+
+package:
+  excludeDevDependencies: false
+  exclude:
+    - '!node_modules/**'
+  include:
+    - functions/handler.js
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  versionFunctions: false
+  region: us-west-2
+  stage: dev
+ 
+  environment:
+    imported:
+      Fn::ImportValue: ${self:service}-${self:provider.stage}-sqs
+    ddbArn:
+      Fn::GetAtt: 
+        - dynamoDB
+        - Arn
+    snsRef:
+      Ref: sns
+    snsTopicName:
+      Fn::GetAtt:
+        - sns
+        - TopicName
+    sqsQueueRef:
+      Ref: sqsQueue
+    sqsQueueArn:
+      Fn::GetAtt: 
+        - sqsQueue
+        - Arn
+    sqsQueueName:
+      Fn::GetAtt: 
+        - sqsQueue
+        - QueueName
+    secretArn:
+      Ref: secret
+    paramName:
+      Ref: param
+    paramType:
+      Fn::GetAtt:
+        - param
+        - Type
+    paramValue:
+      Fn::GetAtt:
+        - param
+        - Value
+    stateMachineRef:
+      Ref: stateMachine
+    stateMachineName:
+      Fn::GetAtt:
+        - stateMachine
+        - Name
+    rdsRef:
+      Ref: rds
+    rdsAddress:
+      Fn::GetAtt:
+        - rds
+        - Endpoint.Address
+    rdsPort:
+      Fn::GetAtt:
+        - rds
+        - Endpoint.Port
+
+custom:
+  idx: 0
+
+functions:
+  hello:
+    handler: functions/handler.handler
+    environment:
+      HANDLER: ${self:functions.hello.handler}
+      IDX: ${self:custom.idx}
+      rLambdaName:
+        Ref: Hello2LambdaFunction
+      rLambdaArn:
+        Fn::GetAtt: Hello2LambdaFunction.Arn
+
+  hello2:
+    handler: functions/handler2.handler
+    environment:
+      HANDLER: ${self:functions.hello.handler}
+      IDX: ${self:custom.idx}
+
+resources:
+  Resources:
+    dynamoDB:
+      Type: AWS::DynamoDB::Table
+      Properties: 
+        TableName: test
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: test
+            AttributeType: S
+        KeySchema:
+          - AttributeName: test
+            KeyType: HASH
+
+    sns:
+      Type: AWS::SNS::Topic
+      Properties: 
+        TopicName: test-sns
+
+    sqsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: TestQueue
+
+    secret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:service}/${self:provider.stage}/secret
+        SecretString: '{"test": "1"}'
+
+    param:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: ${self:service}-${self:provider.stage}-param
+        Type: String
+        Value: Test String
+
+    iamRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - states.amazonaws.com
+              Action:
+                - 'sts:AssumeRole'
+        Policies:
+          - PolicyName: "InvokeHello2"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                  - 
+                    Effect: "Allow"
+                    Action: "lambda:InvokeFunction"
+                    Resource:
+                      - '*'
+    stateMachine:
+      Type: AWS::StepFunctions::StateMachine
+      Properties:
+        StateMachineName: HelloWorld-StateMachine
+        RoleArn:
+          Fn::GetAtt: 
+            - iamRole
+            - Arn
+        DefinitionString: |-
+          {
+            "StartAt": "HelloWorld",
+            "States": {
+              "HelloWorld": {
+                "Type": "Pass",
+                "End": true
+              }
+            }
+          }
+    rds:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        AllocatedStorage: '20'
+        DBInstanceClass: db.t2.micro
+        DBInstanceIdentifier: test-db
+        DBName: test
+        Engine: MySQL
+        MasterUsername: admin
+        MasterUserPassword: password
+      DeletionPolicy: Snapshot
+
+  Outputs:
+    test:
+      Value:
+        Ref: sqsQueue
+      Export:
+        Name: ${self:service}-${self:provider.stage}-sqs

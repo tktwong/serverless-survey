@@ -1,0 +1,58 @@
+service: bingo-board
+org: UA-ACM
+plugins:
+  - serverless-domain-manager
+frameworkVersion: '>=1.28.0 <2.0.0'
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: dev
+  region: us-east-1
+  profile: personal
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+functions:
+  getBoard:
+    handler: bin/getBoard
+    environment:
+      db: dev-bingoTable
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:Query
+        Resource:
+          - "Fn::GetAtt": [ bingoTable, Arn ]
+    events:
+      - http:
+          path: /
+          method: get
+  
+resources:
+  Resources:
+    bingoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: dev-bingoTable
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: boardName
+            AttributeType: S
+        KeySchema:
+          - AttributeName: boardName
+            KeyType: HASH
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  customDomain:
+    domainName: api.jbrookins.dev
+    basePath: 'bingo'
+    stage: "${self:custom.stage}"
+    createRoute53Record: true

@@ -1,0 +1,93 @@
+service: tasks-api
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-east-1
+  environment:
+    USERS_TABLE: ${self:custom.tableName}
+    TASK_NOTIFIER_EMAIL: biscayne3@gmail.com
+    REGION: us-east-1
+  apiKeys:
+    - ${self:provider.stage}-api-keys
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["UsersDynamoDBTable", "Arn" ] }
+  
+resources:
+  Resources:
+    UsersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: taskId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: taskId
+            KeyType: HASH
+
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
+
+functions:
+  getTasks:
+    handler: functions/get-tasks.getTasks
+    events:
+      - http:
+          path: api/v1/tasks
+          method: GET
+          cors: true
+          private: true
+  createTask:
+    handler: functions/create-task.createTask
+    events:
+      - http:
+          path: api/v1/tasks
+          method: POST
+          cors: true
+          private: true
+  updateTask:
+    handler: functions/update-task.updateTask
+    events:
+      - http:
+          path: api/v1/tasks
+          method: PUT
+          cors: true
+          private: true
+  deleteTask:
+    handler: functions/delete-task.deleteTask
+    events:
+      - http:
+          path: api/v1/tasks/{taskId}
+          method: DELETE
+          cors: true
+          private: true
+  tasks-notifier:
+    handler: functions/task-notifier.notifyUser
+    events:
+      - schedule: rate(1 day)
+
+
+plugins:
+  - serverless-offline-scheduler
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  tableName: 'users-tasks-${self:provider.stage}'
+  dynamodb:
+    start:
+      port: 8002
+      migrate: true

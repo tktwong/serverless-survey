@@ -1,0 +1,97 @@
+service:
+  name: yigim-server
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline
+  # - serverless-domain-manager
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ap-northeast-2
+  profile: yigim
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:*'
+      Resource: '*'
+custom:
+  webpack:
+    keepOutputDirectory: true
+    includeModules: true
+    packager: yarn
+  serverless-offline:
+    httpPort: 9000
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      migrate: true
+  # customDomain:
+  #   domainName: yigim.com
+  #   stage: ${opt:stage, 'dev'}
+  #   basePath: ${opt:stage, 'dev'}
+  #   endpointType: regional
+  #   createRoute53Record: true
+functions:
+  #  --- http ---
+  testsCreate:
+    handler: src/http/testsCreate.handler
+    events:
+      - http:
+          method: post
+          cors: true
+          path: tests
+  testsReadItem:
+    handler: src/http/testsReadItem.handler
+    events:
+      - http:
+          method: get
+          cors: true
+          path: tests/{testId}
+  resultsCreate:
+    handler: src/http/resultsCreate.handler
+    events:
+      - http:
+          method: post
+          cors: true
+          path: tests/{testId}/results
+  resultsReadList:
+    handler: src/http/resultsReadList.handler
+    events:
+      - http:
+          method: get
+          cors: true
+          path: tests/{testId}/results
+resources:
+  Resources:
+    TestTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: 'test'
+    ResultTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: testId
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: testId
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: 'result'

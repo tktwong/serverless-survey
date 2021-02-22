@@ -1,0 +1,54 @@
+service: ndwords
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  # These two options are required to silence deprecation warnings from serverless
+  apiGateway: 
+    shouldStartNameWithService: true
+  lambdaHashingVersion: 20201221
+
+plugins:
+  - serverless-iam-roles-per-function
+
+functions:
+  ndwords:
+    handler: src/ndwords/handler.ndwords
+    events:
+      - http:
+          method: POST
+          path: /ndwords
+          authorizer:
+            name: authorizer
+    environment:
+      REGION:
+        !Ref 'AWS::Region'
+      BUCKET_NAME: 
+        Ref: ndwordsBucket
+    iamRoleStatements:
+    -  Effect: "Allow"
+       Action:
+         - "s3:PutObject"
+       Resource:
+         Fn::Join:
+           - ""
+           - - "arn:aws:s3:::"
+             - Ref: ndwordsBucket
+             - '/*'
+  authorizer:
+    handler: src/authorizer/handler.authorizer
+    environment:
+      USERNAME: ${opt:username, 'admin'}
+      # Passwords in config like this is a BAD practice 
+      # This only here because this work will not be going to production
+      PASSWORD: ${opt:password, 'admin'}
+
+resources:
+  Resources:
+    ndwordsBucket:
+      # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-bucket.html
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ndwords

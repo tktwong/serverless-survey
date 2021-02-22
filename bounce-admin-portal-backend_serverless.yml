@@ -1,0 +1,120 @@
+service: admin-portal
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+
+  # Load our webpack config
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+  # Load our secret environment variables based on the current stage.
+  # Fallback to default if it is not in prod.
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: eu-west-2
+
+  # 'iamRoleStatement' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    stripeSecretKey: ${self:custom.environment.stripeSecretKey}
+
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /notes
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+
+  createCustomer:
+    handler: createCustomer.main
+    events:
+      - http:
+          path: createCustomer
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  subscribe:
+    handler: subscribe.main
+    events:
+      - http:
+          path: subscribe
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  createProduct:
+    handler: createProduct.main
+    events:
+      - http:
+          path: createProduct
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  createPlan:
+    handler: createPlan.main
+    events:
+      - http:
+          path: createPlan
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  updateDefaultPaymentMethod:
+    handler: updateDefaultPaymentMethod.main
+    events:
+      - http:
+          path: updateDefaultPaymentMethod
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  getCustomer:
+    handler: getCustomer.main
+    events:
+      - http:
+          path: getCustomer
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  cancelSubscription:
+    handler: cancelSubscription.main
+    events:
+      - http:
+          path: cancelSubscription
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  reactivateSubscription:
+    handler: reactivateSubscription.main
+    events:
+      - http:
+          path: reactivateSubscription
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+
+# Create our resources with separate CloudFormation templates
+resources:
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

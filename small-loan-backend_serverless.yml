@@ -1,0 +1,116 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: small-loan
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+plugins:
+  # - serverless-bundle # Package our functions with Webpack
+  - serverless-plugin-typescript
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  tableName: ${self:custom.stage}-small-loan
+  tag: 'small-loan'
+  bucket: ${self:custom.stage}-small-loan
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: us-west-2
+  stage: dev
+  memorySize:
+    128
+    # These environment variables are made available to our functions
+  # under process.env.
+
+  #stripeSecretKey: ${env:STRIPE_SECRET_KEY} .env is used to store the variables you dont want save in git (password, keys)
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  iamRoleStatements:
+    # - Effect: Allow
+    #   Action:
+    #     - dynamodb:DescribeTable
+    #     - dynamodb:Query
+    #     - dynamodb:Scan
+    #     - dynamodb:GetItem
+    #     - dynamodb:PutItem
+    #     - dynamodb:UpdateItem
+    #     - dynamodb:DeleteItem
+    #   Resource:
+    #     Fn::GetAtt:
+    #       - SmallLoanTable
+    #       - Arn
+    # - Effect: Allow
+    #   Action:
+    #     - 's3:*'
+    #   Resource:
+    #     Fn::GetAtt:
+    #       - S3Bucket
+    #       - Arn
+
+    - Effect: Allow
+      Action:
+        - 's3:*'
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - 'sns:*'
+        - 'sqs:*'
+        - 'textract:*'
+      # Restrict our IAM role permissions to
+      # the specific table for the stage
+      Resource:
+        '*'
+        # - 'Fn::GetAtt': [PumpItTable, Arn]
+
+functions:
+  textractS3:
+    timeout: 60
+    handler: src/s3-textract.main
+    tags:
+      App: ${self:custom.tag}
+    environment:
+      textractRoleArn:
+        Fn::GetAtt:
+          - TextractServiceRole
+          - Arn
+
+  parseJsonS3:
+    handler: src/s3-jsonparse.main
+    # events:
+    #   - s3:
+    #       defined in resources/s3-bucket.yml
+    tags:
+      App: ${self:custom.tag}
+    environment:
+      tableName: ${self:custom.tableName}
+
+resources:
+  - ${file(resources/s3-bucket.yml)}
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/iam.yml)}

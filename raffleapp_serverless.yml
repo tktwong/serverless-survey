@@ -1,0 +1,124 @@
+service: raffle-py
+
+plugins:
+  - serverless-python-requirements
+  - serverless-domain-manager
+
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+  customDomain:
+    domainName: 'raffle.serverlessteam.com'
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+provider:
+  name: aws
+  runtime: python3.6
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["RafflesDynamoDBTable", "Arn" ] }
+        - { "Fn::GetAtt": ["EntriesDynamoDBTable", "Arn" ] }
+    
+  environment:
+    RAFFLE_TABLE: { "Ref": "RafflesDynamoDBTable" }
+    ENTRY_TABLE: { "Ref": "EntriesDynamoDBTable" }
+
+functions:
+  create:
+    handler: handlers/create.handler
+    events:
+      - http:
+          path: /create
+          method: post
+          cors: true
+  listRaffles:
+    handler: handlers/list_raffles.handler
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true
+  getRaffle:
+    handler: handlers/get_raffle.handler
+    events:
+      - http:
+          path: /{shortcode}
+          method: get
+          request:
+            parameters:
+              paths:
+                shortcode: true
+          cors: true
+  setWinner:
+    handler: handlers/set_winner.handler
+    events:
+      - http:
+          path: /{shortcode}
+          method: post
+          request:
+            parameters:
+              paths:
+                shortcode: true          
+          cors: true
+
+# public APIs
+  register:
+    handler: handlers/register.handler
+    events:
+      - http:
+          path: /{shortcode}/register
+          method: post
+          request:
+            parameters:
+              paths:
+                shortcode: true          
+          cors: true
+
+resources:
+  Resources:
+    RafflesDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: shortcode
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: shortcode
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    EntriesDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: shortcode
+            AttributeType: S
+          -
+            AttributeName: email
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: shortcode
+            KeyType: HASH
+          -
+            AttributeName: email
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

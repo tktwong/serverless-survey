@@ -1,0 +1,71 @@
+service: mlchallenge
+plugins:
+  - serverless-offline
+  - serverless-dynamodb-local
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    DYNAMODB_TABLE: "CHALLENGE"
+  iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+        Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+custom:
+  serverless-offline:
+    resourceRoutes: true
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: false
+      migrate: true
+      # Comment if you don't have a DynamoDB running locally
+      noStart: false
+
+functions:
+  topsecret:
+    handler: handler.topsecret
+    events:
+      - http:
+          path: topsecret
+          method: POST
+          cors: true
+
+  get_ship:
+    handler: handler.getShip
+    events:
+      - http:
+          path: topsecret_slice
+          method: GET
+          cors: true
+
+  saveSat:
+    handler: handler.saveSat
+    events:
+      - http:
+          path: topsecret_slice/{satellite_name}
+          method: POST
+          cors: true
+
+resources:
+  Resources:
+    SatDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

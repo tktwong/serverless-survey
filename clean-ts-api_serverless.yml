@@ -1,0 +1,98 @@
+service: pikachu-auth
+
+plugins:
+  - serverless-offline
+  - serverless-domain-manager
+  - serverless-plugin-ifelse
+  - serverless-plugin-typescript
+
+package:
+  excludeDevDependencies: true
+
+custom:
+  customDomain:
+    domainName: pikachu-auth.events.com
+    basePath: ${opt:stage, ‘dev’}
+    stage: ${opt:stage, ‘dev’}
+    createRoute53Record: true
+  serverlessIfElse:
+    - If: ‘“${self:custom.customDomain.stage}” == “dev”’
+      Exclude:
+        - provider.vpc
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 356
+  vpc:
+    securityGroupIds:
+      - sg-0ff8b96509285bb87
+    subnetIds:
+      - subnet-016126229ce1e5577
+      - subnet-0727bb722d675dff4
+      - subnet-0e737bd38295d6821
+  region: us-west-2
+  timeout: 28
+  stage: ${opt:stage, 'dev'}
+  deploymentBucket:
+    name: serverless.${self:provider.region}.events.com
+  environment:
+    JWT_SECRET: ${ssm:/${self:provider.stage}/JWT_SECRET~true}
+    SENTRY_DSN: ${ssm:/${self:provider.stage}/SENTRY_DSN~true}
+    NODE_ENV: ${ssm:/${self:provider.stage}/NODE_ENV}
+
+iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - s3:GetObject
+      - s3:PutObject
+    Resource: ‘*’
+  - Effect: ‘Allow’
+    Action:
+      - ses:SendEmail
+      - ses:SendRawEmail
+    Resource: ‘*’
+
+functions:
+  signup:
+    handler: src/main/handlers/SignUpHandler.handle
+    events:
+      - http:
+          path: /auth/sign-up
+          method: post
+          cors:
+            origins:
+              - https://localhost:3000
+              - https://dashboard.events.com
+              - https://dashboard.dev.events.com
+              - chrome-extension://edlcogmibmmnfenjpecpfbikeibhcopj
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Cookie
+            allowCredentials: true
+  signin:
+    handler: src/main/handlers/SignInHandler.handle
+    events:
+      - http:
+          path: /auth/sign-in
+          method: post
+          cors:
+            origins:
+              - https://localhost:3000
+              - https://dashboard.events.com
+              - https://dashboard.dev.events.com
+              - chrome-extension://edlcogmibmmnfenjpecpfbikeibhcopj
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+              - Cookie
+            allowCredentials: true

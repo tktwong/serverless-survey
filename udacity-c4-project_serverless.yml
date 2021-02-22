@@ -1,0 +1,377 @@
+service:
+  name: workshop-lottery-app
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-plugin-canary-deployments
+  - serverless-aws-documentation
+  - serverless-reqvalidator-plugin
+  - serverless-plugin-tracing
+
+package:
+  individually: false
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-2'}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  environment:
+    WORKSHOPS_TABLE: FFWorkshops-${self:provider.stage}
+    WS_REGISTRANTS_TABLE: FFWSReg-${self:provider.stage}
+    REGISTRANTS_TABLE: FFReg-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+    JWKS_URL: https://dev-5-kp86z1.auth0.com/.well-known/jwks.json
+
+custom:
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Registrant API
+        description: Serverless application for lottery registrations
+    models:
+      - name: CreateRegistrantRequest
+        contentType: application/json
+        schema: ${file(models/create-registrant.json)}
+      - name: CreateWorkshopRequest
+        contentType: application/json
+        schema: ${file(models/create-workshop.json)}
+      - name: CreateWSRegistrantRequest
+        contentType: application/json
+        schema: ${file(models/create-wsregistrant.json)}
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetRegistrants:
+    handler: src/lambda/http/getRegistrants.handler
+    events:
+      - http:
+          method: get
+          path: registrants
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Get all registrants
+            description: Get all lottery registrants
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.REGISTRANTS_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  GetRegistrant:
+    handler: src/lambda/http/getRegistrant.handler
+    events:
+      - http:
+          method: get
+          path: registrants/{emailAddress}
+          cors: true
+          documentation:
+            summary: Get a registrant by email address
+            description: Get a lottery registrant
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.REGISTRANTS_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  GetWSRegistrants:
+    handler: src/lambda/http/getWSRegistrants.handler
+    events:
+      - http:
+          method: get
+          path: wsRegistrants/{workshopId}
+          cors: true
+          #authorizer: Auth
+          documentation:
+            summary: Get all workshop registrants for a selected workshop
+            description: Get all lottery registrants for a selected workshop
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          # - dynamodb:Query
+          - dynamodb:Scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WS_REGISTRANTS_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  # GetWSRegistrant:
+  #   handler: src/lambda/http/getWSRegistrant.handler
+  #   events:
+  #     - http:
+  #         method: get
+  #         path: wsRegistrants/{emailAddress}
+  #         cors: true
+  #         documentation:
+  #           summary: Get workshops for a registrant
+  #           description: Get workshops selected by registrant
+  #   iamRoleStatements:
+  #     - Effect: Allow
+  #       Action:
+  #         - dynamodb:GetItem
+  #       Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WS_REGISTRANTS_TABLE}
+  #     - Effect: Allow
+  #       Action:
+  #         - codedeploy:*
+  #       Resource:
+  #         - '*'
+  #   deploymentSettings:
+  #     type: Linear10PercentEvery1Minute
+  #     alias: Live
+
+  SendEmail:
+    handler: src/lambda/http/sendEmail.handler
+    events:
+      - http:
+          method: post
+          path: nodemailer
+          cors: true
+          documentation:
+            summary: send an email to the registrant
+            description: sends an email to the registrant confirming enrollment
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - 'ses:SendEmail'
+        Resource:
+          - '*'
+        Condition:
+          StringEquals:
+            ses:FromAddress:
+              - 'workshops@kathy-fish.com'
+
+  CreateWSRegistrant:
+    handler: src/lambda/http/createWSRegistrant.handler
+    events:
+      - http:
+          method: post
+          path: wsRegistrants
+          cors: true
+          #authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a workshop registrant
+            description: Create a new workshop registrant
+            requestModels:
+              'application/json': CreateWSRegistrantRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WS_REGISTRANTS_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  CreateRegistrant:
+    handler: src/lambda/http/createRegistrant.handler
+    events:
+      - http:
+          method: post
+          path: registrants
+          cors: true
+          #authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a registrant
+            description: Create a new registrant
+            requestModels:
+              'application/json': CreateRegistrantRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.REGISTRANTS_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  GetWorkshops:
+    handler: src/lambda/http/getWorkshops.handler
+    events:
+      - http:
+          method: get
+          path: workshops
+          cors: true
+          #authorizer: Auth
+          documentation:
+            summary: Get all workshops
+            description: Get all workshops
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WORKSHOPS_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  CreateWorkshop:
+    handler: src/lambda/http/createWorkshop.handler
+    events:
+      - http:
+          method: post
+          path: workshops
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a workshop
+            description: Create a new workshop
+            requestModels:
+              'application/json': CreateWorkshopRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WORKSHOPS_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+  DeleteWorkshop:
+    handler: src/lambda/http/deleteWorkshop.handler
+    events:
+      - http:
+          method: delete
+          path: workshops/{workshopId}
+          cors: true
+          authorizer: Auth
+          documentation:
+            summary: Delete a workshop
+            description: Delete a workshop
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.WORKSHOPS_TABLE}
+      - Effect: Allow
+        Action:
+          - codedeploy:*
+        Resource:
+          - '*'
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    WSRegistrantsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: workshopId
+            AttributeType: S
+          - AttributeName: emailAddress
+            AttributeType: S
+        KeySchema:
+          - AttributeName: workshopId
+            KeyType: HASH
+          - AttributeName: emailAddress
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.WS_REGISTRANTS_TABLE}
+
+    WorkshopsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: workshopId
+            AttributeType: S
+          - AttributeName: workshopStart
+            AttributeType: S
+        KeySchema:
+          - AttributeName: workshopId
+            KeyType: HASH
+          - AttributeName: workshopStart
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.WORKSHOPS_TABLE}
+
+    RegistrantsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: emailAddress
+            AttributeType: S
+        KeySchema:
+          - AttributeName: emailAddress
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.REGISTRANTS_TABLE}
+
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false

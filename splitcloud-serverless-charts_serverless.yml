@@ -1,0 +1,360 @@
+# Welcome to Serverless!
+#
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: splitcloud-serverless-charts-service # NOTE: update this with your service name
+package:
+  exclude:
+   - screenshots/**
+   - scripts
+custom:
+  serverless-offline:
+    httpPort: 7777
+  domains:
+    prod: rest.splitcloud-app.com
+    dev: dev-rest.splitcloud-app.com
+  myStage: ${opt:stage, self:provider.stage}
+  prod: 
+    sc_charts_cache: rate(1 day)
+    schedule_token: rate(2 minutes)
+    schedule_discovery: rate(1 day)
+    schedule_country_charts: cron(0 8 ? * MON *)
+    schedule_wrapped_yearly: cron(0 13 1 12 ? *)
+    schedule_country_wrapped: cron(0 13 15 12 ? *)
+    country_charts_queue: "https://sqs.us-east-1.amazonaws.com/348868901434/splitcloud_charts_by_region"
+    country_charts_arn: "arn:aws:sqs:us-east-1:348868901434:splitcloud_charts_by_region"
+    charts_queue_enabled: true
+    post_generator_arn: "arn:aws:sqs:us-east-1:348868901434:post_generator_queue"
+    post_generator_queue: "https://sqs.us-east-1.amazonaws.com/348868901434/post_generator_queue"
+    referrer_promocode_queue: "https://sqs.us-east-1.amazonaws.com/348868901434/referrer_promocode_queue_prod"
+    referrer_queue_arn: "arn:aws:sqs:us-east-1:348868901434:referrer_promocode_queue_prod"
+    referrer_queue_enabled: true
+  dev: 
+    sc_charts_cache: 
+    schedule: 
+    schedule_token:
+    schedule_discovery:
+    schedule_country_charts:
+    schedule_wrapped_yearly:
+    schedule_country_wrapped:
+    country_charts_queue: "https://sqs.us-east-1.amazonaws.com/348868901434/splitcloud_charts_by_region_dev"
+    country_charts_arn: "arn:aws:sqs:us-east-1:348868901434:splitcloud_charts_by_region_dev"
+    charts_queue_enabled: true
+    post_generator_arn: "arn:aws:sqs:us-east-1:348868901434:post_generator_queue_dev"
+    post_generator_queue: "https://sqs.us-east-1.amazonaws.com/348868901434/post_generator_queue_dev"
+    referrer_promocode_queue: "https://sqs.us-east-1.amazonaws.com/348868901434/referrer_promocode_queue_dev"
+    referrer_queue_arn: "arn:aws:sqs:us-east-1:348868901434:referrer_promocode_queue_dev"
+    referrer_queue_enabled: false
+  bucket: "www.splitcloud-app.com"
+  cache_bucket: "com.splitcloud-app.cache"
+  app_bucket: "com.splitcloud-app.app-sls"
+  customDomain:
+    domainName: ${self:custom.domains.${self:custom.myStage}}
+    basePath: ''
+    stage: "${self:custom.myStage}"
+    createRoute53Record: true
+  
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  timeout: 10
+  versionFunctions: false
+  apiGateway:
+    minimumCompressionSize: 2048
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::${self:custom.cache_bucket}/*"
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "arn:aws:s3:::${self:custom.app_bucket}/*"
+    - Effect: "Allow"
+      Action:
+      - sqs:SendMessage
+      - sqs:GetQueueUrl
+      - sqs:ReceiveMessage
+      - sqs:DeleteMessage
+      Resource: ${self:custom.${self:custom.myStage}.country_charts_arn}
+    - Effect: "Allow"
+      Action:
+      - sqs:SendMessage
+      - sqs:GetQueueUrl
+      - sqs:ReceiveMessage
+      - sqs:DeleteMessage
+      Resource: ${self:custom.${self:custom.myStage}.post_generator_arn}
+    - Effect: "Allow"
+      Action:
+      - sqs:SendMessage
+      - sqs:GetQueueUrl
+      - sqs:ReceiveMessage
+      - sqs:DeleteMessage
+      Resource: ${self:custom.${self:custom.myStage}.referrer_queue_arn}
+    - Effect: "Allow"
+      Action:
+      - SNS:Publish
+      Resource: !Ref chartCreatedTopic
+  environment:
+      BUCKET: ${self:custom.bucket}
+      STAGE: ${self:custom.myStage}
+      CACHE_BUCKET: ${self:custom.cache_bucket}
+      APP_BUCKET: ${self:custom.app_bucket}
+      COUNTRY_CHARTS_QUEUE: ${self:custom.${self:custom.myStage}.country_charts_queue}
+      REFERRER_PROMO_QUEUE: ${self:custom.${self:custom.myStage}.referrer_promocode_queue}
+      CHART_CREATED_TOPIC: !Ref chartCreatedTopic
+resources:
+  Resources:
+    chartCreatedTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-${self:custom.myStage}-country-chart-created
+    referrerPromocodeQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: referrer_promocode_queue_${self:custom.myStage}
+    snsToPostGeneratorSqsPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - ${self:custom.${self:custom.myStage}.post_generator_queue}
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "allow-sns-messages"
+              Effect: Allow
+              Principal: "*"
+              Resource: ${self:custom.${self:custom.myStage}.post_generator_arn}
+              Action: "SQS:SendMessage"
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref chartCreatedTopic
+    countryChartTopicToPostGenQ:
+      Type: 'AWS::SNS::Subscription'
+      Properties:
+        TopicArn: !Ref chartCreatedTopic
+        Endpoint: ${self:custom.${self:custom.myStage}.post_generator_arn}
+        Protocol: sqs
+        RawMessageDelivery: 'true'
+functions:
+  charts_endpoint:
+    handler: src/handlers/api.chartsEndpoint
+    events:
+      - http:
+          path: charts
+          method: get
+  top_regions:
+    handler: src/handlers/api.topRegions
+    events:
+      - http:
+          path: regions
+          method: get
+  postsRegions:
+    handler: src/handlers/api.postsRegions
+    events:
+      - http:
+          path: posts/regions
+          method: get
+  log_collector:
+    timeout: 30
+    handler: src/handlers/api.logCollector
+    events:
+      - http:
+          path: app/feedback/{deviceid}
+          method: POST
+          request:
+            parameters:
+              paths:
+                deviceid: true
+  appReferrer:
+    handler: src/handlers/api.appReferrer
+    events: 
+      - http:
+          path: app/referrer
+          method: POST
+  appPromoReferrer:
+    handler: src/handlers/api.appPromocodeRef
+    events: 
+      - http:
+          path: app/promocode/referrer
+          method: POST
+  exploreRelated:
+    handler: src/handlers/api.exploreRelated
+    events:
+      - http:
+          path: explore/related
+          method: POST
+  radio_countrycodes:
+    handler: src/handlers/api.radioCountryCodes
+    events:
+      - http:
+          path: radio/countrycodes
+          method: get
+  app_config_api:
+    handler: src/handlers/api.appConfigApi
+    events:
+      - http:
+          path: app/config
+          method: get
+  radioListByCountrycode:
+    handler: src/handlers/api.radioListByCountryCode
+    events:
+      - http:
+          path: radio/list/countrycode/{countrycode}
+          method: get
+          request:
+            parameters:
+              paths:
+                countrycode: true
+  globalYearWrapped:
+    handler: src/handlers/api.globalYearWrapped
+    timeout: 30
+    events:
+      - http:
+          path: wrapped/global/{kind}
+          method: get
+  yearWrapped:
+    handler: src/handlers/api.yearWrappedTopList
+    timeout: 30
+    events:
+      - http:
+          path: wrapped/{year}/{deviceId}/{side}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                year: true
+                deviceId: true
+                side: true
+  
+  ctaEndpoint:
+    handler: src/handlers/api.ctaEndpoint
+    events:
+      - http:
+          path: cta/{deviceId}/{side}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                deviceId: true
+                side: true
+  token:
+    handler: src/handlers/batch.selectActiveToken
+    timeout: 30
+    events:
+      - schedule: ${self:custom.${self:custom.myStage}.schedule_token}
+  discovery:
+    handler: src/handlers/batch.updateDiscoveryApi
+    timeout: 60 
+    events:
+      - schedule: ${self:custom.${self:custom.myStage}.schedule_discovery}
+  chartsCache:
+    handler: src/handlers/batch.scChartsCache
+    timeout: 30
+    events:
+      - schedule: ${self:custom.${self:custom.myStage}.sc_charts_cache}
+  country_charts_pub:
+    handler: src/handlers/batch.countryChartsPublisher
+    timeout: 60
+    events:
+      - schedule: ${self:custom.${self:custom.myStage}.schedule_country_charts}
+  country_charts_sub:
+    handler: src/handlers/batch.countryChartsSubscribe
+    timeout: 120
+    reservedConcurrency: 2
+    events:
+      - sqs:
+          arn: ${self:custom.${self:custom.myStage}.country_charts_arn}
+          batchSize: 1
+          enabled: ${self:custom.${self:custom.myStage}.charts_queue_enabled}
+  generateChartsPosts:
+    handler: src/handlers/batch.generateChartsPosts
+    timeout: 50
+    reservedConcurrency: 4
+    events:
+       - sqs:
+          arn: ${self:custom.${self:custom.myStage}.post_generator_arn}
+          batchSize: 1
+  wrappedCountriesCharts:
+    handler: src/handlers/batch.wrappedCountriesCharts
+    timeout: 600
+    events:
+      - schedule: ${self:custom.${self:custom.myStage}.schedule_country_wrapped}
+  wrappedPlaylistPub:
+    handler: src/handlers/batch.wrappedPlaylistDevices
+    timeout: 120
+    events:
+      - schedule: ${self:custom.${self:custom.myStage}.schedule_wrapped_yearly}
+  referrerPromoSub:
+    handler: src/handlers/batch.referrerPromoSub
+    timeout: 30
+    reservedConcurrency: 1
+    events:
+        - sqs:
+            arn: ${self:custom.${self:custom.myStage}.referrer_queue_arn}
+            batchSize: 1
+            enabled: ${self:custom.${self:custom.myStage}.referrer_queue_enabled}
+plugins:
+  - serverless-domain-manager
+  - serverless-offline
+  - serverless-prune-plugin
+ 
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

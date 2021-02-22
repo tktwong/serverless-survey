@@ -1,0 +1,174 @@
+service:
+  name: crystal-backend
+
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+  - serverless-offline
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    USER_DYNAMODB_TABLE: users
+    CRYSTAL_DYNAMODB_TABLE: crystals
+    NOTIFICATION_DYNAMODB_TABLE: notifications
+    REGION: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.USER_DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.CRYSTAL_DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.NOTIFICATION_DYNAMODB_TABLE}"
+    - Effect: Allow
+      Action:
+        - lambda:Invoke
+        - lambda:InvokeAsync
+      Resource: "*"
+  usagePlan: # Optional usage plan configuration
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+resources:
+  Resources:
+    UserTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.USER_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    CrystalTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.CRYSTAL_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    NotificationTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        TableName: ${self:provider.environment.NOTIFICATION_DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        
+functions:
+  addUser:
+    handler: src/controllers/UserController.addUser
+    events:
+      - http: 
+          method: post
+          path: user/create
+          cors: true
+  getUsers:
+    handler: src/controllers/UserController.getUsers
+    events:
+      - http: 
+          method: get
+          path: users
+          cors: true
+  getUser:
+    handler: src/controllers/UserController.getUser
+    events:
+      - http: 
+          method: get
+          path: user/{username}
+          cors: true
+          request:
+            parameters:
+              paths:
+                username: true
+  # addCrystal:
+  #   handler: src/controllers/CrystalController.addCrystal
+  #   events:
+  #     - http: 
+  #         method: post
+  #         path: crystal/create
+  #         cors: true
+  getCrystalsForUser:
+    handler: src/controllers/CrystalController.getCrystalsForUser
+    events:
+      - http: 
+          method: get
+          path: crystal/user/{user_id}
+          cors: true
+          request:
+            parameters:
+              paths:
+                user_id: true
+  sendCrystalToUser:
+    handler: src/controllers/CrystalController.sendCrystalToUser
+    events:
+      - http: 
+          method: post
+          path: crystal/send
+          cors: true
+  notifyAllUsers:
+    handler: src/controllers/NotificationController.notifyAllUsers
+  connectSocket:
+    handler: src/controllers/NotificationController.connectSocket
+    events:
+      - websocket:
+          route: $connect
+  disconnectSocket:
+    handler: src/controllers/NotificationController.disconnectSocket
+    events:
+      - websocket:
+          route: $disconnect
+  messageSocket:    
+    handler: src/controllers/NotificationController.messageSocket
+    events:
+      - websocket:
+          route: $default

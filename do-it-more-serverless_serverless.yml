@@ -1,0 +1,199 @@
+org: endorocket
+app: do-it-more-serverless
+service: do-it-more-serverless
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-central-1
+  stage: dev
+  memorySize: 128
+  timeout: 5
+  endpointType: regional
+  environment:
+    NODE_ENV: dev
+    GOALS_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.GOALS_TABLE}"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.GOALS_TABLE}/index/*'
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-typescript
+
+package:
+  exclude:
+    - config/.env.stg
+    - config/.env.pro
+  include:
+    - config/.env.dev
+
+functions:
+  preSignUpTrigger:
+    handler: app/handler.preSignUpTrigger
+  postConfirmationTrigger:
+    handler: app/handler.postConfirmationTrigger
+  updateProgress:
+    handler: app/handler.updateProgress
+    events:
+      - http:
+          path: user/progress
+          method: put
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+  findUserWithGoals:
+    handler: app/handler.findUserWithGoals
+    events:
+      - http:
+          path: user
+          method: get
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+    memorySize: 512
+  createGoal:
+    handler: app/handler.createGoal
+    events:
+      - http:
+          path: goals
+          method: post
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+  completeGoal:
+    handler: app/handler.completeGoal
+    events:
+      - http:
+          path: goals/{goalId}
+          method: patch
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+  updatePeriods:
+    handler: app/handler.updatePeriods
+    events:
+      - http:
+          path: periods
+          method: post
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+  getFriendsAndTeams:
+    handler: app/handler.getFriendsAndTeams
+    events:
+      - http:
+          path: friends
+          method: get
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+    memorySize: 512
+  inviteFriend:
+    handler: app/handler.inviteFriend
+    events:
+      - http:
+          path: friends
+          method: post
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+  respondToFriendInvitation:
+    handler: app/handler.respondToFriendInvitation
+    events:
+      - http:
+          path: friends/{friendName}/respond
+          method: post
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+  inviteToTeam:
+    handler: app/handler.inviteToTeam
+    events:
+      - http:
+          path: teams
+          method: post
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+  respondToTeamInvitation:
+    handler: app/handler.respondToTeamInvitation
+    events:
+      - http:
+          path: teams/{teamId}/respond
+          method: post
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+  getGoalEvents:
+    handler: app/handler.getGoalEvents
+    events:
+      - http:
+          path: goal-events
+          method: get
+          authorizer:
+            arn: ${param:cognitoUserPoolArn}
+          cors: true
+
+resources:
+  Resources:
+    GoalsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:provider.environment.GOALS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: GSI1PK
+            AttributeType: S
+          - AttributeName: GSI1SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: GSI1
+            KeySchema:
+              - AttributeName: GSI1PK
+                KeyType: HASH
+              - AttributeName: GSI1SK
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'

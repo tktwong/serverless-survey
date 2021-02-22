@@ -1,0 +1,169 @@
+service: system-monitoring
+
+frameworkVersion: ">=1.2.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  timeout: 60
+  memorysize: 2048
+  region: us-east-1
+  logRetentionInDays: 14
+  environment:
+    API_KEY: ${ssm:/${self:custom.stage}/system_monitoring/api_key}
+    ENV: "${self:custom.stage}"
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action: apigateway:GET
+      Resource: 
+        - arn:aws:apigateway:${self:custom.region}::/restapis/*
+        - arn:aws:apigateway:${self:custom.region}::/restapis/*/stages/${self:custom.stage}
+    - Effect: Allow
+      Action: apigateway:PATCH
+      Resource: arn:aws:apigateway:${self:custom.region}::/restapis/*/stages/${self:custom.stage}
+    - Effect: Allow
+      Action: cloudwatch:PutMetricAlarm
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - logs:DescribeLogGroups
+        - logs:ListTagsLogGroup
+        - logs:TagLogGroup
+      Resource: '*'
+    - Effect: Allow
+      Action:
+        - lambda:ListFunctions
+        - lambda:GetFunction
+        - lambda:GetAccountSettings
+        - SNS:GetTopicAttributes	
+        - SNS:ListTopics
+        - SNS:ListSubscriptionsByTopic
+        - es:Describe*
+        - es:List*
+        - sqs:GetQueueAttributes
+        - sqs:GetQueueAttributes
+        - sqs:ListQueues
+        - sqs:ListQueueTags
+        - route53:ListHealthChecks
+      Resource: '*'
+  apiKeys:
+      - monitoring_api_key_${self:custom.stage}
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  stage: ${opt:stage, self:provider.stage}
+  region: "us-east-1"
+  logLevel:
+    prod: WARN
+    default: DEBUG
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+  alerts:
+    stages:
+      - dev
+      - stage
+      - prod
+    dashboards: false
+    alarms:
+      - functionThrottles
+      - functionErrors
+  prune:
+    automatic: true
+    number: 3
+  customDomain:
+    domainName: example-${self:custom.stage}.ringder.com
+    stage: "${self:custom.stage}"
+    basePath: ""
+    certificateName: "*.ringder.com"
+    createRoute53Record: true
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+  - serverless-prune-plugin
+  - serverless-domain-manager
+  - serverless-reqvalidator-plugin
+
+resources:
+  Transform: AWS::Serverless-2016-10-31
+  Resources:
+    MonitoringSNSTopic:
+      Type: AWS::SNS::Topic
+      Properties: 
+        DisplayName: monitoring-${self:custom.stage}
+        TopicName: monitoring-${self:custom.stage}
+          
+    MonitoringSNSSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: {"Ref": "MonitoringSNSTopic"}
+        Endpoint: ${self:custom.triageEmail}
+        Protocol: email
+
+    ParameterRequestValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: ParameterRequestValidator
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: false
+        ValidateRequestParameters: true
+    Route53HealthCheckAlpha:
+      Type: "AWS::Route53::HealthCheck"
+      Properties:
+        HealthCheckConfig:
+          Port: "443"
+          Type: "HTTPS"
+          ResourcePath: "/health?api-key=${self:provider.environment.API_KEY}"
+          FullyQualifiedDomainName: ${self:custom.customDomain.domainName}
+          RequestInterval: "30"
+          FailureThreshold: "2"
+        HealthCheckTags:
+          - Key: Name
+            Value: HealthAlpha-${self:custom.stage}
+          - Key: Env
+            Value: ${self:custom.stage}
+    Route53HealthMetricsAlpha:
+      Type: "AWS::Route53::HealthCheck"
+      Properties:
+        HealthCheckConfig:
+          Port: "443"
+          Type: "HTTPS"
+          ResourcePath: "/alpha-metrics?api-key=${self:provider.environment.API_KEY}"
+          FullyQualifiedDomainName: ${self:custom.customDomain.domainName}
+          RequestInterval: "30"
+          FailureThreshold: "2"
+        HealthCheckTags:
+          - Key: Name
+            Value: MetricsAlpha-${self:custom.stage}
+          - Key: Env
+            Value: ${self:custom.stage}
+     
+functions:
+  # Enable detailed metrics and create Cloudwatch Alarms for all log groups
+
+  autoTagExistingLogGroups:
+    handler: functions/tag.tagExistingLogGroups
+    environment:
+      ENV: ${self:custom.stage}
+
+  autoTagNewLogGroups:
+    handler: functions/tag.tagNewLogGroups
+    events:
+      - cloudwatchEvent:
+          event:
+            source:
+              - aws.logs
+            detail-type:
+              - AWS API Call via CloudTrail
+            detail:
+              eventSource:
+                - logs.amazonaws.com
+              eventName:
+                - CreateLogGroup
+    environment:
+      ENV: ${self:custom.stage}
+
+

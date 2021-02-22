@@ -1,0 +1,209 @@
+service: backstage-cicd
+
+custom:
+  repository: https://github.com/funnel-io/backstage
+
+provider:
+  name: aws
+  stage: prod
+  region: eu-central-1
+
+  deploymentPrefix: serverless
+  deploymentBucket:
+    serverSideEncryption: AES256 # use server-side encryption
+
+resources:
+  Resources:
+    BackstageRepository:
+      Type: AWS::ECR::Repository
+      Properties:
+        RepositoryName: "funnelio/backstage"
+
+    # This resource allows to connect CodeBuild with Github using Personal Access Token.
+    CodeBuildSourceCredential:
+      Type: AWS::CodeBuild::SourceCredential
+      Properties:
+        AuthType: PERSONAL_ACCESS_TOKEN
+        ServerType: GITHUB
+        Token: '{{resolve:secretsmanager:backstage-github-access-token:SecretString}}'
+
+    CodeBuildProjectTest:
+      Type: AWS::CodeBuild::Project
+      DependsOn: CodeBuildRole
+      Properties:
+        Artifacts:
+          Type: no_artifacts
+        Environment:
+          ComputeType: BUILD_GENERAL1_SMALL
+          Image: aws/codebuild/standard:3.0
+          Type: LINUX_CONTAINER
+        Name: ${self:service}-Test
+        ServiceRole:
+          Ref: CodeBuildRole
+        Source:
+          Type: GITHUB
+          BuildSpec: testspec.yml
+          Auth:
+            Type: OAUTH
+            Resource: !Ref CodeBuildSourceCredential
+          Location: ${self:custom.repository}
+        Triggers:
+          Webhook: true
+          FilterGroups:
+            - - Pattern: ^refs/heads/main
+                ExcludeMatchedPattern: true
+                Type: HEAD_REF
+              - Pattern: PUSH
+                Type: EVENT
+
+    CodeBuildProjectBuild:
+      Type: AWS::CodeBuild::Project
+      DependsOn: CodeBuildRole
+      Properties:
+        Artifacts:
+          Type: no_artifacts
+        Environment:
+          ComputeType: BUILD_GENERAL1_SMALL
+          Image: aws/codebuild/standard:3.0
+          Type: LINUX_CONTAINER
+          PrivilegedMode: true
+        Name: ${self:service}-Build
+        ServiceRole:
+          Ref: CodeBuildRole
+        Source:
+          Type: GITHUB
+          BuildSpec: buildspec.yml
+          Auth:
+            Type: OAUTH
+          Location: ${self:custom.repository}
+        Triggers:
+          Webhook: true
+          FilterGroups:
+            - - Pattern: ^refs/heads/main
+                Type: HEAD_REF
+              - Pattern: PUSH
+                Type: EVENT
+
+#    CodePipeline:
+#      Type: AWS::CodePipeline::Pipeline
+#      Properties:
+#        Stages:
+#          - Name: Deploy
+#            Actions:
+#              - Name: Deploy
+#                ActionTypeId:
+#                  Category: Deploy
+#                  Owner: AWS
+#                  Version: 1
+#                  Provider: ECS
+#                Configuration:
+#                  ClusterName: !Ref ECSCluster
+#                  ServiceName: !Ref Service
+#                  FileName: images.json
+#                InputArtifacts:
+#                  - Name: BuildOutput
+#                RunOrder: 1
+
+    CodeBuildRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-CodeBuildRole-${self:provider.region}
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Principal:
+                Service:
+                  - codebuild.amazonaws.com
+        Path: "/"
+        Policies:
+          - PolicyName: ${self:service}-CodeBuildCodeBuildPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - codebuild:*
+                  Resource:
+                    - "*"
+          - PolicyName: ${self:service}-CodeBuildLogsPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:*
+                  Resource:
+                    - "*"
+          - PolicyName: ${self:service}-CodeBuildIAMPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - iam:*
+                  Resource:
+                    - "*"
+          - PolicyName: ${self:service}-CodeBuildCloudformationPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - cloudformation:*
+                  Resource:
+                    - "*"
+          - PolicyName: ${self:service}-CodeBuildEventsPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - events:*
+                  Resource:
+                    - "*"
+          - PolicyName: ${self:service}-EcrPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ecr:BatchCheckLayerAvailability
+                    - ecr:CompleteLayerUpload
+                    - ecr:GetAuthorizationToken
+                    - ecr:InitiateLayerUpload
+                    - ecr:PutImage
+                    - ecr:UploadLayerPart
+                  Resource:
+                    - "*"
+          - PolicyName: ${self:service}-VPCPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ec2:CreateVpc
+                  Resource:
+                    - "*"
+          - PolicyName: ${self:service}-ECSPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ecs:DescribeServices
+                    - ecs:CreateCluster
+                    - ecs:ListClusters
+                  Resource:
+                    - "*"
+          - PolicyName: ${self:service}-SercretsManagerPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                  Resource:
+                    - "*"

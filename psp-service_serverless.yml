@@ -1,0 +1,98 @@
+service: psp-service
+
+plugins:
+  - serverless-pseudo-parameters
+
+custom:
+  aws: ${file(./config/${self:provider.stage}.json):aws}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  memorySize: 128
+  stage: ${opt:stage}
+  timeout: 10
+  environment:
+    NODE_ENV: '${opt:stage}'
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'sqs:SendMessage'
+        - 'sqs:ReceiveMessage'
+        - 'sqs:DeleteMessage'
+        - 'sqs:GetQueueAttributes'
+      Resource:
+        - 'arn:aws:sqs:#{AWS::Region}:#{AWS::AccountId}:transactions-${opt:stage}'
+        - 'arn:aws:sqs:#{AWS::Region}:#{AWS::AccountId}:credit-card-ops-${opt:stage}'
+        - 'arn:aws:sqs:#{AWS::Region}:#{AWS::AccountId}:debit-card-ops-${opt:stage}'
+        - 'arn:aws:sqs:#{AWS::Region}:#{AWS::AccountId}:balance-consolidation-${opt:stage}'
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:PutItem'
+        - 'dynamodb:UpdateItem'
+        - 'dynamodb:Scan'
+        - 'dynamodb:GetItem'
+      Resource:
+        - 'arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/transactions_${opt:stage}'
+        - 'arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/payables_${opt:stage}'
+        - 'arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/payables_balance_${opt:stage}'
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:GetRecords'
+        - 'dynamodb:GetShardIterator'
+        - 'dynamodb:DescribeStream'
+        - 'dynamodb:ListStreams'
+      Resource:
+        - 'arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/transactions_${opt:stage}/stream*'
+        - 'arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/payables_${opt:stage}/stream*'
+
+package:
+  exclude:
+    - ./**
+    - '!node_modules/**'
+    - 'node_modules/**/aws-sdk/**'
+  include:
+    - package.json
+    - dist/**
+    - config/**
+
+functions:
+  receiveTransactions:
+    handler: dist/handlers.receiveTransactionsHandler
+    events:
+      - http:
+          path: v1/transactions
+          method: post
+          cors: true
+  processTransactionsQueue:
+    handler: dist/handlers.processTransactionsQueueHandler
+    reservedConcurrency: 1
+  processTransactionEvents:
+    handler: dist/handlers.processTransactionEventsHandler
+    reservedConcurrency: 1
+  processCreditCardOpsQueue:
+    handler: dist/handlers.processCreditCardOpsQueueHandler
+    reservedConcurrency: 1
+  processDebitCardOpsQueue:
+    handler: dist/handlers.processDebitCardOpsQueueHandler
+    reservedConcurrency: 1
+  processPayableEvents:
+    handler: dist/handlers.processPayableEventsHandler
+    reservedConcurrency: 1
+  processBalanceConsolidationQueue:
+    handler: dist/handlers.processBalanceConsolidationQueueHandler
+    reservedConcurrency: 1
+  getTransactions:
+    handler: dist/handlers.getTransactionsHandler
+    events:
+      - http:
+          path: v1/transactions
+          method: get
+          cors: true
+  getBalance:
+    handler: dist/handlers.getBalanceHandler
+    events:
+      - http:
+          path: v1/payables/balance
+          method: get
+          cors: true

@@ -1,0 +1,67 @@
+service: serverless-graphql
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin
+  - serverless-pseudo-parameters
+custom:
+  stackName: ${self:service}-${self:provider.stage}
+  xray: 'Active' # AWS Xray tracing of requests, queries
+  db:
+    dbname: 'arthas'
+    minCapacity: 2
+    maxCapacity: 16
+    secondsUntilAutoPause: 7200 # if not stage=='prod'
+  secrets:
+    prefix: '${self:service}/${self:provider.stage}'
+    rds: '${self:custom.secrets.prefix}/rds/credentials'
+  vpc:
+    securityGroupIds:
+      - 'Fn::GetAtt': ServerlessSecurityGroup.GroupId
+    subnetIds:
+      - Ref: ServerlessSubnetA
+      - Ref: ServerlessSubnetB
+      - Ref: ServerlessSubnetC
+  bastion: # EC2 host to access database
+    sshKeyPairName: 'arthas-ire-sep-2020' # set this to enable bastion ec2 instance
+    # sshKeyPairName: ''
+    alertEmails: 'dmytro@jetbridge.com' # get SNS notifications of alarms at this address
+    banner: https://ops.jetbridge.com/public/banner.txt
+    bootstrap: https://ops.jetbridge.com/public/bastion_bootstrap.sh
+    instanceType: t3a.nano
+    tenancy: default
+    bannerEnabled: 'true'
+    tcpForwardingEnabled: 'true'
+    x11ForwardingEnabled: 'false'
+    logRetentionInDays: 731
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-1
+  tracing:
+    apiGateway: true
+    lambda: true
+  environment:
+    SECRET_PREFIX: ${self:custom.secrets.prefix}
+    RDS_SECRET_NAME: ${self:custom.secrets.rds}
+    LOAD_RDS_SECRET: 'true'
+    STAGE: ${self:provider.stage}
+    FUNCTION_PREFIX: '${self:custom.stackName}-'
+    XRAY: ${self:custom.xray}
+
+functions:
+  graphql:
+    handler: lambda.handler
+    events:
+      - http:
+          path: graphql
+          method: any
+          cors: true
+    vpc: ${self:custom.vpc}
+
+resources:
+  - ${file(cloudformation/vpc.yml)}
+  - ${file(cloudformation/bastion.yml)}
+  - ${file(cloudformation/db/aurora-serverless.yml)}

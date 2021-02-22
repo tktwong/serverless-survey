@@ -1,0 +1,58 @@
+service: voice-transcriber
+useDotenv: true
+plugins:
+  - serverless-domain-manager
+  - serverless-plugin-include-dependencies
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-west-2
+  stage: prod
+  apiGateway:
+    apiKeys:
+      - voice-transcriber
+    shouldStartNameWithService: true
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'transcribe:StartTranscriptionJob'
+      Resource: '*'
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource: 'arn:aws:s3:::${env:BUCKET_NAME}/*'
+    - Effect: 'Allow'
+      Action:
+        - 'ses:*'
+      Resource: '*'
+custom:
+  customDomain:
+    certificateName: ${env:DOMAIN_NAME}
+    domainName: ${env:DOMAIN_NAME}
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+functions:
+  upload:
+    handler: handler.express
+    memorySize: 128
+    timeout: 60
+    events:
+      - http: 
+          path: '{path+}'
+          method: any
+          integration: LAMBDA
+          private: true
+    environment:
+      BUCKET_NAME: ${env:BUCKET_NAME}
+  filePut:
+    handler: s3handler.filePut
+    events:
+      - s3:
+          bucket: ${env:BUCKET_NAME}
+          event: s3:ObjectCreated:*
+    environment:
+      BUCKET_NAME: ${env:BUCKET_NAME}
+      RECIPIENT: ${env:RECIPIENT}
+      SENDER: ${env:SENDER}

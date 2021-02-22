@@ -1,0 +1,90 @@
+frameworkVersion: 1.35.0
+
+service: 
+  name: edukasyon-exam
+
+custom:
+  stage: ${opt:stage, 'v1'}
+  region: ${opt:region, 'ap-southeast-1'}
+  awsAccountID: 506126633031
+  # layerVersion: ${file(config/env/env-${self:custom.stage}.json):LAYER_VERSION}
+  dynamodb:
+    stages:
+      - ${self:custom.stage}
+    start:
+      dbPath: ./
+      migrate: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stackName: ${self:service.name}
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+  environment:
+    STAGE: '${self:custom.stage}'
+    REGION: '${self:custom.region}'
+  role: arn:aws:iam::${self:custom.awsAccountID}:role/Edukasyon_Exam
+  timeout: 3
+
+package:
+  individually: true
+  exclude:
+    - "**/*"
+
+resources:
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: grades
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+          - AttributeName: quarter
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+          - AttributeName: quarter
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+
+functions:
+  grade:
+    name: grades-ms
+    handler: router.index
+    # layers:
+    #   - arn:aws:lambda:${self:custom.region}:${self:custom.awsAccountID}:layer:${self:custom.prefix}-dependencies:${self:custom.layerVersion}
+    package:
+      include:
+        - aws/**
+        - utils/**
+        - ms/grades/**
+        - node_modules/**
+        - router.js
+    events:
+      - http:
+          path: /grades
+          method: put
+          cors: true
+          integration: lambda-proxy
+      - http:
+          path: /grades
+          method: get
+          cors: true
+          integration: lambda-proxy
+      - http:
+          path: /grades
+          method: delete
+          cors: true
+          integration: lambda-proxy
+      - http:
+          path: /grades/average
+          method: get
+          cors: true
+          integration: lambda-proxy

@@ -1,0 +1,97 @@
+service: english-playground
+
+plugins:
+  - serverless-offline
+  - serverless-dynamodb-local
+
+package:
+  exclude:
+    - .git/**
+    - src/**
+    - test/**
+    - nodemon.json
+    - .dynamodb/**
+
+custom:
+  vocabulary_table: "vocabulary"
+  users_table: "users"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  environment:
+    REGION: ${file(.env.yml):${opt:stage, 'dev'}.REGION}
+    DYNAMO_ENDPOINT: ${file(.env.yml):${opt:stage, 'dev'}.DYNAMO_ENDPOINT}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource: "*"
+
+functions:
+  auth:
+    handler: dist/auth/authorizer.handler
+    cors: true
+    integration: lambda
+  index:
+    handler: dist/index.handler
+    events:
+    - http:
+        cors: true
+        path: '/'
+        method: any
+    - http:
+        cors: true
+        path: '/users'
+        method: any
+    - http:
+        cors: true
+        path: '/users/{id}'
+        method: any
+    - http:
+        cors: true
+        path: '/users/login'
+        method: any
+    - http:
+        cors: true
+        path: '{proxy+}'
+        method: any
+        authorizer: auth
+resources:
+  Conditions:
+    CreateTables:
+      Fn::Equals:
+        - ${opt:stage}
+        - dev
+  Resources:
+    VocabularyDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Condition: CreateTables
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.vocabulary_table}
+
+    UsersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Condition: CreateTables
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: username
+            AttributeType: S
+        KeySchema:
+          - AttributeName: username
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.users_table}

@@ -1,0 +1,117 @@
+service: 'HC-APIService'
+frameworkVersion: ">=1.32.0 < 2.0.0"
+plugins:
+  - 'serverless-pseudo-parameters'
+  - 'serverless-plugin-optimize'
+  - 'serverless-webpack'
+
+custom:
+  profilesTableName: HC-${self:provider.stage}-ProfilesTable
+  roleId: !Ref IAMLambdaRole
+  slackNotifyUrl: ${ssm:slack-events-webhook}
+
+provider:
+  name: 'aws'
+  runtime: 'nodejs10.x'
+  region: ${opt:region, 'eu-west-2'}
+  memorySize: '128'
+  stage: ${opt:stage, 'dev'}
+
+package:
+  individually: 'true'
+  exclude:
+    - 'package.json'
+    - 'package-lock.json'
+
+functions:
+
+  createProfile:
+    handler: 'handlers/create-profile/create-profile.lambda'
+    description: 'Create user profile with id the same as Cognito UID'
+    role:
+      Fn::GetAtt:
+        - IAMLambdaRole
+        - Arn
+    environment:
+      FUNCTION: 'create-profile'
+      PROFILES_TABLE: ${self:custom.profilesTableName}
+      SLACK_NOTIFY_URL: ${self:custom.slackNotifyUrl}
+      REGION: ${self:provider.region}
+      STAGE: ${self:provider.stage}
+
+  userMigration:
+    handler: 'handlers/user-migration/user-migration.lambda'
+    description: 'TO DO'
+    role:
+      Fn::GetAtt:
+        - IAMUserMigrationRole
+        - Arn
+    environment:
+      FUNCTION: 'create-profile'
+      PROFILES_TABLE: ${self:custom.profilesTableName}
+      SLACK_NOTIFY_URL: ${self:custom.slackNotifyUrl}
+      REGION: ${self:provider.region}
+      STAGE: ${self:provider.stage}
+
+  migrateDynamo:
+    handler: 'handlers/migrate-dynamo/migrate-dynamo.lambda'
+    description: 'This lambda is migrating the previous dynamodb tables into the current stack'
+    timeout: 20
+    role:
+      Fn::GetAtt:
+        - IAMLambdaRole
+        - Arn
+    environment:
+      PROFILES_TABLE: ${self:custom.profilesTableName}
+      SLACK_NOTIFY_URL: ${self:custom.slackNotifyUrl}
+      REGION: ${self:provider.region}
+      STAGE: ${self:provider.stage}
+
+resources:
+  - ${file(cloudformation/apigateway/http-api.yml)}
+  - ${file(cloudformation/apigateway/authorizer.yml)}
+
+  - ${file(cloudformation/cognito/user-pool.yml)}
+  - ${file(cloudformation/cognito/user-pool-client.yml)}
+  - ${file(cloudformation/cognito/invoke-lambda-permission.yml)}
+  - ${file(cloudformation/cognito/invoke-migration-lambda-permission.yml)}
+
+  - ${file(cloudformation/dynamodb/profiles-table.yml)}
+
+  - ${file(cloudformation/iam/lambda-role.yml)}
+  - ${file(cloudformation/iam/migration-role.yml)}
+
+  - Outputs:
+      HttpAPIID:
+        Value:
+          Ref: HttpAPI
+        Export:
+          Name: HttpAPI-ID-${self:provider.stage}
+
+      HttpAPIRootResourceId:
+        Value:
+          Fn::GetAtt:
+            - HttpAPI
+            - RootResourceId
+        Export:
+          Name: HttpAPI-RootResourceId-${self:provider.stage}
+
+      HTTPAuthorizerID:
+        Value:
+          Ref: HTTPAuthorizer
+        Export:
+          Name: HTTPAuthorizer-ID-${self:provider.stage}
+
+      IAMLambdaRoleARN:
+        Value:
+          Fn::GetAtt:
+            - IAMLambdaRole
+            - Arn
+        Export:
+          Name: IAMLambdaRole-ARN-${self:provider.stage}
+
+      UserPoolID:
+        Value:
+          Ref: UserPool
+        Export:
+          Name: UserPool-ID-${self:provider.stage}

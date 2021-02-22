@@ -1,0 +1,82 @@
+
+service: imageapi
+
+custom:
+    staging_bucket: imageapi-bucket-b346-e09d7703f485
+    public_bucket: public-test-bucket-a35886d1-3044
+
+provider:
+    name: aws
+    runtime: nodejs12.x
+    profile: serverlessUser
+    stage: dev
+    region: us-west-2
+    apiKeys:
+        - Key1
+        - Key2
+    environment:
+        STAGING_BUCKET: ${self:custom.staging_bucket}
+        PUBLIC_BUCKET: ${self:custom.public_bucket}
+        FILE_EXTENSION: jpg
+        FILE_MIME_TYPE: image/jpg
+        REGION: us-west-2
+        WATERMARK_BUCKET: imageapi-bucket-b346-e09d7703f485
+        WATERMARK_KEY: watermark/watermark.png
+        WATERMARK_DARK_KEY: watermark/watermark_black.png
+        WATERMARK_GRAVITY: south
+    iamRoleStatements:
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:PutObjectAcl
+          Resource: "arn:aws:s3:::${self:custom.staging_bucket}/*"
+
+        # Notice Actions must be spaced TWICE
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:PutObjectAcl
+          Resource: "arn:aws:s3:::${self:custom.public_bucket}/*"
+
+functions:
+    signedUrl:
+        handler: lambdas/signedUrl.handler
+        events:
+            - http:
+                path: staging/signedUrl
+                method: get
+                cors: true
+                private: true
+    publish:
+        handler: lambdas/publish.handler
+        events:
+            - http:
+                path: staging/image/publish
+                method: post
+                # https://www.serverless.com/blog/cors-api-gateway-survival-guide/
+                cors: true
+                # https://www.serverless.com/framework/docs/providers/aws/events/apigateway/#request-parameters
+                private: true
+                
+    # This is the stub for the watermarking function compiled elsewhere
+    watermark:
+        handler: lambdas/watermark.handler
+        events:
+            - http:
+                path: staging/image/watermark
+                method: post
+                cors: true
+                private: true
+
+resources:
+    Resources:
+        UploadBucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:custom.staging_bucket}
+        PublicBucket:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:custom.public_bucket}
+

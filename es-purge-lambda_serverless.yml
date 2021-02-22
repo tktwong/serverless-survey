@@ -1,0 +1,26 @@
+service: es-purge
+provider:
+  name: aws
+  defaultStage: staging
+  stage: ${env:STAGE, self:provider.defaultStage, opt:stage}
+  role: ${env:AWS_ROLE, file(./.env.yml):AWS_ROLE}
+  runtime: nodejs8.10
+  region: ${env:APP_AWS_REGION, file(./.env.yml):APP_AWS_REGION}
+  vpc:
+    securityGroupIds:
+      - ${env:APP_VPC_SECURITY_GROUP, file(./.env.yml):APP_VPC_SECURITY_GROUP}
+    subnetIds:
+      - ${env:APP_VPC_SUBNET, file(./.env.yml):APP_VPC_SUBNET}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "es:ESHttpDelete"
+      Resource: arn:aws:es:${self:provider.region}:*:domain/*
+functions:
+  purge:
+    handler: src/purge.handler
+    description: Purge old ES indicies
+    events:
+      - schedule: cron(0 1 * * ? *)
+plugins:
+  - serverless-webpack

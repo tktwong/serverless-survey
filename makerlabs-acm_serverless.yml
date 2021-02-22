@@ -1,0 +1,102 @@
+## @addtogroup functions
+## @{
+## @file
+## @brief Configure Serverless framework for /permissions_check on AWS Lambda
+## @}
+service:
+  name: makerlabs-acm-functions
+  publish: false
+
+plugins:
+  - serverless-apigw-binary
+  - serverless-apigwy-binary
+
+custom:
+  apigwBinary:
+    types:
+      - "application/octet-stream"
+
+################################################################################
+provider:
+  runtime: nodejs8.10
+
+# AWS Lambda
+  name: aws
+  stage: ${opt:stage, "test"}
+  region: us-west-2
+  timeout: 60
+
+################################################################################
+functions:
+  permissions_check:
+    memorySize: 256
+    handler: index-aws.permissions_check
+    timeout: 30
+    environment:
+      SPREADSHEET_ID: ${file(../config.${self:provider.stage}.yml):SPREADSHEET_ID}
+      GCLOUD_PROJECT: ${file(../config.${self:provider.stage}.yml):GCLOUD_PROJECT}
+      FIREBASE_DATABASE_URL: ${file(../config.${self:provider.stage}.yml):FIREBASE_DATABASE_URL}
+      FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL: ${file(../config.${self:provider.stage}.yml):FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL}
+      FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY: ${file(../config.${self:provider.stage}.yml):FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY}
+      BINARY_CONTENT_TYPES: "application/octet-stream"
+    events:
+      - http:
+          path: /permissions_check
+          method: post
+          request:
+            parameters:
+              headers:
+                "Authorization": false
+                "Content-Type": false
+          contentHandling: CONVERT_TO_BINARY
+      - http:
+          path: /permissions_check
+          method: get
+
+################################################################################
+package:
+  ## Layout generated from Dart -> JS (using build_node_compilers/node_interop):
+  ## From running: `pub run build_runner watch --output=build/`
+  exclude:
+    - '*.*'
+    # No git files
+    - .git/**
+    # No hidden files
+    - .*
+    - .DS_Store
+    # No dart tool cache/config files
+    - .dart_tool/**
+    - analysis_options.yaml
+    - build.yaml
+    - pubspec.*
+    - yarn.lock
+    # No Dart -> JS build cache files
+    - build/**
+    # No Dart source files
+    - example/**
+    - node/**
+    - lib/**
+    - web/**
+  include:
+    # Always include a Google Cloud Functions index file
+    - index.js
+
+    # Include package.json to indicate package dependencies
+    - package.json
+
+    # Include Dart -> JS generated release build files
+    - build/node/*.js
+    # Include Dart -> JS generated debugging files
+    - build/node/*.js.map
+
+    # Include Dart -> JS SDK
+    - build/node/packages/$sdk/dev_compiler/common/dart_sdk.js
+    - build/node/packages/$sdk/dev_compiler/common/run.js
+
+    # Include Dart -> JS generated packages
+    - build/node/packages/**/*.ddc.js
+    - build/node/packages/**/*.ddc.js.map
+
+# AWS Lambda
+    # Include an AWS Lambda wrapper for Google Cloud Function handler
+    - index-aws.js

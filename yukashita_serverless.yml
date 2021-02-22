@@ -1,0 +1,122 @@
+ # NOTE: update this with your service name
+service: uploads
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+provider:
+  variableSyntax: "\\${([^cognito*+][ :a-zA-Z0-9._,\\-\\/\\(\\)]+?)}" # ${cognito-identity.amazonaws.com:sub}をそのまま文字列として出力するようにする。
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+        - "lambda:InvokeFunction"
+      Resource:
+        - "arn:aws:s3:::yukashita-image-uploads/original-files/${self:provider.stage}/*"
+        - "arn:aws:s3:::yukashita-image-thumbnails/original-files/${self:provider.stage}/*"
+        - "arn:aws:dynamodb:us-west-2:163792334106:table/${self:provider.stage}-items"
+        - "arn:aws:dynamodb:us-west-2:163792334106:table/${self:provider.stage}-items/stream/2017-04-18T21:53:58.659"
+        - "arn:aws:lambda:us-west-2:163792334106:function:uploads-${self:provider.stage}-thumbnail"
+        - "arn:aws:lambda:us-west-2:163792334106:function:uploads-${self:provider.stage}-rekognition"
+functions:
+  auth:
+    handler: auth.auth
+    timeout : 5
+    memorySize : 128
+  upload:
+    handler: handler.upload
+    events:
+      - http:
+          path: upload
+          method: post
+          authorizer: auth
+      - http:
+          path: upload
+          method: options
+    memorySize: 128
+    response:
+      headers:
+        Content-Type: "'application/json'"
+      template: $input.path('$')
+    cors:
+      origins:
+        - '*'
+      headers:
+        - Content-Type
+        - X-Amz-Date
+        - Authorization
+        - X-Api-Key
+        - X-Amz-Security-Token
+      allowCredentials: false
+  after_upload:
+    handler: after_upload.handle
+    events:
+      - s3:
+          bucket: "yukashita-image-uploads"
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: original-files/
+    memorySize: 128
+  thumbnail:
+    handler: thumbnail.create
+  rekognition:
+    handler: rekognition.handle
+  dynamo_stream_proxy:
+    handler: dynamo_stream.proxy
+    memorySize: 128
+    events:
+      - stream:
+          arn: arn:aws:dynamodb:us-west-2:163792334106:table/dev-items/stream/2017-04-18T21:53:58.659
+          batchSize: 1
+          startingPosition: TRIM_HORIZON
+          enabled: true
+resources:
+  Resources:
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "yukashita-image-thumbnails"
+    ItemsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "${self:provider.stage}-items"
+        AttributeDefinitions:
+          - 
+            AttributeName: item_id
+            AttributeType: N
+          - 
+            AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - 
+            AttributeName: item_id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          -
+            IndexName: "user_id-item_id-index"
+            KeySchema:
+              -
+                AttributeName: user_id
+                KeyType: HASH
+              -
+                AttributeName: item_id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

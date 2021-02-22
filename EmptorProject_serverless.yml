@@ -1,0 +1,97 @@
+service: EmptorTrialProject
+
+provider:
+  name: aws
+  runtime: python3.7
+  region: ${env:AWS_DEFAULT_REGION}
+  environment:
+    s3_bucket: ${env:s3_bucket}
+    dynamo_table: ${env:dynamo_table}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:GetObjectAcl
+        - s3:PutObject
+        - s3:PutObjectAcl
+      Resource: "arn:aws:s3:::${env:s3_bucket}/*"
+
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:ListStreams
+      Resource:
+        - "Fn::GetAtt": ["WebsitesDynamoDbTable", "Arn"]
+
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+        - "sqs:GetQueueUrl"
+      Resource:
+        - arn:aws:sqs:#{AWS::Region}:#{AWS::AccountId}:WriteSQS
+
+functions:
+  handle_url:
+    handler: trialproject.index.handle_url
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - WriteSQS
+              - Arn
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - WebsitesDynamoDbTable
+              - StreamArn
+
+plugins:
+  - serverless-python-requirements
+  - serverless-pseudo-parameters
+
+custom:
+  region: ${opt:region, self:provider.region}
+  pythonRequirements:
+    dockerizePip: non-linux
+
+package:
+  exclude:
+    - node_modules/**
+
+resources:
+  Resources:
+    WebsiteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${env:s3_bucket}
+
+    WebsitesDynamoDbTable:
+      Type: "AWS::DynamoDB::Table"
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${env:dynamo_table}
+        StreamSpecification:
+          StreamViewType: NEW_IMAGE
+
+    WriteSQS:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "WriteSQS"

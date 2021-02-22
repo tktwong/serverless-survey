@@ -1,0 +1,83 @@
+service: mountain-api
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-plugin-warmup
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  # Stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  # Load secret environment variables based on the current stage.
+  # Fallback to default if not in prod.
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: eu-west-2
+  apiKeys:
+    - ${self:custom.stage}-developer
+    - ${self:custom.stage}-demo-key
+  environment:
+    MONGO_URI: ${self:custom.environment.MONGO_URI}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource: "*"
+
+functions:
+  createMountain:
+    handler: methods/mountains/create.main
+    warmup: true
+    events:
+      - http:
+          path: mountains
+          method: post
+          private: true
+          cors: true
+  getMountain:
+    handler: methods/mountains/get.main
+    warmup: true
+    events:
+      - http:
+          path: mountains/{id}
+          method: get
+          private: true
+          cors: true
+  listMountains:
+    handler: methods/mountains/list.main
+    warmup: true
+    events:
+      - http:
+          path: mountains
+          method: get
+          private: true
+          cors: true
+  updateMountain:
+    handler: methods/mountains/update.main
+    warmup: true
+    events:
+      - http:
+          path: mountains/{id}
+          method: put
+          private: true
+          cors: true
+  deleteMountain:
+    handler: methods/mountains/delete.main
+    warmup: true
+    events:
+      - http:
+          path: mountains/{id}
+          method: delete
+          private: true
+          cors: true

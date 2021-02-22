@@ -1,0 +1,380 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: cdr-mgmt-front # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: python3.7
+
+# you can overwrite defaults here
+#  stage: dev
+#  region: us-east-1
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+package:
+#  include:
+#    - include-me.py
+#    - include-me-dir/**
+  exclude:
+    - web/**
+    - node_modules/**
+   
+functions:
+  receiver:
+    environment:
+      JOBS_TABLE: ${self:custom.stage}-jobs-table
+      STEPS_FUNC:  
+        "Ref": CDRStepsFunction
+    name: ${self:service}-${opt:stage}-receiver
+    handler: functions/receiver.handler
+    timeout: 60
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - JobsTable
+              - StreamArn
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - states:StartExecution
+        Resource:
+          - Ref: CDRStepsFunction
+      - Effect: Allow
+        Action:
+          - dynamodb:*
+        Resource:
+          - "Fn::GetAtt": [ JobsTable, Arn ]
+  pack-completed:
+    environment:
+      RESULT_BUCKET: ${self:service}-${self:custom.stage}-results
+      JOBS_TABLE: ${self:custom.stage}-jobs-table
+    handler: functions/pack-completed.handler
+    timeout: 360
+    events:
+      - s3: 
+          bucket: result
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: result.tar.gz
+            - prefix: private/
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource:
+          - "Fn::GetAtt": [ JobsTable, Arn ]
+          - Fn::Join:
+              - "/"
+              - - "Fn::GetAtt": ["JobsTable", "Arn" ]
+                - "index/IdIndex"
+      - Effect: Allow
+        Action:
+          - s3:GetObjectAcl
+          - s3:GetObject
+          - s3:DeleteObject
+        Resource: 
+          - arn:aws:s3:::${self:service}-${self:custom.stage}-results/*
+          - arn:aws:s3:::${self:service}-${self:custom.stage}-results
+  stats:
+    environment:
+      STATS_TABLE: ${self:custom.stage}-stats-table
+    name: ${self:service}-${opt:stage}-stats
+    handler: functions/stats.handler
+    timeout: 30
+    events:
+      - http:
+          path: stats
+          method: get
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:GetItem
+        Resource:
+          - Fn::Join:
+              - ""
+              - - "arn:aws:dynamodb:"
+                - Ref: "AWS::Region"
+                - ":"
+                - Ref: "AWS::AccountId"
+                - ":table/"
+                - ${self:custom.stage}-stats-table
+  approval:
+    environment:
+      CONFIG_TABLE: ${self:custom.stage}-config-table
+      JOBS_TABLE: ${self:custom.stage}-jobs-table
+    name: ${self:service}-${opt:stage}-approval
+    handler: functions/approval.handler
+    timeout: 60
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource:
+          - "Fn::GetAtt": [ ConfigurationTable, Arn ]
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource:
+          - "Fn::GetAtt": [ JobsTable, Arn ]
+  request-approval:
+    environment:
+      JOBS_TABLE: ${self:custom.stage}-jobs-table
+    name: ${self:service}-${opt:stage}-request-approval
+    handler: functions/request-approval.handler
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource:
+          - "Fn::GetAtt": [ JobsTable, Arn ]
+  restore-completed:
+    environment:
+      SQS_PACK_URL:
+        !Ref SQSPack
+      JOBS_TABLE: ${self:custom.stage}-jobs-table
+      JOBS_DETAILS_TABLE: ${self:custom.stage}-jobs-detail-table
+      RESULT_BUCKET: ${self:service}-${self:custom.stage}-results
+      RESTORATION_TABLE: ${self:custom.stage}-restoration-table
+    handler: functions/restore-completed.handler
+    events:
+      - sns:
+          arn:
+            Fn::Join:
+              - ""
+              - - "arn:aws:sns:"
+                - Ref: "AWS::Region"
+                - ":"
+                - Ref: "AWS::AccountId"
+                - ":${self:custom.stage}-crd-glacier-recover-completed"
+          topicName: ${self:custom.stage}-crd-glacier-recover-completed
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:Query
+        Resource:
+          - "Fn::GetAtt": [ JobsTable, Arn ]
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:PutObjectAcl
+          - s3:PutObjectTagging
+        Resource: 
+          - arn:aws:s3:::${self:service}-${self:custom.stage}-results/*
+          - arn:aws:s3:::${self:service}-${self:custom.stage}-results
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:GetObjectAcl
+          - s3:ListBucket
+        Resource:
+          - arn:aws:s3:::${self:custom.backend}-${self:custom.stage}-cdr/*
+          - arn:aws:s3:::${self:custom.backend}-${self:custom.stage}-cdr
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:Query
+        Resource:
+          - "Fn::GetAtt": [ JobsDetail, Arn ]
+          - "Fn::GetAtt": [ ObjectRestoration, Arn ]
+      - Effect: Allow
+        Action:
+          - sqs:SendMessage
+        Resource:
+          - "Fn::GetAtt": [ SQSPack, Arn ]
+  process-request:
+    timeout: 900
+    environment:
+      CDR_BUCKET: ${self:custom.backend}-${self:custom.stage}-cdr
+      RESULT_BUCKET: ${self:service}-${self:custom.stage}-results
+      JOBS_TABLE: ${self:custom.stage}-jobs-table
+      JOBS_DETAILS_TABLE: ${self:custom.stage}-jobs-detail-table
+      RESTORATION_TABLE: ${self:custom.stage}-restoration-table
+      RESTAURATION_TYPE: Standard
+      SQS_PACK_URL:
+        !Ref SQSPack
+    name: ${self:service}-${opt:stage}-process-request
+    handler: functions/process-request.handler
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:Query
+        Resource:
+          - "Fn::GetAtt": [ JobsTable, Arn ]
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:PutObjectAcl
+          - s3:PutObjectTagging
+        Resource: 
+          - arn:aws:s3:::${self:service}-${self:custom.stage}-results/*
+          - arn:aws:s3:::${self:service}-${self:custom.stage}-results
+      - Effect: Allow
+        Action:
+          - s3:RestoreObject
+          - s3:GetObject
+          - s3:GetObjectAcl
+          - s3:ListBucket
+        Resource:
+          - arn:aws:s3:::${self:custom.backend}-${self:custom.stage}-cdr/*
+          - arn:aws:s3:::${self:custom.backend}-${self:custom.stage}-cdr
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource:
+          - "Fn::GetAtt": [ JobsDetail, Arn ]
+          - "Fn::GetAtt": [ ObjectRestoration, Arn ]
+      - Effect: Allow
+        Action:
+          - sqs:SendMessage
+        Resource:
+          - "Fn::GetAtt": [ SQSPack, Arn ]
+
+stepFunctions:
+  stateMachines:
+    stepFunction:
+      id: CDRStepsFunction
+      definition:
+        Comment: "State machine to mange CDR"
+        StartAt: RequiresApproval
+        States:
+          RequiresApproval:
+            Type: Task
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-approval"
+            Next: ValidatesApproval
+          ValidatesApproval:
+            Type: Choice
+            Choices:
+              - 
+                Variable: $.audit
+                StringEquals: '1'
+                Next: WaitForApproval
+              - 
+                Variable: $.audit
+                StringEquals: '0'
+                Next: ProcessRequestDay
+              - 
+                Variable: $.audit
+                StringEquals: '10'
+                Next: ProcessRequestDay
+            Default: DefaultState
+          DefaultState:
+            Type: Fail
+            Error: DefaultStateError
+            Cause: "No Matches!"
+          WaitForApproval:
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-request-approval"
+            End: true
+            Type: Task
+          ProcessRequestDay:
+            Type: Choice
+            Choices:
+              - 
+                Variable: $.continue
+                StringEquals: 'True'
+                Next: ProcessRequest
+            Default: EndRequest
+          EndRequest:
+            Type: Succeed
+          ProcessRequest:
+            Resource: "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-process-request"
+            Type: Task
+            Next: ProcessRequestDay
+
+custom:
+  output:
+    handler: scripts/output.handler # Same syntax as you already know
+    file: web/config/${self:custom.stage}.json # toml, yaml, yml, and json format is available
+  stage: ${opt:stage, self:provider.stage}
+  backend: cdr-mgmt-backend
+  stages:
+    - dev
+    - stg
+    - prd
+  tableThroughputs:
+    prd: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  pythonRequirements:
+    dockerizePip: true
+    useDownloadCache: true
+    useStaticCache: true
+  scripts:
+    hooks:
+      'info:displayStackOutputs': "cp web/config/${self:custom.stage}.js web/src/aws-exports.js "
+  #client:
+  #  bucketName: ${self:service}-${self:custom.stage}-web
+  #  distributionFolder: web/dist
+# Create our resources with separate CloudFormation templates
+
+
+resources:
+  # DynamoDB
+  - ${file(resources/params.yml)}
+  - ${file(resources/s3.yml)}
+  - ${file(resources/dynamodb.yml)}
+  - ${file(resources/appsync.yml)}
+  - ${file(resources/cognito.yml)}
+  - ${file(resources/vpc.yml)}
+  - ${file(resources/iam.yml)}
+  - ${file(resources/sqs.yml)}
+  - ${file(resources/autoscaling.yml)}
+  - ${file(resources/efs.yml)}
+  - ${file(resources/outputs.yml)}
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-python-requirements
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+  - serverless-finch
+  - serverless-plugin-scripts
+  - serverless-stack-output

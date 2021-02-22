@@ -1,0 +1,79 @@
+service: nb-shdsvcnpd-itsm-portal-ld
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: prod
+  region: ${opt:region, 'us-east-1'}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  deploymentBucket:
+    name: nb-shdsvcnpd-itsm-servonld-sandbox
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  create:
+    handler: handler/create.create
+    events:
+      - http:
+          path: handler
+          method: post
+          cors: true
+
+  list:
+    handler: handler/list.list
+    events:
+      - http:
+          path: handler
+          method: get
+          cors: true
+
+  get:
+    handler: handler/get.get
+    events:
+      - http:
+          path: handler/{id}
+          method: get
+          cors: true
+
+  update:
+    handler: handler/update.update
+    events:
+      - http:
+          path: handler/{id}
+          method: put
+          cors: true
+
+  delete:
+    handler: handler/delete.delete
+    events:
+      - http:
+          path: handler/{id}
+          method: delete
+          cors: true
+
+resources:
+  Resources:
+    handlerTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain # Keeps around the DynamoDB resource when we redeploy/destroy
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

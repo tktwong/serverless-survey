@@ -1,0 +1,175 @@
+#
+service: callcenter
+frameworkVersion: "=1.32.0"
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${opt:stage, env:STAGE}
+  region: ap-northeast-1
+  tracing: true
+  environment:
+    STAGE: ${self:provider.stage}
+    GOOGLE_APPLICATION_CREDENTIALS: credentials.json
+    BUCKET_NAME: ${self:service}-recdata-${self:provider.stage}
+    SQS_QUEUE_URL:
+      Ref: NotifySlackQueue
+    SLACK_WEBHOOK_URL: ${env:SLACK_WEBHOOK_URL}
+
+package:
+  exclude:
+    - "**"
+  include:
+    - handler.py
+    - callcenter.py
+    - credentials.json
+
+functions:
+  record:
+    handler: handler.record
+    role: RecordRole
+    memorySize: 256
+    timeout: 30
+    events:
+      - http:
+          path: record
+          method: post
+  callback:
+    handler: handler.callback
+    role: CallbackRole
+    memorySize: 256
+    timeout: 30
+    events:
+      - http:
+          path: callback
+          method: post
+  speechtotext:
+    handler: handler.speech_to_text
+    role: SpeechToTextRole
+    memorySize: 256
+    timeout: 30
+    events:
+      - s3: RecData
+  notifyslack:
+    handler: handler.notify_slack
+    role: NotifySlackRole
+    memorySize: 256
+    timeout: 30
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - NotifySlackQueue
+              - Arn
+
+resources:
+  Resources:
+    S3BucketRecData:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-recdata-${self:provider.stage}
+        AccessControl: Private
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        VersioningConfiguration:
+          Status: Enabled
+    S3BucketRecDataLambdaPermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Fn::GetAtt:
+            - SpeechtotextLambdaFunction
+            - Arn
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: arn:aws:s3:::${self:service}-recdata-${self:provider.stage}
+    NotifySlackQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: NotifySlackQueue
+    RecordRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-record-role-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+    CallbackRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-callback-role-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+        Policies:
+          - PolicyName: ${self:service}-callback-policy-${self:provider.stage}
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                  Resource:
+                    - arn:aws:s3:::${self:service}-recdata-${self:provider.stage}/*
+    SpeechToTextRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-speech-to-text-role-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+        Policies:
+          - PolicyName: ${self:service}-speech-to-text-policy-${self:provider.stage}
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - sqs:SendMessage
+                    - s3:GetObject
+                  Resource:
+                    - "*"
+    NotifySlackRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-notify-slack-role-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+          - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+
+plugins:
+  - serverless-python-requirements
+  - serverless-plugin-tracing
+
+custom:
+  pythonRequirements:
+    dockerizePip: true

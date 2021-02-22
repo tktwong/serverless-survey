@@ -1,0 +1,195 @@
+service:
+  name: serverless-aws-typescript
+
+plugins:
+  # - serverless-plugin-aws-alerts
+  # - serverless-offline-sns
+  # - serverless-dynamodb-local
+  - serverless-typescript-api
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  stackTags:
+    "APPLICATION": "messaging-app"
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    SNS_TOPIC: ${env:SNS_TOPIC, 'messaging-topic'}
+    SNS_ARN: ${env:SNS_ARN, "arn:aws:sns:${self:provider.region}:${env:AWS_ACCOUNT, '123456789012'}:${env:SNS_TOPIC, 'messaging-topic'}"}
+    DB_TABLE: ${env:DB_TABLE, 'messaging-data'}
+  iamRoleStatements:
+    # Allow the lambda to write logs
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource: 
+        - "Fn::Join": ["", ["arn:aws:logs:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":*"]]
+    # Allow the lambda to read/write database
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:PutItem"
+        - "dynamodb:Query"
+        - "dynamodb:GetItem"
+        - "dynamodb:DeleteItem"
+      Resource:
+        - "Fn::Join": ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/${self:provider.environment.DB_TABLE}"]]
+        - "Fn::Join": ["", ["arn:aws:dynamodb:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":table/${self:provider.environment.DB_TABLE}/*"]]
+    # Allow the lambda to send email message
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+        - "ses:SendRawEmail"
+      Resource:
+        - "Fn::Join": ["", ["arn:aws:ses:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":*"]]
+    # Allow the lambda to publish in sns topic and send sms message
+    - Effect: "Allow"
+      Action:
+        - "sns:Publish"
+        - "sns:SetSMSAttributes"
+      Resource:
+        - "*"
+        - "Fn::Join": ["", ["arn:aws:sns:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":${self:provider.environment.SNS_TOPIC}"]]
+
+event: &defaultEvent
+  authorizer: ${self:custom.authorizer}
+  cors: true
+
+functions:
+  list-message:
+    handler: src/handler.listMessage
+    events:
+      - http:
+          method: get
+          path: message
+          # <<: *defaultEvent
+  publish-message:
+    handler: src/handler.publishMessage
+    events:
+      - http:
+          method: post
+          path: message
+          <<: *defaultEvent
+  send-message:
+    handler: src/handler.sendMessage
+    events:
+      - sns: ${self:provider.environment.SNS_TOPIC}
+  store-message:
+    handler: src/handler.storeMessage
+    events:
+      - sns: ${self:provider.environment.SNS_TOPIC}
+  get-message:
+    handler: src/handler.getMessage
+    events:
+      - http:
+          method: get
+          path: message/{messageId}
+          <<: *defaultEvent
+  remove-message:
+    handler: src/handler.removeMessage
+    events:
+      - http:
+          method: delete
+          path: message/{messageId}
+          <<: *defaultEvent
+  authorize: # https://serverless.com/framework/docs/providers/aws/events/apigateway/#http-endpoints-with-custom-authorizers
+    handler: src/handler.authorize
+    environment:
+      TOKEN_ISSUER: ${env:TOKEN_ISSUER}
+      JWKS_URI: ${env:JWKS_URI}
+      AUDIENCE: ${env:AUDIENCE}
+      API_KEY: ${env:API_KEY, ''}
+
+custom:
+  authorizer:
+    name: authorize
+    identitySource: method.request.header.Authorization
+    identityValidationExpression: Bearer (.*)
+    resultTtlInSeconds: 0
+    type: token
+  serverless-offline:
+    port: 3000
+    noTimeout: true
+  serverless-offline-sns:
+    port: 4002
+    debug: true
+    accountId: ${env:AWS_ACCOUNT, '123456789012'}
+  # dynamodb:
+  #   stages:
+  #     - dev
+  #   start:
+  #     host: localhost
+  #     port: "8000"
+  #     noStart: true
+  #     migrate: true
+  # notifications:
+  #   - protocol: email
+  #     endpoint: ${env:NOTIFICATION_EMAIL}
+  # alerts:
+  #   dashboards: true
+  #   topics:
+  #     alarm:
+  #       topic: ${self:service}-${self:provider.stage}-alerts-alarm
+  #       notifications: ${self:custom.notifications}
+  #   definitions:
+  #     functionErrors:
+  #       period: 60
+  #     functionInvocations:
+  #       threshold: 10
+  #       period: 600
+  #   global:
+  #     - functionThrottles
+  #     - functionErrors
+  #   function:
+  #     - functionInvocations
+  #     - functionDuration
+
+# resources:
+#   Description: AWS Serverless Message Delivery App v${file(package.json):version}
+#   Resources:
+#     MessagingData:
+#       Type: AWS::DynamoDB::Table
+#       Properties:
+#         TableName: ${self:provider.environment.DB_TABLE}
+#         AttributeDefinitions:
+#           - AttributeName: messageId
+#             AttributeType: "S"
+#           - AttributeName: timestamp
+#             AttributeType: "N"
+#           - AttributeName: recipient
+#             AttributeType: "S"
+#           - AttributeName: sender
+#             AttributeType: "S"
+#         KeySchema:
+#           - AttributeName: messageId
+#             KeyType: HASH
+#         GlobalSecondaryIndexes:
+#           - IndexName: recipient-index
+#             KeySchema:
+#               - AttributeName: recipient
+#                 KeyType: HASH
+#               - AttributeName: timestamp
+#                 KeyType: RANGE
+#             Projection:
+#               ProjectionType: ALL
+#             ProvisionedThroughput:
+#               ReadCapacityUnits: 5
+#               WriteCapacityUnits: 5
+#           - IndexName: sender-index
+#             KeySchema:
+#               - AttributeName: sender
+#                 KeyType: HASH
+#               - AttributeName: timestamp
+#                 KeyType: RANGE
+#             Projection:
+#               ProjectionType: ALL
+#             ProvisionedThroughput:
+#               ReadCapacityUnits: 5
+#               WriteCapacityUnits: 5
+#         ProvisionedThroughput:
+#           ReadCapacityUnits: 5
+#           WriteCapacityUnits: 5

@@ -1,0 +1,92 @@
+
+service: spotcheck
+
+plugins:
+  - serverless-s3-deploy
+  - serverless-package
+
+provider:
+  name: aws
+  runtime: python2.7
+  memorySize: 128
+  stage: ${opt:stage, self.custom.defaultStage}
+
+  environment:
+    TEMPLATE_TABLE:
+      Ref: templateTable
+    PAGE_TABLE:
+      Ref: pageTable
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:GetItem"
+        - "dynamodb:PutItem"
+        - "dynamodb:Query"
+        - "dynamodb:Scan"
+      Resource:
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/*"
+
+package:
+  artifact: .serverless/package.zip
+
+custom:
+  defaultStage: dev
+  assets:
+    - bucket: spotcheck-${self:provider:stage}
+      files:
+        - source: assets/
+          globs: [ '**/*' ]
+
+  package:
+    sources:
+      "./src/":
+        - "**"
+        - "!**/*.pyc"
+      "./dist/":
+        - "**"
+        - "-!**/*.pyc"
+        - "!*egg-info/**"
+        - "!*dist-info/**"
+
+functions:
+  page:
+    handler: views.default
+    events:
+      - http: GET {path+}
+
+resources:
+  Resources:
+    assetBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.assets.bucket}
+
+    templateTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-template
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+
+    pageTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-page
+        AttributeDefinitions:
+          - AttributeName: path
+            AttributeType: S
+        KeySchema:
+          - AttributeName: path
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

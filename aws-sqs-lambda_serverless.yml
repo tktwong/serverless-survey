@@ -1,0 +1,63 @@
+
+
+service: sqs-completion-lambda-kinesis
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: eu-west-2
+  memorySize: 256
+
+  iamRoleStatements:
+   # Grant privilege read from work table dynamoDB stream
+   - Effect: Allow
+     Action:
+      - sqs:ReceiveMessage
+      - sqs:GetQueueAttributes
+      - sqs:SendMessage
+      - sqs:GetQueueUrl
+     Resource:
+       Fn::GetAtt: 
+        - workQueue
+        - Arn
+
+   # Grant privilege to write to results table 
+   - Effect: Allow
+     Action:
+      - dynamodb:PutItem
+     Resource:
+       Fn::GetAtt: 
+        - resultsTable
+        - Arn
+
+functions:
+  sqsHandler:
+    handler: lambdaHandler.process
+    events:
+     - sqs:
+        arn:
+         Fn::GetAtt:
+          - workQueue
+          - Arn
+
+# The "Resources" your "Functions" use.  Raw AWS CloudFormation goes in here.
+resources:
+  Resources:
+    workQueue: 
+      Type: AWS::SQS::Queue
+      Properties: 
+        QueueName: workQueue
+
+    resultsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: sqsResultsTable
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 100

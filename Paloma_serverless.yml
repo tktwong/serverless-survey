@@ -1,0 +1,64 @@
+service: paloma
+app: paloma
+# tenant: drpappa
+# org: DungBeetleBASH
+
+# Serverless version
+# Check out our docs for more details
+frameworkVersion: ">=1.28.0 <3.0.0"
+
+provider:
+  name: aws
+  runtime: go1.x
+  region: eu-west-1
+  profile: serverless-agent
+  environment:
+    USERS_TABLE: "PalomaUsers${self:provider.stage}"
+    NEPTUNE_CLUSTER_ADDRESS: ${cf:paloma-dev.PalomaDBClusterEndpointAddress}
+  stackTags:
+    app: paloma
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [UsersTable, Arn]
+    - Effect: Allow
+      Action:
+        - neptune-db:*
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:rds:"
+            - Ref: AWS::Region
+            - ":"
+            - Ref: AWS::AccountId
+            - ":cluster:"
+            - Ref: PalomaDBCluster
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./src/functions/**
+
+layers:
+  deps:
+    package:
+      artifact: build/deps.zip
+
+functions:
+  - ${file(sls/functions/users.yml)}
+
+resources:
+  - ${file(sls/resources/security.yml)}
+  - ${file(sls/resources/neptune.yml)}
+  - ${file(sls/resources/dynamodb.yml)}
+  - ${file(sls/resources/cognito.yml)}
+  - ${file(sls/resources/logs.yml)}

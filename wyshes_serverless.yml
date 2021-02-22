@@ -1,0 +1,119 @@
+service: wyshes
+
+app: gyft-ninja
+tenant: flintory5
+
+plugins:
+  - serverless-dynamodb-local # use this with serverless-offline to create local dev environment
+  - serverless-offline
+  - serverless-stack-output
+
+custom:
+  tableName: 'gyft-wyshes-table-${self:provider.stage}'
+  firehoseStream: 'wyshes-dynamo-stream-${self:provider.stage}'
+  dynamodb:
+    start:
+      migrate: true
+  output:
+    file: .build/stack.json # where stack output should be stored by the serverless-stack-output plugin
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage}
+  region: us-east-1
+  environment:
+    WYSHES_TABLE: ${self:custom.tableName}
+    AWS_DEPLOY_REGION: ${self:provider.region}
+    STAGE: ${opt:stage}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["GyftWyshesDynamoDBTable", "Arn" ] }
+        - { "Fn::Join": [ "/", [ 
+           { "Fn::GetAtt": ["GyftWyshesDynamoDBTable", "Arn" ] }, "index", "name"
+          ]]}  
+
+
+functions:
+  createWyshes:
+    handler: createWyshes.handler
+    events:
+      - http:
+          method: POST
+          path: /wyshes
+          private: false
+          cors: true
+
+resources:
+  Resources:
+    GyftWyshesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+          - AttributeName: wyshId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: wyshId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: name
+            KeySchema:
+              - AttributeName: name
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
+
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+#    events:
+#      - http:
+#          path: users/create
+#          method: get
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

@@ -1,0 +1,65 @@
+service: bankinginsights
+# app and org for use with dashboard.serverless.com
+app: banking-insights
+org: epsilonalpha
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '2'
+
+custom:
+  name: banking-insights
+  cognitoUserPoolName: ${self:custom.name}-${self:provider.stage}-user-pool
+  cognitoUserPoolClientName: ${self:custom.name}-${self:provider.stage}-user-pool-client
+  cognitoIdentityPoolName: ${self:custom.name}-${self:provider.stage}-identity-pool
+  cognitoAuthRoleName: ${self:custom.name}-${self:provider.stage}-auth-role
+  cognitoUnAuthRoleName: ${self:custom.name}-${self:provider.stage}-unAuth-role
+  websiteBucketName: ${self:custom.name}-${self:provider.stage}-elroy-antao
+  transactionTableName: ${self:custom.name}-${self:provider.stage}-transaction-2
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-west-2
+  iamRoleStatements:
+    - ${file(src/server/resources/dynamodb-policy.yml)}
+  environment:
+    transactionsTable: ${self:custom.transactionTableName}
+      
+# you can add packaging information here
+package:
+  individually: true
+  # exclude: # Specify the directories and files which should be excluded in the deployment package
+  #   - .git/**
+  #   - node_modules/**
+  #   - src/**
+  #   - public/**
+  #   - build/**
+
+functions:
+  GetTransactions:
+    handler: src/server/handlers/getTransactions.main
+    events:
+      - http:
+          path: transactions
+          method: get
+          cors: true
+          authorizer: aws_iam
+  AddTransaction:
+    handler: src/server/handlers/createTransaction.main
+    events:
+      - http:
+          path: transactions
+          method: post
+          cors: true
+          authorizer: aws_iam
+resources:
+  - ${file(src/server/resources/cognito-user-pool.yml)}
+  - ${file(src/server/resources/cognito-identity-pool.yml)}
+  - ${file(src/server/resources/api-gateway-errors.yml)}
+  - ${file(src/server/resources/s3-bucket-website.yml)}
+  - ${file(src/server/resources/dynamodb-table.yml)}
+
+plugins:
+  - serverless-bundle

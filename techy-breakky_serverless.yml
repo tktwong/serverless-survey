@@ -1,0 +1,106 @@
+service: techy-brekky
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stackTags:
+      project: "techy-brekky"
+  stage: dev
+  region: eu-west-2
+  environment:
+    tableName: ${self:custom.tableName}
+    asdf: asdfasdfasdf
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+       - dynamodb:Query
+       - dynamodb:Scan
+       - dynamodb:GetItem
+       - dynamodb:PutItem
+       - dynamodb:UpdateItem
+       - dynamodb:DeleteItem
+      Resource:
+        - Fn::GetAtt:
+          - TechyBrekky
+          - Arn
+        - { "Fn::Join": [ '/', [{ "Fn::GetAtt": ['TechyBrekky', "Arn" ] }, "index", "GSI" ]]}
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  tableName: TechyBrekky-${self:custom.stage}
+
+functions:
+# Orders
+  createOrder:
+    handler: orders.create
+    events:
+    - http:
+        path: orders
+        method: post
+  getOrder:
+    handler: orders.get
+    events:
+    - http:
+        path: orders
+        method: get
+  deleteOrder:
+    handler: orders.delete
+    events:
+    - http:
+        path: orders
+        method: delete
+# Offices
+  getAllOffices:
+    handler: offices.getAll
+    events:
+    - http:
+        path: offices
+        method: get
+  createOffice:
+    handler: offices.createOffice
+    events:
+    - http:
+        path: offices
+        method: post
+# Breakfasts
+  createBreakfast:
+    handler: breakfasts.createBreakfast
+    events:
+    - http:
+        path: breakfasts
+        method: post
+
+resources:
+  Resources:
+    TechyBrekky:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: PartitionKey
+            AttributeType: S
+          - AttributeName: SortKey
+            AttributeType: S
+          - AttributeName: Data
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PartitionKey
+            KeyType: HASH
+          - AttributeName: SortKey
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: GSI
+            KeySchema:
+              - AttributeName: SortKey
+                KeyType: HASH
+              - AttributeName: Data
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1

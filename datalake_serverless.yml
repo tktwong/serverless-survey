@@ -1,0 +1,1633 @@
+# NOTE: Service name must match the repository name, but replace all '.' with '-' (this is a restriction of Cloudformation naming conventions)
+# NOTE: See serverless docs at https://serverless.com/framework/docs/providers/aws/guide/quick-start/ for more information on serverless.yml
+service: tb-app-datalake
+
+custom:
+  hen: ${env:HEN_NAME, self:custom.localDeploy.hen}
+  coop: ${env:COOP, self:custom.localDeploy.coop}
+  emrStackName: ${env:EMR_STACK_NAME, self:custom.localDeploy.emrStackName}
+  localDeploy: # Settings used when deploying locally
+    stage: local
+    hen: local
+    coop: local
+    emrStackName: tb-emr-datalake-master
+  sns:
+    snsendpoint: ${env:FAILURE_NOTIFICATION_SNS_ENDPOINT}
+    snsnotification: ${self:service}-failuresnsnotification-${self:custom.hen}-${self:provider.stage}
+  addjobflow:
+    lambda:
+      lambdametricName: ${env:LAMBDA_FUNCTION_METRIC_NAME}
+      lambdaperiod: ${env:LAMBDA_FUNCTION_PERIOD}
+      lambdathreshold: ${env:LAMBDA_FUNCTION_THRESHOLD}
+      lambdacomparisonoperator: ${env:LAMBDA_FUNCTION_COMPARISON_OPR}
+  dynamo:
+    defaultCapacity: 1
+    fileMetadata:
+      name: ${self:service}-file-metadata-${self:custom.hen}-${self:provider.stage}
+      readCapacity: ${env:DYNAMO_FILE_META_READ_CAP, self:custom.dynamo.defaultCapacity}
+      writeCapacity: ${env:DYNAMO_FILE_META_WRITE_CAP, self:custom.dynamo.defaultCapacity}
+      readmetricname: ${env:FILE_METADATA_READCAPACITY_METRIC_NAME}
+      readperiod: ${env:FILE_METADATA_READCAPACITY_PERIOD}
+      readthreshold: ${env:FILE_METADATA_READCAPACITY_THRESHOLD}
+      readcomparisonpperator: ${env:FILE_METADATA_READCAPACITY_COMPARISON_OPR}
+      writemetricname: ${env:FILE_METADATA_WRITECAPACITY_METRIC_NAME}
+      writeperiod: ${env:FILE_METADATA_WRITECAPACITY_PERIOD}
+      writethreshold: ${env:FILE_METADATA_WRITECAPACITY_THRESHOLD}
+      writecomparisonoperator: ${env:FILE_METADATA_WRITECAPACITY_COMPARISON_OPR}
+    processMetadata:
+      name: ${self:service}-process-metadata-${self:custom.hen}-${self:provider.stage}
+      readCapacity: ${env:DYNAMO_PROCESS_META_READ_CAP, self:custom.dynamo.defaultCapacity}
+      writeCapacity: ${env:DYNAMO_PROCESS_META_WRITE_CAP, self:custom.dynamo.defaultCapacity}
+      readmetricname: ${env:PROCESS_METADATA_READCAPACITY_METRIC_NAME}
+      readperiod: ${env:PROCESS_METADATA_READCAPACITY_PERIOD}
+      readthreshold: ${env:PROCESS_METADATA_READCAPACITY_THRESHOLD}
+      readcomparisonoperator: ${env:PROCESS_METADATA_READCAPACITY_COMPARISON_OPR}
+      writemetricname: ${env:PROCESS_METADATA_WRITECAPACITY_METRIC_NAME}
+      writeperiod: ${env:PROCESS_METADATA_WRITECAPACITY_PERIOD}
+      writethreshold: ${env:PROCESS_METADATA_WRITECAPACITY_THRESHOLD}
+      writecomparisonoperator: ${env:PROCESS_METADATA_WRITECAPACITY_COMPARISON_OPR}
+  buckets:
+    code: ${self:service}-code-${self:custom.hen}-${self:provider.stage}
+    dataprocessingerrors: ${self:service}-data-processing-errors-${self:custom.hen}-${self:provider.stage}
+    landing: ${self:service}-landing-${self:custom.hen}-${self:provider.stage}
+    rawCustomerPii: ${self:service}-raw-customer-pii-${self:custom.hen}-${self:provider.stage}
+    rawHrPii: ${self:service}-raw-hr-pii-${self:custom.hen}-${self:provider.stage}
+    rawRegular: ${self:service}-raw-regular-${self:custom.hen}-${self:provider.stage}
+    discoveryCustomerPii: ${self:service}-discovery-cutomer-pii-${self:custom.hen}-${self:provider.stage}
+    discoveryHrPii: ${self:service}-discovery-hr-pii-${self:custom.hen}-${self:provider.stage}
+    discoveryRegular: ${self:service}-discovery-regular-${self:custom.hen}-${self:provider.stage}
+    refinedCustomerPii: ${self:service}-refined-customer-pii-${self:custom.hen}-${self:provider.stage}
+    refinedHrPii: ${self:service}-refined-hr-pii-${self:custom.hen}-${self:provider.stage}
+    refinedRegular: ${self:service}-refined-regular-${self:custom.hen}-${self:provider.stage}
+    deliveryCustomerPii: ${self:service}-delivery-customer-pii-${self:custom.hen}-${self:provider.stage}
+    deliveryRegular: ${self:service}-delivery-regular-${self:custom.hen}-${self:provider.stage}
+  remover:
+    buckets:
+      - ${self:custom.buckets.code}
+  package:
+    routeRawArtifact: target/dist/${self:service}-route-raw.zip
+    extractMetadataArtifact: target/dist/${self:service}-extract-metadata.zip
+    addStepsArtifact: target/dist/${self:service}-add-jobflow-steps.zip
+    dataprocessingErrorsArtifact: target/dist/${self:service}-data-processing-errors.zip
+
+provider:
+  name: aws
+  runtime: python2.7
+  stage: ${env:STAGE, self:custom.localDeploy.stage}
+  region: us-east-1
+  deploymentBucket: motherhen-${self:custom.coop}-${self:custom.hen}-deployments
+  stackTags:
+    GLCODE: '0062'
+    bill-glcode: '0062'
+    # TODO: change support team to EIM at some point...
+    SupportTeam: eaapplicationarchitects@gamestop.com
+    tech-support-team: eaapplicationarchitects@gamestop.com
+    BuiltBy: eaapplicationarchitects@gamestop.com
+    tech-builtby: eaapplicationarchitects@gamestop.com
+    tech-deployby: MH-CodePipeline
+    LastUpdatedBy: 'dturner'
+  environment:
+    STAGE: ${self:provider.stage}
+    # uncomment for local test via sls offline, or define the env var manually in your test shell
+    # but do not checkin since it will break the TEST stage of your app's code-pipeline
+    # AWS_REGION: ${self:provider.region} # needed for sls offline
+
+package:
+  individually: true
+
+functions:
+
+################################################
+#
+# NOTE: Be EXTREMELY careful with naming here--especially the buckets and lambdapermissions.
+#       We are relying on some serverless framework magic to do things in the right order, 
+#       and not naming things correctly can cause endless frustration and maybe even tears.
+#
+# See: https://gamestop.atlassian.net/wiki/spaces/AA/pages/81494201/Configure+S3+triggered+lambda+via+SLS
+# See also: https://serverless.com/framework/docs/providers/aws/events/s3/
+#           * Pay special attention to the bullets under the "Custom bucket configuration" heading.
+#
+################################################
+
+  routeRaw:
+    role: RouteRawRole
+    environment:
+      RAW_CUSTOMER_PII_BUCKET: ${self:custom.buckets.rawCustomerPii}
+      RAW_HR_PII_BUCKET: ${self:custom.buckets.rawHrPii}
+      RAW_REGULAR_BUCKET: ${self:custom.buckets.rawRegular}
+
+    name: ${self:service}-route-raw-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - s3:
+        bucket: landing
+        event: s3:ObjectCreated:*
+    package:
+      artifact: ${self:custom.package.routeRawArtifact}
+
+  extractMetadata:
+    role: ExtractMetadataRole
+    environment:
+      RAW_CUSTOMER_PII_BUCKET: ${self:custom.buckets.rawCustomerPii}
+      RAW_HR_PII_BUCKET: ${self:custom.buckets.rawHrPii}
+      RAW_REGULAR_BUCKET: ${self:custom.buckets.rawRegular}
+      DELIVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.deliveryCustomerPii}
+      DELIVERY_REGULAR_BUCKET: ${self:custom.buckets.deliveryRegular}
+      FILE_METADATA_TABLE: ${self:custom.dynamo.fileMetadata.name}
+    name: ${self:service}-extract-metadata-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - s3:
+        bucket: rawCustomerPii
+        event: s3:ObjectCreated:*
+      - s3:
+        bucket: rawHrPii
+        event: s3:ObjectCreated:*
+      - s3:
+        bucket: rawRegular
+        event: s3:ObjectCreated:*
+      - s3:
+        bucket: deliveryCustomerPii
+        event: s3:ObjectCreated:*
+      - s3:
+        bucket: deliveryRegular
+        event: s3:ObjectCreated:*
+    package:
+      artifact: ${self:custom.package.extractMetadataArtifact}
+
+  dataprocessingErrors:
+    role: DataprocessingErrorsRole
+    environment:
+      DATA_PROCESSING_ERRORS_BUCKET: ${self:custom.buckets.dataprocessingerrors}
+      HEN_NAME: ${self:custom.hen}
+      NOTIFICATION: ${self:custom.sns.snsnotification}
+    name: ${self:service}-data-processing-errors-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - s3:
+        bucket: dataprocessingerrors
+        event: s3:ObjectCreated:*
+    package:
+      artifact: ${self:custom.package.dataprocessingErrorsArtifact}
+
+  addJobFlowStepsCustomer:
+    role: AddJobFlowStepsRole
+    environment:
+      CODE_BUCKET: ${self:custom.buckets.code}
+      DATA_PROCESSING_ERRORS_BUCKET: ${self:custom.buckets.dataprocessingerrors}
+      RAW_CUSTOMER_PII_BUCKET: ${self:custom.buckets.rawCustomerPii}
+      RAW_HR_PII_BUCKET: ${self:custom.buckets.rawHrPii}
+      RAW_REGULAR_BUCKET: ${self:custom.buckets.rawRegular}
+      DISCOVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.discoveryCustomerPii}
+      DISCOVERY_HR_PII_BUCKET: ${self:custom.buckets.discoveryHrPii}
+      DISCOVERY_REGULAR_BUCKET: ${self:custom.buckets.discoveryRegular}
+      REFINED_CUSTOMER_PII_BUCKET: ${self:custom.buckets.refinedCustomerPii}
+      REFINED_HR_PII_BUCKET: ${self:custom.buckets.refinedHrPii}
+      REFINED_REGULAR_BUCKET: ${self:custom.buckets.refinedRegular}
+      DELIVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.deliveryCustomerPii}
+      DELIVERY_REGULAR_BUCKET: ${self:custom.buckets.deliveryRegular}
+      EMR_STACK_NAME: ${self:custom.emrStackName}
+    name: ${self:service}-add-steps-customer-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - schedule:
+          name: ${self:service}-add-steps-customer-sched-${self:custom.hen}-${self:provider.stage}
+          description: 'Invokes the ${self:service}-add-steps-customer-${self:custom.hen}-${self:provider.stage} lambda on a schedule'
+          rate: cron(0 5 * * ? *) # every day at 5AM UTC/12AM Dallas time
+          input:
+            builder: customer
+            enabled: true
+    package:
+      artifact: ${self:custom.package.addStepsArtifact}
+
+  addJobFlowStepsProduct:
+    role: AddJobFlowStepsRole
+    environment:
+      CODE_BUCKET: ${self:custom.buckets.code}
+      DATA_PROCESSING_ERRORS_BUCKET: ${self:custom.buckets.dataprocessingerrors}
+      RAW_CUSTOMER_PII_BUCKET: ${self:custom.buckets.rawCustomerPii}
+      RAW_HR_PII_BUCKET: ${self:custom.buckets.rawHrPii}
+      RAW_REGULAR_BUCKET: ${self:custom.buckets.rawRegular}
+      DISCOVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.discoveryCustomerPii}
+      DISCOVERY_HR_PII_BUCKET: ${self:custom.buckets.discoveryHrPii}
+      DISCOVERY_REGULAR_BUCKET: ${self:custom.buckets.discoveryRegular}
+      REFINED_CUSTOMER_PII_BUCKET: ${self:custom.buckets.refinedCustomerPii}
+      REFINED_HR_PII_BUCKET: ${self:custom.buckets.refinedHrPii}
+      REFINED_REGULAR_BUCKET: ${self:custom.buckets.refinedRegular}
+      DELIVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.deliveryCustomerPii}
+      DELIVERY_REGULAR_BUCKET: ${self:custom.buckets.deliveryRegular}
+      EMR_STACK_NAME: ${self:custom.emrStackName}
+    name: ${self:service}-add-steps-product-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - schedule:
+          name: ${self:service}-add-steps-product-sched-${self:custom.hen}-${self:provider.stage}
+          description: 'Invokes the ${self:service}-add-steps-product-${self:custom.hen}-${self:provider.stage} lambda on a schedule'
+          rate: cron(10 5 * * ? *) # every day at 5:10AM UTC/12:10AM Dallas time
+          input:
+            builder: product
+            enabled: true
+    package:
+      artifact: ${self:custom.package.addStepsArtifact}
+
+  addJobFlowStepsStore:
+    role: AddJobFlowStepsRole
+    environment:
+      CODE_BUCKET: ${self:custom.buckets.code}
+      DATA_PROCESSING_ERRORS_BUCKET: ${self:custom.buckets.dataprocessingerrors}
+      RAW_CUSTOMER_PII_BUCKET: ${self:custom.buckets.rawCustomerPii}
+      RAW_HR_PII_BUCKET: ${self:custom.buckets.rawHrPii}
+      RAW_REGULAR_BUCKET: ${self:custom.buckets.rawRegular}
+      DISCOVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.discoveryCustomerPii}
+      DISCOVERY_HR_PII_BUCKET: ${self:custom.buckets.discoveryHrPii}
+      DISCOVERY_REGULAR_BUCKET: ${self:custom.buckets.discoveryRegular}
+      REFINED_CUSTOMER_PII_BUCKET: ${self:custom.buckets.refinedCustomerPii}
+      REFINED_HR_PII_BUCKET: ${self:custom.buckets.refinedHrPii}
+      REFINED_REGULAR_BUCKET: ${self:custom.buckets.refinedRegular}
+      DELIVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.deliveryCustomerPii}
+      DELIVERY_REGULAR_BUCKET: ${self:custom.buckets.deliveryRegular}
+      EMR_STACK_NAME: ${self:custom.emrStackName}
+      PROCESS_METADATA_TABLE: ${self:custom.dynamo.processMetadata.name}
+    name: ${self:service}-add-steps-store-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - schedule:
+          name: ${self:service}-add-steps-store-sched-${self:custom.hen}-${self:provider.stage}
+          description: 'Invokes the ${self:service}-add-steps-store-${self:custom.hen}-${self:provider.stage} lambda on a schedule'
+          rate: cron(20 5 * * ? *) # every day at 5:20AM UTC/12:20AM Dallas time
+          input:
+            builder: store
+            enabled: true
+    package:
+      artifact: ${self:custom.package.addStepsArtifact}
+
+  addJobFlowStepsGoalsKPI:
+    role: AddJobFlowStepsRole
+    environment:
+      CODE_BUCKET: ${self:custom.buckets.code}
+      DATA_PROCESSING_ERRORS_BUCKET: ${self:custom.buckets.dataprocessingerrors}
+      RAW_CUSTOMER_PII_BUCKET: ${self:custom.buckets.rawCustomerPii}
+      RAW_HR_PII_BUCKET: ${self:custom.buckets.rawHrPii}
+      RAW_REGULAR_BUCKET: ${self:custom.buckets.rawRegular}
+      DISCOVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.discoveryCustomerPii}
+      DISCOVERY_HR_PII_BUCKET: ${self:custom.buckets.discoveryHrPii}
+      DISCOVERY_REGULAR_BUCKET: ${self:custom.buckets.discoveryRegular}
+      REFINED_CUSTOMER_PII_BUCKET: ${self:custom.buckets.refinedCustomerPii}
+      REFINED_HR_PII_BUCKET: ${self:custom.buckets.refinedHrPii}
+      REFINED_REGULAR_BUCKET: ${self:custom.buckets.refinedRegular}
+      DELIVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.deliveryCustomerPii}
+      DELIVERY_REGULAR_BUCKET: ${self:custom.buckets.deliveryRegular}
+      EMR_STACK_NAME: ${self:custom.emrStackName}
+    name: ${self:service}-add-steps-goalskpi-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - schedule:
+          name: ${self:service}-add-steps-goalskpi-sched-${self:custom.hen}-${self:provider.stage}
+          description: 'Invokes the ${self:service}-add-steps-goalskpi-${self:custom.hen}-${self:provider.stage} lambda on a schedule'
+          rate: cron(50 5 * * ? *) # every day at 5:50AM UTC/12:50AM Dallas time
+          input:
+            builder: goalskpi
+            enabled: true
+    package:
+      artifact: ${self:custom.package.addStepsArtifact}
+
+  addJobFlowStepsSalesOthers:
+    role: AddJobFlowStepsRole
+    environment:
+      CODE_BUCKET: ${self:custom.buckets.code}
+      DATA_PROCESSING_ERRORS_BUCKET: ${self:custom.buckets.dataprocessingerrors}
+      RAW_CUSTOMER_PII_BUCKET: ${self:custom.buckets.rawCustomerPii}
+      RAW_HR_PII_BUCKET: ${self:custom.buckets.rawHrPii}
+      RAW_REGULAR_BUCKET: ${self:custom.buckets.rawRegular}
+      DISCOVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.discoveryCustomerPii}
+      DISCOVERY_HR_PII_BUCKET: ${self:custom.buckets.discoveryHrPii}
+      DISCOVERY_REGULAR_BUCKET: ${self:custom.buckets.discoveryRegular}
+      REFINED_CUSTOMER_PII_BUCKET: ${self:custom.buckets.refinedCustomerPii}
+      REFINED_HR_PII_BUCKET: ${self:custom.buckets.refinedHrPii}
+      REFINED_REGULAR_BUCKET: ${self:custom.buckets.refinedRegular}
+      DELIVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.deliveryCustomerPii}
+      DELIVERY_REGULAR_BUCKET: ${self:custom.buckets.deliveryRegular}
+      EMR_STACK_NAME: ${self:custom.emrStackName}
+    name: ${self:service}-add-steps-salesothers-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - schedule:
+          name: ${self:service}-add-steps-salesothers-sched-${self:custom.hen}-${self:provider.stage}
+          description: 'Invokes the ${self:service}-add-steps-salesothers-${self:custom.hen}-${self:provider.stage} lambda on a schedule'
+          rate: cron(10 6 * * ? *) # every day at 6:10AM UTC/1:10AM Dallas time
+          input:
+            builder: salesothers
+            enabled: true
+    package:
+      artifact: ${self:custom.package.addStepsArtifact}
+
+  addJobFlowStepsSalesTransactions:
+    role: AddJobFlowStepsRole
+    environment:
+      CODE_BUCKET: ${self:custom.buckets.code}
+      DATA_PROCESSING_ERRORS_BUCKET: ${self:custom.buckets.dataprocessingerrors}
+      RAW_CUSTOMER_PII_BUCKET: ${self:custom.buckets.rawCustomerPii}
+      RAW_HR_PII_BUCKET: ${self:custom.buckets.rawHrPii}
+      RAW_REGULAR_BUCKET: ${self:custom.buckets.rawRegular}
+      DISCOVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.discoveryCustomerPii}
+      DISCOVERY_HR_PII_BUCKET: ${self:custom.buckets.discoveryHrPii}
+      DISCOVERY_REGULAR_BUCKET: ${self:custom.buckets.discoveryRegular}
+      REFINED_CUSTOMER_PII_BUCKET: ${self:custom.buckets.refinedCustomerPii}
+      REFINED_HR_PII_BUCKET: ${self:custom.buckets.refinedHrPii}
+      REFINED_REGULAR_BUCKET: ${self:custom.buckets.refinedRegular}
+      DELIVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.deliveryCustomerPii}
+      DELIVERY_REGULAR_BUCKET: ${self:custom.buckets.deliveryRegular}
+      EMR_STACK_NAME: ${self:custom.emrStackName}
+      PROCESS_METADATA_TABLE: ${self:custom.dynamo.processMetadata.name}
+    name: ${self:service}-add-steps-salestransactions-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - schedule:
+          name: ${self:service}-add-steps-salestransactions-sched-${self:custom.hen}-${self:provider.stage}
+          description: 'Invokes the ${self:service}-add-steps-salestransactions-${self:custom.hen}-${self:provider.stage} lambda on a schedule'
+          rate: cron(25 6 * * ? *) # every day at 6:25AM UTC/1:25AM Dallas time
+          input:
+            builder: salestransactions
+            enabled: true
+    package:
+      artifact: ${self:custom.package.addStepsArtifact}
+
+  addJobFlowStepsStoreCustomerExperience:
+    role: AddJobFlowStepsRole
+    environment:
+      CODE_BUCKET: ${self:custom.buckets.code}
+      DATA_PROCESSING_ERRORS_BUCKET: ${self:custom.buckets.dataprocessingerrors}
+      RAW_CUSTOMER_PII_BUCKET: ${self:custom.buckets.rawCustomerPii}
+      RAW_HR_PII_BUCKET: ${self:custom.buckets.rawHrPii}
+      RAW_REGULAR_BUCKET: ${self:custom.buckets.rawRegular}
+      DISCOVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.discoveryCustomerPii}
+      DISCOVERY_HR_PII_BUCKET: ${self:custom.buckets.discoveryHrPii}
+      DISCOVERY_REGULAR_BUCKET: ${self:custom.buckets.discoveryRegular}
+      REFINED_CUSTOMER_PII_BUCKET: ${self:custom.buckets.refinedCustomerPii}
+      REFINED_HR_PII_BUCKET: ${self:custom.buckets.refinedHrPii}
+      REFINED_REGULAR_BUCKET: ${self:custom.buckets.refinedRegular}
+      DELIVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.deliveryCustomerPii}
+      DELIVERY_REGULAR_BUCKET: ${self:custom.buckets.deliveryRegular}
+      EMR_STACK_NAME: ${self:custom.emrStackName}
+    name: ${self:service}-add-steps-storecustexpr-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - schedule:
+          name: ${self:service}-add-steps-storecustexpr-sched-${self:custom.hen}-${self:provider.stage}
+          description: 'Invokes the ${self:service}-add-steps-storecustomerexpr-${self:custom.hen}-${self:provider.stage} lambda on a schedule'
+          rate: cron(40 6 * * ? *) # every day at 6:40AM UTC/1:40AM Dallas time
+          input:
+            builder: storecustomerexperience
+            enabled: true
+    package:
+      artifact: ${self:custom.package.addStepsArtifact}
+
+  addJobFlowStepsSalesKPIandDetails:
+    role: AddJobFlowStepsRole
+    environment:
+      CODE_BUCKET: ${self:custom.buckets.code}
+      DATA_PROCESSING_ERRORS_BUCKET: ${self:custom.buckets.dataprocessingerrors}
+      RAW_CUSTOMER_PII_BUCKET: ${self:custom.buckets.rawCustomerPii}
+      RAW_HR_PII_BUCKET: ${self:custom.buckets.rawHrPii}
+      RAW_REGULAR_BUCKET: ${self:custom.buckets.rawRegular}
+      DISCOVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.discoveryCustomerPii}
+      DISCOVERY_HR_PII_BUCKET: ${self:custom.buckets.discoveryHrPii}
+      DISCOVERY_REGULAR_BUCKET: ${self:custom.buckets.discoveryRegular}
+      REFINED_CUSTOMER_PII_BUCKET: ${self:custom.buckets.refinedCustomerPii}
+      REFINED_HR_PII_BUCKET: ${self:custom.buckets.refinedHrPii}
+      REFINED_REGULAR_BUCKET: ${self:custom.buckets.refinedRegular}
+      DELIVERY_CUSTOMER_PII_BUCKET: ${self:custom.buckets.deliveryCustomerPii}
+      DELIVERY_REGULAR_BUCKET: ${self:custom.buckets.deliveryRegular}
+      EMR_STACK_NAME: ${self:custom.emrStackName}
+      PROCESS_METADATA_TABLE: ${self:custom.dynamo.processMetadata.name}
+    name: ${self:service}-add-steps-saleskpianddetails-${self:custom.hen}-${self:provider.stage}
+    handler: handler.lambda_handler
+    events:
+      - schedule:
+          name: ${self:service}-add-steps-saleskpianddetails-sched-${self:custom.hen}-${self:provider.stage}
+          description: 'Invokes the ${self:service}-add-steps-saleskpianddetails-${self:custom.hen}-${self:provider.stage} lambda on a schedule'
+          rate: cron(55 6 * * ? *) # every day at 6:55AM UTC/1:55AM Dallas time
+          input:
+            builder: saleskpianddetails
+            enabled: true
+    package:
+      artifact: ${self:custom.package.addStepsArtifact}
+      
+# NOTE: If needed, add additional Lambda Function definitions here
+# See https://serverless.com/framework/docs/providers/aws/guide/functions/ for more information
+
+resources:
+  # STUFF FOR CUSTOM BUCKET CONFIGURATION
+  ### TODO ### https://serverless.com/framework/docs/providers/aws/events/s3/
+  Resources:
+    ######################################################################
+    # SPARK CODE BUCKET
+    ######################################################################
+    
+    # S3 bucket where we put spark code. Not used by lambdas, but read by the EMR cluster
+    S3BucketCode:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.code}
+        # need to add policy to allow the cluster to read the bucket
+
+    ######################################################################
+    # DATA PROCESSING ERRORS BUCKET
+    ######################################################################
+    
+    # S3 bucket where exception handling errors are placed
+    S3BucketDataProcessingErrors:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.dataprocessingerrors}
+        LifecycleConfiguration:
+          Rules:
+          - Id: ExpirationRule
+            Status: Enabled
+            ExpirationInDays: 90
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              Function:
+                Fn::GetAtt:
+                  - DataprocessingErrorsLambdaFunction
+                  - Arn
+      DependsOn: ExtractMetadataLambdaPermissionDataprocessingerrorsS3
+
+    # Permission to invoke the Lambda that that send SNS notification
+    ExtractMetadataLambdaPermissionDataprocessingerrorsS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Fn::GetAtt:
+            - DataprocessingErrorsLambdaFunction
+            - Arn
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: arn:aws:s3:::${self:custom.buckets.dataprocessingerrors}
+
+    ######################################################################
+    # LANDING BUCKET
+    ######################################################################
+
+    # S3 bucket where CSV files enter the data lake
+    S3BucketLanding:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.landing}
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              Function:
+                Fn::GetAtt:
+                  - RouteRawLambdaFunction
+                  - Arn
+      DependsOn: RouteRawLambdaPermissionLandingS3
+
+    # Permission to invoke the Lambda that routes files from the Landing bucket to the Raw buckets
+    RouteRawLambdaPermissionLandingS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Fn::GetAtt:
+            - RouteRawLambdaFunction
+            - Arn
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: arn:aws:s3:::${self:custom.buckets.landing}
+
+    ######################################################################
+    # RAW BUCKETS
+    ######################################################################
+
+    # RAW CUSTOMER PII BUCKET
+    # S3 bucket that contains raw (csv) files containing Customer PII data
+    S3BucketRawCustomerPii:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.rawCustomerPii}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                KMSMasterKeyID:
+                  Ref: S3PIIEncryptionKey
+                SSEAlgorithm: aws:kms
+        LifecycleConfiguration:
+          Rules:
+            - Id: Glacier-Expiration-Rule
+              Status: Enabled
+              ExpirationInDays: 3650
+              Transitions:
+                - TransitionInDays: 730
+                  StorageClass: Glacier
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              Function:
+                Fn::GetAtt:
+                  - ExtractMetadataLambdaFunction
+                  - Arn
+      DependsOn: ExtractMetadataLambdaPermissionRawCustomerPiiS3
+
+    # Permission to invoke the Lambda that extracts metadata from the raw customer pii bucket
+    ExtractMetadataLambdaPermissionRawCustomerPiiS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Fn::GetAtt:
+            - ExtractMetadataLambdaFunction
+            - Arn
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: arn:aws:s3:::${self:custom.buckets.rawCustomerPii}
+
+    # RAW HR PII BUCKET
+    # S3 bucket that contains raw (csv) files containing HR PII data
+    S3BucketRawHrPii:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.rawHrPii}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                KMSMasterKeyID:
+                  Ref: S3PIIEncryptionKey
+                SSEAlgorithm: aws:kms
+        LifecycleConfiguration:
+          Rules:
+            - Id: Glacier-Expiration-Rule
+              Status: Enabled
+              ExpirationInDays: 3650
+              Transitions:
+                - TransitionInDays: 730
+                  StorageClass: Glacier
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              Function:
+                Fn::GetAtt:
+                  - ExtractMetadataLambdaFunction
+                  - Arn
+      DependsOn: ExtractMetadataLambdaPermissionRawHrPiiS3
+
+    # Permission to invoke the Lambda that extracts metadata from the raw hr bucket
+    ExtractMetadataLambdaPermissionRawHrPiiS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Fn::GetAtt:
+            - ExtractMetadataLambdaFunction
+            - Arn
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: arn:aws:s3:::${self:custom.buckets.rawHrPii}
+
+    # RAW REGULAR BUCKET
+    # S3 bucket that contains raw (csv) files containing no security-related data
+    S3BucketRawRegular:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.rawRegular}
+        LifecycleConfiguration:
+          Rules:
+            - Id: Glacier-Expiration-Rule
+              Status: Enabled
+              ExpirationInDays: 3650
+              Transitions:
+                - TransitionInDays: 730
+                  StorageClass: Glacier
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              Function:
+                Fn::GetAtt:
+                  - ExtractMetadataLambdaFunction
+                  - Arn
+      DependsOn: ExtractMetadataLambdaPermissionRawRegularS3
+
+    # Permission to invoke the Lambda that extracts metadata from the raw regular bucket
+    ExtractMetadataLambdaPermissionRawRegularS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Fn::GetAtt:
+            - ExtractMetadataLambdaFunction
+            - Arn
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: arn:aws:s3:::${self:custom.buckets.rawRegular}
+
+    ######################################################################
+    # DELIVERY BUCKET
+    ######################################################################
+
+    # DELIVERY CUSTOMER PII BUCKET
+    # S3 bucket that contains the output of the datalake processing (csv)
+    S3BucketDeliveryCustomerPii:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.deliveryCustomerPii}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                KMSMasterKeyID:
+                  Ref: S3PIIEncryptionKey
+                SSEAlgorithm: aws:kms
+        LifecycleConfiguration:
+          Rules:
+          - Id: ExpirationRule
+            Status: Enabled
+            ExpirationInDays: 14
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              Function:
+                Fn::GetAtt:
+                  - ExtractMetadataLambdaFunction
+                  - Arn
+      DependsOn: ExtractMetadataLambdaPermissionDeliveryCusomerPiiS3
+
+    # Permissions for the Lambda that extracts metadata from the raw and delivery buckets
+    ExtractMetadataLambdaPermissionDeliveryCusomerPiiS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Fn::GetAtt:
+            - ExtractMetadataLambdaFunction
+            - Arn
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: arn:aws:s3:::${self:custom.buckets.deliveryCustomerPii}
+     
+    # DELIVERY REGULAR BUCKET
+    # S3 bucket that contains the output of the datalake processing (csv) 
+    S3BucketDeliveryRegular:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.deliveryRegular}
+        LifecycleConfiguration:
+          Rules:
+          - Id: ExpirationRule
+            Status: Enabled
+            ExpirationInDays: 14
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              Function:
+                Fn::GetAtt:
+                  - ExtractMetadataLambdaFunction
+                  - Arn
+      DependsOn: ExtractMetadataLambdaPermissionDeliveryRegularS3
+
+    # Permissions for the Lambda that extracts metadata from the raw and delivery buckets
+    ExtractMetadataLambdaPermissionDeliveryRegularS3:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Fn::GetAtt:
+            - ExtractMetadataLambdaFunction
+            - Arn
+        Principal: s3.amazonaws.com
+        Action: lambda:InvokeFunction
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: arn:aws:s3:::${self:custom.buckets.deliveryRegular}
+
+    ######################################################################
+    # DISCOVERY BUCKETS
+    ######################################################################
+
+    # DISCOVERY CUSTOMER PII BUCKET
+    S3BucketDiscoveryCustomerPii:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.discoveryCustomerPii}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                KMSMasterKeyID:
+                  Ref: S3PIIEncryptionKey
+                SSEAlgorithm: aws:kms
+        LifecycleConfiguration:
+          Rules:
+            - Id: IA-Glacier-Expire-Rule
+              Status: Enabled
+              ExpirationInDays: 3650
+              Transitions:
+                - TransitionInDays: 730
+                  StorageClass: STANDARD_IA
+                - TransitionInDays: 1460
+                  StorageClass: Glacier
+
+    # DISCOVERY HR PII BUCKET
+    S3BucketDiscoveryHrPii:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.discoveryHrPii}
+        LifecycleConfiguration:
+          Rules:
+            - Id: IA-Glacier-Expire-Rule
+              Status: Enabled
+              ExpirationInDays: 3650
+              Transitions:
+                - TransitionInDays: 730
+                  StorageClass: STANDARD_IA
+                - TransitionInDays: 1460
+                  StorageClass: Glacier
+
+    # DISCOVERY REGULAR BUCKET
+    S3BucketDiscoveryRegular:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.discoveryRegular}
+        LifecycleConfiguration:
+          Rules:
+          - Id: IA-Glacier-Expire-Rule
+            Status: Enabled
+            ExpirationInDays: 3650
+            Transitions:
+              - TransitionInDays: 730
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 1460
+                StorageClass: Glacier
+
+    ######################################################################
+    # REFINED BUCKETS
+    ######################################################################
+
+    # REFINED CUSTOMER PII BUCKET
+    S3BucketRefinedCustomerPii:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.refinedCustomerPii}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                KMSMasterKeyID:
+                  Ref: S3PIIEncryptionKey
+                SSEAlgorithm: aws:kms
+        LifecycleConfiguration:
+          Rules:
+          - Id: IA-Glacier-Expire-Rule
+            Status: Enabled
+            ExpirationInDays: 3650
+            Transitions:
+              - TransitionInDays: 730
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 1460
+                StorageClass: Glacier
+
+    # REFINED HR PII BUCKET
+    S3BucketRefinedHrPii:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.refinedHrPii}
+        LifecycleConfiguration:
+          Rules:
+          - Id: IA-Glacier-Expire-Rule
+            Status: Enabled
+            ExpirationInDays: 3650
+            Transitions:
+              - TransitionInDays: 730
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 1460
+                StorageClass: Glacier
+
+    # REFINED REGULAR BUCKET
+    S3BucketRefinedRegular:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.buckets.refinedRegular}
+        LifecycleConfiguration:
+          Rules:
+          - Id: IA-Glacier-Expire-Rule
+            Status: Enabled
+            ExpirationInDays: 3650
+            Transitions:
+              - TransitionInDays: 730
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 1460
+                StorageClass: Glacier
+
+    ######################################################################
+    # DYNAMO TABLES
+    ######################################################################
+
+    FileMetadataDynamoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: ${self:custom.dynamo.fileMetadata.readCapacity}
+          WriteCapacityUnits: ${self:custom.dynamo.fileMetadata.writeCapacity}
+        # NOTE: Must grant access to this TableName in iamRoleStatements section
+        TableName: ${self:custom.dynamo.fileMetadata.name}
+
+    ProcessMetadataDynamoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: ${self:custom.dynamo.processMetadata.readCapacity}
+          WriteCapacityUnits: ${self:custom.dynamo.processMetadata.writeCapacity}
+        # NOTE: Must grant access to this TableName in iamRoleStatements section
+        TableName: ${self:custom.dynamo.processMetadata.name}
+
+    ######################################################################
+    # Cloudwatch Alarm and Notifications
+    ######################################################################
+
+    FileMetadataReadCapacityAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Alarm when read capacity reaches provisioned read capacity
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.dynamo.fileMetadata.readmetricname}
+        Namespace: AWS/DynamoDB
+        Statistic: Average
+        Period: ${self:custom.dynamo.fileMetadata.readperiod}
+        EvaluationPeriods: 5
+        Threshold: ${self:custom.dynamo.fileMetadata.readthreshold}
+        ComparisonOperator: ${self:custom.dynamo.fileMetadata.readcomparisonpperator}
+        Dimensions:
+          - Name: TableName
+            Value:
+              Ref: FileMetadataDynamoTable
+
+    FileMetadataWriteCapacityAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Alarm when write capacity reaches provisioned write capacity
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.dynamo.fileMetadata.writemetricname}
+        Namespace: AWS/DynamoDB
+        Statistic: Average
+        Period: ${self:custom.dynamo.fileMetadata.writeperiod}
+        EvaluationPeriods: 5
+        Threshold: ${self:custom.dynamo.fileMetadata.writethreshold}
+        ComparisonOperator: ${self:custom.dynamo.fileMetadata.writecomparisonoperator}
+        Dimensions:
+          - Name: TableName
+            Value:
+              Ref: FileMetadataDynamoTable
+
+    ProcessMetadataReadCapacityAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Alarm when read capacity reaches provisioned read capacity
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.dynamo.processMetadata.readmetricname}
+        Namespace: AWS/DynamoDB
+        Statistic: Average
+        Period: ${self:custom.dynamo.processMetadata.readperiod}
+        EvaluationPeriods: 5
+        Threshold: ${self:custom.dynamo.processMetadata.readthreshold}
+        ComparisonOperator: ${self:custom.dynamo.processMetadata.readcomparisonoperator}
+        Dimensions:
+          - Name: TableName
+            Value:
+              Ref: ProcessMetadataDynamoTable
+
+    ProcessMetadataWriteCapacityAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Alarm when write capacity reaches provisioned write capacity
+        AlarmActions:
+         - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.dynamo.processMetadata.writemetricname}
+        Namespace: AWS/DynamoDB
+        Statistic: Average
+        Period: ${self:custom.dynamo.processMetadata.writeperiod}
+        EvaluationPeriods: 5
+        Threshold: ${self:custom.dynamo.processMetadata.writethreshold}
+        ComparisonOperator: ${self:custom.dynamo.processMetadata.writecomparisonoperator}
+        Dimensions:
+          - Name: TableName
+            Value:
+              Ref: ProcessMetadataDynamoTable
+
+    RouterawlambdafailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda failure alarm for routeRaw Lambda Function
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.addjobflow.lambda.lambdametricName}
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: ${self:custom.addjobflow.lambda.lambdaperiod}
+        EvaluationPeriods: 1
+        Threshold: ${self:custom.addjobflow.lambda.lambdathreshold}
+        ComparisonOperator: ${self:custom.addjobflow.lambda.lambdacomparisonoperator}
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: RouteRawLambdaFunction
+
+    ExtractMetadatalambdafailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda failure alarm for extractMetadata Lambda Function
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.addjobflow.lambda.lambdametricName}
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: ${self:custom.addjobflow.lambda.lambdaperiod}
+        EvaluationPeriods: 1
+        Threshold: ${self:custom.addjobflow.lambda.lambdathreshold}
+        ComparisonOperator: ${self:custom.addjobflow.lambda.lambdacomparisonoperator}
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: ExtractMetadataLambdaFunction
+
+    StorelambdafailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda failure alarm for addJobFlowStepsStore Lambda Function
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.addjobflow.lambda.lambdametricName}
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: ${self:custom.addjobflow.lambda.lambdaperiod}
+        EvaluationPeriods: 1
+        Threshold: ${self:custom.addjobflow.lambda.lambdathreshold}
+        ComparisonOperator: ${self:custom.addjobflow.lambda.lambdacomparisonoperator}
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AddJobFlowStepsStoreLambdaFunction
+
+    CustomerlambdafailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda failure alarm for addJobFlowStepsCustomer Lambda Function
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.addjobflow.lambda.lambdametricName}
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: ${self:custom.addjobflow.lambda.lambdaperiod}
+        EvaluationPeriods: 1
+        Threshold: ${self:custom.addjobflow.lambda.lambdathreshold}
+        ComparisonOperator: ${self:custom.addjobflow.lambda.lambdacomparisonoperator}
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AddJobFlowStepsCustomerLambdaFunction
+
+    ProductlambdafailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda failure alarm for addJobFlowStepsProduct Lambda Function
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.addjobflow.lambda.lambdametricName}
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: ${self:custom.addjobflow.lambda.lambdaperiod}
+        EvaluationPeriods: 1
+        Threshold: ${self:custom.addjobflow.lambda.lambdathreshold}
+        ComparisonOperator: ${self:custom.addjobflow.lambda.lambdacomparisonoperator}
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AddJobFlowStepsProductLambdaFunction
+
+    StoreCustomerExperiencelambdafailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda failure alarm for addJobFlowStepsStoreCustomerExperience Lambda Function
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.addjobflow.lambda.lambdametricName}
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: ${self:custom.addjobflow.lambda.lambdaperiod}
+        EvaluationPeriods: 1
+        Threshold: ${self:custom.addjobflow.lambda.lambdathreshold}
+        ComparisonOperator: ${self:custom.addjobflow.lambda.lambdacomparisonoperator}
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AddJobFlowStepsStoreCustomerExperienceLambdaFunction
+
+    GoalsKPIlambdafailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda failure alarm for addJobFlowStepsGoalsKPI Lambda Function
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.addjobflow.lambda.lambdametricName}
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: ${self:custom.addjobflow.lambda.lambdaperiod}
+        EvaluationPeriods: 1
+        Threshold: ${self:custom.addjobflow.lambda.lambdathreshold}
+        ComparisonOperator: ${self:custom.addjobflow.lambda.lambdacomparisonoperator}
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AddJobFlowStepsGoalsKPILambdaFunction
+
+    SalesOtherslambdafailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda failure alarm for addJobFlowStepsSalesOthers Lambda Function
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.addjobflow.lambda.lambdametricName}
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: ${self:custom.addjobflow.lambda.lambdaperiod}
+        EvaluationPeriods: 1
+        Threshold: ${self:custom.addjobflow.lambda.lambdathreshold}
+        ComparisonOperator: ${self:custom.addjobflow.lambda.lambdacomparisonoperator}
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AddJobFlowStepsSalesOthersLambdaFunction
+
+    SalesTransactionslambdafailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda failure alarm for addJobFlowStepsSalesTransactions Lambda Function
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.addjobflow.lambda.lambdametricName}
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: ${self:custom.addjobflow.lambda.lambdaperiod}
+        EvaluationPeriods: 1
+        Threshold: ${self:custom.addjobflow.lambda.lambdathreshold}
+        ComparisonOperator: ${self:custom.addjobflow.lambda.lambdacomparisonoperator}
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AddJobFlowStepsSalesTransactionsLambdaFunction
+
+    SalesKPIandDetailslambdafailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Lambda failure alarm for addJobFlowStepsSalesKPIandDetails Lambda Function
+        AlarmActions:
+          - Ref: SNSNotificationTopic
+        MetricName: ${self:custom.addjobflow.lambda.lambdametricName}
+        Namespace: AWS/Lambda
+        Statistic: Sum
+        Period: ${self:custom.addjobflow.lambda.lambdaperiod}
+        EvaluationPeriods: 1
+        Threshold: ${self:custom.addjobflow.lambda.lambdathreshold}
+        ComparisonOperator: ${self:custom.addjobflow.lambda.lambdacomparisonoperator}
+        Dimensions:
+          - Name: FunctionName
+            Value:
+              Ref: AddJobFlowStepsSalesKPIandDetailsLambdaFunction
+
+    ######################################################################
+    # SNS Notification Topic
+    ######################################################################
+
+    SNSNotificationTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        Subscription:
+          - Endpoint: ${self:custom.sns.snsendpoint}
+            Protocol: email
+        TopicName: ${self:custom.sns.snsnotification}
+
+    SNSTopicPolicy:
+      Type: AWS::SNS::TopicPolicy
+      Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal: '*'
+              Action:
+                - sns:Publish
+              Resource: '*'
+        Topics:
+          - Ref: SNSNotificationTopic
+
+    ######################################################################
+    # CMK - KMS
+    ######################################################################
+
+    S3PIIEncryptionKey:
+      Type: AWS::KMS::Key
+      Properties:
+        Description: A Encryption key for PII Buckets
+        Enabled: true
+        EnableKeyRotation: true
+        KeyPolicy:
+          Id: KmsKeyPolicy
+          Version: '2012-10-17'
+          Statement:
+            - Sid: Enable IAM User Permissions
+              Effect: Allow
+              Principal:
+                AWS:
+                  - 'Fn::Join':
+                      - ':'
+                      - - 'arn:aws:iam:'
+                        - Ref: AWS::AccountId
+                        - root
+              Action: kms:*
+              Resource: '*'
+            - Sid: Allow access for Key Administrators
+              Effect: Allow
+              Principal:
+                AWS:
+                  - 'Fn::Join':
+                      - ':'
+                      - - 'arn:aws:iam:'
+                        - Ref: AWS::AccountId
+                        - role/GS-FullAdmin
+              Action:
+                - kms:Create*
+                - kms:Describe*
+                - kms:Enable*
+                - kms:List*
+                - kms:Put*
+                - kms:Update*
+                - kms:Revoke*
+                - kms:Disable*
+                - kms:Get*
+                - kms:Delete*
+                - kms:TagResource
+                - kms:UntagResource
+                - kms:ScheduleKeyDeletion
+                - kms:CancelKeyDeletion
+              Resource: '*'
+            - Sid: Allow use of the key
+              Effect: Allow
+              Principal:
+                AWS: '*'
+              Action:
+                - kms:*
+              Resource: '*'
+            - Sid: Allow attachment of persistent resources
+              Effect: Allow
+              Principal:
+                AWS:
+                  - 'Fn::GetAtt':
+                      - KmsKeyServiceRole
+                      - Arn
+              Action:
+                - 'kms:CreateGrant'
+                - 'kms:ListGrants'
+                - 'kms:RevokeGrant'
+              Resource: '*'
+              Condition:
+                Bool:
+                  'kms:GrantIsForAWSResource': 'true'
+
+    S3PIIEncryptionKeyAlias:
+      Type: AWS::KMS::Alias
+      Properties:
+        AliasName:
+          'Fn::Join':
+            - '-'
+            - - alias/${self:service}
+              - KMS
+              - ${self:custom.hen}
+              - ${self:provider.stage}
+        TargetKeyId:
+          Ref: S3PIIEncryptionKey
+
+    ######################################################################
+    # Glue - Crawler
+    ######################################################################
+
+    DiscoveryDatabase:
+      Type: AWS::Glue::Database
+      Properties:
+        CatalogId: 
+          Ref: AWS::AccountId
+        DatabaseInput:
+          Name: ${self:service}-discoverylayer-database-${self:custom.hen}-${self:provider.stage}
+          Description: Database for discovery layer
+
+    RefinedDatabase:
+      Type: AWS::Glue::Database
+      Properties:
+        CatalogId: 
+          Ref: AWS::AccountId
+        DatabaseInput:
+          Name: ${self:service}-refinedlayer-database-${self:custom.hen}-${self:provider.stage}
+          Description: Database for refined layer
+
+    DiscoverylayerCrawler:
+      Type: AWS::Glue::Crawler
+      Properties:
+        Name: ${self:service}-glue-mtd-discovery-layer-${self:custom.hen}-${self:provider.stage}
+        Role:
+          'Fn::GetAtt':
+            - GlueRole
+            - Arn
+        DatabaseName:
+          Ref: DiscoveryDatabase
+        TablePrefix: discoverycrw
+        Targets:
+          S3Targets:
+            - Path: s3://${self:custom.buckets.discoveryCustomerPii}/Customer/Working/
+            - Path: s3://${self:custom.buckets.discoveryHrPii}/Employee/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/Product/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/ProductCategory/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/Store/ATTDealerCodes/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/Store/BAE/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/Store/DTV/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/Store/DealerCodes/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/Store/Location/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/Store/MultiTracker/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/Store/SpringMobileStore/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/ATTDealerCode/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/TBGoalPointEmployee/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/TBGoalPointStore/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/StoreRecruitingHeadcount/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/StoreGoals/Working/			
+            - Path: s3://${self:custom.buckets.discoveryRegular}/StoreDailyGoalForecast/Working/
+            - Path: s3://${self:custom.buckets.discoveryCustomerPii}/SalesLeads/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/StoreTraffic/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/StoreTransactionAdjustment/Working1/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/StoreTransactionAdjustment/Working2/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/ATTSalesActual/Working1/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/ATTSalesActual/Working2/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/EmployeeTransactionAdjustment/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/EmployeeOperationalEfficiency/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/StoreCustomerExperience/Working/
+            - Path: s3://${self:custom.buckets.discoveryRegular}/SalesDetails/Working/
+        SchemaChangePolicy:
+          UpdateBehavior: 'UPDATE_IN_DATABASE'
+          DeleteBehavior: 'DEPRECATE_IN_DATABASE'
+        Schedule:
+          ScheduleExpression: 'cron(0 0 * * ? *)'
+
+    RefinedlayerCrawler:
+      Type: AWS::Glue::Crawler
+      Properties:
+        Name: ${self:service}-glue-mtd-refined-layer-${self:custom.hen}-${self:provider.stage}
+        Role:
+          'Fn::GetAtt':
+            - GlueRole
+            - Arn
+        DatabaseName:
+          Ref: RefinedDatabase
+        TablePrefix: refinedcrw
+        Targets:
+          S3Targets:
+            - Path: s3://${self:custom.buckets.refinedCustomerPii}/CustomerPII/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/Employee/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/Product/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/ProductCategory/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/Store/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/ATTDealerCode/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/TBGoalPoint/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/StoreRecruitingHeadcount/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/StoreGoals/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/EmployeeGoal/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/StoreDailyGoalForecast/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/SalesLeads/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/StoreTraffic/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/StoreTransactionAdj/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/ATTSalesActual/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/EmployeeTransactionAdjustment/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/EmployeeOperationalEfficiency/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/StoreCustomerExperience/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/SalesDetails/Working/
+            - Path: s3://${self:custom.buckets.refinedRegular}/SalesKPI/Working/
+        SchemaChangePolicy:
+          UpdateBehavior: 'UPDATE_IN_DATABASE'
+          DeleteBehavior: 'DEPRECATE_IN_DATABASE'
+        Schedule:
+          ScheduleExpression: 'cron(0 0 * * ? *)'
+
+    ######################################################################
+    # IAM ROLES
+    ######################################################################
+
+    LogPolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: ${self:service}-log-policy-${self:custom.hen}-${self:provider.stage}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+                - logs:DescribeLogStreams
+              Resource: arn:aws:logs:${self:provider.region}:*:*
+        Roles:
+          - Ref: RouteRawRole
+          - Ref: ExtractMetadataRole
+          - Ref: AddJobFlowStepsRole
+          - Ref: DataprocessingErrorsRole
+
+    RouteRawRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-routeRawRole-${self:custom.hen}-${self:provider.stage}
+        AssumeRolePolicyDocument: 
+          ${file(sls-include/assume-role-policy-doc.yml)}
+        Policies:
+          - PolicyName: RouteRawPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                  Resource:
+                    - arn:aws:s3:::${self:custom.buckets.landing}/*
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:DeleteObject
+                    - s3:List*
+                  Resource:
+                    - arn:aws:s3:::${self:custom.buckets.rawCustomerPii}
+                    - arn:aws:s3:::${self:custom.buckets.rawCustomerPii}/*
+                    - arn:aws:s3:::${self:custom.buckets.rawHrPii}
+                    - arn:aws:s3:::${self:custom.buckets.rawHrPii}/*
+                    - arn:aws:s3:::${self:custom.buckets.rawRegular}
+                    - arn:aws:s3:::${self:custom.buckets.rawRegular}/*
+                - Effect: Allow
+                  Action:
+                    - kms:Decrypt
+                    - kms:Encrypt
+                  Resource: '*'
+
+    ExtractMetadataRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-extractMetadataRole-${self:custom.hen}-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          ${file(sls-include/assume-role-policy-doc.yml)}
+        Policies:
+          - PolicyName: ExtractMetadataPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                  Resource:
+                    - arn:aws:s3:::${self:custom.buckets.rawCustomerPii}/*
+                    - arn:aws:s3:::${self:custom.buckets.rawHrPii}/*
+                    - arn:aws:s3:::${self:custom.buckets.rawRegular}/*
+                    - arn:aws:s3:::${self:custom.buckets.deliveryCustomerPii}/*
+                    - arn:aws:s3:::${self:custom.buckets.deliveryRegular}/*
+                - Effect: Allow
+                  Action:
+                    - dynamodb:*
+                  Resource:
+                    - Fn::GetAtt:
+                      - FileMetadataDynamoTable
+                      - Arn
+                - Effect: Allow
+                  Action:
+                    - kms:Decrypt
+                    - kms:Encrypt
+                  Resource: '*'
+
+    # This role will be used by dataprocessing error notification lambda
+    DataprocessingErrorsRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-dataprocessingErrorsRole-${self:custom.hen}-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          ${file(sls-include/assume-role-policy-doc.yml)}
+        Policies:
+          - PolicyName: DataprocessingErrorsPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:*
+                  Resource:
+                    - arn:aws:s3:::${self:custom.buckets.dataprocessingerrors}
+                    - arn:aws:s3:::${self:custom.buckets.dataprocessingerrors}/*
+                - Effect: Allow
+                  Action:
+                    - sns:*
+                  Resource: '*'
+
+    # This role will be used by all AddJobFlowSteps lambdas
+    AddJobFlowStepsRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-AddJobFlowStepsRole-${self:custom.hen}-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          ${file(sls-include/assume-role-policy-doc.yml)}
+        Policies:
+          - PolicyName: AddJobFlowStepsRolePolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - cloudformation:DescribeStacks
+                  Resource:
+                    - Fn::Join:
+                      - ':'
+                      - - arn
+                        - aws
+                        - cloudformation
+                        - Ref: AWS::Region
+                        - Ref: AWS::AccountId
+                        - stack/${self:custom.emrStackName}/*
+                - Effect: Allow
+                  Action:
+                    - s3:*
+                  Resource:
+                    - arn:aws:s3:::${self:custom.buckets.rawCustomerPii}
+                    - arn:aws:s3:::${self:custom.buckets.rawCustomerPii}/*
+                    - arn:aws:s3:::${self:custom.buckets.rawHrPii}
+                    - arn:aws:s3:::${self:custom.buckets.rawHrPii}/*
+                    - arn:aws:s3:::${self:custom.buckets.rawRegular}
+                    - arn:aws:s3:::${self:custom.buckets.rawRegular}/*
+                - Effect: Allow
+                  Action:
+                    - dynamodb:*
+                  Resource:
+                    - Fn::GetAtt:
+                      - FileMetadataDynamoTable
+                      - Arn
+                - Effect: Allow
+                  Action:
+                    - elasticmapreduce:AddJobFlowSteps
+                  Resource: '*'
+                - Effect: Allow
+                  Action:
+                    - kms:Decrypt
+                    - kms:Encrypt
+                  Resource: '*'
+
+    # This role will be used to query CustomerPii and HrPii and regular buckets via Athena
+    AthenaaccessCustomerPiibucketsRole:
+      Type: AWS::IAM::Role
+      Properties:
+         RoleName: ${self:service}-AthenaaccessCustomerPiibucketsRole-${self:custom.hen}-${self:provider.stage}
+         AssumeRolePolicyDocument:
+           ${file(sls-include/assume-athena-role-policy-doc.yml)}
+         Policies:
+           - PolicyName: AthenaaccessPiibucketsPolicy
+             PolicyDocument:
+               Version: '2012-10-17'
+               Statement:
+                - Effect: Allow
+                  Action:
+                    - athena:*
+                  Resource: '*'
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:ListObjects
+                    - s3:GetObject
+                  Resource:
+                      - arn:aws:s3:::${self:custom.buckets.rawCustomerPii}/*
+                      - arn:aws:s3:::${self:custom.buckets.discoveryCustomerPii}/*
+                      - arn:aws:s3:::${self:custom.buckets.refinedCustomerPii}/*
+                - Effect: Allow
+                  Action:
+                    - kms:Decrypt
+                    - kms:Encrypt
+                  Resource: '*'
+
+    AthenaaccessHrPiibucketsRole:
+      Type: AWS::IAM::Role
+      Properties:
+         RoleName: ${self:service}-AthenaaccessHrPiibucketsRole-${self:custom.hen}-${self:provider.stage}
+         AssumeRolePolicyDocument:
+           ${file(sls-include/assume-athena-role-policy-doc.yml)}
+         Policies:
+           - PolicyName: AthenaaccessHrbucketsPolicy
+             PolicyDocument:
+               Version: '2012-10-17'
+               Statement:
+                - Effect: Allow
+                  Action:
+                    - athena:*
+                  Resource: '*'
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:ListObjects
+                    - s3:GetObject
+                  Resource:
+                      - arn:aws:s3:::${self:custom.buckets.rawHrPii}/*
+                      - arn:aws:s3:::${self:custom.buckets.discoveryHrPii}/*
+                      - arn:aws:s3:::${self:custom.buckets.refinedHrPii}/*
+                - Effect: Allow
+                  Action:
+                    - kms:Decrypt
+                    - kms:Encrypt
+                  Resource: '*'
+
+    AthenaaccessRegularbucketsRole:
+      Type: AWS::IAM::Role
+      Properties:
+         RoleName: ${self:service}-AthenaaccessRegularbucketsRole-${self:custom.hen}-${self:provider.stage}
+         AssumeRolePolicyDocument:
+           ${file(sls-include/assume-athena-role-policy-doc.yml)}
+         Policies:
+           - PolicyName: AthenaaccessRegularbucketsPolicy
+             PolicyDocument:
+               Version: '2012-10-17'
+               Statement:
+                - Effect: Allow
+                  Action:
+                    - athena:*
+                  Resource: '*'
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:ListObjects
+                    - s3:GetObject
+                  Resource:
+                      - arn:aws:s3:::${self:custom.buckets.rawRegular}/*
+                      - arn:aws:s3:::${self:custom.buckets.discoveryRegular}/*
+                      - arn:aws:s3:::${self:custom.buckets.refinedRegular}/*
+
+    # This role will be used to glue crawler
+    GlueRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:service}-glueRole-${self:custom.hen}-${self:provider.stage}
+        AssumeRolePolicyDocument:
+          ${file(sls-include/assume-glue-role-policy-doc.yml)}    
+        Policies:
+          - PolicyName: gluepolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: '*'
+                  Resource: '*'
+
+    # This role will be used to KMS - Encryption key
+    KmsKeyServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Action: 'sts:AssumeRole'
+              Effect: Allow
+              Principal:
+                AWS:
+                  'Fn::Join':
+                    - ''
+                    - - 'arn:aws:iam::'
+                      - Ref: AWS::AccountId
+                      - :root
+        Path: /
+        ManagedPolicyArns:
+          - 'arn:aws:iam::aws:policy/AmazonEC2FullAccess'
+          - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+          - 'arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess'
+          - 'arn:aws:iam::aws:policy/AmazonAthenaFullAccess'
+          - 'arn:aws:iam::aws:policy/AmazonElasticMapReduceFullAccess'
+          - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
+
+  ######################################################################
+  # OUTPUTS
+  ######################################################################
+
+  Outputs:
+    CodeBucket:
+      Description: Bucket where the spark code is deployed--the location where EMR steps get their code
+      Value:
+        Ref: S3BucketCode

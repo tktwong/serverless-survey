@@ -1,0 +1,92 @@
+service: serverless-restapi
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-dynamodb-local
+  - serverless-offline
+
+package:
+  individually: true
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    seed:
+      test:
+        sources:
+          - table: ContactsTable-${self:provider.stage}
+            sources: [./data/dynamodb/contacts.json]
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  region: localhost
+  environment:
+    AWS_STAGE: ${self:provider.stage}
+    AWS_REGION: ${self:provider.region}
+
+functions:
+  createContact:
+    handler: src/functions/createContact.handler
+    events:
+      - http:
+          path: contacts
+          method: post
+          cors: true
+
+  updateContact:
+    handler: src/functions/updateContact.handler
+    events:
+      - http:
+          path: contacts/{id}
+          method: patch
+          cors: true
+
+  removeContact:
+    handler: src/functions/removeContact.handler
+    events:
+      - http:
+          path: contacts/{id}
+          method: delete
+          cors: true
+
+  getContact:
+    handler: src/functions/getContact.handler
+    events:
+      - http:
+          path: contacts/{id}
+          method: get
+          cors: true
+
+  listContacts:
+    handler: src/functions/listContacts.handler
+    events:
+      - http:
+          path: contacts
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    ContactsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ContactsTable-${self:provider.stage}
+        AttributeDefinitions:
+          - AttributeName: Id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: Id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

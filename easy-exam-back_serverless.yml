@@ -1,0 +1,151 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: easy-exam-back # NOTE: update this with your service name
+
+plugins:
+  - serverless-webpack
+  - serverless-prune-plugin
+  - serverless-plugin-split-stacks
+  - serverless-pseudo-parameters
+  - serverless-iam-roles-per-function
+  - serverless-offline
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  accountId: 061382701604
+  cognitoUserPoolIds:
+    dev: 'us-east-1_KQcRyKMPq'
+    staging: ''
+    production: ''
+  memorySize:
+    dev: 128
+    staging: 128
+    production: 256
+  webpack:
+    webpackConfig: './webpack.config.js'
+    includeModules: true
+  prune:
+    automatic: true
+    number: 20
+  splitStacks:
+    perFunction: false
+    perType: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  profile: ${self:custom.stage}-easy-exam
+  timeout: 30
+  memorySize: ${self:custom.memorySize.${self:custom.stage}}
+  versionFunctions: false
+  environment:
+    serviceName: ${self:service}
+    region: ${self:provider.region}
+    stage: ${self:custom.stage}
+    dynamodbPacientsTable: ${self:service}-${self:custom.stage}-pacients-table
+    dynamodbUsersTable: ${self:service}-${self:custom.stage}-users-table
+    congnitoUserPoolId: ${self:custom.cognitoUserPoolIds.${self:custom.stage}}
+
+package:
+  exclude:
+    - .serverless/**
+    - .git/**
+    - node_modules/**
+
+functions:
+
+  # Pacients
+
+  NewPacient:
+    handler: src/functions/pacients.newPacient
+    events:
+      - http:
+          path: pacients
+          method: post
+          cors: true
+    iamRoleStatementsName: ${self:service}-${self:custom.stage}-NewPacient-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:provider.environment.dynamodbPacientsTable}
+      - Effect: Allow
+        Action: dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:provider.environment.dynamodbPacientsTable}
+  
+  GetPacient:
+    handler: src/functions/pacients.getPacient
+    events:
+      - http:
+          path: pacients/{pacientId}
+          method: get
+          cors: true
+    iamRoleStatementsName: ${self:service}-${self:custom.stage}-GetPacient-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:provider.environment.dynamodbPacientsTable}
+
+  ListPacients:
+    handler: src/functions/pacients.listPacients
+    events:
+      - http:
+          path: pacients
+          method: get
+          cors: true
+    iamRoleStatementsName: ${self:service}-${self:custom.stage}-ListPacients-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Scan
+        Resource: arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:provider.environment.dynamodbPacientsTable}
+
+  # Users
+
+  NewUser:
+    handler: src/functions/users.newUser
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+    iamRoleStatementsName: ${self:service}-${self:custom.stage}-NewUser-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:provider.environment.dynamodbUsersTable}
+      - Effect: Allow
+        Action: dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:provider.environment.dynamodbUsersTable}
+      - Effect: Allow
+        Action: cognito-idp:AdminCreateUser
+        Resource: arn:aws:cognito-idp:${self:provider.region}:${self:custom.accountId}:userpool/*
+
+  GetUser:
+    handler: src/functions/users.getUser
+    events:
+      - http:
+          path: users/{userId}
+          method: get
+          cors: true
+    iamRoleStatementsName: ${self:service}-${self:custom.stage}-GetUser-lambdaRole
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:${self:custom.accountId}:table/${self:provider.environment.dynamodbUsersTable}
+
+resources:
+  - ${file(resources/cognito/cognito-users-pool.yml)}
+  - ${file(resources/dynamo/dynamo-pacients-table.yml)}
+  - ${file(resources/dynamo/dynamo-users-table.yml)}

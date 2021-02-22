@@ -1,0 +1,354 @@
+service: archadon-${self:custom.env}
+plugins:
+  - serverless-webpack
+provider:
+  name: aws
+  runtime: nodejs6.10
+  profile: archadon
+  vpc:
+    securityGroupIds:
+      - sg-52201920
+    subnetIds:
+      - subnet-1705f34a
+      - subnet-e918eeb4
+  environment:
+    ASSET_URL: ${opt:assetUrl, self:custom.assetUrl}
+    NODE_ENV: ${env:NODE_ENV, self:custom.NODE_ENV}
+    ALGOLIA_API_KEY: ${file(${opt:secrets}):ALGOLIA_API_KEY}
+    ALGOLIA_SECRET_KEY: ${file(${opt:secrets}):ALGOLIA_SECRET_KEY}
+    MONGO_URI: ${file(${opt:secrets}):MONGO_URI}
+    STRIPE_SECRET_KEY: ${file(${opt:secrets}):STRIPE_SECRET_KEY}
+    ADMIN_EMAIL: ${file(${opt:secrets}):ADMIN_EMAIL}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+        - "s3:*"
+        - ec2:DescribeNetworkInterfaces
+        - ec2:CreateNetworkInterface
+        - ec2:DeleteNetworkInterface
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "ses:SendRawEmail"
+      Resource: "arn:aws:ses:us-east-1:478433309488:identity/archadon.com"
+custom:
+  webpack: ./webpack/prod.js
+  webpackIncludeModules: true
+  assetUrl: "https://assets.dev.archadon.com"
+  env: ${opt:env, self:provider.stage}
+  NODE_ENV: "development"
+
+package:
+  # individually: true
+  include:
+    - templates/**
+
+functions:
+  getUserData:
+    handler: functions/user/read/getUserData.getUserData
+    events:
+      - http:
+          path: user/v1/read/{id}
+          method: get
+          cors:
+            origins:
+              - '*'
+            headers:
+              - authtoken
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          request:
+            parameters:
+              paths:
+                id: true
+
+  updateUserProfile:
+    handler: functions/user/update/updateUserProfile.updateUserProfile
+    events:
+      - http:
+          path: user/v1/update/data/{id}
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - authtoken
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          request:
+            parameters:
+              paths:
+                id: true
+
+  updateUserPassword:
+    handler: functions/user/update/updateUserPassword.updateUserPassword
+    events:
+      - http:
+          path: user/v1/update/item/password/{id}
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - authtoken
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          request:
+            parameters:
+              paths:
+                id: true
+
+  # updateUserEmail:
+  #   handler: functions/handlers.updateUserEmail
+  #   events:
+  #     - http:
+  #         path: user/v1/update/item/email/{id}
+  #         method: post
+  #         cors:
+  #           origins:
+  #             - '*'
+  #           headers:
+  #             - authtoken
+  #             - Content-Type
+  #             - X-Amz-Date
+  #             - Authorization
+  #             - X-Api-Key
+  #             - X-Amz-Security-Token
+  #         request:
+  #           parameters:
+  #             paths:
+  #               id: true
+  #   environment:
+  #     USER_TABLE: ${self:custom.UserItemTable}
+
+  createUser:
+    handler: functions/user/create/index.createUser
+    events:
+      - http:
+          path: user/v1/create
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - authtoken
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+
+  getUserFavorites:
+    handler: functions/user/read/getFavorites.getUserFavorites
+    events:
+      - http:
+          path: user/v1/getFavorites/{id}
+          method: get
+          cors:
+            origins:
+              - '*'
+            headers:
+              - authtoken
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          request:
+            parameters:
+              paths:
+                id: true
+
+  loginUser:
+    handler: functions/user/login/index.login
+    events:
+      - http:
+          path: user/v1/login
+          cors:
+            origins:
+              - '*'
+            headers:
+              - authtoken
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          method: post
+
+  createProduct:
+    handler: functions/product/create/index.createProduct
+    events:
+      - http:
+          path: product/v1/create
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - authtoken
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+
+  # updateProductData:
+  #   handler: functions/handlers.updateProductData
+  #   events:
+  #     - http:
+  #         path: product/v1/update/data/{id}
+  #         method: post
+  #         cors:
+  #           origins:
+  #             - '*'
+  #           headers:
+  #             - authtoken
+  #             - Content-Type
+  #             - X-Amz-Date
+  #             - Authorization
+  #             - X-Api-Key
+  #             - X-Amz-Security-Token
+  #         request:
+  #           parameters:
+  #             paths:
+  #               id: true
+  #   environment:
+  #     PRODUCT_DATA_TABLE: ${self:custom.ProductDataTable}
+  #     USER_TABLE: ${self:custom.UserItemTable}
+
+  # getProductBatch:
+  #   handler: functions/handlers.getBatch
+  #   events:
+  #     - http:
+  #         path: product/v1/batch
+  #         method: post
+  #         cors:
+  #           origins:
+  #             - '*'
+  #           headers:
+  #             - Content-Type
+  #             - X-Amz-Date
+  #             - Authorization
+  #             - X-Api-Key
+  #             - X-Amz-Security-Token
+  #   environment:
+  #     PRODUCT_DATA_TABLE: ${self:custom.ProductDataTable}
+  #     PRODUCT_ITEM_TABLE: ${self:custom.ProductItemTable}
+
+  # getProductList:
+  #   handler: functions/handlers.getProductList
+  #   events:
+  #     - http:
+  #         path: product/v1/list
+  #         method: get
+  #         cors:
+  #           origins:
+  #             - '*'
+  #           headers:
+  #             - authtoken
+  #             - Content-Type
+  #             - X-Amz-Date
+  #             - Authorization
+  #             - X-Api-Key
+  #             - X-Amz-Security-Token
+  #   environment:
+  #     PRODUCT_DATA_TABLE: ${self:custom.ProductDataTable}
+  #     PRODUCT_ITEM_TABLE: ${self:custom.ProductItemTable}
+
+  purchase:
+    handler: functions/order/purchase.purchase
+    events:
+      - http:
+          path: purchase/v1/charge
+          method: post
+          cors:
+            origins:
+              - '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+
+  # emailAdmin:
+  #   handler: functions/handlers.emailAdmin
+  #   events:
+  #     - stream:
+  #         type: dynamodb
+  #         startingPosition: LATEST
+  #         arn:
+  #           Fn::GetAtt:
+  #             - OrderItemTable
+  #             - StreamArn
+  #   environment:
+  #     ADMIN_EMAIL: ${file(${opt:secrets}):adminEmail}
+  #     ORDER_DATA_TABLE: ${self:custom.OrderDataTable}
+
+  # onOrderCreate:
+  #   handler: functions/handlers.onOrderCreate
+  #   events:
+  #      - stream:
+  #         type: dynamodb
+  #         startingPosition: LATEST
+  #         arn:
+  #           Fn::GetAtt:
+  #             - OrderItemTable
+  #             - StreamArn
+  #   environment:
+  #     ORDER_DATA_TABLE: ${self:custom.OrderDataTable}
+
+  getProductData:
+    handler: functions/product/read/index.getProductData
+    events:
+      - http:
+          path: product/v1/data/{id}
+          method: get
+          cors:
+            origins:
+              - '*'
+            headers:
+              - authtoken
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+          request:
+            parameters:
+              paths:
+                id: true
+
+resources:
+  Resources:
+    # UserItemTable: ${file(./resources/User/Item.yml)}
+    # UserDataTable: ${file(./resources/User/Data.yml)}
+    # ProductItemTable: ${file(./resources/Product/Item.yml)}
+    # ProductDataTable: ${file(./resources/Product/Data.yml)}
+    # OrderItemTable: ${file(./resources/Order/Item.yml)}
+    # OrderDataTable: ${file(./resources/Order/Data.yml)}
+    # S3Bucket:
+    #   Type: "AWS::S3::Bucket"
+    #   Properties:
+    #     BucketName: ${self:service}
+
+
+    # ProductTable: ${file(./resources/ProductTable.yml)}
+    # ChargeTable: ${file(./resources/ChargeTable.yml)}
+    # FavoriteTable: ${file(./resources/FavoriteTable.yml)}
+    # ProductMediaTable: ${file(./resources/ProductMediaTable.yml)}
+    # TaggedProductTable: ${file(./resources/TaggedProductTable.yml)}
+    # TagTable: ${file(./resources/TagTable.yml)}
+    # UserProfileTable: ${file(./resources/UserProfileTable.yml)}
+    # UserTable: ${file(./resources/UserTable.yml)}

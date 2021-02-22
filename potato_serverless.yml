@@ -1,0 +1,77 @@
+service: potato
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  stageVariables:
+    bucketName: ${env:AWS_S3_BUCKET_NAME}-${self:custom.stage}
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  region: eu-west-1
+  cfLogs: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:putObject
+      Resource: '*'
+
+functions:
+  scale:
+    handler: src/functions/scale.main
+    events:
+      - http:
+          path: scale
+          method: get
+          integration: lambda
+          request:
+            parameters:
+              querystrings:
+                url: true
+          response:
+            statusCodes:
+              302:
+                pattern: '[302]'
+                headers:
+                  Location: integration.response.body.errorType
+
+resources:
+  Resources:
+    PotatoBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.stageVariables.bucketName}
+        LifecycleConfiguration:
+          Rules:
+            - ExpirationInDays: 1
+              Prefix: 'tmp/'
+              Status: 'Enabled'
+
+    PotatoBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      DependsOn: PotatoBucket
+      Properties:
+        Bucket:
+          Ref: PotatoBucket
+        PolicyDocument:
+          Statement:
+            - Action:
+                - s3:PutObject
+                - s3:PutObjectAcl
+                - s3:DeleteObject
+                - s3:GetObject
+              Effect: Allow
+              Principal:
+                AWS:
+                  "Fn::GetAtt":
+                    - IamRoleLambdaExecution
+                    - Arn
+              Resource:
+                "Fn::Join":
+                  - ""
+                  - - "arn:aws:s3:::"
+                    - Ref: PotatoBucket
+                    - '/*'
+
+plugins:
+  - serverless-plugin-stage-variables

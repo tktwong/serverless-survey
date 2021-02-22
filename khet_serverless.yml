@@ -1,0 +1,108 @@
+service: khet-chess-game
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: dev
+  region: ap-southeast-2
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      # Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+    - Effect: "Allow"
+      Action:
+        - "iot:Connect"
+        - "iot:Publish"
+        - "iot:Subscribe"
+        - "iot:Receive"
+        - "iot:GetThingShadow"
+        - "iot:UpdateThingShadow"
+      Resource: "*"
+custom:
+  secrets: ${file(secret.${opt:stage, self:provider.stage}.yml)}
+  dynamodb:
+    start:
+      migrate: true
+
+functions:
+  notifyDisconnect:
+    handler: src/notifyDisconnect.handler
+    timeout: 30
+    events:
+      - iot:
+          sql: "SELECT * FROM 'last-will'"
+    environment:
+      IOT_AWS_REGION: ${opt:region, self:provider.region}
+      IOT_ENDPOINT_HOST: ${self:custom.secrets.IOT_ENDPOINT_HOST}
+  iotPresignedUrl:
+    handler: src/iotPresignedUrl.handler
+    timeout: 30
+    events:
+      - http: OPTIONS /iot-presigned-url
+      - http: 
+          method: GET
+          path: /iot-presigned-url
+    environment:
+      IOT_AWS_REGION: ${opt:region, self:provider.region}
+      IOT_ENDPOINT_HOST: ${self:custom.secrets.IOT_ENDPOINT_HOST}
+      IOT_ACCESS_KEY: ${self:custom.secrets.IOT_ACCESS_KEY}
+      IOT_SECRET_KEY: ${self:custom.secrets.IOT_SECRET_KEY}
+  app:
+    handler: index.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+  create:
+    handler: users/create.create
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+  list:
+    handler: users/get.list
+    events:
+      - http:
+          path: users
+          method: get
+          cors: true
+  get:
+    handler: users/get.one
+    events:
+      - http:
+          path: users/{id}
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    UsersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline

@@ -1,0 +1,102 @@
+# Welcome to Serverless!
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+
+service: real-frontend-resources
+frameworkVersion: '>=1.0.0 <2.0.0'
+
+provider:
+  name: aws
+  stackName: real-${self:provider.stage}-frontend-resources
+  stage: ${opt:stage, 'dev'}
+  logRetentionInDays: 7
+
+plugins:
+  - serverless-plugin-git-variables
+
+resources:
+
+  Resources:
+
+    # https://serverless-stack.com/chapters/configure-s3-in-serverless.html
+    FrontendResourcesBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      Properties:
+        AccessControl: Private
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+
+    FrontendResourcesBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: FrontendResourcesBucket
+        PolicyDocument:
+          Statement:
+            - Action:
+                - 's3:GetObject'
+              Effect: Allow
+              Resource: !Join [ /, [ !GetAtt FrontendResourcesBucket.Arn, '*' ] ]
+              Principal:
+                CanonicalUser: !GetAtt FrontendResourcesCloudFrontOriginAccessIdentity.S3CanonicalUserId
+
+    FrontendResourcesCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            Compress: true
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+            TargetOriginId: FrontendResourcesCloudFrontDistributionOriginId
+            ViewerProtocolPolicy: https-only
+          DefaultRootObject: ''
+          Enabled: true
+          Origins:
+            - DomainName: !GetAtt FrontendResourcesBucket.DomainName
+              Id: FrontendResourcesCloudFrontDistributionOriginId
+              S3OriginConfig:
+                OriginAccessIdentity: !Join [ /, [ origin-access-identity, cloudfront, Ref: FrontendResourcesCloudFrontOriginAccessIdentity ] ]
+
+    FrontendResourcesCloudFrontOriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: 'Origin Access Identity for Cloud Front formation of FrontendResources bucket'
+
+  Outputs:
+
+    CloudFrontFrontendResourcesDistributionId:
+      Value:
+        Ref: FrontendResourcesCloudFrontDistribution
+
+    CloudFrontFrontendResourcesDomainName:
+      Value: !GetAtt FrontendResourcesCloudFrontDistribution.DomainName
+
+    GitBranch:
+      Value: ${git:branch}
+
+    GitDescribe:
+      Value: ${git:describeLight}
+
+    GitIsDirty:
+      Value: ${git:isDirty}
+
+    S3FrontendResourcesBucketName:
+      Value:
+        Ref: FrontendResourcesBucket

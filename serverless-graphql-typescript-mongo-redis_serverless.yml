@@ -1,0 +1,126 @@
+service: my-service-name
+
+custom:
+  aws_profile: "dev"
+  environment: ${file(env.yml):${self:provider.stage}, file(env.yml):offline}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+    forceExclude:
+      - aws-sdk
+    packager: "yarn"
+    packagerOptions:
+      scripts:
+        - yarn autoclean --init
+        - rm .yarnclean && cat ../../.yarnclean >> .yarnclean && echo '\n*.ts\ntest' >> .yarnclean
+        - rm -rf node_modules/aws-sdk
+        - yarn autoclean --force
+  prune:
+    automatic: true
+    number: 5 # Number of versions to keep
+
+  warmup:
+    prewarm: true
+    name: ${self:service}-${self:provider.stage}-lambda-warmer
+    concurrency: 1
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-offline
+  - serverless-plugin-warmup
+  - serverless-webpack
+  # - serverless-jetpack
+  # - serverless-snyk
+  - serverless-prune-plugin
+  - serverless-plugin-select
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  stage: ${opt:stage, 'offline'}
+  profile: ${self:custom.aws_profile} # aws credentials profile to use
+  region: ${opt:region, 'eu-central-1'}
+  lambdaHashingVersion: 20201221
+  apiGateway:
+    shouldStartNameWithService: true
+    minimumCompressionSize: 1024
+  tracing:
+    apiGateway: true
+    lambda: true
+  environment:
+    REDIS_HOST: ${self:custom.environment.REDIS_HOST}
+    REDIS_PASSWORD: ${self:custom.environment.REDIS_PASSWORD}
+    REDIS_PORT: ${self:custom.environment.REDIS_PORT}
+    MONGO_URL: ${self:custom.environment.MONGO_URL}
+    ENGINE_API_KEY: ${self:custom.environment.ENGINE_API_KEY}
+    BASE_URL: ${self:custom.environment.BASE_URL}
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    NODE_ENV: production
+    SQS_QUEUE_URL: ${self:custom.environment.SQS_QUEUE_URL}
+    S3_BUCKET: ${self:custom.environment.S3_BUCKET}
+    APOLLO_KEY: ${self:custom.environment.APOLLO_KEY}
+    APOLLO_GRAPH_VARIANT: ${self:custom.environment.APOLLO_GRAPH_VARIANT}
+    APOLLO_SCHEMA_REPORTING: ${self:custom.environment.APOLLO_SCHEMA_REPORTING}
+    AWS_STAGE: ${self:provider.stage}
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - lambda:*
+          Resource: "*"
+
+        - Effect: "Allow"
+          Action:
+            - "ses:SendEmail"
+            - "ses:SendRawEmail"
+          Resource:
+            - "*"
+
+        - Effect: "Allow"
+          Action:
+            - s3:*
+          Resource: "*"
+
+        - Effect: "Allow"
+          Action:
+            - "sqs:*"
+          Resource: "*"
+
+package: # Optional deployment packaging configuration
+  # include: # Specify the directories and files which should be included in the deployment package
+  # - src/**
+  # - handler.js
+  individually: true
+  exclude: # Specify the directories and files which should be excluded in the deployment package
+    - .git/**
+    - env.yml
+    - package-lock.json
+    - yarn.lock
+    - .env
+    - "*.md"
+    - .vscode/**
+    - "*.config.js"
+  excludeDevDependencies: true
+
+functions:
+  graphqlHandler:
+    handler: api/graphqlHandler.graphqlHandler
+    # provisionedConcurrency: 4
+    timeout: 20
+    warmup:
+      enabled: live
+    events:
+      - http:
+          path: playground
+          method: get
+          cors: true
+      - http:
+          path: graphql
+          method: post
+          cors: true
+      - http:
+          path: graphql
+          method: get
+          cors: true

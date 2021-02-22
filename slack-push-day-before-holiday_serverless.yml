@@ -1,0 +1,43 @@
+service:
+  name: day-before-holiday
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  defaultStage: dev
+  slack:
+    dev:
+      token: ${env:SLACK_API_TOKEN_DEV}
+      channel: ${env:SLACK_CHANNEL_DEV}
+      username: ${env:SLACK_USERNAME_DEV}
+    production:
+      token: ${env:SLACK_API_TOKEN_PROD}
+      channel: ${env:SLACK_CHANNEL_PROD}
+      username: ${env:SLACK_USERNAME_PROD}
+  schedule:
+    noticeDayBeforeHoliday:
+      dev: # スケジュールなし
+      production: cron(0 3 * * ? *) # 毎日昼12時
+plugins:
+  - serverless-webpack
+  - serverless-dotenv-plugin
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: ap-northeast-1
+  profile: aa
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    STAGE: ${self:provider.stage}
+    TZ: Asia/Tokyo
+    SLACK_API_TOKEN: ${self:custom.slack.${self:provider.stage}.token}
+    SLACK_CHANNEL: ${self:custom.slack.${self:provider.stage}.channel}
+    SLACK_USERNAME: ${self:custom.slack.${self:provider.stage}.username}
+functions:
+  noticeDayBeforeHoliday:
+    handler: src/handler.noticeDayBeforeHoliday
+    events:
+      - schedule: ${self:custom.schedule.noticeDayBeforeHoliday.${self:provider.stage}}

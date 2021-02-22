@@ -1,0 +1,90 @@
+service: cloud-project
+
+provider:
+    name: aws
+    region: eu-west-2
+    runtime: provided
+    stage: dev
+    environment:
+        APP_ENV: dev
+        APP_AWS_REGION: 'eu-west-2'
+        APP_AWS_VERSION: 'latest'
+        APP_AWS_DYNAMODB_CREDENTIAL_KEY: ${ssm:/${self:service}/${self:provider.stage}/key}
+        APP_AWS_DYNAMODB_CREDENTIAL_SECRET: ${ssm:/${self:service}/${self:provider.stage}/secret}
+        APP_AWS_RESOURCE_PREFIX: ${self:custom.prefix}
+    iamRoleStatements:
+        - Effect: Allow
+          Action:
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+          Resource: "arn:aws:dynamodb:eu-west-2:*:table/*"
+
+custom:
+    prefix: ${self:service}-${self:provider.region}-${self:provider.stage}
+
+plugins:
+    - ./vendor/bref/bref
+
+package:
+    exclude:
+        - node_modules/**
+        - var/log/**
+        - public/build/**
+        - var/cache/**
+        - '!var/cache/prod/**'
+        - assets/**
+        - tests/**
+    include:
+        - public/build/manifest.json
+        - public/build/entrypoints.json
+
+functions:
+    website:
+        handler: public/index.php
+        timeout: 28
+        layers:
+            - ${bref:layer.php-73-fpm}
+        events:
+            -   http: 'ANY /'
+            -   http: 'ANY /{proxy+}'
+
+    console:
+        handler: bin/console
+        timeout: 120
+        layers:
+            - ${bref:layer.php-73}
+            - ${bref:layer.console}
+
+resources:
+    Resources:
+        Assets:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: ${self:custom.prefix}-assets
+        AssetsPolicy:
+            Type: AWS::S3::BucketPolicy
+            Properties:
+                Bucket: !Ref Assets
+                PolicyDocument:
+                    Statement:
+                        - Effect: Allow
+                          Principal: '*'
+                          Action: 's3:GetObject'
+                          Resource: arn:aws:s3:::${self:custom.prefix}-assets/*
+        SessionTable:
+            Type: AWS::DynamoDB::Table
+            Properties:
+                TableName: ${self:custom.prefix}-sessionsTable
+                AttributeDefinitions:
+                    - AttributeName: id
+                      AttributeType: S
+                KeySchema:
+                    - AttributeName: id
+                      KeyType: HASH
+                ProvisionedThroughput:
+                    ReadCapacityUnits: 1
+                    WriteCapacityUnits: 1

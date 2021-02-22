@@ -1,0 +1,76 @@
+service: serverless-mongodb-backend
+frameworkVersion: '>=1.23.X <2.0.0'
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${env:STAGE, 'dev'}
+  region: ${env:AWS_REGION, 'us-east-1'}
+  apiKeys:
+    - ${self:provider.stage}-api
+  stackName: ${env:CF_APP_STACKNAME, 'api-${self:provider.stage}'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ec2:List*
+        - ec2:Describe*
+        - ec2:RegisterImage
+        - ec2:DeregisterImage
+        - ssm:GetParametersByPath
+        - kms:Decrypt
+      Resource: '*'
+  environment:
+    NODE_ENV: ${self:custom.NodeEnvByStage.${self:provider.stage}}
+    PARAM_PATH: ${env:API_PARAM_PATH, '/${self:provider.stackName}'}
+    DB_HOST: ${self:custom.DbHost.${self:provider.stage}, '${self:custom.DbHost.cloud}'}
+    DB_NAME: ${env:DB_NAME, 'db'}
+
+package:
+ include:
+   - node_modules/**
+   - dist/**
+
+custom:
+  NodeEnvByStage:
+    local: local
+    dev: development
+    test: test
+    prod: production
+  DbHost:
+    local: '0.0.0.0'
+    cloud: ${cf:${env:CF_DB_STACK, 'mongodb-${self:provider.stage}'}.DbHost}
+
+functions:
+  mongodbCrud:
+    handler: dist/index.crud
+    description: Handles Create, Read, Update, and Destroy operations for MongoDB
+    events:
+      - http:
+          path: /{doc}
+          method: any
+          cors: true
+          request:
+            parameters:
+              paths:
+                doc: true
+      - http:
+          path: /{doc}/{id}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                doc: true
+                id: true
+      - http:
+          path: /{doc}/{id}
+          method: delete
+          cors: true
+          request:
+            parameters:
+              paths:
+                doc: true
+                id: true
+
+    private: true # enforces the use of x-api-key in header
+    environment:

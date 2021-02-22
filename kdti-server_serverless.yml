@@ -1,0 +1,73 @@
+service: kdti-backend
+
+provider:
+    name: aws
+    region: us-east-1
+    runtime: provided
+    versionFunctions: false
+    environment:
+        APP_ENV: ${opt:stage}
+        DATABASE_URL: postgresql://kdti:${ssm:/kdti/database-password}@kdtidb.cq08e7zurr6v.us-east-1.rds.amazonaws.com/${ssm:/kdti/${opt:stage}/db-name, ''}
+        SENTRY_DSN: ${ssm:/kdti/${opt:stage}/sentry-dsn}
+        CORS_ALLOW_ORIGIN: ${ssm:/kdti/${opt:stage}/cors, ''}
+        JWT_SECRET_KEY: ${ssm:/kdti/${opt:stage}/jwt-private, ''}
+        JWT_PUBLIC_KEY: ${ssm:/kdti/${opt:stage}/jwt-public, ''}
+        JWT_PASSPHRASE: ${ssm:/kdti/${opt:stage}/jwt-passphrase, ''}
+    vpc:
+        securityGroupIds:
+            - sg-28f5537d
+        subnetIds:
+            - subnet-0a550fe1333855e73
+            - subnet-0da17ace050712d70
+
+plugins:
+    - ./vendor/bref/bref
+
+package:
+    exclude:
+        - 'tests/**'
+        - 'public/**'
+    include:
+        - 'public/index.php'
+
+functions:
+    api:
+        handler: public/index.php
+        timeout: 28 # in seconds (API Gateway has a timeout of 29 seconds)
+        layers:
+            - ${bref:layer.php-74-fpm}
+        events:
+            - http: 'ANY /'
+            - http: 'ANY /{proxy+}'
+            - schedule:
+                  rate: rate(5 minutes)
+                  input:
+                      warmer: true
+    console:
+        handler: bin/console
+        timeout: 120 # in seconds
+        layers:
+            - ${bref:layer.php-74} # PHP
+            - ${bref:layer.console} # The "console" layer
+resources:
+    Resources:
+        # The S3 bucket that stores the assets
+        Assets:
+            Type: AWS::S3::Bucket
+            Properties:
+                BucketName: kdti-statics-${opt:stage}
+                CorsConfiguration:
+                    CorsRules:
+                        -   AllowedHeaders: ["*"]
+                            AllowedMethods: [GET]
+                            AllowedOrigins: ["*"]
+        AssetsBucketPolicy:
+            Type: AWS::S3::BucketPolicy
+            Properties:
+                Bucket: !Ref Assets # References the bucket we defined above
+                PolicyDocument:
+                    Statement:
+                        -   Effect: Allow
+                            Principal: '*' # everyone
+                            Action: 's3:GetObject' # to read
+                            Resource: 'arn:aws:s3:::kdti-statics-${opt:stage}/*' # things in it

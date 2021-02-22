@@ -1,0 +1,92 @@
+service: thecircle
+
+frameworkVersion: '>=1.28.0 <2.0.0'
+
+custom:
+  SurveyBucketName: answers-tech-task-the-circle
+  AnswersFifoQueueName: Answers-${self:custom.stage}.fifo
+  stage: ${opt:stage, self:provider.stage}
+  ListenDataStoreBucketName: datastorage-${self:custom.stage}
+
+provider:
+  name: aws
+  region: eu-west-2
+  stage: dev
+  runtime: go1.x
+  # TODO - move these to per-function instead
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'sqs:SendMessage'
+        - 'sqs:ReceiveMessage'
+        - 'sqs:DeleteMessage'
+        - 'sqs:GetQueueAttributes'
+        - 'sqs:ChangeMessageVisibility'
+      Resource: 'arn:aws:sqs:${self:provider.region}:#{AWS::AccountId}:${self:custom.AnswersFifoQueueName}'
+    - Effect: 'Allow'
+      Action:
+        - 's3:PutObject'
+        - 's3:GetObject'
+      Resource: 'arn:aws:s3:::answers-tech-task-the-circle/*'
+    - Effect: 'Allow'
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+      Resource: 'arn:aws:s3:::${self:custom.ListenDataStoreBucketName}/*'
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+functions:
+  listenDataStore:
+    handler: bin/listenDataStore
+    environment:
+      DataStorage: ${self:custom.ListenDataStoreBucketName}
+    events:
+      - sqs:
+          arn: 'arn:aws:sqs:${self:provider.region}:#{AWS::AccountId}:${self:custom.AnswersFifoQueueName}'
+          batchSize: 10
+
+  listenQuestionTrigger:
+    handler: bin/listenQuestionTrigger
+    environment:
+      AnswersFifoQueue: 'https://sqs.${self:provider.region}.amazonaws.com/#{AWS::AccountId}/${self:custom.AnswersFifoQueueName}'
+    events:
+      - s3:
+          bucket: ${self:custom.SurveyBucketName}
+          event: s3:ObjectCreated:*
+          existing: true
+
+  listenCapture:
+    handler: bin/listenCapture
+    environment:
+      SurveyBucket: ${self:custom.SurveyBucketName}
+    events:
+      - http:
+          path: /capture
+          method: post
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+
+resources:
+  Resources:
+    AnswersFifoQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.AnswersFifoQueueName}
+        FifoQueue: true
+        ContentBasedDeduplication: true
+
+plugins:
+  - serverless-pseudo-parameters

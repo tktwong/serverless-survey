@@ -1,0 +1,295 @@
+service: gomitter
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: ap-northeast-1
+  deploymentBucket: serverless-upload-ap-northeast-1
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: Allow
+      Action: [dynamodb:GetItem, dynamodb:BatchGetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+      Resource:
+        - Fn::Join: [ ":", ["arn:aws:dynamodb", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "table/gomi2"]]
+
+    - Effect: Allow
+      Action: [dynamodb:BatchGetItem, dynamodb:Query, dynamodb:PutItem]
+      Resource:
+        - Fn::Join: [ ":", ["arn:aws:dynamodb", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "table/gomi_tweet2"]]
+        - Fn::Join: [ ":", ["arn:aws:dynamodb", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "table/gomi_tweet2/index/*"]]
+
+    - Effect: Allow
+      Action: [dynamodb:Query, dynamodb:UpdateItem]
+      Resource:
+        - Fn::Join: [ ":", ["arn:aws:dynamodb", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "table/gomi_rank2"]]
+        - Fn::Join: [ ":", ["arn:aws:dynamodb", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "table/gomi_rank2/index/*"]]
+
+    - Effect: Allow
+      Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+      Resource:
+        - Fn::Join: [ ":", ["arn:aws:dynamodb", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "table/gomi_sequence2"]]
+
+    - Effect: Allow
+      Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+      Resource:
+        - Fn::Join: [ ":", ["arn:aws:dynamodb", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "table/gomi_count2"]]
+
+    - Effect: Allow
+      Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem]
+      Resource:
+        - Fn::Join: [ ":", ["arn:aws:dynamodb", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "table/gomi_session2"]]
+
+    - Effect: Allow
+      Action: [ssm:GetParameter]
+      Resource:
+        - Fn::Join: [ ":", ["arn:aws:ssm", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "parameter/gomitter/twitter_consumer_key"]]
+        - Fn::Join: [ ":", ["arn:aws:ssm", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "parameter/gomitter/twitter_consumer_secret"]]
+        - Fn::Join: [ ":", ["arn:aws:ssm", { Ref: AWS::Region }, { Ref: AWS::AccountId }, "parameter/gomitter/jwt_token"]]
+
+functions:
+  main:
+    handler: handler.gomi
+    description: gomitter application
+    tags: { Application: Gomitter }
+    events: [{ http: { path: "/", method: post, cors: true } }]
+  auth:
+    handler: handler.auth
+    description: gomitter authentication
+    tags: { Application: Gomitter }
+    events: [{ http: { path: "/auth/{action}", method: get, cors: true } }]
+
+resources:
+  Description: Gomitter Serverless
+  Resources:
+    ## tables
+    GomiSessionTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: gomi_session2
+        AttributeDefinitions:
+          - { AttributeName: uid, AttributeType: S }
+        KeySchema:
+          - { AttributeName: uid, KeyType: HASH }
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+        Tags: [{ Key: "Application", Value: "Gomitter" }]
+
+    GomiTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: gomi2
+        AttributeDefinitions:
+          - { AttributeName: gomi_id, AttributeType: S }
+        KeySchema:
+          - { AttributeName: gomi_id, KeyType: HASH }
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        Tags: [{ Key: "Application", Value: "Gomitter" }]
+
+    GomiRankTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: gomi_rank2
+        AttributeDefinitions:
+          - { AttributeName: gomi_id,   AttributeType: S }
+          - { AttributeName: member_id, AttributeType: S }
+          - { AttributeName: count,     AttributeType: N }
+        KeySchema:
+          - { AttributeName: member_id, KeyType: HASH }
+          - { AttributeName: gomi_id,   KeyType: RANGE }
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: gomi_rank2_gsi
+            KeySchema:
+              - { AttributeName: member_id, KeyType: HASH }
+              - { AttributeName: count,     KeyType: RANGE }
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        Tags: [{ Key: "Application", Value: "Gomitter" }]
+
+    GomiCountTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: gomi_count2
+        AttributeDefinitions:
+          - { AttributeName: member_id, AttributeType: S }
+        KeySchema:
+          - { AttributeName: member_id, KeyType: HASH }
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        Tags: [{ Key: "Application", Value: "Gomitter" }]
+
+    GomiSequenceTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: gomi_sequence2
+        AttributeDefinitions:
+          - { AttributeName: key, AttributeType: S }
+        KeySchema:
+          - { AttributeName: key, KeyType: HASH }
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        Tags: [{ Key: "Application", Value: "Gomitter" }]
+
+    GomiTweetTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: gomi_tweet2
+        AttributeDefinitions:
+          - { AttributeName: id,        AttributeType: N }
+          - { AttributeName: member_id, AttributeType: S }
+        KeySchema:
+          - { AttributeName: id, KeyType: HASH }
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: gomi_tweet2_gsi
+            KeySchema:
+              - { AttributeName: member_id, KeyType: HASH }
+              - { AttributeName: id,        KeyType: RANGE }
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        Tags: [{ Key: "Application", Value: "Gomitter" }]
+
+    ## serve bucket setting
+    Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+       BucketName: "${self:service}"
+       Tags: [{ Key: "Application", Value: "Gomitter" }]
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: { Ref: Bucket }
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Principal:
+                AWS: "arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${ssm:/app/gomitter/oai_id~true}"
+              Resource:
+                Fn::Join: [ "/", [ { Fn::GetAtt: [ Bucket, Arn ] }, "*" ] ]
+
+    ## api setting
+    Domain:
+      Type: AWS::ApiGateway::DomainName
+      Properties:
+        CertificateArn: "${ssm:/acm/camelon.info~true}"
+        DomainName: "gomi-api.camelon.info"
+
+    Mapping:
+      Type: AWS::ApiGateway::BasePathMapping
+      Properties:
+        DomainName: { Ref: Domain }
+        RestApiId:  { Ref: ApiGatewayRestApi }
+        Stage: dev
+
+    RecordSetOfAPI:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        Name: "gomi-api.camelon.info"
+        Type: A
+        HostedZoneName: "camelon.info."
+        AliasTarget:
+          DNSName: { Fn::GetAtt: [Domain, DistributionDomainName] }
+          HostedZoneId: Z2FDTNDATAQYW2
+
+    ## gomi.camelon.info setting
+    CloudfrontOfCamelon:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Comment: gomitter for gomi.camelon.info
+          Aliases:
+            - "gomi.camelon.info"
+          HttpVersion: http2
+          ViewerCertificate:
+            AcmCertificateArn: "${ssm:/acm/camelon.info~true}"
+            SslSupportMethod: sni-only
+          DefaultRootObject: index.html
+          DefaultCacheBehavior:
+            TargetOriginId: GomitterWebAssetsForCamelon
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+              QueryString: true
+              Headers:
+                - Origin
+            MinTTL: 8640000
+            MaxTTL: 8640000
+            DefaultTTL: 8640000
+          Enabled: true
+          Origins:
+            - Id: GomitterWebAssetsForCamelon
+              DomainName: "${self:service}.s3.amazonaws.com"
+              S3OriginConfig:
+                OriginAccessIdentity: "origin-access-identity/cloudfront/${ssm:/app/gomitter/oai_id~true}"
+        Tags: [{ Key: "Application", Value: "Gomitter" }]
+
+    RecordSetOfCamelon:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        Name: "gomi.camelon.info"
+        Type: A
+        HostedZoneName: "camelon.info."
+        AliasTarget:
+          DNSName: { Fn::GetAtt: [CloudfrontOfCamelon, DomainName] }
+          HostedZoneId: Z2FDTNDATAQYW2
+
+    ## gomi.familiar-life.info setting
+    CloudfrontOfFamiliarLife:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Comment: gomitter for gomi.familiar-life.info
+          Aliases:
+            - "gomi.familiar-life.info"
+          HttpVersion: http2
+          ViewerCertificate:
+            AcmCertificateArn: "${ssm:/acm/familiar-life.info}"
+            SslSupportMethod: sni-only
+          DefaultRootObject: index.html
+          DefaultCacheBehavior:
+            TargetOriginId: GomitterWebAssetsForFamiliarLife
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+              QueryString: true
+              Headers:
+                - Origin
+            MinTTL: 8640000
+            MaxTTL: 8640000
+            DefaultTTL: 8640000
+          Enabled: true
+          Origins:
+            - Id: GomitterWebAssetsForFamiliarLife
+              DomainName: "${self:service}.s3.amazonaws.com"
+              S3OriginConfig:
+                OriginAccessIdentity: "origin-access-identity/cloudfront/${ssm:/app/gomitter/oai_id~true}"
+        Tags: [{ Key: "Application", Value: "Gomitter" }]
+
+    RecordSetOfFamiliarLife:
+      Type: AWS::Route53::RecordSet
+      Properties:
+        Name: "gomi.familiar-life.info"
+        Type: A
+        HostedZoneName: "familiar-life.info."
+        AliasTarget:
+          DNSName: { Fn::GetAtt: [CloudfrontOfFamiliarLife, DomainName] }
+          HostedZoneId: Z2FDTNDATAQYW2

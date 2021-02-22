@@ -1,0 +1,230 @@
+service:
+  name: api-services
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  timeout: 30
+  stage: ${opt:stage, self:custom.aws_stage}
+  environment: ${self:custom.environment}
+
+  iamRoleStatements:
+    - Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+      Resource: "arn:aws:dynamodb:us-east-1:*:table/${self:provider.environment.DB_LOG_TABLE}"
+      Effect: Allow
+    - Action:
+        - s3:PutObject
+      Resource: "arn:aws:s3:::champaign/*"
+      Effect: Allow
+
+resources:
+  Resources:
+    OperationsTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.DB_LOG_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+functions:
+  members-list:
+    handler: members-service/members.index
+    events:
+      - http:
+          method: get
+          path: members
+          cors: true
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_POOL_ARN}
+  members-show:
+    handler: members-service/members.show
+    events:
+      - http:
+          method: get
+          path: members/{id}
+          cors: true
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_POOL_ARN}
+  members-update:
+    handler: members-service/updateMember.handler
+    events:
+      - http:
+          method: put
+          path: members/{id}
+          cors: true
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_POOL_ARN}
+
+  trigger-champaign-member-update:
+    handler: members-service/triggerChampaignMemberUpdate.handler
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - OperationsTable
+              - StreamArn
+
+  trigger-subject-access-request:
+    handler: members-service/triggerSubjectAccessRequest.handler
+    events:
+      - http:
+          method: post
+          path: subject_access_request/
+          cors: true
+
+
+  champaign-subject-access-data:
+    handler: members-service/champaignSubjectAccessData.handler
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - OperationsTable
+              - StreamArn
+
+  ak-subject-access-data:
+    handler: members-service/akSubjectAccessData.handler
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - OperationsTable
+              - StreamArn
+
+  members-unsubscribe:
+    handler: members-service/members.unsubscribe
+    events:
+      - http:
+          method: post
+          path: members/unsubscribe
+          cors: true
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_POOL_ARN}
+
+  members-braintree-data:
+    handler: payments-service/braintree_data.show
+    events:
+      - http:
+          method: get
+          path: members/braintree_data
+          cors: true
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_POOL_ARN}
+
+  members-gocardless-subscriptions:
+    handler: payments-service/gocardless_subscriptions.index
+    events:
+      - http:
+          method: get
+          path: members/{id}/gocardless_subscriptions
+          cors: true
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_POOL_ARN}
+
+  payments-subscriptions-del-ak:
+    handler: payments-service/subscriptions-delete-actionkit.handler
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - OperationsTable
+              - StreamArn
+
+  payments-subscriptions-del-champaign:
+      handler: payments-service/subscriptions-delete-champaign.handler
+      events:
+        - stream:
+            type: dynamodb
+            batchSize: 1
+            startingPosition: LATEST
+            arn:
+              Fn::GetAtt:
+                - OperationsTable
+                - StreamArn
+
+  payments-subscriptions-del:
+    handler: payments-service/subscriptions-delete.handler
+    events:
+      - http:
+          method: delete
+          path: payments-service/{provider}/subscriptions/{id}
+          cors: true
+          authorizer:
+            arn: ${self:provider.environment.COGNITO_POOL_ARN}
+          request:
+            parameters:
+              paths:
+                id: true
+                provider: true
+
+  braintree-token:
+    handler: payments-service/providers/braintree/token.handler
+    events:
+      - http:
+          method: get
+          path: braintree/token
+          cors: true
+
+custom:
+  # Use the AWS_STAGE env var if you don't want to manually override the stage
+  # via the command line. So, instead of:
+  #
+  #  $ sls deploy -s stageName -f functionName
+  #  $ sls invoke -s stageName -f functionName
+  #  $ sls logs -s stageName -f functionName
+  #
+  # You can set the stage in your env, and it will be picked up by sls:
+  #
+  #  $ export AWS_STAGE=stageName
+  #  $ sls deploy -f functionName
+  #  $ sls invoke -f functionName
+  #  $ sls logs -f functionName
+  #
+  # If you don't set a stage, it will default to 'dev'
+  aws_stage: ${env:AWS_STAGE, 'dev'}
+
+  # By default, dev and prod stages use env vars. If you're deploying to your
+  # own stage, create the file: {project_root}/settings/{your_stage_name}.yml
+  # with the following format:
+  #
+  #     environment:
+  #       KEY1: value1
+  #       KEY2: value2
+  #
+  # And it will be picked up automatically
+  environment: ${file(./settings/${self:provider.stage}.yml):environment}

@@ -1,0 +1,45 @@
+service: video-on-demand
+
+custom:
+  stage: ${opt:stage, 'dev'}
+  config: file(../config/${self:custom.stage}.json)
+
+provider:
+  name: aws
+  runtime: dotnetcore2.1
+  stage: ${self:custom.stage}
+  region: ${${self:custom.config}:AWS_REGION}
+  environment:
+    S3_PREPROCESSED_NAME: ${${self:custom.config}:s3.preprocessed}
+  s3:
+    preprocessed:
+      name: ${${self:custom.config}:s3.preprocessed}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:Putobject
+        - s3:PutObjectAcl
+      Resource: '*'
+
+package:
+  artifact: bin/release/netcoreapp2.1/hello.zip
+  individually: true
+  exclude:
+    - .git/**
+    - ./config/**
+
+functions:
+  getPresignedPostData:
+    handler: CsharpHandlers::Handlers.PresignedPostData::Get
+    events: 
+      - http:
+          path: presigned-post-url
+          method: post
+          cors: true
+  process:
+    handler: CsharpHandlers::Handlers.Process::Run
+    events:
+      - s3:
+          bucket: preprocessed
+          event: s3:ObjectCreated:*
+  

@@ -1,0 +1,58 @@
+service:
+  name: remote-service
+
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+# Add the serverless-webpack plugin
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+  tracing:
+    apiGateway: true
+    lambda: true
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:Scan
+      Resource: !GetAtt worldTable.Arn
+
+functions:
+  world:
+    handler: handler.world
+    events:
+      - http:
+          method: get
+          path: world
+  worldEvent:
+    handler: handler.worldEvent
+    events:
+      - eventBridge:
+          pattern:
+            source:
+              - cloudwatch-embedded-metric-example
+
+resources:
+  Resources:
+    worldTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: worldTable
+        AttributeDefinitions:
+          - AttributeName: _id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: _id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+

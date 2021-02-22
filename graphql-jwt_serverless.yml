@@ -1,0 +1,50 @@
+service: ${file(package.json):name}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'development'}
+  region: ${env:AWS_DEFAULT_REGION, 'eu-west-1'}
+  tracing: true
+  timeout: 10
+  memorySize: 128
+deploymentBucket: ${file(infrastructure/terraform-state.json):serverless_s3_bucket}
+environment:
+STAGE: ${self:provider.stage}
+REGION: ${self:provider.region}
+SERVICE: ${self:service}
+
+functions:
+  graphQl:
+    handler: src/server/handlers/graphql/index.handler
+    events:
+      - http:
+          path: /graphql
+          method: ANY
+          cors: true
+  playground:
+    handler: src/server/handlers/playground/index.handler
+    events:
+      - http:
+          path: playground
+          method: ANY
+          cors: true
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-content-encoding
+  - serverless-plugin-tracing
+
+custom:
+  webpack:
+    webpackConfig: infrastructure/webpack/webpack.config.server.js
+    includeModules: true
+
+  contentEncoding:
+    minimumCompressionSize: 0
+
+  serverless-offline:
+    port: 3000
+    httpsProtocol: 'infrastructure/ssl-certs/localhost'
+    useChildProcesses: true

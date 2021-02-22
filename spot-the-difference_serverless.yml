@@ -1,0 +1,93 @@
+service: spot-the-difference
+
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+  - serverless-dynamodb-local
+  - serverless-domain-manager
+
+custom:
+  tableName: 'users-table-${self:provider.stage}'
+
+  wsgi:
+    app: app.app
+    packRequirements: false
+    pythonBin: python3
+
+  pythonRequirements:
+    dockerizePip: non-linux
+
+  dynamodb:
+    stages:
+      - dev
+    start:
+      migrate: true
+
+  domain:
+    dev: "api-dev.spotdiff.online"
+
+  customDomain:
+    domainName: ${self:custom.domain.${opt:stage}}
+    hostedZoneId: Z051670734W62CVYQ4B6H
+    stage: ${opt:stage}
+
+provider:
+  name: aws
+  runtime: python3.8
+  stage: dev
+  region: eu-west-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+
+      Resource:
+        - { "Fn::GetAtt": ["UsersDynamoDBTable", "Arn" ] }
+
+  environment:
+    USERS_TABLE: ${self:custom.tableName}
+    CLIENT_ID: ${file(env.json):CLIENT_ID}
+    CLIENT_SECRET: ${file(env.json):CLIENT_SECRET}
+
+functions:
+  app:
+    handler: wsgi_handler.handler
+    events:
+      - http:
+          method: any
+          path: /
+          cors: true
+      - http:
+          method: any
+          path: /{proxy+}
+          cors: true
+
+package:
+  exclude:
+    - client/**
+    - venv/**
+
+resources:
+  Resources:
+    UsersDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: share_code
+            AttributeType: S
+
+        KeySchema:
+          -
+            AttributeName: share_code
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}

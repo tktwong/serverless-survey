@@ -1,0 +1,197 @@
+service: jsrace
+
+frameworkVersion: ">=1.2.0 <2.0.0"
+
+plugins:
+  - serverless-single-page-app-plugin
+  - serverless-webpack
+
+custom:
+  s3Bucket: jsrace
+  webpackIncludeModules: true
+
+provider:
+  name: aws
+  stage: api
+  runtime: nodejs6.10
+  memorySize: 128
+  region: eu-west-1
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+functions:
+  create:
+    handler: handler.create
+    events:
+      - http:
+          path: testcases
+          method: post
+          cors: true
+          integration: lambda
+          request:
+            template:
+              application/json: "$input.json('$')"
+  get:
+    handler: handler.get
+    events:
+      - http:
+          path: testcases/{id}
+          method: get
+          cors: true
+          integration: lambda
+          request:
+            parameters:
+              paths:
+                id: true
+          response:
+            headers:
+              Cache-Control: "'max-age=86400'"
+
+  list:
+    handler: handler.list
+    events:
+      - http:
+          path: testcases
+          method: get
+          cors: true
+          integration: lambda
+          response:
+            headers:
+              Cache-Control: "'max-age=10'"
+
+package:
+  exclude:
+    - client/**
+    - app/**
+
+resources:
+  Resources:
+    UsagePlan:
+      Type: AWS::ApiGateway::UsagePlan
+      Properties:
+        ApiStages:
+          - ApiId:
+              Ref: "ApiGatewayRestApi"
+            Stage: ${self:provider.stage}
+        Quota:
+          Limit: 1000
+          Period: DAY
+        Throttle:
+          BurstLimit: 50
+          RateLimit: 10
+    WebAppS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3Bucket}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    WebAppS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: WebAppS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.s3Bucket}/*
+    WebAppCloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - Id: ApiOrigin
+              DomainName:
+                Fn::Join:
+                  - ""
+                  - - Ref: ApiGatewayRestApi
+                    - .execute-api.eu-west-1.amazonaws.com
+              OriginPath: ''
+              CustomOriginConfig:
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+            - Id: WebApp
+              DomainName: ${self:custom.s3Bucket}.s3.amazonaws.com
+              OriginPath: ''
+              CustomOriginConfig:
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+          Enabled: 'true'
+          ## Uncomment the following section in case you are using a custom domain
+          # Aliases:
+          # - mysite.example.com
+          DefaultRootObject: index.html
+          CustomErrorResponses:
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            TargetOriginId: WebApp
+            ForwardedValues:
+              QueryString: 'false'
+              Cookies:
+                Forward: none
+            MinTTL: 0
+            ViewerProtocolPolicy: redirect-to-https
+          ViewerCertificate:
+            CloudFrontDefaultCertificate: 'true'
+          CacheBehaviors:
+            - PathPattern: 'api/*'
+              AllowedMethods:
+                - DELETE
+                - GET
+                - HEAD
+                - OPTIONS
+                - PATCH
+                - POST
+                - PUT
+              TargetOriginId: ApiOrigin
+              ForwardedValues:
+                QueryString: 'true'
+                Cookies:
+                  Forward: none
+              MinTTL: 0
+              ViewerProtocolPolicy: https-only
+    TestCasesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+  Outputs:
+    WebAppCloudFrontDistributionOutput:
+      Value:
+        'Fn::GetAtt': [ WebAppCloudFrontDistribution, DomainName ]

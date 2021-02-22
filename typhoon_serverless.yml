@@ -1,0 +1,180 @@
+service: typhoon
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: local
+  region: eu-north-1
+  logRetentionInDays: 7
+
+  # For the purpose of this demo, the functions
+  # will run in AWS Lambda default VPC, wich
+  # will leverage Lambda built in functionality to
+  # take care of high availablity, running on multiple AZ:s.
+  # This will unfortunately cut us of from most of the internet
+  # (Except S3 and DynamoDB).
+  #
+  # Most likely we would run this in our own VPC.
+  # Then we have to account for selecting multiple subnets
+  # in different AZ:S.
+  #
+  # vpc:
+  #   securityGroupIds:
+  #     - sg-xxxx
+  #   subnetIds:
+  #     - subnet-xxxx
+  #     - subnet-yyyy
+
+  environment:
+    STAGE: ${self:provider.stage}
+    REGION: ${self:provider.region}
+    EVENT_BUS: ${self:custom.eventBusName}
+    DYNAMODB_ORDER_TABLE: orders-table
+    DYNAMODB_RATE_TABLE: rate-table
+
+  # IAM - permissions should be mapped to individual functions
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:BatchWriteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_ORDER_TABLE}"
+
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_RATE_TABLE}"
+
+    - Effect: 'Allow'
+      Action:
+        - 'events:PutEvents'
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - sqs:*
+      Resource:
+        Fn::GetAtt: [ SQSQueue, Arn ]
+
+  package:
+    individually: true
+
+custom:
+  eventBusName: test-bus-${opt:stage, self:provider.stage}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+functions:
+  createOrder:
+    handler: handlers/createOrder.handler
+    memorySize: 256
+    timeout: 2
+    events:
+      - http:
+          path: api/order
+          method: post
+
+  listOrders:
+    handler: handlers/listOrders.handler
+    memorySize: 512
+    timeout: 6
+    events:
+      - http:
+          path: api/orders
+          method: get
+
+  processOrders:
+    handler: handlers/processOrders.handler
+    memorySize: 1024
+    timeout: 30
+    reservedConcurrency: 1
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - SQSQueue
+              - Arn
+          batchSize: 25
+
+  fetchExchangeRate:
+    handler: handlers/fetchExchangeRate.handler
+    memorySize: 128
+    events:
+      - schedule:
+          rate: cron(0 0 * * *)
+          enabled: true
+
+resources:
+  Resources:
+    EventBridge:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: ${self:custom.eventBusName}
+
+    EventBridgeSQSRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Description: "Test Event Bus"
+        EventBusName: ${self:custom.eventBusName}
+        State: ENABLED
+        Targets:
+          -
+            Arn: !GetAtt SQSQueue
+            Id: "SQSQueueTestV1"
+
+      # Should use a DLQ
+      SQSQueue:
+        Type: AWS::SQS::Queue
+
+      SQSPolicy:
+        Type: AWS::SQS::QueuePolicy
+        Properties:
+          Queues:
+            - !Ref SQSQueue
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - "SQS:SendMessage"
+                Effect: "Allow"
+                Resource: !GetAtt SQSQueue.Arn
+                Principal:
+                  Service:
+                    - "events.amazonaws.com"
+                Condition:
+                  ArnEquals:
+                    aws:SourceArn: !GetAtt EventBridgeSQSRule.Arn
+
+      OrderDynamoDbTable:
+        Type: 'AWS::DynamoDB::Table'
+        Properties:
+          AttributeDefinitions:
+            - AttributeName: id
+              AttributeType: S
+          KeySchema:
+            - AttributeName: id
+              KeyType: HASH
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+          TableName: ${self:provider.environment.DYNAMODB_ORDER_TABLE}
+
+      RateDynamoDbTable:
+        Type: 'AWS::DynamoDB::Table'
+        Properties:
+          AttributeDefinitions:
+            - AttributeName: date
+              AttributeType: S
+          KeySchema:
+            - AttributeName: date
+              KeyType: HASH
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+          TableName: ${self:provider.environment.DYNAMODB_RATE_TABLE}

@@ -1,0 +1,91 @@
+service: tats-job-offer-service
+
+plugins: 
+  - serverless-offline
+  - serverless-bundle
+
+frameworkVersion: '2'
+
+package:
+  individually: true
+
+custom:
+  apiVersion: 'v1'
+  bundle:
+    aliases:
+      - infrastructure: ./../../libs/infrastructure
+      - models: ./../../libs/models
+      - jobOfferStorage: ./src/interfaces/storage
+      - recruiterStorage: ./../recruiters/src/interfaces/storage
+
+provider:
+  name: aws
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ap-south-1'}
+  apiGateway:
+    restApiRootResourceId: ${${file(./settings/${opt:stage, self:provider.stage, 'dev'}.settings.json):REST_API_ROOT_RSS_ID}}
+    restApiId: ${${file(./settings/${opt:stage, self:provider.stage, 'dev'}.settings.json):REST_API_ID}}
+    restApiResources:
+      /v1: ${${file(./settings/${opt:stage, self:provider.stage, 'dev'}.settings.json):REST_API_V1_RSS_ID}}
+  runtime: nodejs12.x
+  deploymentBucket:
+    name: tats-webapi-deploys
+    maxPreviousDeploymentArtifacts: 5
+    blockPublicAccess: true
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action: SNS:Publish
+      Resource: ${file(./settings/${opt:stage, self:provider.stage, 'development'}.settings.json):JOB_OFFER_CREATED_TOPIC_ARN}
+  environment:
+    DATABASE_CONNECTION_URI: ${${file(./settings/${opt:stage, self:provider.stage, 'dev'}.settings.json):DATABASE_CONNECTION_URI}}
+    JOB_OFFER_CREATED_TOPIC_ARN: ${file(./settings/${opt:stage, self:provider.stage, 'dev'}.settings.json):JOB_OFFER_CREATED_TOPIC_ARN}
+    DEFAULT_LIMIT_PAGINATION: ${file(./settings/${opt:stage, self:provider.stage, 'dev'}.settings.json):DEFAULT_LIMIT_PAGINATION}
+    
+functions: 
+  jobOfferCreator:
+    handler: src/handlers/jobOfferCreator.handle
+    events:
+      - http:
+          path: ${self:custom.apiVersion}/joboffers
+          method: POST
+          cors: true
+  
+  jobOfferRetriever:
+    handler: src/handlers/jobOfferRetriever.handle
+    events:
+      - http:
+          path: ${self:custom.apiVersion}/joboffers/{jobOfferId}
+          method: GET
+          cors: true
+
+  jobOfferUpdater:
+    handler: src/handlers/jobOfferUpdater.handle
+    events:
+      - http:
+          path: ${self:custom.apiVersion}/joboffers/{jobOfferId}
+          method: PUT
+          cors: true
+
+  jobOfferRemover:
+    handler: src/handlers/jobOfferRemover.handle
+    events:
+      - http:
+          path: ${self:custom.apiVersion}/joboffers/{jobOfferId}
+          method: DELETE
+          cors: true
+
+  jobOfferSearcher:
+    handler: src/handlers/jobOfferSearcher.handle
+    events:
+      - http:
+          path: ${self:custom.apiVersion}/joboffers
+          method: GET
+          cors: true
+
+  applyToJobOffer:
+    handler: src/handlers/applyToJobOffer.handle
+    events:
+      - http:
+          path: ${self:custom.apiVersion}/joboffers/{jobOfferId}
+          method: PATCH
+          cors: true

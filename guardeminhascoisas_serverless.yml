@@ -1,0 +1,224 @@
+service: ${self:custom.env.NAME}
+
+frameworkVersion: ">=1.1.0"
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-plugin-offline-dynamodb-stream
+  - serverless-pseudo-parameters
+
+custom:
+  env: ${file(env.${opt:STAGE, 'prod'}.yml), file(env.yml)}
+
+  #DynamoDB Local Configuration
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    stages:
+      - ${self:custom.env.STAGE}
+    seed:
+      domain:
+        sources:
+          - table: ${self:service}-${self:provider.stage}-users
+            sources: [./database/seeds/users.json]
+
+  #DynamoDB STREAMS Local Configuration
+  dynamodbStream:
+    host: localhost
+    port: 8000
+    pollForever: true
+    region: ${self:custom.env.REGION}
+    streams:
+      - table: ${self:provider.environment.TABLENAME_USERS}
+        functions:
+          - user_stream_listener
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:STAGE, self:custom.env.STAGE}
+  region: ${self:custom.env.REGION}
+
+  environment:
+    JWT_SECRET: ${self:custom.env.JWT_SECRET}
+    TABLENAME_USERS: ${self:service}-${self:provider.stage}-users
+    TABLENAME_USERS_DELETED: ${self:service}-${self:provider.stage}-users-deleted
+
+  iamRoleStatementsStream:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeStream
+        - dynamodb:GetRecords
+        - dynamodb:GetShardIterator
+        - dynamodb:ListStreams
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: ["arn:aws:dynamodb:${self:custom.env.REGION}:*:table/${self:provider.environment.TABLENAME_USERS}/stream/*"
+                ]
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: ["arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLENAME_USERS}",
+                 "arn:aws:dynamodb:${self:custom.env.REGION}:*:table/${self:provider.environment.TABLENAME_USERS}/index/*",
+                 "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.TABLENAME_USERS_DELETED}"
+                ]
+
+#
+# Lambnda / Functions / Methods
+#
+functions:
+
+  # General Authorizer for all private APIs
+  authorizer:
+    handler: app/users/lambdas/Authorizer/authorizer.auth
+
+  # Regiter a user - Public API
+  register:
+    handler: app/users/lambdas/register/register.handler
+    iamRoleConfig: ${self:provider.iamRoleStatements}
+    events:
+      - http:
+          path: user/register
+          method: post
+          cors: true
+
+  # Get session token / logion for a user - Public API
+  login:
+    handler: app/users/lambdas/login/login.handler
+    iamRoleConfig: ${self:provider.iamRoleStatements}
+    events:
+      - http:
+          path: user
+          method: post
+          cors: true
+
+
+  # Revew / Refresh a user's token - Public API
+  refreshToken:
+    handler: app/users/lambdas/refreshToken/refreshToken.handler
+    iamRoleConfig: ${self:provider.iamRoleStatements}
+    events:
+      - http:
+          path: user/refreshtoken
+          method: post
+          cors: true
+          authorizer:
+            name: authorizer
+            resultTtlInSeconds: 0
+
+  # Get user information - Private API
+  user:
+    handler: app/users/lambdas/get/get.handler
+    iamRoleConfig: ${self:provider.iamRoleStatements}
+    events:
+      - http:
+          path: user
+          method: get
+          cors: true
+          authorizer:
+            name: authorizer
+            resultTtlInSeconds: 0
+
+  # Update user information - Private API
+  userUpdate:
+    handler: app/users/lambdas/update/update.handler
+    iamRoleConfig: ${self:provider.iamRoleStatements}
+    events:
+      - http:
+          path: user
+          method: put
+          cors: true
+          authorizer:
+            name: authorizer
+            resultTtlInSeconds: 0
+
+  # Delete user  - Private API
+  delete:
+    handler: app/users/lambdas/delete/delete.handler
+    iamRoleConfig: ${self:provider.iamRoleStatements}
+    events:
+      - http:
+          path: user
+          method: delete
+          cors: true
+          authorizer:
+            name: authorizer
+            resultTtlInSeconds: 0
+
+  # Stream deleted user information to backup table - AWS EVENT
+  user_stream_listener:
+      handler: app/users/lambdas/streamListener/index.handler
+      iamRoleConfig: ${self:provider.iamRoleStatementsStream}
+      events:
+        - stream:
+            type: dynamodb
+            arn: !GetAtt UsersDynamoDbTable.StreamArn
+
+resources:
+  Resources:
+
+    # Rest API
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: ${self:service}-${self:custom.env.STAGE}
+        Description: Main API Gateway for the ${self:service} solution
+
+    UsersDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:provider.environment.TABLENAME_USERS}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits:  1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:  # GSI for email as a key
+        - IndexName: emailGSI
+          KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+          Projection:
+            ProjectionType: 'ALL' 
+          ProvisionedThroughput:
+            ReadCapacityUnits:  1
+            WriteCapacityUnits: 1
+        StreamSpecification:      # Stream for collect deleting users information
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+    DeletedUsersDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: ${self:provider.environment.TABLENAME_USERS_DELETED}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

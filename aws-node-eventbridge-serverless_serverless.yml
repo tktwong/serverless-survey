@@ -1,0 +1,66 @@
+
+
+service: aws-node-eventbridge-serverless
+
+frameworkVersion: '2'
+
+plugins:
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - events:PutEvents
+      Resource: "*"
+
+  environment:
+    TRANSACTION_EVENT_BUS_NAME: transactions-${self:provider.stage}
+
+custom:
+  TRANSACTION_EVENT_BUS_NAME: transactions-${self:provider.stage}
+
+functions:
+  abcTransactions:
+   handler: handler.abc
+   events:
+     - eventBridge:
+        eventBus: arn:aws:events:#{AWS::Region}:#{AWS::AccountId}:event-bus/${self:custom.TRANSACTION_EVENT_BUS_NAME}
+        pattern:
+           source:
+             - acme.transactions.abc
+
+
+  notify:
+   handler: handler.hello
+   events:
+     - eventBridge:
+        eventBus: marketing 
+        pattern:
+           source:
+             - acme.newsletter.campaign
+
+
+
+  xyzTransactions:
+   handler: handler.xyz
+   events:
+     - eventBridge:
+        eventBus: arn:aws:events:#{AWS::Region}:#{AWS::AccountId}:event-bus/${self:custom.TRANSACTION_EVENT_BUS_NAME}
+        pattern:
+           source:
+             - acme.transactions.xyz
+
+  sendTransaction:
+    handler: handler.send
+
+resources:
+  Resources:
+    TransactionsEventBus: 
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: ${self:custom.TRANSACTION_EVENT_BUS_NAME}

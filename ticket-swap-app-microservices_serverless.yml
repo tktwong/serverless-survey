@@ -1,0 +1,152 @@
+service:
+  name: ${file(config.js):env.eventsServiceName}
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  tracing:
+    apiGateway: true
+    lambda: true
+  region: ${file(config.js):env.region}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        - '#{ticketsTable.Arn}'
+        - '#{eventTable.Arn}'
+        - '#{userTable.Arn}'
+
+    - Effect: Allow
+      Action:
+        - sns:*
+      Resource:
+        - 'arn:aws:sns:#{AWS::Region}:#{AWS::AccountId}:*'
+
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+      Resource:
+        - 'arn:aws:sqs:#{AWS::Region}:#{AWS::AccountId}:*'
+
+    - Effect: 'Allow'
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource:
+        - '*'
+
+plugins:
+  - serverless-webpack
+  - serverless-dynamodb-local
+  - serverless-offline-sns
+  - serverless-offline
+  - serverless-pseudo-parameters
+  - serverless-plugin-lambda-dead-letter
+
+custom:
+  serverless-offline:
+    port: ${file(config.js):env.eventsPort}
+  serverless-offline-sns:
+    port: 9997
+    sns-endpoint: http://localhost:${file(config.js):env.snsOfflinePort}
+
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+
+  dynamodb:
+    start:
+      port: ${file(config.js):env.eventsDbPort}
+      migrate: true
+      seed: true
+    seed:
+      dev:
+        sources:
+          - table: ${file(config.js):env.events_tickets_table}
+            sources: ['./.seeds/tickets.json']
+          - table: ${file(config.js):env.events_events_table}
+            sources: ['./.seeds/events.json']
+          - table: ${file(config.js):env.events_users_table}
+            sources: ['./.seeds/users.json']
+    stages:
+      - dev
+
+functions:
+  main:
+    name: ${file(config.js):env.eventsFunc}
+    handler: src/index.handler
+    events:
+      - http: # this endpoint is test purpose for now
+          method: any
+          path: '/events'
+
+  usersEventListener:
+    name: ${self:service.name}-event-listener-users
+    handler: src/event-listeners/users-event-listener.handler
+    deadLetter:
+      sqs: ${self:service.name}-event-listener-users-dlq
+    events:
+      - sns:
+          arn: arn:aws:sns:${file(config.js):env.region}:${file(config.js):env.AWS_ACCOUNT_ID}:${file(config.js):env.usersEvent}
+
+  ticketsEventListener:
+    name: ${self:service.name}-event-listener-tickets
+    handler: src/event-listeners/tickets-event-listener.handler
+    deadLetter:
+      sqs: ${self:service.name}-event-listener-tickets-dlq
+    events:
+      - sns: # serverless-offline-sns docs says "- sns: <arn>" is also valid syntax, but it doesn't work
+          arn: arn:aws:sns:${file(config.js):env.region}:${file(config.js):env.AWS_ACCOUNT_ID}:${file(config.js):env.ticketsEvent}
+
+resources:
+  Resources:
+    ticketsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(config.js):env.events_tickets_table}
+        AttributeDefinitions:
+          - AttributeName: eventId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: eventId
+            KeyType: HASH
+          - AttributeName: userId
+            KeyType: RANGE
+
+        BillingMode: PAY_PER_REQUEST
+
+    eventTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(config.js):env.events_events_table}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+
+        BillingMode: PAY_PER_REQUEST
+
+    userTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${file(config.js):env.events_users_table}
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+
+        BillingMode: PAY_PER_REQUEST

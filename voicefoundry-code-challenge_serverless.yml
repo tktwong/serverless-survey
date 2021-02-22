@@ -1,0 +1,207 @@
+
+
+service: husband-points
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  environment:
+    dynamodb_table: ${self:service}-table
+    region: ${opt:region, self:provider.region}
+    stage: ${opt:stage, self:provider.stage}
+
+  iamRoleStatements:
+   - Effect: "Allow"
+     Action:
+       - "s3:ListBucket"
+     Resource:
+      Fn::Join:
+        - ""
+        - - "arn:aws:s3:::"
+          - Ref: DataBucket
+   - Effect: "Allow"
+     Action:
+       - "s3:PutObject"
+     Resource:
+      Fn::Join:
+        - ""
+        - - "arn:aws:s3:::"
+          - Ref: WebsiteBucket
+   - Effect: "Allow"
+     Action: 
+       - "dynamodb:PutItem"
+     Resource: "*"
+     # adding KMS decrypt permissions to avoid hitting this bug: https://github.com/serverless/examples/issues/279
+   - Effect: "Allow"
+     Action: 
+       - "kms:Decrypt"
+     Resource: "*"
+
+
+functions:
+
+  # this function allows the user to create an entry from the web interface
+  create:
+    handler: create.lambda_handler
+    events: 
+      - http:
+          path: points
+          method: post
+
+  # this function uploads the data in the .csv file to a DynamoDB table
+  upload:
+    handler: upload.lambda_handler
+    environment:
+      data_bucket: ${self:custom.s3databucketname}
+
+  # this function dynamically sets up the static site, and references the API gateway
+  set:
+    handler: set.lambda_handler
+    environment:
+      website_bucket: ${self:custom.s3websitebucketname}
+      api_id: 
+        Ref: ApiGatewayRestApi
+
+      
+resources:
+
+  Resources:
+
+    # dynamoDB table
+    pointsTable:
+      Type: AWS::DynamoDB::Table
+      Properties: 
+        TableName: ${self:provider.environment.dynamodb_table}
+        AttributeDefinitions: 
+          - 
+            AttributeName: entry_id
+            AttributeType: N
+          - 
+            AttributeName: date
+            AttributeType: S
+        KeySchema: 
+          - 
+            AttributeName: entry_id
+            KeyType: HASH
+          - 
+            AttributeName: date
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    # S3 bucket where .csv will be uploaded - a plugin will automatically upload the .csv file upon deploy
+    DataBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3databucketname}
+
+    # Policy for DataBucket
+    DataBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: DataBucket
+        PolicyDocument:
+          Id: LambdaAccessPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Action:
+                - 's3:GetObject'
+              Effect: Allow
+              Resource: 
+                - !Join ['', ["arn:aws:s3:::", !Ref DataBucket, "/*"]]
+              Principal: 
+                # AWS: !Join ['', ["arn:aws:iam::", !Ref AWS::AccountId, ":role/", "*"]]
+                AWS:
+                  Fn::Join:
+                    - ''
+                    - - 'arn:aws:iam::'
+                      - Ref: AWS::AccountId
+                      - ':role/${self:service.name}-${self:provider.stage}-${self:provider.region}-lambdaRole'
+
+    # S3 bucket that will host the static site - error.html and main.css are automatically uploaded upon deploy
+    # index.html is uploaded by the "set" lambda function, after the API Gateway ID becomes available
+    WebsiteBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3websitebucketname}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: error.html
+
+    WebsiteBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+          Bucket: 
+            Ref: WebsiteBucket
+          PolicyDocument:
+            Id: WebPolicy
+            Version: "2012-10-17"
+            Statement:
+              - Sid: PublicReadForGetBucketObjects
+                Effect: Allow
+                Principal: '*'
+                Action: 's3:GetObject'
+                Resource: !Join 
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref WebsiteBucket
+                    - /*
+              - Action:
+                  - 's3:PutObject'
+                Effect: Allow
+                Resource: 
+                  - !Join ['', ["arn:aws:s3:::", !Ref WebsiteBucket, "/*"]]
+                Principal: 
+                  AWS:
+                    Fn::Join:
+                      - ''
+                      - - 'arn:aws:iam::'
+                        - Ref: AWS::AccountId
+                        - ':role/${self:service.name}-${self:provider.stage}-${self:provider.region}-lambdaRole'
+
+
+  Outputs:
+    WebsiteURL:
+      Value: !GetAtt 
+        - WebsiteBucket
+        - WebsiteURL
+      Description: URL for website hosted on S3
+
+
+plugins:
+  - serverless-s3-deploy
+  - custom-serverless-plugin
+  - serverless-s3-remover
+  - serverless-stack-output
+
+custom:
+  s3databucketname: ${self:service.name}-${self:provider.stage}-${self:provider.region}-data
+  s3websitebucketname: ${self:service.name}-${self:provider.stage}-${self:provider.region}-web
+  assets:
+    auto: true
+    targets:
+      - bucket: !Ref DataBucket
+        files:
+          - source: ./assets/data/
+            globs: "*.csv"
+      - bucket: !Ref WebsiteBucket
+        files:
+          - source: ./assets/public/
+            globs: 
+              - "error.html"
+              - "main.css"
+  remover:
+    buckets:
+      - ${self:custom.s3databucketname}
+      - ${self:custom.s3websitebucketname}
+  output:
+    file: .build/stack.json
+
+

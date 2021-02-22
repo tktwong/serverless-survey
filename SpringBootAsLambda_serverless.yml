@@ -1,0 +1,81 @@
+service: lambda-boot
+
+plugins:
+  - serverless-plugin-warmup
+
+custom:
+  warmup:
+    timeout: 20
+    prewarm: true
+    enabled: true
+  main_class: com.lambda.boot.BootApplication
+  basePath: lambda-boot
+  # VPC
+  subnet_id: subnet-0eca7763f935aca2e
+  security_group_id: sg-21f70e41
+
+provider:
+  name: aws
+  runtime: java11
+  memorySize: 1512
+  timeout: 30
+  region: eu-central-1
+  environment:
+    aws_access_key: ${ssm:telegram_bot_aws_access_key~true}
+    aws_secret_key: ${ssm:telegram_bot_aws_secret_key~true}
+    redis_hostname: ${ssm:telegram_bot_redis_hostname~true}
+    websocket_url: ${ssm:telegram_bot_websocket_url~true}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - ec2:DescribeNetworkInterfaces
+        - ec2:CreateNetworkInterface
+        - ec2:DeleteNetworkInterface
+        - ec2:DescribeInstances
+        - ec2:AttachNetworkInterface
+      Resource: "*"
+  stage: v1
+  profile: ${opt:profile, "default"}
+  endpointType: REGIONAL
+  websocketApiRouteSelectionExpression: $request.body.action
+
+package:
+  individually: true
+
+functions:
+  lambda-boot-function:
+    package:
+      artifact: target/boot-0.0.1-SNAPSHOT-lambda-package.zip
+    handler: com.lambda.boot.StreamLambdaHandler
+    vpc:
+      securityGroupIds:
+        - ${self:custom.security_group_id}
+      subnetIds:
+        - ${self:custom.subnet_id}
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+      - websocket:
+          route: $default
+      - http:
+          path: /chat
+          method: ANY
+          cors: true
+      - http:
+          path: /login
+          method: ANY
+          cors: true
+      - http:
+          path: /ws
+          method: ANY
+          cors: true
+      - http:
+          path: /send
+          method: ANY
+          cors: true

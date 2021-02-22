@@ -1,0 +1,462 @@
+service:
+  name: zmgc
+
+plugins:
+  - serverless-domain-manager
+  - serverless-appsync-plugin
+  - serverless-pseudo-parameters
+  - serverless-s3-sync
+
+package:
+  individually: true
+  exclude:
+    - ./**
+
+provider:
+  name: aws
+  runtime: go1.x
+  stage: ${opt:stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - apigateway:*
+      Resource: "arn:aws:apigateway:*::/*"
+    - Effect: Allow
+      Action:
+        - execute-api:Invoke
+      Resource: "arn:aws:execute-api:*:*:*"
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:DescribeLogGroups
+        - logs:DescribeLogStreams
+        - logs:PutLogEvents
+        - logs:GetLogEvents
+        - logs:FilterLogEvents
+      Resource: "*"
+
+custom:
+  accountId: #{AWS::AccountId}
+  s3Sync:
+    - bucketName: ${file(./config.yml):${opt:stage}.ELM_BUCKET}
+      localDir: build
+  customDomain:
+    domainName: ${file(./config.yml):${opt:stage}.DOMAIN_ROOT}
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+  appSync:
+    name: ${file(./config.yml):${opt:stage}.APP_SYNC}
+    authenticationType: AMAZON_COGNITO_USER_POOLS
+    userPoolConfig:
+      awsRegion: #{AWS::Region}
+      defaultAction: ALLOW
+      userPoolId:  { Ref: UserPool }
+    mappingTemplates:
+      - dataSource: awsLambdaDataSource
+        type: Query #Query, Mutation, Subscription
+        field: helloWorld
+        request: "helloWorld-request-mapping-template.txt"
+        response: "helloWorld-response-mapping-template.txt"
+    schema: # defaults schema.graphql
+    serviceRole: "AppSyncServiceRole"
+    dataSources:
+      - type: AWS_LAMBDA
+        name: awsLambdaDataSource
+        description: 'Lambda DataSource'
+        config:
+          lambdaFunctionArn: { Fn::GetAtt: [GraphqlLambdaFunction, Arn] } # Where GraphqlLambdaFunction is the lambda function cloudformation resource created by serverless for the serverless function named graphql
+          serviceRoleArn: { Fn::GetAtt: [AppSyncLambdaServiceRole, Arn] }
+
+functions:
+  graphql:
+    name: graphql-${self:provider.stage}
+    description: Graphql function
+    handler: bin/graphql
+    package:
+      individually: true
+      include:
+        - ./bin/graphql
+    memorySize: 128
+  status:
+    handler: bin/status
+    name: status-${self:provider.stage}
+    description: Status/healthcheck function for API
+    package:
+      individually: true
+      include:
+        - ./bin/status
+    memorySize: 128
+    timeout: 30
+    events:
+      - http:
+          path: status
+          method: get
+
+  process:
+    handler: bin/process
+    description: Process CSV files function
+    package:
+      individually: true
+      include:
+        - ./bin/resize
+    memorySize: 128
+    timeout: 30
+    events:
+      - s3: csv
+
+  reprocess:
+    handler: bin/process
+    description: Process CSV files function
+    package:
+      individually: true
+      include:
+        - ./bin/resize
+    memorySize: 128
+    timeout: 30
+    events:
+      - s3: csv
+
+resources:
+  Resources:
+    S3BucketCsv:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(./config.yml):${opt:stage}.CSV_BUCKET}
+        # add additional custom bucket configuration here
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: 's3:ObjectCreated:*'
+              Function:
+                "Fn::GetAtt":
+                  - ProcessLambdaFunction
+                  - Arn
+            - Event: 's3:ObjectRemoved:*'
+              Function:
+                "Fn::GetAtt":
+                  - ReprocessLambdaFunction
+                  - Arn
+        LifecycleConfiguration:
+          Rules:
+            - Id: "Delayed csv expiration"
+              Status: "Enabled"
+              TagFilters:
+                  - Key: "deleted-csv"
+                    Value: "true"
+              ExpirationInDays: 1
+
+    CsvBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: ${file(./config.yml):${opt:stage}.CSV_BUCKET}
+        PolicyDocument:
+          Statement:
+            - Action:
+                - s3:putObject
+              Effect: "Allow"
+              Principal:
+                "AWS":
+                  - "arn:aws:iam::#{AWS::AccountId}:root"
+              Resource:
+                - "arn:aws:s3:::${file(./config.yml):${opt:stage}.CSV_BUCKET}/*.xls"
+                - "arn:aws:s3:::${file(./config.yml):${opt:stage}.CSV_BUCKET}/*.csv"
+                - "arn:aws:s3:::${file(./config.yml):${opt:stage}.CSV_BUCKET}/*.tsv"
+                - "arn:aws:s3:::${file(./config.yml):${opt:stage}.CSV_BUCKET}/*.xlsx"
+
+    ProcessLambdaPermissionCsvS3:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        FunctionName:
+          "Fn::GetAtt":
+            - ProcessLambdaFunction
+            - Arn
+        Principal: "s3.amazonaws.com"
+        Action: "lambda:InvokeFunction"
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: "arn:aws:s3:::${file(./config.yml):${opt:stage}.CSV_BUCKET}"
+
+    ReprocessLambdaPermissionCsvS3:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        FunctionName:
+          "Fn::GetAtt":
+            - ReprocessLambdaFunction
+            - Arn
+        Principal: "s3.amazonaws.com"
+        Action: "lambda:InvokeFunction"
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: "arn:aws:s3:::${file(./config.yml):${opt:stage}.CSV_BUCKET}"
+
+    elmBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(./config.yml):${opt:stage}.ELM_BUCKET}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          ErrorDocument: index.html
+          IndexDocument: index.html
+        CorsConfiguration:
+          CorsRules:
+          - AllowedMethods:
+            - GET
+            - POST
+            - PUT
+            - HEAD
+            AllowedOrigins:
+            - "*"
+            AllowedHeaders:
+            - "*"
+    elmBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: elmBucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "elmBucket"
+                    },
+                    "/*"
+                  ]
+                ]
+    CDN:
+      Type: "AWS::CloudFront::Distribution"
+      Properties:
+        DistributionConfig:
+          ViewerCertificate:
+            AcmCertificateArn: ${file(./config.yml):${opt:stage}.CERTIFICATE_ARN}
+            SslSupportMethod: sni-only
+          Enabled: true
+          HttpVersion: http2
+          # IsIPV6Enabled: true
+          # not supported by cloudformation
+          # https://forums.aws.amazon.com/thread.jspa?messageID=764293
+          Aliases: ${file(./config.yml):${opt:stage}.DOMAIN_ALIASES}
+          DefaultRootObject: index.html
+          Origins:
+            - DomainName: {"Fn::Join": ["", ["${file(./config.yml):${opt:stage}.ELM_BUCKET}", ".", "s3.amazonaws.com"]]}
+              # us-east-1.s3.amazonaws.com
+              Id: {"Fn::Join": ["", ["S3", "-", "${file(./config.yml):${opt:stage}.ELM_BUCKET}"]]}
+              CustomOriginConfig:
+                HTTPSPort: 443
+                OriginProtocolPolicy: http-only
+          DefaultCacheBehavior:
+            ViewerProtocolPolicy: redirect-to-https # allow-all
+            TargetOriginId: {"Fn::Join": ["", ["S3", "-", "${file(./config.yml):${opt:stage}.ELM_BUCKET}"]]}
+            AllowedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            DefaultTTL: 30
+            MinTTL: 10
+            ForwardedValues:
+              QueryString: true
+
+    # Creates a user pool in cognito for your app to auth against
+
+    # Fixme: customer email address needs to be manually entered and verified
+    # https://console.aws.amazon.com/ses/home?region=us-east-1#verified-senders-email:
+
+    # Time based MFA can not be enabled from script
+    # I have asked AWS to fix this
+
+    UserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        UserPoolName: ZmgcNameIdentityPool${opt:stage}
+        SmsVerificationMessage: "Your verification code is {####}."
+        AutoVerifiedAttributes:
+          - email
+        MfaConfiguration: "OFF"
+        EmailVerificationSubject: "Your ZMGC verification code"
+        EmailVerificationMessage: "Your ZMGC verification code is {####}."
+        SmsAuthenticationMessage: "Your ZMGC authentication code is {####}."
+        Schema:
+          - Name: name
+            AttributeDataType: String
+            Mutable: true
+            Required: false
+          - Name: email
+            AttributeDataType: String
+            Mutable: false
+            Required: true
+          - Name: phone_number
+            AttributeDataType: String
+            Mutable: true
+            Required: false
+        Policies:
+          PasswordPolicy:
+            RequireLowercase: true
+            RequireSymbols: false
+            RequireNumbers: true
+            MinimumLength: 8
+            RequireUppercase: true
+        AdminCreateUserConfig:
+          InviteMessageTemplate:
+            EmailMessage: "Your ZMGC username is {username} and temporary password is {####}."
+            EmailSubject: "Your temporary ZMGC password"
+            SMSMessage: "Your ZMGC username is {username} and temporary password is {####}."
+          UnusedAccountValidityDays: 7
+          AllowAdminCreateUserOnly: false
+
+    # Creates a User Pool Client to be used by the identity pool
+    UserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: ZmgcUserPoolClient${opt:stage}
+        GenerateSecret: false
+        UserPoolId:
+          Ref: UserPool
+
+    # Creates a federeated Identity pool
+    IdentityPool:
+      Type: "AWS::Cognito::IdentityPool"
+      Properties:
+        IdentityPoolName: ZmgcIdentity${opt:stage}
+        AllowUnauthenticatedIdentities: true
+        CognitoIdentityProviders:
+          - ClientId:
+              Ref: UserPoolClient
+            ProviderName:
+              'Fn::GetAtt': [ UserPool, ProviderName ]
+        SupportedLoginProviders:
+          'graph.facebook.com': "xxxxxxxxxx"
+        OpenIdConnectProviderARNs:
+          - 'arn:aws:iam::xxxxxxxxxxx:oidc-provider/accounts.google.com'
+
+    # Create a role for unauthorized acces to AWS resources. Very limited access. Only allows users in the previously created Identity Pool
+    CognitoUnAuthorizedRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
+              Action:
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: IdentityPool
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": unauthenticated
+        Policies:
+          - PolicyName: "CognitoUnauthorizedPolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "mobileanalytics:PutEvents"
+                    - "cognito-sync:*"
+                  Resource: "*"
+
+    # Create a role for authorized acces to AWS resources. Control what your user can access.
+    # This example only allows Lambda invokation
+    # Only allows users in the previously created Identity Pool
+    CognitoAuthorizedRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Federated: "cognito-identity.amazonaws.com"
+              Action:
+                - "sts:AssumeRoleWithWebIdentity"
+              Condition:
+                StringEquals:
+                  "cognito-identity.amazonaws.com:aud":
+                    Ref: IdentityPool
+                "ForAnyValue:StringLike":
+                  "cognito-identity.amazonaws.com:amr": authenticated
+        Policies:
+          - PolicyName: "CognitoAuthorizedPolicy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "mobileanalytics:PutEvents"
+                    - "cognito-sync:*"
+                    - "cognito-identity:*"
+                  Resource: "*"
+                - Effect: "Allow"
+                  Action:
+                    - "lambda:InvokeFunction"
+                  Resource: "*"
+
+    # Assigns the roles to the Identity Pool
+    IdentityPoolRoleMapping:
+      Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+      Properties:
+        IdentityPoolId:
+          Ref: IdentityPool
+        Roles:
+          authenticated:
+              'Fn::GetAtt': [ CognitoAuthorizedRole, Arn ]
+          unauthenticated:
+              'Fn::GetAtt': [ CognitoUnAuthorizedRole, Arn ]
+
+    # AppSync lambda role
+    AppSyncLambdaServiceRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "Lambda-${self:custom.appSync.serviceRole}"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                Service:
+                  - "appsync.amazonaws.com"
+              Action:
+                - "sts:AssumeRole"
+        Policies:
+          - PolicyName: "Lambda-${self:custom.appSync.serviceRole}-Policy"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "lambda:invokeFunction"
+                  Resource:
+                    - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:graphql-${self:provider.stage}"
+                    - "arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:graphql-${self:provider.stage}:*"
+
+Outputs:
+  UserPoolId:
+    Value:
+      Ref: UserPool
+    Export:
+      Name: "UserPool::Id"
+  UserPoolClientId:
+    Value:
+      Ref: UserPoolClient
+    Export:
+      Name: "UserPoolClient::Id"
+  IdentityPoolId:
+    Value:
+      Ref: IdentityPool
+    Export:
+      Name: "IdentityPool::Id"
+

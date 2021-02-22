@@ -1,0 +1,109 @@
+service: random-state-machine
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-central-1
+  stage: dev
+  profile: serverless-random
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:GetQueueAttributes
+        - sqs:ReceiveMessage
+      Resource:
+        - !GetAtt OneDigitNumbersQueue.Arn
+        - !GetAtt TwoDigitNumbersQueue.Arn
+    - Effect: Allow
+      Action:
+        - states:SendTaskSuccess
+      Resource: !Sub 'arn:aws:states:#{AWS::Region}:#{AWS::AccountId}:stateMachine:valueGenerator'
+
+functions:
+  generateRandomNumber:
+    handler: handler.generateRandomNumber
+  handleOneDigitNumber:
+    handler: handler.handleOneDigitNumber
+    events:
+      - sqs:
+          arn: !GetAtt OneDigitNumbersQueue.Arn
+          batchSize: 1
+  handleTwoDigitNumber:
+    handler: handler.handleTwoDigitNumber
+    events:
+      - sqs:
+          arn: !GetAtt TwoDigitNumbersQueue.Arn
+          batchSize: 1
+
+stepFunctions:
+  stateMachines:
+    ValueGeneratorAA:
+      name: valueGenerator
+      definition:
+        StartAt: GenerateRandomNumber
+        States:
+          GenerateRandomNumber:
+            Type: Task
+            Resource: !GetAtt generateRandomNumber.Arn
+            Next: IsBigNumber
+            Parameters:
+              threshold: 5
+              max: 15
+            ResultPath: $.value
+            Retry:
+              - ErrorEquals:
+                  - WrongRandomNumber
+                IntervalSeconds: 5
+                BackoffRate: 1
+                MaxAttempts: 2
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                Next: Failed
+          IsBigNumber:
+            Type: Choice
+            Choices:
+              - Variable: $.value
+                NumericGreaterThanEquals: 10
+                Next: SendToTwoDigitNumbersQueue
+              - Variable: $.value
+                NumericLessThan: 10
+                Next: SendToOneDigitNumbersQueue
+          SendToOneDigitNumbersQueue:
+            Type: Task
+            Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+            Parameters:
+              QueueUrl: !Ref OneDigitNumbersQueue
+              MessageBody:
+                Message.$: $.value
+                TaskToken.$: $$.Task.Token
+            Next: Success
+          SendToTwoDigitNumbersQueue:
+            Type: Task
+            Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+            Parameters:
+              QueueUrl: !Ref TwoDigitNumbersQueue
+              MessageBody:
+                Message.$: $.value
+                TaskToken.$: $$.Task.Token
+            Next: Success
+          Success:
+            Type: Succeed
+          Failed:
+            Type: Fail
+
+resources:
+  Resources:
+    OneDigitNumbersQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: oneDigitNumbersQueue
+    TwoDigitNumbersQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: twoDigitNumbersQueue
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-step-functions
+  - serverless-pseudo-parameters

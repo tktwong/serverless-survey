@@ -1,0 +1,178 @@
+service: app-collector-api
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  # Our stage is based on what is passed in when running serverless
+  # commands. Or fallsback to what we have set in the provider section.
+  stage: ${opt:stage, self:provider.stage}
+  # Set the table name here so we can use it while testing locally
+  noteTableName: ${self:custom.stage}-notes
+  # Set the table name here so we can use it while testing locally
+  locationTableName: ${self:custom.stage}-locations
+  # Set our DynamoDB throughput for prod and all other non-prod stages.
+  tableThroughputs:
+    prod: 5
+    default: 1
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  # Load our webpack config
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+
+  # 'iamRoleStatement' defines the permission policy for the Lambda function.
+  # In this case Lambda functions are granted with permissions to access DynamoDB.
+  environment:
+    noteTableName: ${self:custom.noteTableName}
+    locationTableName: ${self:custom.locationTableName}
+
+  iamRoleStatements:
+    # Allow access to the Locations table created within this doc
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [ LocationsTable, Arn ]
+    # Allow access to the countries table. Only read access
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource: "arn:aws:dynamodb:us-east-1:326696086447:table/country-table"
+
+functions:
+
+  # Defines an HTTP API endpoint that loads in the countries table
+  # - path: url path is /countries
+  # - method: GET request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  listCountries:
+    handler: listCountries.main
+    events:
+      - http:
+          path: countries
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  # Defines an HTTP API endpoint that calls the main function in createLocation.js
+  # - path: url path is /locations
+  # - method: POST request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+  createLocation:
+    handler: locations/createLocation.main
+    events:
+      - http:
+          path: locations
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  listAllLocations:
+  # Defines an HTTP API endpoint that calls the main function in listAllLocations.js
+  # This does a scan of the locations table
+  # - path: url path is /locations
+  # - method: GET request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+    handler: locations/listAllLocations.main
+    events:
+      - http:
+          path: locations
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  listLocations:
+  # Defines an HTTP API endpoint that calls the main function in listLocations.js
+  # This does a query of the locations table with a countryId as the HASH
+  # - path: url path is /locations/{countryId}
+  # - method: GET request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+    handler: locations/listLocations.main
+    events:
+      - http:
+          path: locations/{countryId}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+  getLocation:
+  # Defines an HTTP API endpoint that calls the main function in getLocation.js
+  # This pulls up a single record using a countryId and locationId
+  # - path: url path is /locations/{countryId}/{locationId}
+  # - method: GET request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+    handler: locations/getLocation.main
+    events:
+      - http:
+          path: locations/{countryId}/{locationId}
+          method: get
+          cors: true
+          authorizer: aws_iam
+
+
+  updateLocation:
+  # Defines an HTTP API endpoint that calls the main function in updateLocation.js
+  # This updates a single record using a countryId and locationId
+  # - path: url path is /locations/{countryId}/{locationId}
+  # - method: PUT request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+    handler: locations/updateLocation.main
+    events:
+      - http:
+          path: locations/{countryId}/{locationId}
+          method: put
+          cors: true
+          authorizer: aws_iam
+
+  deleteLocation:
+  # Defines an HTTP API endpoint that calls the main function in deleteLocation.js
+  # This deletes a record using a countryId and locationId
+  # - path: url path is /locations/{countryId}/{locationId}
+  # - method: DEL request
+  # - cors: enabled CORS (Cross-Origin Resource Sharing) for browser cross
+  #     domain api call
+  # - authorizer: authenticate using the AWS IAM role
+    handler: locations/deleteLocation.main
+    events:
+      - http:
+          path: locations/{countryId}/{locationId}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+
+resources:
+  - ${file(resources/dynamodb-table.yml)}
+  - ${file(resources/s3-bucket.yml)}
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

@@ -1,0 +1,66 @@
+service: serverless-firebase-notification
+
+plugins:
+  - serverless-client-s3
+
+custom: ${file(conf/custom.js)}
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${self:custom.region}
+  stage: dev
+  apiKeys:
+    - ${self:custom.apikey}
+  usagePlan:
+    quota:
+      limit: 5000
+      offset: 2
+      period: MONTH
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+  usagePlanKey: ${self:custom.apikey}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+        - s3:GetObject
+      Resource:
+        - "arn:aws:s3:::${self:custom.adminBucketName}"
+        - "arn:aws:s3:::${self:custom.adminBucketName}/*"
+
+functions:
+  registry:
+    handler: src/handler.registry
+    environment:
+      ALLOW_ORIGIN: ${self:custom.origin}
+      FIREBASE_SERVER_KEY: ${self:custom.firebase.key}
+      TZ: ${self:custom.timezone}
+    events:
+      - http:
+          path: /
+          method: post
+          cors: true
+          private: true
+
+  notification:
+    handler: src/handler.notification
+    environment:
+      BUCKET: ${self:custom.adminBucketName}
+      FIREBASE_SERVER_KEY: ${self:custom.firebase.key}
+      TZ: ${self:custom.timezone}
+      TOPIC_NAME: ${self:custom.firebase.topicName}
+    events:
+      - schedule: cron(0/10 * * * ? *)
+
+resources:
+  Resources:
+    S3Public:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.client.bucketName}
+    S3Admin:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.adminBucketName}

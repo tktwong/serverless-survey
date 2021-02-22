@@ -1,0 +1,223 @@
+service: serverless-graphql-appsync-lda
+
+frameworkVersion: ">=1.21.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: production
+  region: ${env:AWS_REGION}
+  environment:
+    NODE_ENV: ${self:provider.stage}
+    DATABASE_URL: ${env:DATABASE_URL}
+    DATABASE_USER: ${env:DATABASE_USER}
+    DATABASE_PASSWORD: ${env:DATABASE_PASSWORD}
+    DATABASE_DB: ${env:DATABASE_DB}
+    SNS_TOPIC: arn:aws:sns:${self:provider.region}:${env:ACC_ID}:${env:STAGE}-linkbaby-events
+    MEDIA_S3_BUCKET: ${env:STAGE}-linkbaby-user-uploads
+    SLACK_WEBHOOK_URL: ${env:SLACK_WEBHOOK_URL}
+    STAGE: ${self:provider.stage}
+    AWS_ACCOUNT_NUMBER: ${env:ACC_ID}
+    TWITTER_CONSUMER_KEY: ${env:TWITTER_CONSUMER_KEY}
+    TWITTER_CONSUMER_SECRET: ${env:TWITTER_CONSUMER_SECRET}
+    WEB_PUBLIC_ROOT: ${env:WEB_PUBLIC_ROOT}
+
+  vpc:
+    securityGroupIds:
+      - ${env:SEC_GROUP_1}
+      - ${env:SEC_GROUP_2}
+    subnetIds:
+      - ${env:SUBNET_ID_1}
+      - ${env:SUBNET_ID_2}
+  iamRoleStatements:
+      - 
+        Effect: "Allow" 
+        Action:
+          - "SQS:SendMessage"
+        Resource:
+          - arn:aws:sqs:${self:provider.region}:${env:ACC_ID}:${env:STAGE}-linkbaby-dl-queue
+      - 
+        Effect: "Allow" 
+        Action:
+          - "SNS:Publish"
+        Resource:
+          - arn:aws:sns:${self:provider.region}:${env:ACC_ID}:${env:STAGE}-linkbaby-events
+      - 
+        Effect: "Allow" 
+        Action:
+          - "SNS:CreateTopic"
+          - "SNS:Publish"
+        Resource:
+          - arn:aws:sns:${self:provider.region}:${env:ACC_ID}:linkbaby-${env:STAGE}-push-*
+      -
+        Effect: "Allow"
+        Action:
+          - "SNS:CreatePlatformEndpoint"
+          - "SNS:Subscribe"
+        Resource:
+          - "*"
+      -
+        Effect: "Allow"
+        Action:
+          - "ses:SendEmail"
+          - "ses:SendRawEmail"
+        Resource:
+          - "*"
+      - Effect: 'Allow'
+        Action:
+          - 'lambda:InvokeFunction'
+        Resource:
+          - "*"
+
+plugins:
+  - serverless-appsync-plugin
+  - serverless-offline
+  - serverless-webpack
+  - serverless-stack-output
+  - serverless-plugin-lambda-dead-letter
+  - serverless-s3-sync
+  - serverless-plugin-warmup
+
+package:
+  individually: true
+
+functions:
+  graphql:
+    handler: handler.graphqlHandler
+    warmup: true
+  eventHandler:
+    handler: eventHandler.eventHandler
+    deadLetter:
+      sqs:  ${env:STAGE}-linkbaby-dl-queue
+    events:
+      - sns:
+          topicName: ${env:STAGE}-linkbaby-events
+          displayName: ${env:STAGE} linkbaby event bus
+      - s3:
+          bucket: userUploads
+          event: s3:ObjectCreated:*
+  daily:
+    handler: daily.dailyHandler
+    events:
+      - schedule: cron(0 14 * * ? *)
+
+custom:
+  siteName: link.baby
+  accountId: ${env:ACC_ID} # replace this with your accountId
+  appSync:
+    name: linkbaby-${self:provider.stage}-api  # defaults to api
+    authenticationType: API_KEY
+    mappingTemplates: ${file(./sls-appsync-mt.yml)}
+    serviceRole: "Lambda-AppSyncServiceRole"
+    dataSources:
+      - type: AWS_LAMBDA
+        name: Lambda
+        description: 'Lambda DataSource'
+        config:
+          lambdaFunctionArn: { Fn::GetAtt: [GraphqlLambdaFunction, Arn] }
+          serviceRoleArn: { Fn::GetAtt: [AppSyncServiceRole, Arn] }
+  serverless-offline:
+    port: 4000
+  webpackIncludeModules: true
+  output:
+    handler: scripts/output.handler
+  s3Sync:
+    - bucketName: ${self:custom.siteName}
+      localDir: website/dist
+
+resources:
+  Resources: 
+    AppSyncServiceRole:
+      Type: "AWS::IAM::Role" 
+      Properties: 
+        RoleName: "Lambda-AppSyncServiceRole" 
+        AssumeRolePolicyDocument: 
+          Version: "2012-10-17" 
+          Statement: 
+            - 
+              Effect: "Allow" 
+              Principal: 
+                Service:
+                  - "appsync.amazonaws.com" 
+              Action: 
+                - "sts:AssumeRole" 
+        Policies: 
+          - 
+            PolicyName: "Lambda-AppSyncServiceRole-Policy" 
+            PolicyDocument: 
+              Version: "2012-10-17" 
+              Statement: 
+                - 
+                  Effect: "Allow" 
+                  Action: 
+                    - "lambda:invokeFunction" 
+                  Resource: 
+                    - { Fn::GetAtt: [GraphqlLambdaFunction, Arn] }
+                    - Fn::Join: [':', [{ Fn::GetAtt: [GraphqlLambdaFunction, Arn] }, '*']]
+    S3BucketUserUploads:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${env:STAGE}-linkbaby-user-uploads
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+              AllowedOrigins:
+                - "*"
+    S3BucketUserUploadsPermissions:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: ${env:STAGE}-linkbaby-user-uploads
+        PolicyDocument:
+          Statement:
+            - Principal: "*"
+              Action:
+                - s3:GetObject
+              Effect: Allow
+              Sid: "PublicAccessReadOnly"
+              Resource: arn:aws:s3:::${env:STAGE}-linkbaby-user-uploads/*
+    EventsLambdaPermissionS3:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        FunctionName:
+          "Fn::GetAtt":
+            - EventHandlerLambdaFunction
+            - Arn
+        Principal: "s3.amazonaws.com"
+        Action: "lambda:InvokeFunction"
+        SourceAccount:
+          Ref: AWS::AccountId
+        SourceArn: "arn:aws:s3:::${env:STAGE}-linkbaby-user-uploads"
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.siteName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "StaticSite"
+                    },
+                    "/*"
+                  ]
+                ]

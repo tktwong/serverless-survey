@@ -1,0 +1,82 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: geolocation-api
+
+frameworkVersion: '>=1.25.0'
+
+custom:
+  stages:
+    - dev
+    - staging
+    - prod
+  env: ${file(./configs/${self:provider.stage}.yml)}
+  webpack:
+    webpackConfig: 'webpack.config.js' # Name of webpack configuration file
+    includeModules: true
+  warmup:
+    cleanFolder: false
+    schedule: 'cron(0/5 8-17 ? * MON-FRI *)' # Run WarmUP every 5 minutes Mon-Fri between 8:00am and 5:55pm (UTC)
+    timeout: 20
+    prewarm: true # Run WarmUp immediately after a deploymentlambda
+  customDomain:
+    domainName: ${self:custom.env.domainName}
+    stage: ${self:provider.stage}
+    basePath: 'v1' # Not working :(
+    certificateArn: ${self:custom.env.certificateArn.${self:provider.region}}
+    certificateRegion: ${opt:region}
+    createRoute53Record: true
+    endpointType: 'regional'
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 256
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource:
+      - Fn::Join:
+        - ':'
+        - - arn:aws:lambda
+          - Ref: AWS::Region
+          - Ref: AWS::AccountId
+          - function:${self:service}-${self:provider.stage}-*
+
+  stage: ${opt:stage,'dev'}
+  region: ${opt:region, 'us-west-1'}
+  endpointType: regional
+
+resources:
+  Resources:
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: ${self:service}-${self:provider.stage}
+
+plugins:
+  - serverless-webpack
+  - serverless-plugin-warmup
+  - serverless-stage-manager
+  - serverless-domain-manager
+
+functions:
+  fetchLocationData:
+    handler: src/handler.fetchLocationData
+    warmup: production
+    events:
+      - http:
+          path: location
+          method: get
+          cors: true

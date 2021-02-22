@@ -1,0 +1,77 @@
+service:
+  name: mail-forwarder-s3
+
+plugins:
+  - serverless-webpack
+
+custom:
+  topicName: 'mail-forwarder-${self:provider.stage}'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 's3'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+        - ses:SendRawEmail
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:DeleteObject
+      Resource:
+        - Fn::Join: ["",['Fn::GetAtt': [MailBucket, Arn], "/*"]]
+  environment:
+    to_address: ${file(./config.yml):to}
+
+functions:
+  forwarder:
+    handler: index.handler
+    events:
+      - sns:
+          arn: !Ref MailSNSTopic
+          topicName: ${self:custom.topicName}
+
+resources:
+  Resources:
+    MailSNSTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:custom.topicName}
+    MailRuleSet:
+      Type: AWS::SES::ReceiptRuleSet
+    MailRule:
+      Type: AWS::SES::ReceiptRule
+      Properties:
+        Rule:
+          Actions:
+            - S3Action:
+                BucketName: !Ref MailBucket
+                TopicArn: !Ref MailSNSTopic
+          Enabled: true
+          Recipients: ${file(./config.yml):recipients}
+          ScanEnabled: true
+        RuleSetName: !Ref MailRuleSet
+    MailBucket:
+      Type: AWS::S3::Bucket
+    MailBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref MailBucket
+        PolicyDocument:
+          Statement:
+            -
+              Action:
+                - "s3:PutObject"
+              Effect: "Allow"
+              Resource:
+                Fn::Join: ["",['Fn::GetAtt': [MailBucket, Arn], "/*"]]
+              Principal:
+                Service: "ses.amazonaws.com"
+              Condition:
+                StringEquals:
+                  aws:Referer:
+                    - !Ref AWS::AccountId

@@ -1,0 +1,57 @@
+service: api
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: python3.8
+  lambdaHashingVersion: 20201221
+  stage: ${opt:stage, 'local'}
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - s3:GetObject
+      - s3:ListBucket
+    Resource:
+      - arn:aws:s3:::${env:BUCKET_NAME}/*
+      - arn:aws:s3:::${env:BUCKET_NAME}
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin
+  - serverless-python-requirements
+
+package:
+  exclude:
+    - s3/**
+    - .pytest_cache/**
+    - __pycache__/**
+    - tests/**
+    - node_modules/**
+    - .idea
+    - .serverless
+    - venv/**
+    - .git/**
+
+custom:
+  serverless-offline:
+    useChildProcesses: true
+  pythonRequirements:
+    dockerizePip: non-linux
+    noDeploy:
+      - boto3
+      - botocore
+      - pytest
+      - coverage
+      - jmespath
+
+functions:
+  getVulnerabilities:
+    handler: handler.handle_request
+    events:
+      - http:
+          path: /{host}/vulnerabilities
+          method: get
+    environment:
+      BUCKET_NAME: ${env:BUCKET_NAME}
+      OBJECT_KEY: ${env:OBJECT_KEY}
+      STAGE: ${self:provider.stage}

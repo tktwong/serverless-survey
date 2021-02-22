@@ -1,0 +1,78 @@
+# Name of our service
+service: daily-instance-snapshot
+
+# The required version of serverless we have to be using for this to work
+frameworkVersion: ">=1.26.0 <2.0.0"
+
+##############################
+# Our service provider and runtime/region definitions
+##############################
+provider:
+  # Which provider to use
+  name: aws
+  description: "AWS Automated Instance AMI Snapshots and Volumes"
+  # Which stage to deploy to
+  stage: ${opt:stage, 'prod'}
+  # Which Lambda runtime to use
+  runtime: python3.6
+  # How many days we want to maintain logs in CloudWatch
+  logRetentionInDays: 30
+  # Which AWS region to deploy in, eu-west-1 by default, but overridable
+  region: 'eu-west-2'             
+  # In megabytes, 128 minimum in 64MB increments
+  memorySize: 128                 
+  # In seconds
+  timeout: 300                    
+  # We want to version our functions so we can revert if we need to
+  versionFunctions:  true         
+  # This allows us to customize our expiration time of our CloudWatch Log Buckets
+  cfLogs: true                    
+  
+  environment:
+    # This is the number of days by default to store AMIs for
+    DEFAULT_RETENTION_TIME: "7"
+    # Use this to limit what region(s) you'd like this lambda to scan.  Comma-delimited, by default scan all regions.
+    LIMIT_TO_REGIONS: "eu-west-2"
+    # If this env variable is set to true it will only print what it would do, not actually do it         
+    DRY_RUN: "false"
+    # This is the key we will scan for to detect if this script is managing a snapshot, by default this is "AWSAutomatedDailySnapshots".
+    KEY_TO_TAG_ON: "AWSAutomatedDailySnapshots"
+  iamRoleStatements:
+  # We must be able to do what this script needs to do... 
+  - Effect: Allow
+    Action:
+      - ec2:CreateImage
+      - ec2:CreateSnapshot
+      - ec2:CreateTags
+      - ec2:DeleteSnapshot
+      - ec2:DeregisterImage
+      - ec2:DescribeImages
+      - ec2:DescribeInstances
+      - ec2:DescribeSnapshots
+      - ec2:DescribeVolumes
+    Resource: "*"
+
+
+##############################
+# Our function definition
+##############################
+functions:
+  execute_handler:
+    description: This does a snapshot of all our instances we want to be manually backed up to AMIs and attempts to delete expired volumes
+    handler: handler.lambda_handler
+    events:
+      - schedule:
+          description: Once a day for AMI backups
+          rate: rate(1 day)
+          enabled: true
+
+##############################
+package:
+  exclude:
+    - ".DS_Store"
+    - ".git"
+    - ".gitignore"
+    - ".serverless"
+    - "requirements.txt"
+    - "**.md"
+    - "*.png"

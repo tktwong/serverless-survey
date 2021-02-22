@@ -1,0 +1,184 @@
+service: ${self:custom.pOwner}-api-sample
+
+frameworkVersion: ">=1.1.0 <=2.8.0"
+
+package: 
+  individually: true
+  exclude:
+    - "*/**"
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-pseudo-parameters
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+    migration:
+      dir: offline/migrations
+  #-----------------------------------------------------------------------------
+  # Mapping with respect to environment specific URL and serverless stage.
+  #-----------------------------------------------------------------------------
+  # AWS account Id Map that would be used as a map for forming urns.
+  # dev-account-id: 329400689xxx
+  dev-region: us-east-1
+
+  # #  Owner or service name. Example of owner is rti which standards for
+  # #  real time inventory.  Ensure that the owner name is kept within 6 letters as
+  # #  it will be used in tagging and naming of various resources.
+  pOwner: dsre
+
+  # #  Name of the vertical to which this app belongs to.  Example of vertical
+  # #  would be dfa (Dealer Field and Affiliates), cto (Consumer Portals) etc. Used
+  # #  to identify who is responsible for the resource.
+  # pVertical: col
+
+  # pAccountId: ${self:custom.${self:custom.pEnvironment}-account-id}
+
+  # # [dev, prod]
+  pEnvironment: ${opt:stage, self:provider.stage, 'dev'}
+
+  pRegion: ${self:custom.${self:custom.pEnvironment}-region}
+
+  # # Log Level - can be any of 'trace', 'debug', 'info', 'warn', 'error'
+  # pLogLevel: ${self:custom.${self:custom.pEnvironment}-log-level}
+
+  # # Auth Domain URL
+  # pAuthDomain: ${self:custom.${self:custom.pEnvironment}-auth-domain}
+
+  # # Auth STS Domain URL
+  # pAuthStsDomain: ${self:custom.${self:custom.pEnvironment}-auth-sts-domain}
+
+  # # Auth Valid Tenants
+  # pAuthValidTenants: ${self:custom.${self:custom.pEnvironment}-auth-valid-tenants}
+
+  # # Auth Key Extension
+  # pAuthKeysExtension: ${self:custom.${self:custom.pEnvironment}-auth-keys-extension}
+  
+  # #Authorized Client AppId
+  # pAuthClientAppid: ${self:custom.${self:custom.pEnvironment}-client-appid}
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ${self:custom.pRegion}
+  profile: juan
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatementsName: role-serverless-offline-test-lambda
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+layers:
+  dependencies:
+    name: ${self:service}-${opt:stage, self:provider.stage, 'dev'}-dependencies
+    description: Contain all the app third party dependencies
+    compatibleRuntimes: 
+      - nodejs12.x
+    retain: false #
+    package:
+      artifact: layers/dependencies/nodejs.zip
+
+
+functions:
+  create:
+    package:
+      include:
+        - todos/create.js
+        - todos/common/dynamodb.js
+    layers:
+      - { Ref: DependenciesLambdaLayer }
+    handler: todos/create.create
+    events:
+      - http:
+          path: todos
+          method: post
+          cors: true
+
+  list:
+    package:
+      include:
+        - todos/list.js
+        - todos/common/dynamodb.js
+    layers:
+      - { Ref: DependenciesLambdaLayer }
+    handler: todos/list.list
+    events:
+      - http:
+          path: todos
+          method: get
+          cors: true
+
+  get:
+    package:
+      include:
+        - todos/get.js
+        - todos/common/dynamodb.js
+    layers:
+      - { Ref: DependenciesLambdaLayer }
+    handler: todos/get.get
+    events:
+      - http:
+          path: todos/{id}
+          method: get
+          cors: true
+
+  update:
+    package:
+      include:
+        - todos/update.js
+        - todos/common/dynamodb.js
+    layers:
+      - { Ref: DependenciesLambdaLayer }
+    handler: todos/update.update
+    events:
+      - http:
+          path: todos/{id}
+          method: put
+          cors: true
+
+  delete:
+    package:
+      include:
+        - todos/delete.js
+        - todos/common/dynamodb.js
+    layers:
+      - { Ref: DependenciesLambdaLayer }
+    handler: todos/delete.delete
+    events:
+      - http:
+          path: todos/{id}
+          method: delete
+          cors: true
+
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}

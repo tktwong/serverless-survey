@@ -1,0 +1,95 @@
+service: sls-chat-server
+
+frameworkVersion: '2'
+
+plugins:
+  - serverless-python-requirements
+
+package:
+  exclude:
+    - node_modules/**
+    - env/**
+    - README.md
+    - package.json
+    - package-lock.json
+    - requirements.txt
+
+custom:
+  default_stage: dev
+  stage: ${opt:stage, self:custom.default_stage}
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: ap-southeast-1
+
+  environment:
+    REGION: ap-southeast-1
+    DYNAMODB_HOST: https://dynamodb.ap-southeast-1.amazonaws.com
+
+  apiGateway:
+    shouldStartNameWithService: true
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - { 'Fn::GetAtt': ['ChatMessageTable', 'Arn'] }
+        - { 'Fn::GetAtt': ['ChatAuditTable', 'Arn'] }
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - http:
+          path: hello
+          method: get
+  chatcount:
+    handler: chat/handler.chatCount
+    events:
+      - http:
+          path: chatcount
+          method: get
+  postchat:
+    handler: chat/handler.postChat
+    events:
+      - http:
+          path: chat
+          method: post
+  getchat:
+    handler: chat/handler.getChat
+    events:
+      - http:
+          path: chat
+          method: get
+
+resources:
+  Resources:
+    ChatMessageTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: chat-message-table
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: user
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: N
+        KeySchema:
+          - AttributeName: user
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+
+    ChatAuditTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: chat-audit-table
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: key
+            AttributeType: S
+        KeySchema:
+          - AttributeName: key
+            KeyType: HASH

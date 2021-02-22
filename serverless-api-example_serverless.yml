@@ -1,0 +1,100 @@
+
+service: price-api
+
+frameworkVersion: ">=1.0.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev        # ${opt:stage, 'dev'}  # TODO: bug in dynamo local, may need to use custom.stage here, but should work
+  region: eu-west-1 # ${opt:region, 'eu-west-1'}
+  memorySize: 128   # mb
+  timeout: 5        # seconds
+  tracing:          # turn on x-ray tracing
+    apiGateway: true
+    lambda: true
+  environment:      # global environment vars
+    SERVERLESS_STAGE: ${self:provider.stage}
+    DYNAMODB_TABLE: ${self:custom.dynamoConfig.tableName}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+  # info on params here: https://serverless.com/framework/docs/providers/aws/guide/serverless.yml/
+
+functions:
+  list:
+    handler: src/lambda.getPrice
+    events:
+      - http:
+          path: prices
+          method: get
+  get:
+    handler: src/lambda.getPrice
+    events:
+      - http:
+          path: prices/{id}
+          method: get
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-mocha-plugin
+
+custom:
+  dynamoConfig:
+    tableName: price-${self:provider.stage}
+    throughputByEnv:
+      dev: 1
+      prod: 1
+      default: 1
+    throughput: ${self:custom.dynamoConfig.throughputByEnv.${self:provider.stage}, self:custom.dynamoConfig.throughputByEnv.default}
+  serverless-offline:
+    printOutput: true
+  serverless-mocha-plugin:
+    preTestCommands:
+      #- bash test/setup/offlineStart.sh
+    postTestCommands:
+      #- bash test/setup/offlineStop.sh
+  dynamodb:  # offline dynamo config
+    stages:
+      - dev
+    start:
+      port: 8001
+      inMemory: true
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+    seed:
+      domain:
+        sources:
+          - table: ${self:provider.environment.DYNAMODB_TABLE}
+            sources: [test/setup/testdata.json]
+
+resources:
+  Resources:
+    PriceDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      # DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.dynamoConfig.tableName}
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: ${self:custom.dynamoConfig.throughput}
+          WriteCapacityUnits: ${self:custom.dynamoConfig.throughput}
+
+package:
+  individually: false
+  exclude:
+    - .dynamodb/**
+    - test/**

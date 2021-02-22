@@ -1,0 +1,163 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: codesmithquiz
+# app and org for use with dashboard.serverless.com
+#app: codesmith-app-quiz
+#org: r-h-ltd
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+plugins:
+  - serverless-s3-sync
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stackName: ${self:service}-${self:provider.stage}
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-2'}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "execute-api:ManageConnections"
+      Resource:
+        - "arn:aws:execute-api:*:*:**/@connections/*"
+    - Effect: Allow
+      Action:
+        - "dynamodb:PutItem"
+        - "dynamodb:GetItem"
+        - "dynamodb:UpdateItem"
+        - "dynamodb:DeleteItem"
+        - "dynamodb:BatchGetItem"
+        - "dynamodb:BatchWriteItem"
+        - "dynamodb:Query"
+      Resource:
+        - Fn::GetAtt: [ApplicationDynamoDBTable, Arn]
+        - Fn::Join:
+            - "/"
+            - - Fn::GetAtt: [ApplicationDynamoDBTable, Arn]
+              - "*"
+  environment:
+    APPLICATION_TABLE:
+      Ref: ApplicationDynamoDBTable
+    API_REGION: "${self:provider.region}"
+
+  # optional
+  websocketApiName: websocket-chat-${self:provider.stage}
+
+custom:
+  siteName: codesmith-quiz.com
+  s3Sync:
+    - bucketName: ${self:custom.siteName}
+      localDir: static
+
+functions:
+  # manage connection and disconnection of clients
+  connectionManager:
+    handler: src/handler.connectionManager
+    events:
+      - websocket:
+          route: $connect
+      - websocket:
+          route: $disconnect
+
+  # just in case we are getting weird / bad data
+  # we can react to it with a sane response
+  defaultMessages:
+    handler: src/handler.defaultMessage
+    events:
+      - websocket:
+          route: $default
+
+  # handle chat app messages
+  sendMessage:
+    handler: src/handler.sendMessage
+    events:
+      - websocket:
+          route: sendMessage
+
+  # Channel Subscriptions
+  channelManager:
+    handler: src/handler.channelManager
+    events:
+      - websocket:
+          route: subscribeChannel
+      - websocket:
+          route: unsubscribeChannel
+
+  # handle broadcasting all events
+  # we do this by listening the dynamodb table stream for messages or disconnects
+  # could even be done by sub-systems directly to dynamodb
+  broadcast:
+    handler: src/handler.broadcast
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt: [ApplicationDynamoDBTable, StreamArn]
+
+resources:
+  Resources:
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:GetObject
+              Resource:
+                Fn::Join: ["", ["arn:aws:s3:::", { "Ref": "StaticSite" }, "/*"]]
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.siteName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    # DynamoDB best practices suggest most applications should only
+    # have a single table. For resources check out the follow links...
+    # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/best-practices.html
+    # Advanced Design Patterns for DynamoDB - https://www.youtube.com/watch?v=HaEPXoXVf2k
+    ApplicationDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: reverse
+            KeySchema:
+              - AttributeName: sk
+                KeyType: HASH
+              - AttributeName: pk
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL

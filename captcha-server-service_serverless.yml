@@ -1,0 +1,95 @@
+service: Captcha
+
+
+provider:
+  name: aws
+  region: us-east-2
+  stage: DEV
+  runtime: nodejs10.x
+  role: arn:aws:iam::556332110707:role/LambdaBasicPrivileges
+  environment: ${self:custom.environments.${opt:stage, 'DEV'}}
+  deploymentBucket:
+    tags:
+      saas: ${self:custom.saasName}
+      stage: ${opt:stage, 'DEV'}
+      scope: global
+      type: captcha
+
+
+custom:
+  saasName: 'Captcha'
+  pathToHandler: "compiled/src"
+  pathToJSFile: "src"
+  accessKeyId: ${ssm:concise-accessKeyId~true}
+  secretAccessKey: ${ssm:concise-secretAccessKey~true}
+  region: ${ssm:concise-region~true}
+  apiGatewayTags:
+    saas: ${self:custom.saasName}
+    stage: ${opt:stage, 'DEV'}
+    scope: global
+    type: captcha
+  environments:
+    DEV:
+      saasName: ${self:custom.saasName}
+      stage: 'DEV'
+      accessKeyId: ${self:custom.accessKeyId}
+      secretAccessKey: ${self:custom.secretAccessKey}
+      region: ${self:custom.region}
+    PROD:
+      saasName: ${self:custom.saasName}
+      stage: 'PROD'
+      accessKeyId: ${self:custom.accessKeyId}
+      secretAccessKey: ${self:custom.secretAccessKey}
+      region: ${self:custom.region}
+
+
+plugins:
+  - serverless-plugin-include-dependencies
+  - serverless-tag-api-gateway
+
+
+package:
+  individually: true
+  exclude:
+    - "*.*"
+    - "src/**"
+    - "compiled/**"
+    - "correctModuleNames.js"
+  include:
+    - "*.js"
+
+
+functions:
+
+  secretKey-get:
+    handler: ${self:custom.pathToHandler}/secretKey-get.handler
+    package:
+      include:
+      - "${self:custom.pathToJSFile}/secretKey-get.js"
+    events:
+      - http:
+          path: secretKey-get
+          method: post
+          cors: true
+    tags:
+      saas: ${self:custom.saasName}
+      stage: ${opt:stage, 'DEV'}
+      scope: global
+      type: captcha
+
+
+  verify:
+    handler: ${self:custom.pathToHandler}/verify.handler
+    package:
+      include:
+      - "${self:custom.pathToJSFile}/verify.js"
+    events:
+      - http:
+          path: verify
+          method: post
+          cors: true
+    tags:
+      saas: ${self:custom.saasName}
+      stage: ${opt:stage, 'DEV'}
+      scope: global
+      type: captcha

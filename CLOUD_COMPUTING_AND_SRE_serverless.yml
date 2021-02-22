@@ -1,0 +1,69 @@
+# install serverless pseudo paramteres plugin
+# npm install serverless-pseudo-parameters
+
+# sls deploy --stage {name}
+
+service: aoj75 
+
+plugins:
+  - serverless-pseudo-parameters
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  stage: dev
+  runtime: python3.6
+  memorySize: 128
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:ChangeMessageVisibility
+        - sqs:DeleteMessage
+        - sqs:ReceiveMessage
+        - sqs:SendMessage
+        - sns:Publish
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: 
+        - "*"
+  environment:
+      sqs_url: https://sqs.us-east-1.amazonaws.com/#{AWS::AccountId}/sqs-principal-${self:custom.stage} # ${ssm:/${self:custom.stage}/queue/sqs/url} # 
+      sqs_arn: arn:aws:sqs:us-east-1:#{AWS::AccountId}:sqs-principal-${self:custom.stage} # ${ssm:/${self:custom.stage}/queue/sqs/arn} # 
+      sqs_dlq_url: https://sqs.us-east-1.amazonaws.com/#{AWS::AccountId}/sqs-dlq-queue-${self:custom.stage} # ${ssm:/${self:custom.stage}/queue/dlq/url} #
+      sqs_dlq_arn: arn:aws:sqs:us-east-1:#{AWS::AccountId}:sqs-dlq-queue-${self:custom.stage} # ${ssm:/${self:custom.stage}/queue/dlq/arn} #
+      sns_arn: arn:aws:sns:us-east-1:#{AWS::AccountId}:sns-principal-${self:custom.stage} # ${ssm:/${self:custom.stage}/topic/arn} #
+  tracing:
+    apiGateway: true
+    lambda: true
+package:
+  exclude:
+    - layer/**
+      
+layers:
+  Dependencias:
+    path: layer
+    description: 'dependências'
+      
+functions:
+  insereSQS:
+    handler: insereSQS.insert
+    layers:
+      - {Ref: DependenciasLambdaLayer }
+    events:
+      - http:
+          path: inseresqs/{mensagem}
+          method: get
+  leSQS:
+    handler: leSQS.le
+    layers:
+      - {Ref: DependenciasLambdaLayer }
+  pushSNS:
+    handler: pushtosns.push
+    layers:
+      - {Ref: DependenciasLambdaLayer }
+    #events:
+    #  - sqs: arn:aws:sqs:us-east-1:#{AWS::AccountId}:sqs-dlq-queue-${self:custom.stage}
+    
+    

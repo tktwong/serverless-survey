@@ -1,0 +1,94 @@
+service: serverless-scala
+
+provider:
+    name: aws
+    runtime: java8
+    region: ap-southeast-2
+
+# layers:
+#     dependencies:
+#         path: java/lib
+#         package:
+#             artifact: 'target/scala-2.13/dependencies.jar'
+
+functions:
+    api:
+        package:
+          artifact: 'channels/target/scala-2.13/proguard/channels-service_2.13-0.1.0-SNAPSHOT.jar'
+        handler: com.engitano.serverless.channels.Channels
+        # layers:
+        #   - { Ref: DependenciesLambdaLayer }
+        events:
+            - http:
+                path: /
+                method: ANY
+                cors:
+                  origin: '*'
+                  headers:
+                    - Content-Type
+                    - X-Amz-Date
+                    - Authorization
+                    - X-Api-Key
+                    - X-Amz-Security-Token
+                    - X-Amz-User-Agent
+                  allowCredentials: true
+                authorizer:
+                    name: authorizerFunc
+                    resultTtlInSeconds: 300
+                    identitySource: method.request.header.Authorization
+                    type: token
+            - http:
+                path: /{any+} 
+                method: ANY
+                cors:
+                  origin: '*'
+                  headers:
+                    - Content-Type
+                    - X-Amz-Date
+                    - Authorization
+                    - X-Api-Key
+                    - X-Amz-Security-Token
+                    - X-Amz-User-Agent
+                  allowCredentials: true
+                authorizer:
+                    name: authorizerFunc
+                    resultTtlInSeconds: 300
+                    identitySource: method.request.header.Authorization
+                    type: token
+    authorizerFunc:
+        package:
+          artifact: 'auth/target/scala-2.13/proguard/authorizer_2.13-0.1.0-SNAPSHOT.jar'
+        handler: com.engitano.serverless.auth.Authorizer
+resources:
+  Resources:
+    channelsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Channels
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: topic
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        GlobalSecondaryIndexes:
+          - IndexName: ChannelsByTopic
+            KeySchema:
+            - AttributeName: topic
+              KeyType: HASH
+            - AttributeName: id
+              KeyType: RANGE
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'

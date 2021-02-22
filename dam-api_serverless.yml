@@ -1,0 +1,81 @@
+# NOTE: update this with your service name
+service: dam-api
+app: dam-api
+tenant: dimkharitonov
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-export-env
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  tableThroughputs:
+    prod: 10
+    default: 5
+  tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: eu-west-1
+  memorySize: 256
+  timeout: 10
+
+  environment:
+    tableName:
+      Ref: AssetsMetaTable
+    wikiTableName:
+      Ref: WikiArticlesTable
+    assetsBucketName:
+      Ref: AssetsBucket
+
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+    - dynamodb:DescribeTable
+    - dynamodb:Query
+    - dynamodb:Scan
+    - dynamodb:GetItem
+    - dynamodb:PutItem
+    - dynamodb:UpdateItem
+    - dynamodb:DeleteItem
+    - dynamodb:BatchWriteItem
+    - dynamodb:BatchGetItem
+    # Restrict our IAM role permissions to
+    # the specific table for the stage
+    Resource:
+    - "Fn::GetAtt": [ AssetsMetaTable, Arn ]
+    - "Fn::GetAtt": [ WikiArticlesTable, Arn ]
+  - Effect: Allow
+    Action:
+    - s3:GetObject
+    - s3:PutObject
+    - s3:DeleteObject
+    Resource:
+      Fn::Join:
+      - ""
+      - - "Fn::GetAtt": [ AssetsBucket, Arn ]
+        - "/*"
+
+functions:
+  - ${file(handlers/assets.yml)}
+  - ${file(handlers/wikiArticles.yml)}
+
+
+
+resources:
+  # DynamoDB
+  - ${file(resources/dynamodb-table.yml)}
+  # S3
+  - ${file(resources/s3buckets.yml)}
+  # Cognito
+  - ${file(resources/cognito-user-pool.yml)}
+  - ${file(resources/cognito-identity-pool.yml)}

@@ -1,0 +1,261 @@
+service:
+  name: MyMovieList-App
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  user: ${opt:region, 'shaker'}
+
+  environment:
+    CATEGORIES_TABLE: Categories-${self:provider.stage}
+    MOVIES_TABLE: Movies-${self:provider.stage}
+    ATTACHMENTS_BUCKET: mymovielist-attachments-${self:provider.user}-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  #====================================================================================================================#
+
+  # Configure get categories function
+  GetCategories:
+    handler: src/lambda/http/category/getCategories.handler
+    events:
+      - http:
+          method: get
+          path: categories
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+
+  # Configure create category function
+  CreateCategory:
+    handler: src/lambda/http/category/createCategory.handler
+    events:
+      - http:
+          method: post
+          path: categories
+          cors: true
+          authorizer: Auth
+          request:
+            schema:
+              application/json: ${file(models/category-schema.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+
+
+  # Configure update category function
+  UpdateCategory:
+    handler: src/lambda/http/category/updateCategory.handler
+    events:
+      - http:
+          method: patch
+          path: categories/{categoryId}
+          cors: true
+          authorizer : Auth
+          request:
+            schema:
+              application/json: ${file(models/category-schema.json)}          
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+
+
+  # Configure delete category  function
+  DeleteCategory:
+    handler: src/lambda/http/category/deleteCategory.handler
+    events:
+      - http:
+          method: delete
+          path: categories/{categoryId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+
+  #====================================================================================================================#
+
+  # Configure get movies function
+  GetMovies:
+    handler: src/lambda/http/movie/getMovies.handler
+    events:
+      - http:
+          method: get
+          path: movies
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIES_TABLE}
+
+  # Configure create movie function
+  CreateMovie:
+    handler: src/lambda/http/movie/createMovie.handler
+    events:
+      - http:
+          method: post
+          path: movies
+          cors: true
+          authorizer: Auth
+          request:
+            schema:
+              application/json: ${file(models/create-movie-schema.json)}
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIES_TABLE}
+      - Effect: Allow
+        Action: dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.CATEGORIES_TABLE}
+
+
+  # Configure update movie function
+  UpdateMovie:
+    handler: src/lambda/http/movie/updateMovie.handler
+    events:
+      - http:
+          method: patch
+          path: movies/{movieId}
+          cors: true
+          authorizer : Auth
+          request:
+            schema:
+              application/json: ${file(models/update-movie-schema.json)}          
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIES_TABLE}
+
+
+  # Configure delete movie  function
+  DeleteMovie:
+    handler: src/lambda/http/movie/deleteMovie.handler
+    events:
+      - http:
+          method: delete
+          path: movies/{movieId}
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIES_TABLE}
+
+
+  # Configure generate signed url function
+  GenerateUploadUrl:
+    handler: src/lambda/http/movie/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: movies/{movieId}/attachment
+          cors: true
+          authorizer: Auth
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.MOVIES_TABLE}
+      - Effect: Allow
+        Action: 
+          - s3:GetObject
+          - s3:PutObject
+        Resource: arn:aws:s3:::${self:provider.environment.ATTACHMENTS_BUCKET}/*
+
+
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    CategoriesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.CATEGORIES_TABLE}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: categoryId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: categoryId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        
+    MoviesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.MOVIES_TABLE}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: movieId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: movieId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        
+    MoviesAttachmentsBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: ${self:provider.environment.ATTACHMENTS_BUCKET}
+          CorsConfiguration:
+            CorsRules:
+              -
+                AllowedOrigins:
+                  - '*'
+                AllowedHeaders:
+                  - '*'
+                AllowedMethods:
+                  - GET
+                  - PUT
+                  - POST
+                  - DELETE
+                  - HEAD
+                MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref MoviesAttachmentsBucket
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.ATTACHMENTS_BUCKET}/*'
+
+        
+

@@ -1,0 +1,64 @@
+# Reference: https://www.serverless.com/framework/docs/providers/aws/guide/serverless.yml/
+
+service: notifyer-cron
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 512 # optional, in MB, default is 1024
+  timeout: 60
+  stage: ${opt:stage,'dev'}
+  region: ap-southeast-2
+  profile: serverless
+  environment: ${file(env.yml):${self:provider.stage}}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:PutItem
+      Resource: "arn:aws:dynamodb:*:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+
+package:
+  individually: true
+  exclude:
+    - .dynamodb/**
+# https://www.serverless.com/framework/docs/providers/aws/guide/resources/#aws---resources
+# resources:
+#   Resources:
+#     notifyerTable:
+#       Type: AWS::DynamoDB::Table
+#       Properties:
+#         TableName: ${self:provider.environment.DYNAMODB_TABLE}
+#         AttributeDefinitions:
+#           - AttributeName: user
+#             AttributeType: S
+#         KeySchema:
+#           - AttributeName: user
+#             KeyType: HASH
+#         ProvisionedThroughput:
+#           ReadCapacityUnits: 1
+#           WriteCapacityUnits: 1
+        # consider BillingMode: PAY_PER_REQUEST
+        # https://www.serverless.com/blog/dynamodb-on-demand-serverless
+
+plugins:
+  - serverless-webpack
+  # - serverless-dynamodb-local
+  - serverless-offline
+
+# https://www.serverless.com/framework/docs/providers/aws/guide/functions/
+functions:
+  app:
+    handler: handler.app
+    events: ${file(events.yml):${self:provider.stage}}
+
+custom:
+  webpack:
+    includeModules: false
+
+#   dynamodb:
+#   # If you only want to use DynamoDB Local in some stages, declare them here
+#     stages:
+#       - dev

@@ -1,0 +1,58 @@
+service: project-auger
+
+# app and org for use with dashboard.serverless.com
+app: project-auger
+org: killallskywalker
+
+# service environment
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ap-southeast-1
+  environment: ${file(./config/${self:custom.stage}.env.json)}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - '*' 
+      Resource:
+        - 'arn:aws:sns:ap-southeast-1:567650660041:${self:custom.settings.${self:custom.stage}.QUOTATION}'
+
+
+# function
+functions:
+  rest:
+    handler: main.handler
+    description: REST api
+    events: 
+      - http: 
+          path: /
+          method: ANY
+          cors: true
+      - http: 
+          path: /{proxy+}
+          method: ANY
+          cors: true
+  notification:
+    handler: faas/notification.quotation
+    description: send quotation based on user preferences 
+    events:
+      - sns: ${self:custom.settings.${self:custom.stage}.QUOTATION}
+
+
+#plugins
+plugins:
+  - serverless-offline-sns
+  - serverless-offline
+
+#custom configuration
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  settings:
+    dev:
+      QUOTATION:  quotation-dev
+  serverless-offline-sns:
+    port: 4002
+    debug: false
+    accountId: 567650660041 
+

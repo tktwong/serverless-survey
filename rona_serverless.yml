@@ -1,0 +1,60 @@
+service: rona
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 128
+  region: eu-central-1
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - "s3:PutObject"
+        - "s3:ListBucket"
+      Resource:
+        - "arn:aws:s3:::${self:service}-${opt:stage}-tek/*"
+
+plugins:
+  - serverless-offline
+  - serverless-plugin-typescript
+  - serverless-plugin-common-excludes
+  - serverless-plugin-include-dependencies
+  - serverless-s3-local
+
+package:
+  individually: true
+  excludeDevDependencies: false
+
+custom:
+  s3:
+    port: 8000
+    directory: buckets  # this directory must be already created.
+
+functions:
+  list-keys:
+    handler: app/functions/list-keys.handler
+    events:
+      - http:
+          path: keys
+          method: get
+
+  upload-keys:
+    handler: app/functions/upload-key.handler
+    events:
+      - http:
+          path: keys
+          method: post
+
+resources:
+  Resources:
+    S3TekBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-${opt:stage}-tek
+        AccessControl: "Private"
+        LifecycleConfiguration:
+          Rules:
+            - Id: AutoExpire
+              Status: Enabled
+              ExpirationInDays: "14"
+

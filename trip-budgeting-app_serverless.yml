@@ -1,0 +1,179 @@
+org: makinwa37
+app: trip-budgeting-app
+service:
+  name: trip-budgeting
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-plugin-tracing
+
+# package:
+  # individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  profile: makinwa
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-2'}
+
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  environment:
+    TRIPS_TABLE: Trips-${self:provider.stage}
+    ACTIVITIES_TABLE: Activities-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+
+iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - xray:PutTraceSegments
+      - xray:PutTelemetryRecords
+    Resource:
+      - "*"
+
+custom:
+  documentation:
+    api:
+      info:
+        version: '1.0.0'
+        title: Trip Budget API
+        description: Trip Budget app API
+      tags:
+        - name: Trip Budgets
+          description: Trip Budget Management
+    models:
+      - name: CreateTripRequest
+        contentType: "application/json"
+        schema: ${file(src/models/create-trip-request.json)}
+      - name: UpdateTripRequest
+        contentType: "application/json"
+        schema: ${file(src/models/update-trip-request.json)}
+
+functions:
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetTrips:
+    handler: src/lambda/http/getTrips.handler
+    iamRoleStatementsName: get-trips-function-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TRIPS_TABLE}
+    events:
+      - http:
+          method: get
+          path: trips
+          cors: true
+          authorizer: Auth
+
+  CreateTrip:
+    handler: src/lambda/http/createTrip.handler
+    iamRoleStatementsName: create-trip-function-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action: dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TRIPS_TABLE}
+    events:
+      - http:
+          method: post
+          path: trips
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new Trip
+            description: Create a new Trip
+            requestModels:
+              'application/json': CreateTripRequest
+  UpdateTrip:
+    handler: src/lambda/http/updateTrip.handler
+    iamRoleStatementsName: update-trip-function-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TRIPS_TABLE}
+    events:
+      - http:
+          method: patch
+          path: trips/{tripId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a Trip
+            description: Update a Trip
+            requestModels:
+              'application/json': UpdateTripRequest
+      - http:
+          method: put
+          path: trips/{tripId}
+          cors: true
+          authorizer: Auth
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Update a Trip
+            description: Update a Trip
+            requestModels:
+              'application/json': UpdateTripRequest
+  DeleteTrip:
+    handler: src/lambda/http/deleteTrip.handler
+    iamRoleStatementsName: delete-trip-function-role
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TRIPS_TABLE}
+    events:
+      - http:
+          method: delete
+          path: trips/{tripId}
+          cors: true
+          authorizer: Auth
+
+resources:
+  Resources:
+    TripsDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: tripId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: tripId
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.TRIPS_TABLE}
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi

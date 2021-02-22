@@ -1,0 +1,72 @@
+
+service: reto-backend
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  environment:
+    DYNAMODB_TABLE: ${self:provider.stage}WORKER
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:Scan
+        - dynamodb:GetItem
+      Resource: '*'
+  lambdaHashingVersion: 20201222
+
+functions:
+  getPerson:
+    handler: src/person/Controller.handler
+    name: FNGETPERSONS
+    description: en esta funcion se consumirá el recurso person del api de Star Wars
+    environment:
+      SWAPI_RESOURCE_PEOPLE: https://swapi.py4e.com/api/people
+    events:
+      - http:
+          path: person/{id}
+          method: get
+  createWorker:
+    handler: src/worker/Controller.saveWorker
+    name: FNCREATEWORKER
+    description: funcion para guardar datos del modelo trabajadores con Dynamodb
+    events:
+      - http:
+          path: worker
+          method: post
+  getWorkers:
+    handler: src/worker/Controller.getWorkers
+    name: FNGETWORKERS
+    description: funcion que obtiene la lista de trabajadores
+    events:
+      - http:
+          path: worker
+          method: get
+  getWorker:
+    handler: src/worker/Controller.getWorker
+    name: FNGETWORKER
+    description: funcion que obtiene un trabajador segun su id
+    events:
+      - http:
+          path: worker/{id}
+          method: get
+  
+resources: # CloudFormation template syntax from here on.
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

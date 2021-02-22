@@ -1,0 +1,112 @@
+service: penca
+custom:
+  APP_ENV: PENCA
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${env:${self:custom.APP_ENV}_STAGE}
+  profile: ${env:PENCA_SERVERLESS_PROFILE}
+  versionFunctions: false
+  environment:
+    PENCA_AWS_API_ACCESS_KEY: ${env:${self:custom.APP_ENV}_AWS_API_ACCESS_KEY}
+    PENCA_AWS_API_SECRET_KEY: ${env:${self:custom.APP_ENV}_AWS_API_SECRET_KEY}
+    PENCA_AWS_API_REGION: ${env:${self:custom.APP_ENV}_AWS_API_REGION}
+    PENCA_APP: PENCA
+    PENCA_STAGE: ${env:${self:custom.APP_ENV}_STAGE}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "lambda:InvokeFunction"
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "SNS:Publish"
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        - "*"
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - "*"
+package:
+  individually: true
+  exclude:
+    - 'src/**'
+    - 'dist/**'
+functions:
+  bets:
+      handler: betsHandler.betsHandler
+      name: ${self:provider.stage}-${self:service}-bets
+      events:
+        - http:
+            path: ${self:service}/games/{matchId}/bets
+            method: get
+            cors: true
+      # - http:
+      #     path: ${self:service}/games/{gameId}/bet
+      #     method: post
+      #     cors: true
+          # authorizer:
+          #   arn: arn:aws:lambda:us-east-1:273870774381:function:${self:provider.stage}-security-validation
+          #   identitySource: method.request.header.Authorization
+  games:
+    handler: gamesHandler.gamesHandler
+    name: ${self:provider.stage}-${self:service}-games
+    events:
+      - http:
+          path: ${self:service}/games
+          method: get
+          cors: true
+  standings:
+    handler: standingsHandler.standingsHandler
+    name: ${self:provider.stage}-${self:service}-standings
+    events:
+      - http:
+          path: ${self:service}/standings
+          method: get
+          cors: true
+      - http:
+          path: ${self:service}/standings
+          method: post
+          cors: true
+  dataRetrieval:
+    handler: dataRetrievalHandler.dataRetrievalHandler
+    name: ${self:provider.stage}-${self:service}-dataRetrieval
+    timeout: 300
+    events:
+      - schedule:
+          rate: rate(3 hours)
+          enabled: true
+  # logIn:
+  #   handler: logInHandler.logInHandler
+  #   name: ${self:provider.stage}-${self:service}-logIn
+  #   events:
+  #     - http:
+  #         path: ${self:service}/login
+  #         method: post
+  #         cors: true
+  # validation:
+  #   handler: validationHandler.validationHandler
+  #   name: ${self:provider.stage}-${self:service}-validation
+  # validateToken:
+  #   handler: validateTokenHandler.validateTokenHandler
+  #   name: ${self:provider.stage}-${self:service}-validateToken
+  #   events:
+  #     - http:
+  #         path: ${self:service}/validateToken
+  #         method: post
+  #         cors: true
+  # logOut:
+  #   handler: logOutHandler.logOutHandler
+  #   name: ${self:provider.stage}-${self:service}-logOut
+  #   events:
+  #     - http:
+  #         path: ${self:service}/logout
+  #         method: delete
+  #         cors: true

@@ -1,0 +1,105 @@
+service: reina-blog-sls
+
+plugins:
+  - serverless-python-requirements
+  - serverless-prune-plugin
+  - serverless-plugin-existing-s3
+
+custom:
+  defaultProfile: reina-blog
+  defaultRegion: ap-northeast-1
+  prune:
+    automatic: true
+    number: 3
+  pythonRequirements:
+    dockerizePip: true
+
+provider:
+  name: aws
+  runtime: python3.7
+  profile: ${opt:profile, self:custom.defaultProfile}
+  region: ${opt:region, self:custom.defaultRegion}
+  envionment:
+    TZ: Asia/Tokyo
+
+package:
+  exclude:
+    - node_modules/*
+    - env/*
+    - test/*
+    - scripts/*
+    - test/*
+    - package*
+
+functions:
+  forward-ses-mail:
+    handler: forward_ses_mail.lambda_handler
+    events:
+      - existingS3:
+          bucket: ${file(./env/env.yml):S3_BUCKET_NAME}
+          events:
+            - s3:ObjectCreated:Put
+            - s3:ObjectCreated:Post
+            - s3:ObjectCreated:CompleteMultipartUpload
+    role: forwardSesMailLambdaRole
+    memorySize: 512
+    timeout: 10
+    environment:
+      ORIGIN_TO: ${file(./env/env.yml):ORIGIN_TO}
+      FORWARD_TO: ${file(./env/env.yml):FORWARD_TO}
+      SES_REGION: ${file(./env/env.yml):SES_REGION}
+      S3_BUCKET_NAME: ${file(./env/env.yml):S3_BUCKET_NAME}
+
+resources:
+  Resources:
+    forwardSesMailLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: "/"
+        RoleName: lambda-forward-ses-mail-role
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: lambda-forward-ses-mail-s3-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:GetObject
+                    - s3:PutObject
+                  Resource:
+                    - "arn:aws:s3:::${self:functions.forward-ses-mail.environment.S3_BUCKET_NAME}"
+                    - "arn:aws:s3:::${self:functions.forward-ses-mail.environment.S3_BUCKET_NAME}/*"
+          - PolicyName: lambda-forward-ses-mail-ses-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ses:*
+                  Resource:
+                    - "*"
+          - PolicyName: lambda-forward-ses-mail-cloudwatch-logs-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                        - ':'
+                        - - 'arn:aws:logs'
+                          - Ref: 'AWS::Region'
+                          - Ref: 'AWS::AccountId'
+                          - 'log-group:/aws/lambda/*:*:*'

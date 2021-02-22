@@ -1,0 +1,91 @@
+
+
+service: qi-audit
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: us-east-2
+  environment: ${file(./src/config/env.yml):${opt:stage, self:custom.defaults.stage}}
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+      - kinesis:PutRecord
+      - kinesis:PutRecordBatch      
+    Resource: '*'
+
+custom:
+  names:
+    kinesis:
+      assess: ${opt:stage}-${self:service}-assess-log-stream
+      central_read: ${opt:stage}-${self:service}-central-read-log-stream
+      audit: ${opt:stage}-${self:service}-audit-stream
+    
+  defaults:
+    stage: dev
+  webpack:
+    includeModules: true # enable auto-packing of external modules
+     
+functions:
+  assessStream:
+    handler: src/handlers/assess-stream.handle
+    events:
+      - stream:
+          type: kinesis
+          arn: 
+            Fn::GetAtt: 
+              - AssessKinesisStream
+              - Arn
+          batchSize: 500
+          startingPosition: LATEST
+  centralReadStream:
+    handler: src/handlers/central-readlog-stream.handle
+    events:
+      - stream:
+          type: kinesis
+          arn: 
+            Fn::GetAtt: 
+              - CentralReadKinesisStream
+              - Arn
+          batchSize: 500
+          startingPosition: LATEST
+  auditStream:
+    handler: src/handlers/audit-stream.handle
+    events:
+      - stream:
+          type: kinesis
+          arn: 
+            Fn::GetAtt: 
+              - AuditKinesisStream
+              - Arn
+          batchSize: 500
+          startingPosition: LATEST
+package:
+  include:
+    - src/**/*
+    - src/config/env.yml
+  
+plugins:
+ - serverless-webpack
+ - serverless-offline
+
+resources:
+  Resources:
+      AssessKinesisStream:
+        Type: AWS::Kinesis::Stream
+        DeletionPolicy: Delete
+        Properties:
+          Name: ${self:custom.names.kinesis.assess}
+          ShardCount: 1
+      CentralReadKinesisStream:
+        Type: AWS::Kinesis::Stream
+        DeletionPolicy: Delete
+        Properties:
+          Name: ${self:custom.names.kinesis.central_read}
+          ShardCount: 1
+      AuditKinesisStream:
+        Type: AWS::Kinesis::Stream
+        DeletionPolicy: Delete
+        Properties:
+          Name: ${self:custom.names.kinesis.audit}
+          ShardCount: 1

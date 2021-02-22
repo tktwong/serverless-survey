@@ -1,0 +1,63 @@
+
+service: serverless-trial
+
+frameworkVersion: '2'
+
+plugins:
+  - serverless-appsync-plugin
+
+provider:
+  name: aws
+  profile: serverless
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-2'}
+  timeout:  120
+  runtime: nodejs12.x
+  lambdaHashingVersion: 20201221
+
+custom:
+  base: ${self:service}-${self:provider.stage}
+  account: ${file(./config/config.${self:provider.stage}.json):account}
+  notedb: ${file(./config/config.${self:provider.stage}.json):notedb}
+
+  role:
+    arn: arn:aws:iam::${self:custom.account.id}:role
+
+    cognito:
+      auth:
+        name: ${self:custom.base}-auth-CognitoRole
+        arn: ${self:custom.role.arn}/${self:custom.role.cognito.auth.name}
+      unAuth:
+        name: ${self:custom.base}-unAuth-CognitoRole
+        arn: ${self:custom.base}/${self:custom.role.cognito.unAuth.name}
+
+    notedb: 
+      name: ${self:custom.notedb.table.note.name}-role
+      arn: ${self:custom.role.arn}/${self:custom.role.notedb.name}
+
+  appSync:
+    name: ${self:custom.base}-api
+    authenticationType: AWS_IAM
+    schema: schema.graphql
+    mappingTemplatesLocation: mapping-templates
+    mappingTemplates:
+      - dataSource: Note
+        type: Mutation
+        field: createNote
+        request: dynamodb/request/createNote.vtl
+        response: dynamodb/response/createNote.vtl
+    serviceRole: AppSyncServiceRole
+    dataSources:
+      - name: Note
+        type: AMAZON_DYNAMODB
+        description: "database to keep all notes"
+        config:
+          tableName: ${self:custom.notedb.table.note.name}
+          serviceRoleArn: ${self:custom.role.notedb.arn}
+            # Fn::GetAtt: 
+            #   - AppSyncNoteDBServiceRole
+            #   - Arn
+
+resources:
+  - ${file(./resources/noteTable.yml)}
+  - ${file(./resources/cognito.yml)}

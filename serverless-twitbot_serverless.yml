@@ -1,0 +1,89 @@
+# Welcome to Serverless!
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: aws-python3 # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  region: eu-west-1
+  runtime: python3.7
+  memorySize: 512 # optional, in MB, default is 1024
+  timeout: 300 # optional, in seconds, default is 6
+  versionFunctions: false # optional, default is true
+
+# you can overwrite defaults here
+  stage: dev
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource: "arn:aws:s3:::${env:S3_BUCKET}/*"
+    - Effect: "Allow"
+      Action:
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+        - "logs:DescribeLogStreams"
+      Resource: "arn:aws:logs:*:*:*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+plugins:
+  - serverless-python-requirements
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    invalidateCaches: true
+    slim: true
+    slimPatterns:
+      - "**/__pycache__"
+# you can add packaging information here
+package:
+  exclude:
+    - node_modules/**
+    - package-lock.json
+
+functions:
+  twitbot:
+    handler: twitbot.index.lambda_handler
+    module: twitbot
+    events:
+      - schedule:
+          rate: cron(0 6 * * ? *)
+          enabled: true
+
+#    Define function environment variables here
+    environment:
+      CONFIG: "s3://${env:S3_BUCKET}/twitbot.cf"
+      SMTP_USER: "${env:SMTP_USER}"
+      SMTP_PASSWORD: "${env:SMTP_PASSWORD}"
+      SMTP_HOST: "${env:SMTP_HOST}"
+      SMTP_PORT: "${env:SMTP_PORT}"
+      TWITTER_CONSUMER_KEY: "${env:TWITTER_CONSUMER_KEY}"
+      TWITTER_CONSUMER_SECRET: "${env:TWITTER_CONSUMER_SECRET}"
+      TWITTER_ACCESS_TOKEN_KEY: "${env:TWITTER_ACCESS_TOKEN_KEY}"
+      TWITTER_ACCESS_TOKEN_SECRET: "${env:TWITTER_ACCESS_TOKEN_SECRET}"
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    ConfigBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: "${env:S3_BUCKET}"
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

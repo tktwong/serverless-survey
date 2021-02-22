@@ -1,0 +1,109 @@
+service: images-s3
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  environment:
+    CANDIDATE_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+    CANDIDATE_EMAIL_TABLE: "candidate-email-${opt:stage, self:provider.stage}"
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: "arn:aws:s3:::datakeeper/*"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+      Resource: "*"
+
+resources:
+  Resources:
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: datakeeper
+     
+        AccessControl: PublicRead
+        CorsConfiguration:
+          CorsRules:
+          - AllowedMethods:
+            - GET
+            - PUT
+            - POST
+            - HEAD
+            AllowedOrigins:
+            - "*"
+            AllowedHeaders:
+            - "*"
+
+    CandidatesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "id"
+            AttributeType: "S"   
+        KeySchema:
+          -
+            AttributeName: "id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: "NEW_AND_OLD_IMAGES"
+        TableName: ${self:provider.environment.CANDIDATE_TABLE}
+  
+            
+functions:
+  requestUploadURL:
+    handler: src/js/handler.requestUploadURL
+    events:
+      - http:
+          path: requestUploadURL
+          method: post
+          cors: true
+
+  textract:
+    handler: src/js/handler.llamada
+    events:
+      - http:
+          path: textract
+          method: post
+          cors: true
+  
+  contratosSubmission:
+    handler: src/js/SavetoDB.submit
+    memorySize: 128
+    description: post para dynamo.
+    events:
+      - http: 
+          path: contratos
+          method: post
+          cors: true
+  
+  contractDetails:
+    handler: src/js/SavetoDB.get
+    description: lamda get.
+    events:
+      - http:
+          path: contratos/{id}
+          method: get
+          cors: true
+
+  viewcontract:
+    handler: src/js/view.viewcontract
+    description: get dynamodb.
+    events:
+      - http:
+          path: getcontract
+          method: get
+          cors: true
+          
+          
+          

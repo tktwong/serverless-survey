@@ -1,0 +1,71 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: pomodoro # NOTE: update this with your service name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: ${opt:region, 'us-east-1'}
+  stackName: ${self:service}-${self:provider.stage}
+  websocketsApiRouteSelectionExpression: $request.body.action
+  profile: pomodoro-staging
+  websocketsApiName: pomodoro-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:GetItem
+        - dynamodb:Scan
+        - dynamodb:UpdateItem
+      Resource:
+        - 'Fn::Join':
+            - ':'
+            - - 'arn:aws:dynamodb'
+              - Ref: 'AWS::Region'
+              - Ref: 'AWS::AccountId'
+              - 'table/pomodoro'
+
+
+functions:
+  connectHandler:
+    handler: src/connect.handler
+    events:
+      - websocket:
+          route: $connect
+    environment:
+      CONNECTIONS_TABLE_NAME: ${env:CONNECTIONS_TABLE_NAME, 'pomodoro'}
+  disconnectHandler:
+    handler: src/disconnect.handler
+    events:
+      - websocket:
+          route: $disconnect
+    environment:
+      CONNECTIONS_TABLE_NAME: ${env:CONNECTIONS_TABLE_NAME, 'pomodoro'}
+  actionHandler:
+    handler: src/send.handler
+    events:
+      - websocket:
+          route: sendMessage
+    environment:
+      CONNECTIONS_TABLE_NAME: ${env:CONNECTIONS_TABLE_NAME, 'pomodoro'}
+  cleanupSession:
+    handler: src/send.handler
+    events:
+      - schedule: rate(2 hours)

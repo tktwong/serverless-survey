@@ -1,0 +1,92 @@
+service: gym-legacy
+custom:
+  auth0: ${file(.auth0.yml)}
+provider:
+  name: aws
+  runtime: nodejs6.10
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - dynamodb:GetItem
+        - dynamodb:Query
+      Resource:
+        Fn::Join:
+        - ':'
+        - - arn
+          - aws
+          - dynamodb
+          - Ref: 'AWS::Region'
+          - Ref: 'AWS::AccountId'
+          - 'table/schedules'
+  environment:
+    AUTH0_DOMAIN: ${self:custom.auth0.AUTH0_DOMAIN}
+    AUTH0_BACKEND_CLIENT_ID: ${self:custom.auth0.AUTH0_BACKEND_CLIENT_ID}
+    AUTH0_BACKEND_CLIENT_SECRET: ${self:custom.auth0.AUTH0_BACKEND_CLIENT_SECRET}
+functions:
+  getPrograms:
+    handler: program.getAll
+    events:
+      - http:
+          path: user/programs
+          method: GET
+          authorizer: auth
+          cors: true
+  getSchedule:
+    handler: schedule.get
+    events:
+    - http:
+        path: user/schedule/{name}
+        method: GET
+        authorizer: auth
+        cors: true
+        request:
+          parameters:
+            paths:
+              name: true
+  createSchedule:
+    handler: schedule.post
+    events:
+      - http:
+          path: user/schedule/{name}
+          method: POST
+          authorizer: auth
+          cors: true
+          request:
+            parameters:
+              paths:
+                name: true
+  deleteSchedule:
+    handler: schedule.delete
+    events:
+      - http:
+          path: user/schedule/{name}
+          method: DELETE
+          authorizer: auth
+          cors: true
+          request:
+            parameters:
+              paths:
+                name: true
+  auth:
+    handler: auth.authenticate
+resources:
+  Resources:
+    schedulesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: schedules
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+          - AttributeName: name
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5

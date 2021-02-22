@@ -1,0 +1,128 @@
+service: cloud-koala
+
+frameworkVersion: "<2.0.0"
+
+plugins:
+  - serverless-python-requirements
+
+provider:
+  name: aws
+  runtime: python2.7
+  region: ap-southeast-2
+  memorySize: 512
+  timeout: 60
+  stage: ${opt:stage, 'dev'}
+  environment:
+    DYNAMODB_TABLE: ${self:custom.table_name}
+    S3_BUCKET: ${self:custom.bucket_name}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: arn:aws:dynamodb:*:*:table/${self:custom.table_name}
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource: arn:aws:s3:::${self:custom.bucket_name}/*
+
+custom:
+  pythonRequirements:
+    dockerizePip: false # trying this to get deployment working on seed.run
+    zip: true
+  table_name: ${self:service}-${self:provider.stage}-models
+  bucket_name: ${self:service}-${self:provider.stage}-models
+
+functions:
+  # API functions
+  # /models
+  get_models:
+    handler: lib/handler.get_models
+    events:
+      - http:
+          path: models
+          method: get
+          cors: true
+  add_model:
+    handler: lib/handler.add_model
+    events:
+      - http:
+          path: models
+          method: post
+          cors: true
+  # /models/{model_id}
+  get_model:
+    handler: lib/handler.get_model
+    events:
+      - http:
+          path: models/{model_id}
+          method: get
+          cors: true
+  run_model:
+    handler: lib/handler.run_model
+    events:
+      - http:
+          path: models/{model_id}
+          method: post
+          cors: true
+  update_model:
+    handler: lib/handler.update_model
+    events:
+      - http:
+          path: models/{model_id}
+          method: put
+          cors: true
+  delete_model:
+    handler: lib/handler.delete_model
+    events:
+      - http:
+          path: models/{model_id}
+          method: delete
+          cors: true
+  # /config
+  create_config_sheet:
+    handler: lib/handler.create_config_sheet
+    events:
+      - http:
+          path: config
+          method: post
+          cors: true
+
+  # Back-end functions
+  compile_model:
+    handler: lib/handler.compile_model
+    events:
+      - s3:
+          bucket: ${self:custom.bucket_name}
+          rules:
+            - prefix: excel_uploads/
+
+package:
+    exclude:
+        - .tox/**
+        - .vscode/**
+        - env/**
+        - tests/**
+        - test/**
+        - promote-artifacts/**
+
+resources:
+  Resources:
+    DynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.table_name}
+        AttributeDefinitions:
+          - AttributeName: model_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: model_id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

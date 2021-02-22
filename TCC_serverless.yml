@@ -1,0 +1,262 @@
+
+service: autenticacao # NOTE: update this with your service name
+
+
+custom:
+  tableName: 'Usuarios-${self:provider.stage}'
+  tableProdutos: 'Produtos-${self:provider.stage}'
+  # Load our secret environment variables based on the current stage.
+  # Fallback to default if it is not in prod.
+  environment: ${file(env.yml):${self:custom.stage}, file(env.yml):default}
+  stage: dev
+  
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${self:custom.stage}
+  region: us-east-2
+  environment:
+    USUARIOS_TABLE: ${self:custom.tableName}
+    PRODUTOS_TABLE: ${self:custom.tableProdutos}
+    AWS_DEPLOY_REGION: ${self:provider.region}
+    JWT_ENCRYPTION_CODE: "CE2784CB-EFF6-4AFB-A56F-5EF156E85F80"
+    SQLCONNECTIONSTRING_ESTOQUE: ${self:custom.environment.cnEstoque}
+    SQLCONNECTIONSTRING_PEDIDOS: ${self:custom.environment.cnPedidos}
+    SQLCONNECTIONSTRING_ENTREGA: ${self:custom.environment.cnEntrega}
+    
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["Produtos", "Arn" ] }
+        - { "Fn::GetAtt": ["Usuarios", "Arn" ] }
+        - { "Fn::Join": [ "/", [ 
+           { "Fn::GetAtt": ["Usuarios", "Arn" ] }, "index", "roomIndex" 
+          ]]}
+        - { "Fn::Join": [ "/", [
+            { "Fn::GetAtt": ["Usuarios", "Arn" ] }, "index", "userIndex" 
+          ]]}
+
+functions:
+  #MODULO DE ENTREGAS
+  entregasListar:
+    handler: src/entregas/entrega.entregasListar
+    memorySize: 128
+    events:
+      - http: 
+          method: GET
+          path: /entregas
+          private: false
+          cors: true
+  entregasAtualizarStatus:
+    handler: src/entregas/entrega.entregasAtualizarStatus
+    memorySize: 128
+    events:
+      - http: 
+          method: PUT
+          path: /entregas/{id}/status
+          private: false
+          cors: true  
+  #MODULO DE PEDIDOS
+  pedidosIncluir:
+    handler: src/pedidos/pedidos.pedidosIncluir
+    memorySize: 128
+    events:
+      - http: 
+          method: POST
+          path: /pedidos
+          private: false
+          cors: true
+  pedidosListarPendentes:
+    handler: src/pedidos/pedidos.pedidosListarPendentes
+    memorySize: 128
+    events:
+      - http: 
+          method: GET
+          path: /pedidos
+          private: false
+          cors: true
+  pedidosAtualizarStatus:
+    handler: src/pedidos/pedidos.pedidosAtualizarStatus
+    memorySize: 128
+    events:
+      - http: 
+          method: PUT
+          path: /pedidos/{id}/status
+          private: false
+          cors: true
+  #MODULO DE ESTOQUE
+  estoqueFornecedor:
+    handler: src/estoque/estoque.estoqueFornecedor
+    memorySize: 128
+    events:
+      - http: 
+          method: POST
+          path: /fornecedores/{id}/estoque
+          private: false
+          cors: true
+  estoqueListaFornecedor:
+    handler: src/estoque/estoque.estoqueListaFornecedor
+    memorySize: 128
+    events:
+      - http: 
+          method: GET
+          path: /fornecedores/{id}/estoque
+          private: false
+          cors: true
+  estoqueProduto:
+    handler: src/estoque/estoque.estoqueProduto
+    memorySize: 256
+    events:
+      - http: 
+          method: GET
+          path: /produtos/{id}/estoque
+          private: false
+          cors: true
+
+#MODULO DE CADASTROS          
+  produtos_Listar:
+    handler: src/cadastros/produtos.listar
+    memorySize: 256
+    events:
+      - http: 
+          method: GET
+          path: /produtos
+          private: false
+          cors: true  
+  produtos_Buscar:
+    handler: src/cadastros/produtos.buscar
+    memorySize: 256
+    events:
+      - http: 
+          method: GET
+          path: /produtos/{id}
+          private: false
+          cors: true
+  produtos_Incluir:
+    handler: src/cadastros/produtos.incluir
+    memorySize: 128
+    events:
+      - http: 
+          method: POST
+          path: /produtos
+          private: false
+          cors: true
+  produtos_Apagar:
+    handler: src/cadastros/produtos.apagar
+    memorySize: 128
+    events:
+      - http: 
+          method: DELETE
+          path: /produtos
+          private: false          
+          cors: true
+  produtos_Alterar:
+    handler: src/cadastros/produtos.alterar
+    memorySize: 128
+    events:
+      - http: 
+          method: PUT
+          path: /produtos/{id}
+          private: false               
+          cors: true
+
+# MODULO DE AUTENTICAÇÂO          
+  autenticacao_login:
+    handler: src/autenticacao/handler.authenticate
+    memorySize: 128
+    events:
+      - http: 
+          method: POST
+          path: /login
+          private: false
+          cors: true
+  autenticacao_createUser:
+    handler: src/autenticacao/handler.createUser
+    memorySize: 128
+    events:
+      - http: 
+          method: POST
+          path: /users
+          private: false
+          cors: true
+  autenticacao_listarUsuarios:
+    handler: src/autenticacao/handler.listarUsuarios
+    memorySize: 128
+    events:
+      - http: 
+          method: GET
+          path: /users
+          private: false
+          cors: true
+  autenticacao_deleteUser:
+    handler: src/autenticacao/handler.deleteUser
+    memorySize: 128
+    events:
+      - http: 
+          method: DELETE
+          path: /users/{id}
+          private: false
+          cors: true
+
+resources:
+  Resources:
+    Usuarios:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: username
+            AttributeType: S
+          - AttributeName: role
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: username-index
+            KeySchema:
+              - AttributeName: username
+                KeyType: HASH
+            Projection:
+              ProjectionType: KEYS_ONLY
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1        
+          - IndexName: userrole-index
+            KeySchema:
+              - AttributeName: role
+                KeyType: HASH
+            Projection:
+              NonKeyAttributes:
+                - nome
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
+    Produtos:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH    
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableProdutos}
+
+

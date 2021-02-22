@@ -1,0 +1,67 @@
+service: instagram-token-manager
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stackTags:
+    project: instagram-token-manager
+  
+  environment:
+    BUCKET: ${file(env.yml):bucket}
+    TOKENFILE: "token.js"
+    APP_ID: ${file(env.yml):app_id}
+    APP_SECRET: ${file(env.yml):app_secret}
+    REDIRECT_URI: ${file(env.yml):redirect_uri}
+
+# you can overwrite defaults here
+#  stage: dev
+  region: us-east-1
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:GetObject"
+        - "s3:PutObject"
+      Resource: "arn:aws:s3:::${file(env.yml):bucket}/*"
+
+functions:
+  refresh:
+    handler: refreshToken.lambdaHandler
+    events:
+      - schedule: rate(1 day)
+  initiate:
+    handler: initToken.lambdaHandler
+    events:
+      - http:
+          path: instagram/auth
+          method: get
+
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    NewResource:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(env.yml):bucket}
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: MyPublicPolicy
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: !Join 
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref NewResource
+                  - /*
+        Bucket: !Ref NewResource
+Outputs:
+  NewOutput:
+    Description: "Description for the output"
+    Value: "Some output value"

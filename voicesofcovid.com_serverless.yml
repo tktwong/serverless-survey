@@ -1,0 +1,90 @@
+org: fernandomcsea
+app: voicesofcovid
+service: voicesofcovid
+
+provider:
+  name: aws
+  profile: fernando
+  runtime: python3.7
+  environment:
+    ALGOLIA_ADMIN_API_KEY: ${param:ALGOLIA_ADMIN_API_KEY}
+    ALGOLIA_APPLICATION_ID: ${param:ALGOLIA_APPLICATION_ID}
+    GOOGLE_RECAPTCHA_TOKEN: ${param:GOOGLE_RECAPTCHA_TOKEN}
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:*
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - ses:*
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+        - "arn:aws:s3:::voicesofcovid/*"
+        - "arn:aws:s3:::voicesofcovid"
+        - "arn:aws:ses:us-east-1:560654602687:identity/fmcorey@gmail.com"
+        - "arn:aws:ses:us-east-1:560654602687:identity/fernandomc.sea@gmail.com"
+
+functions:
+  generateUrl:
+    handler: backend/generate_url.handler
+    events: 
+      - http:
+          method: post
+          path: generate
+          cors: true
+          request:
+            schema:
+              application/json: ${file(./backend/voice.model.json)}
+  sendApprovalRequestEmail:
+    handler: backend/request_approval.handler
+    events:
+      - s3:
+          bucket: voicesofcovid
+          event: s3:ObjectCreated:*
+          existing: true
+  approveRequestAddVoice:
+    handler: backend/approve.handler
+    events:
+      - http:
+          path: /approve/{id}
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    voicesOfCovid:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+package:
+  exclude:
+    - venv/**
+    - node_modules/**
+    - frontend/**
+
+plugins:
+  - serverless-finch
+  - serverless-python-requirements
+
+custom:
+  client:
+    bucketName: voicesofcovid.com
+    distributionFolder: frontend/dist

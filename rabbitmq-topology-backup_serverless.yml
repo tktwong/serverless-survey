@@ -1,0 +1,121 @@
+service: rabbitmq-topology-backup
+
+provider:
+  name: aws
+  runtime: java8
+  memorySize: 3008
+  timeout: 900
+  region: us-west-2
+  deploymentBucket:
+    name: ${opt:bucket}
+    serverSideEncryption: "AES256"
+  cfnRole: "arn:aws:iam::${opt:account}:role/cloudformation/deployer/cloudformation-deployer"
+  iamRoleStatements:
+    - Effect: Allow
+      Action: kms:Decrypt
+      Resource:
+        Fn::GetAtt: [EncryptionKey, Arn]
+  logRetentionInDays: 7
+  stackTags:
+    Creator: serverless
+    Environment: ${self:custom.EnvironmentTag.${opt:stage}}
+    Project: ${self:service}
+    Team: platform
+    Visibility: internal
+
+package:
+  artifact: target/universal/rabbitmq-topology-backup.zip
+
+functions:
+  backup:
+    handler: com.dwolla.rabbitmq.topology.LambdaHandler
+    vpc:
+      securityGroupIds:
+        - Ref: SourceMarkerSecurityGroup
+      subnetIds:
+        Fn::Split:
+          - ','
+          - !ImportValue ${self:custom.VpcImportPrefix.${opt:stage}}VpcInternalSubnets
+    events:
+      - schedule:
+          description: Hourly back up of RabbitMQ topology to CloudWatch
+          rate: rate(1 hour)
+          input:
+            baseUri: "http://rabbit.us-west-2.${opt:stage}.dwolla.net:15672"
+            username: guest
+            password: ${self:custom.Credentials.${opt:stage}}
+
+resources:
+  Description: "A serverless app to regularly back up the topology of a given RabbitMQ cluster to CloudWatch Logs"
+  Resources:
+    EncryptionKey:
+      Type: AWS::KMS::Key
+      Properties:
+        KeyPolicy:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: 'Allow root access'
+              Effect: 'Allow'
+              Principal:
+                AWS:
+                  !Join
+                  - ''
+                  - - "arn:aws:iam::"
+                    - !Ref 'AWS::AccountId'
+                    - ":root"
+              Action: 'kms:*'
+              Resource: '*'
+            - Sid: 'Allow DataEncrypter to encrypt'
+              Effect: 'Allow'
+              Principal:
+                AWS:
+                  !Join
+                  - ''
+                  - - "arn:aws:iam::"
+                    - !Ref 'AWS::AccountId'
+                    - ":role/DataEncrypter"
+              Action:
+                - 'kms:Encrypt'
+                - 'kms:ReEncrypt*'
+                - 'kms:DescribeKey'
+              Resource: '*'
+    EncryptionKeyAlias:
+      Type: AWS::KMS::Alias
+      Properties:
+        AliasName: alias/${self:service}-${opt:stage}-key
+        TargetKeyId:
+          Ref: EncryptionKey
+    SourceMarkerSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Source security group marking an ENI as a legitimate source of traffic to the RabbitMQ cluster
+        VpcId:
+          Fn::ImportValue: ${self:custom.VpcImportPrefix.${opt:stage}}VpcId
+        Tags:
+          - Key: SecurityGroupType
+            Value: TrafficSource
+  Outputs:
+    SourceMarkerSecurityGroup:
+      Value:
+        Ref: SourceMarkerSecurityGroup
+      Description:
+        Source security group ID that can be imported to mark this lambda as a legitimate source of traffic to the RabbitMQ cluster
+      Export:
+        Name: ${self:service}:${self:custom.VpcImportPrefix.${opt:stage}}:TrafficSource
+
+custom:
+  EnvironmentTag:
+    prod: production
+    uat: uat
+    devint: devint
+    sandbox: sandbox
+  VpcImportPrefix:
+    prod: Prod
+    uat: Uat
+    devint: DevInt
+    sandbox: Sandbox
+  Credentials:
+    prod: "AQICAHiDNht96T/IKQK0KfuZpG+Aw4vUrb9L8CpGZlT4k+zE4QFC4I43mcb1zz7FncDWMb+iAAAAYzBhBgkqhkiG9w0BBwagVDBSAgEAME0GCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQM1SX6iQLislO11jSJAgEQgCDG1oxeWIyw+J1cWKSxT6hLuA+VZZ/eNFGCw5sztFv4qA=="
+    uat: "AQICAHiegsUSdl9tn+48V5sbA6PETCu1Wcyy31foqE323H1I5QH4ZJA7sKyo+WybFM+dadoOAAAAYzBhBgkqhkiG9w0BBwagVDBSAgEAME0GCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQMOKQv6U6njHoZzIWxAgEQgCC2VCRrNF5O9VjIdJbANJ4uBLosUdqNm+gBuQ2igN3Kxw=="
+    devint: "AQICAHiJE+vM1VKEiQpXXtbfIKwjr5wCpmMhCdnS6y6/6difLQHWlWmvntNurE47Nj9yjiyxAAAAYzBhBgkqhkiG9w0BBwagVDBSAgEAME0GCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQMUXdDbknkKI11IIJMAgEQgCCAseunTuVe7QYyZJUWqc7x9DfDOc0WHgaMqTnPzj1SZw=="
+    sandbox: "AQICAHgb9o3/IugdfQGA/kgXhS09JW4ZaWptMszqUXn+B15pnwGz0IJhY8rKr4gdAC33iAphAAAAYzBhBgkqhkiG9w0BBwagVDBSAgEAME0GCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQMRbuM/bBBe6mqguEOAgEQgCBkJrGnRlZLxC1+AYVEY1R2YJW0rQSmIudSpkq9dESrmQ=="

@@ -1,0 +1,386 @@
+service: virtual-currency-pro
+
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+
+
+plugins:
+  - serverless-finch
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  client:
+    # bucketName: ${self:service}-${opt:stage, self:provider.stage}
+    bucketName: virtual-currency.pro
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+      seed: true
+    migration:
+      dir: api/offline/migrations
+    seed:
+      production:
+        sources:
+          # - table:  ${self:provider.environment.DYNAMODB_TABLE}
+          #   sources: [./api/offline/seeds/${self:provider.environment.DYNAMODB_TABLE}.json]
+          - table: ${self:provider.environment.DYNAMODB_SITE_MASTER_TABLE}
+            sources: [./api/offline/seeds/site_master.json]
+      developments:
+        sources:
+          # - table:  ${self:provider.environment.DYNAMODB_TABLE}
+          #   sources: [./api/offline/seeds/${self:provider.environment.DYNAMODB_TABLE}.json]
+          - table: ${self:provider.environment.DYNAMODB_SITE_MASTER_TABLE}
+            sources: [./api/offline/seeds/site_master.json]
+  webpack: ./webpack.config.babel.js
+
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  environment:
+    BUCKET_NAME: ${self:custom.client.bucketName}
+    DYNAMODB_TABLE: ${self:service}-data-${opt:stage, self:provider.stage}
+    DYNAMODB_SITE_MASTER_TABLE: ${self:service}-site-master-${opt:stage, self:provider.stage}
+    DYNAMODB_SOCIAL_POST_TABLE: ${self:service}-social-post-${opt:stage, self:provider.stage}
+    DYNAMODB_COMMENT_TABLE: ${self:service}-comment-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+        - s3:*
+      Resource: 
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+        - "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_SITE_MASTER_TABLE}"
+        - "arn:aws:s3:::${self:service}-${opt:stage, self:provider.stage}"
+        - "arn:aws:s3:::${self:service}-${opt:stage, self:provider.stage}/*"
+defaults:
+  stage: dev
+  region: ap-northeast-1
+
+functions:
+  create:
+    handler: api/news/create.create
+    events:
+      - http:
+          path: news
+          method: post
+          cors: true
+
+  list:
+    handler: api/news/list.list
+    events:
+      - http:
+          path: news/list
+          method: get
+          cors: true
+      - http:
+          path: news/list/{key}
+          method: get
+          cors: true
+
+  topview:
+    handler: api/news/topview.topview
+    events:
+      - http:
+          path: news/topview
+          method: get
+          cors: true
+      - http:
+          path: news/topview/{key}
+          method: get
+          cors: true
+
+  get:
+    handler: api/news/get.get
+    events:
+      - http:
+          path: news/{id}
+          method: get
+          cors: true
+  review:
+    handler: api/news/review.review
+    events:
+      - http:
+          path: news/{id}/{type}
+          method: get
+          cors: true
+
+  update:
+    handler: api/news/update.update
+    events:
+      - http:
+          path: news/{id}
+          method: put
+          cors: true
+
+  delete:
+    handler: api/news/delete.delete
+    events:
+      - http:
+          path: news/{id}
+          method: delete
+          cors: true
+  comment_list: 
+    handler: api/comment/list.list
+    events:
+      - http:
+          path: comment/{article_id}
+          method: get
+          cors: true
+      - http:
+          path: comment/{article_id}/{key}
+          method: get
+          cors: true
+
+  comment_put: 
+    handler: api/comment/put.put
+    events:
+      - http:
+          path: comment/{article_id}
+          method: post
+          cors: true
+  comment_review: 
+    handler: api/comment/review.review
+    events:
+      - http:
+          path: comment/review/{id}
+          method: get
+          cors: true
+  cron:
+    handler: api/cron/news_rss.run
+    events:
+      # Invoke Lambda function every minute
+      - schedule: rate(5 minutes)
+      
+  scorereset:
+    handler: api/cron/score_reset.daily
+    events:
+      - schedule: cron(0 2 * * ? *)
+  scorereset_week:
+    handler: api/cron/score_reset.weekly
+    events:
+      - schedule: cron(0 0 2 * ? 7)
+  # secondCron:
+  #   handler: handler.run
+  #   events:
+  #     # Invoke Lambda function every 2nd minute from Mon-Fri
+  #     - schedule: cron(0/2 * ? * MON-FRI *)
+  twitter:
+    handler: api/cron/tweet.run
+    events:
+      - schedule: rate(30 minutes)
+  cron_create_sitemap:
+    handler: api/cron/create_sitemap.run
+    events:
+      - schedule: rate(1 day)
+
+resources:
+  Resources:
+    NewsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: code
+            AttributeType: S
+          -
+            AttributeName: publishAt
+            AttributeType: N
+          - 
+            AttributeName: score
+            AttributeType: N
+          - 
+            AttributeName: week_score
+            AttributeType: N
+          -
+            AttributeName: site_id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          -
+            IndexName: GsiteIdpublishAtIndex1
+            KeySchema:
+              - 
+                AttributeName: site_id
+                KeyType: HASH
+              - 
+                AttributeName: publishAt
+                KeyType: RANGE
+            Projection:
+                ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits : 1
+              WriteCapacityUnits: 2
+          -
+            IndexName: GcodepublishAtIndex1
+            KeySchema:
+              -
+                AttributeName: code
+                KeyType: HASH
+              -
+                AttributeName: publishAt
+                KeyType: RANGE
+            Projection:
+                ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits : 3
+              WriteCapacityUnits: 1
+          -
+            IndexName: GcodeScoreIndex1
+            KeySchema:
+              -
+                AttributeName: code
+                KeyType: HASH
+              -
+                AttributeName: score
+                KeyType: RANGE
+            Projection:
+                ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits : 3
+              WriteCapacityUnits: 1
+          -
+            IndexName: GcodeWeekScoreIndex1
+            KeySchema:
+              -
+                AttributeName: code
+                KeyType: HASH
+              -
+                AttributeName: week_score
+                KeyType: RANGE
+            Projection:
+                ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits : 3
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits : 3
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+
+    NewsSiteMasterDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: weight
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+          -
+            AttributeName: weight
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_SITE_MASTER_TABLE}
+
+    NewsSiteSocialPostDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_SOCIAL_POST_TABLE}
+
+    NewsSiteCommentDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+          -
+            AttributeName: article_id
+            AttributeType: S
+          -
+            AttributeName: createdAt
+            AttributeType: N
+          -
+            AttributeName: like
+            AttributeType: N
+          -
+            AttributeName: user_id
+            AttributeType: N
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          -
+            IndexName: GarticleLikeIndex1
+            KeySchema:
+              -
+                AttributeName: article_id
+                KeyType: HASH
+              -
+                AttributeName: like
+                KeyType: RANGE
+            Projection:
+                ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits : 1
+              WriteCapacityUnits: 1
+          -
+            IndexName: GarticleCreatedAtIndex1
+            KeySchema:
+              -
+                AttributeName: article_id
+                KeyType: HASH
+              -
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+                ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits : 1
+              WriteCapacityUnits: 1
+          -
+            IndexName: GuserCreatedAtIndex1
+            KeySchema:
+              -
+                AttributeName: user_id
+                KeyType: HASH
+              -
+                AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+                ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits : 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_COMMENT_TABLE}

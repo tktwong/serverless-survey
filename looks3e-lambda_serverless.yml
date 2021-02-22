@@ -1,0 +1,88 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+plugins:
+  - serverless-webpack
+
+service: looks3e
+
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: us-east-1
+  profile: hgoldwire
+  memorySize: 128 # optional, in MB, default is 1024
+  environment:
+    ELASTICSEARCH_URL: https://es.kalico.cc
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:ListBucket"
+        - "s3:ListAllMyBuckets"
+      Resource: "*"
+
+functions:
+  webapp:
+    handler: src/webapp.handler
+    events:
+      - http: ANY /
+      - http: 'ANY {proxy+}'
+
+  sqs-s3-events:
+    handler: src/sqs-s3-events.handler
+    events:
+      - sqs:
+        arn:
+          Fn::GetAtt:
+            - sqsS3Events
+            - Arn
+
+  sqs-request-inventory:
+    handler: src/sqs-request-inventory.handler
+    events:
+      - sqs:
+        arn:
+          Fn::GetAtt:
+            - sqsRequestInventory
+            - Arn
+
+  sqs-add-to-cache:
+    handler: src/sqs-add-to-cache.handler
+    events:
+      - sqs:
+        arn:
+          Fn::GetAtt:
+            - sqsAddTocache
+            - Arn
+
+  s3-bucket-inventory:
+    handler: src/s3-bucket-inventory.handler
+
+resources:
+  Resources:
+    sqsS3Events:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "looks3e-s3-events"
+
+    sqsRequestInventory:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "looks3e-request-inventory"
+
+    sqsAddTocache:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "looks3e-add-to-cache"

@@ -1,0 +1,101 @@
+
+service: appconfig # NOTE: update this with your service name
+
+
+frameworkVersion: "=1.4.0"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  region: eu-west-1
+  apiKeys:
+    - ${file(config/.env.json):apikey} # -> x-api-k: md5(value)
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/appconfig-*"
+package:
+  exclude:
+    - .git/**
+functions:
+  apps-list:
+    handler: src/handlers/apps-list.main
+    events:
+      - http:
+          path: v1/apps
+          method: get
+          private: true
+  apps-get:
+    handler: src/handlers/apps-get.main
+    events:
+      - http:
+          path: v1/apps/{id}
+          method: get
+          private: true
+
+  certificates-list:
+    handler: src/handlers/certificates-list.main
+    events:
+      - http:
+          path: v1/certificates
+          method: get
+          private: true
+
+resources:
+  Resources:
+    AppsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: 'appconfig-apps'
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+  #      GlobalSecondaryIndexes:
+  #        -
+  #          IndexName: xxx
+  #          KeySchema:
+  #            -
+  #              AttributeName: slug
+  #              KeyType: HASH
+  #          Projection:
+  #            ProjectionType: ALL
+  #          ProvisionedThroughput:
+  #            ReadCapacityUnits: 1
+  #            WriteCapacityUnits: 1
+
+    CertificatesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        TableName: 'appconfig-certificates'
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+
+plugins:
+  - serverless-offline

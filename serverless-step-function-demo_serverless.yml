@@ -1,0 +1,106 @@
+service: slackstandups
+
+custom:
+  bucketName: YourStaticSiteBucketName
+  slackApiKey: ${ssm:/slackApiKey~true}
+  s3Sync:
+    - bucketName: ${self:custom:bucketName}
+      localDir: static
+      acl: public-read
+      followSymlinks: true # optional
+      defaultContentType: text/html # optional
+      bucketPrefix: ''
+
+plugins:
+  - serverless-s3-sync
+  - serverless-step-functions
+
+provider:
+  name: aws
+  runtime: python3.8
+  iamRoleStatements:
+  - Effect: 'Allow'
+    Action:
+      - 's3:ListBucket'
+    Resource:
+      Fn::Join:
+        - ''
+        - - 'arn:aws:s3:::'
+          - Ref: StaticSite
+  - Effect: 'Allow'
+    Action:
+      - 's3:PutObject'
+      - "s3:GetObject"
+      - "s3:DeleteObject"
+      - "s3:GetObjectAcl"
+      - "s3:PutObjectAcl"
+    Resource:
+      Fn::Join:
+        - ''
+        - - 'arn:aws:s3:::'
+          - Ref: StaticSite
+          - '/*'
+
+functions:
+  main:
+    handler: handler.main
+    environment:
+      slackApiKey: ${self:custom.slackApiKey}
+  siteUpdate:
+    handler: siteUpdate.main
+  newDay:
+    handler: newDay.main
+
+stepFunctions:
+  stateMachines:
+    etlStateMachine:
+      name: etlStateMachine-${self:service}-${opt:stage}
+      role: arn:aws:iam::062627477424:role/stepFunctionRole
+      events:
+        - schedule: 'cron(30 16 ? * MON-FRI *)'
+      definition:
+        Comment: "An example of the Amazon Step Function using wait states"
+        StartAt: new_day
+        States:
+          new_day:
+            Type: Task
+            Resource: arn:aws:lambda:${opt:region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-newDay
+            Next: read_slack
+          read_slack:
+            Type: Task
+            Resource: arn:aws:lambda:${opt:region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-main
+            Next: choice_state
+          choice_state:
+            Type: Choice
+            Choices:
+            - Variable: "$.state"
+              StringEquals: success
+              Next: update_site
+            - Variable: "$.state"
+              StringEquals: complete
+              Next: default_state
+            Default: default_state
+          update_site:
+            Type: Task
+            Resource: arn:aws:lambda:${opt:region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-siteUpdate
+            Next: wait_five_min
+          wait_five_min:
+            Type: Wait
+            Seconds: 300
+            Next: read_slack
+          default_state:
+            Type: Succeed
+
+
+resources:
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom:bucketName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+  Outputs:
+    AnotherBucketNameOutputKey:
+      Value: !Ref StaticSite

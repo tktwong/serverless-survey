@@ -1,0 +1,170 @@
+
+service: trainthroughplay
+
+frameworkVersion: ">=1.9.0 <2.0.0"
+
+custom: ${file(resources/custom_vars.yml)}
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs6.10
+  stage: ${opt:stage}
+  environment:
+    USERPOOL_ID: ${self:custom.${self:provider.stage}PoolId}
+    CLIENT_ID: ${self:custom.${self:provider.stage}PoolClientId}
+    S3PARAM1: ${self:custom.${self:custom.stage}s3param1}
+    S3PARAM2: ${self:custom.${self:custom.stage}s3param2}
+    S3PARAM3: ${self:provider.region}
+    S3MEDIA: {Ref: S3media}
+    FOLDERS_TABLE: {Ref: foldersDB}
+    OBJECTS_TABLE: {Ref: objectsDB}
+    HISTORY_TABLE: {Ref: historyDB}
+    STAGE: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Resource:
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - ":table/"
+              - Ref: foldersDB
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - ":table/"
+              - Ref: foldersDB
+              - '/index/*'
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - ":table/"
+              - Ref: objectsDB
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - ":table/"
+              - Ref: objectsDB
+              - '/index/*'
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - ":table/"
+              - Ref: historyDB
+        - "Fn::Join":
+            - ""
+            -
+              - "arn:aws:dynamodb:"
+              - {Ref: "AWS::Region"}
+              - ":"
+              - {Ref: "AWS::AccountId"}
+              - ":table/"
+              - Ref: historyDB
+              - '/index/*'
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Scan
+        - dynamodb:Query
+        
+functions:
+  presign:
+    handler: functions/pre_signup.handler
+  getContact:
+    handler: functions/contact.get
+    events:
+      - http:
+          cors: true
+          path: /contact
+          method: get
+  postContact:
+    handler: functions/contact.post
+    events:
+      - http:
+          cors: true
+          path: /contact
+          method: post
+  getFolders:
+    handler: functions/folders.get
+    events:
+      - http:
+          cors: true
+          path: /folders
+          method: get
+  getObjects:
+    handler: functions/objects.get
+    events:
+      - http:
+          cors: true
+          path: /objects
+          method: get
+  getHistory:
+    handler: functions/history.get
+    events:
+      - http:
+          cors: true
+          path: /history
+          method: get
+  getUrl:
+    handler: functions/url.get
+    events:
+      - http:
+          cors: true
+          path: /url
+          method: get
+  putHistory:
+    handler: functions/history.put
+    events:
+      - http:
+          cors: true
+          path: /history
+          method: put
+
+resources:
+  Mappings: ${file(resources/mappings.yml)}
+  Outputs: ${file(resources/outputs.yml)}
+  Resources:
+    WebSite:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        WebsiteConfiguration:
+          ErrorDocument: index.html
+          IndexDocument: index.html
+    S3media:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: ${self:service}-${self:custom.stage}-media
+    foldersDB: ${file(resources/foldersDB.yml)}
+    objectsDB: ${file(resources/objectsDB.yml)}
+    historyDB: ${file(resources/historyDB.yml)}
+    DnsRecords: ${file(resources/${self:custom.stage}-dns.yml)}
+    SSLCert: ${file(resources/${self:custom.stage}-ssl.yml)}
+    CDN: ${file(resources/CDN.yml)}
+
+package:
+  exclude:
+    - bin/**
+    - resources/**
+    - package.json

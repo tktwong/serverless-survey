@@ -1,0 +1,67 @@
+# We require newer versions of the Serverless framework.
+frameworkVersion: ">=1.21.0 <2.0.0"
+
+plugins:
+  # Running `npm test` will run tests directly against the Lambda handler
+  # and `npm test:watch` will run the tests on each change!
+  - serverless-mocha-plugin
+
+# This is the custom name of your service.  You can run multiple services,
+# however each should use a different name within the same region.
+service: apollo-engine
+
+#
+# Configuration Parameters
+#
+custom:
+  apollo:
+    # This is the Engine API key.  Create yours at:
+    #  https://engine.apollographql.com/
+    engineApiKey: !YOUR_API_KEY!
+
+#
+# Resolvers
+#
+functions:
+  # This resolver code lives in the similarly named path and export!
+  query:
+    handler: functions/query/index.default
+
+
+provider:
+  # This only supports AWS at the moment!
+  name: aws
+
+  # AWS only supports Node 6 at the moment!
+  runtime: nodejs6.10
+
+  # AWS currently only supports Fargate in us-east-1, but this is expected
+  # to change, as is typical with Amazon's "land-and-expand" deployment.
+  region: us-east-1
+
+  # Due to our need to use both AWS-style and Serverless-style variables,
+  # which share the same format, we need to use a different style of
+  # variable within this Serverless project!  Hopefully this can be
+  # avoided once this is built into a Serverless plugin!
+  variableSyntax: "\\%{([ ~:a-zA-Z0-9._\\'\",\\-\\/\\(\\)]+?)}"
+  environment:
+    # This demonstrates exposing particular aspects of the newly created
+    # environment to the Lamdba resolver itself.  In this case, this
+    # URL allows the Lambda to talk back with the Engine Proxy,
+    # which is used by the `engineHealth` query.
+    ENGINE_PROXY_URL: '%{file(apollo/helpers.yml):engineProxyUrl}'
+
+resources:
+  #
+  # IMPORTANT: You can pick from one of the configuration files here,
+  # though only one should be enabled at a time!
+  #
+
+  # This simple deployment implements a public-only network with no
+  # private resources.
+  # - '%{file(apollo/engine-simple.yml):resources}'
+
+  # This alternative option also includes a Memcached cluster, allowing
+  # multiple Engine proxy deployments to share their cache (and offload
+  # their memory consumption!)
+  - '%{file(apollo/engine-with-cache.yml):resources}'

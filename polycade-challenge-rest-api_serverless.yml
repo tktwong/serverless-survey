@@ -1,0 +1,136 @@
+service: polycade-challenge-rest-api
+
+plugins:
+  - serverless-pseudo-parameters
+
+provider:
+  name: aws
+  region: us-west-2
+  stage: production
+  runtime: nodejs12.x
+  role: LambdaRole
+  environment:
+    NODE_ENV: ${self:provider.stage}
+    NODE_PATH: ./src
+    POSTGRES_HOST: ${self:custom.postgres.host}
+    POSTGRES_PORT: ${self:custom.postgres.port}
+    POSTGRES_DB: ${self:custom.postgres.db}
+    POSTGRES_USER: ${self:custom.postgres.user}
+    POSTGRES_PASSWORD: ${self:custom.postgres.password}
+
+custom:
+  postgres:
+    db: machines
+    user: root
+    password: yqdX39kqv5Z50JG
+    host:
+      Fn::GetAtt: [PostgreSqlRDSInstance, Endpoint.Address]
+    port:
+      Fn::GetAtt: [PostgreSqlRDSInstance, Endpoint.Port]
+
+resources:
+  Resources:
+    LambdaRole: ${file(./resource/lambda-role.yml)}
+    ServerlessInternetGateway: ${file(./resource/serverless-internet-gateway.yml)}
+    ServerlessVPC: ${file(./resource/serverless-vpc.yml)}
+    ServerlessVPCGA: ${file(./resource/serverless-vpc-ga.yml)}
+    ServerlessSubnetA: ${file(./resource/serverless-subnet-a.yml)}
+    ServerlessSubnetB: ${file(./resource/serverless-subnet-b.yml)}
+    ServerlessSubnetGroup: ${file(./resource/serverless-subnet-group.yml)}
+    ServerlessSecurityGroup: ${file(./resource/serverless-security-group.yml)}
+    RouteTablePublic: ${file(./resource/route-table-public.yml)}
+    RoutePublic: ${file(./resource/route-public.yml)}
+    RouteTableAssociationSubnetA: ${file(./resource/route-table-association-subnet-a.yml)}
+    RouteTableAssociationSubnetB: ${file(./resource/route-table-association-subnet-b.yml)}
+
+    PostgreSqlRDSInstance: ${file(./resource/postgres-rds-instance.yml)}
+
+functions:
+  # Health.
+  health:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /health
+          method: get
+
+  # Pricing Model.
+  listPricingModels:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /pricing-models
+          method: get
+
+  createPricingModel:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /pricing-models
+          method: post
+
+  findPricingModel:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /pricing-models/{pmId}
+          method: get
+
+  updatePricingModel:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /pricing-models/{pmId}
+          method: put
+
+  # Price Configuration.
+  listPriceConfigurations:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /pricing-models/{pmId}/prices
+          method: get
+
+  createPriceConfiguration:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /pricing-models/{pmId}/prices
+          method: post
+
+  deletePriceConfiguration:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /pricing-models/{pmId}/prices/{priceId}
+          method: get
+
+
+  # Machine.
+  createMachine:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /machines
+          method: post
+
+  updateMachinePricing:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /machines/{machineId}/prices/{pmId}
+          method: put
+
+  deleteMachinePricing:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /machines/{machineId}/prices/{pmId}
+          method: delete
+
+  getMachinePricing:
+    handler: src/serverless-wrapper.handler
+    events:
+      - http:
+          path: /machines/{machineId}/prices
+          method: put

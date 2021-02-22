@@ -1,0 +1,125 @@
+service:
+  name: zapling
+
+custom:
+  usersTableName: zapling-users-${opt:stage, self:provider.stage}
+
+plugins:
+  - serverless-webpack
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  region: ${opt:region, 'eu-west-1'}
+  stage: ${opt:stage, 'dev'}
+  environment:
+    ENV: ${self:provider.stage}
+    REGION: ${self:provider.region}
+    USERS_TABLE_NAME: ${self:custom.usersTableName}
+    STRIPE_SECRET_KEY: ${file(./config.${self:provider.stage}.yml):STRIPE_SECRET_KEY}
+    STRIPE_ENDPOINT_SECRET: ${file(./config.${self:provider.stage}.yml):STRIPE_ENDPOINT_SECRET}
+    AIRTABLE_API_KEY: ${file(./config.${self:provider.stage}.yml):AIRTABLE_API_KEY}
+    AIRTABLE_TABLE_ID: ${file(./config.${self:provider.stage}.yml):AIRTABLE_TABLE_ID}
+    FRONTEND_URL: ${file(./config.${self:provider.stage}.yml):FRONTEND_URL}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:*'
+      Resource:
+        - arn:aws:dynamodb:*:*:table/${self:custom.usersTableName}
+        - arn:aws:dynamodb:*:*:table/${self:custom.usersTableName}/*
+
+functions:
+  login:
+    handler: src/api.login
+    events:
+      - http:
+          method: post
+          path: login
+          cors: true
+  signup:
+    handler: src/api.signup
+    events:
+      - http:
+          method: post
+          path: signup
+          cors: true
+  me:
+    handler: src/api.me
+    events:
+      - http:
+          method: get
+          path: me
+          cors: true
+  plantTree:
+    handler: src/webhook.zapierPlantTree
+    events:
+      - http:
+          method: post
+          path: plant-tree
+          cors: true
+  stripe:
+    handler: src/webhook.stripeWebhook
+    timeout: 30
+    events:
+      - http:
+          method: post
+          path: stripe
+          cors: true
+
+resources:
+  Resources:
+    UsersDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: email
+            AttributeType: S
+          - AttributeName: apiKey
+            AttributeType: S
+          - AttributeName: stripeId
+            AttributeType: S
+          - AttributeName: checkoutSessionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: indexByStripeId
+            KeySchema:
+              - AttributeName: stripeId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          - IndexName: indexByCheckoutSessionId
+            KeySchema:
+              - AttributeName: checkoutSessionId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+          - IndexName: indexByApiKey
+            KeySchema:
+              - AttributeName: apiKey
+                KeyType: HASH
+            Projection:
+              NonKeyAttributes:
+                - email
+                - trees
+                - credit
+                - subscriptionId
+                - stripeId
+              ProjectionType: INCLUDE
+            ProvisionedThroughput:
+              ReadCapacityUnits: 1
+              WriteCapacityUnits: 1
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.usersTableName}

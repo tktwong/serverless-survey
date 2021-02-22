@@ -1,0 +1,173 @@
+service: crud-app-ts
+app: crud-app-ts
+org: bart1885
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  environment:
+    USER_POOL_ID: ${${self:custom.config}:USER_POOL_ID}
+    CLIENT_ID: ${${self:custom.config}:CLIENT_ID}
+    BUCKET_NAME: ${self:custom.s3BucketName}
+    RDS_HOSTNAME:  ${${self:custom.config}:RDS_HOSTNAME}
+    RDS_USERNAME:  ${${self:custom.config}:RDS_USERNAME}
+    RDS_PASSWORD:  ${${self:custom.config}:RDS_PASSWORD}
+    RDS_PORT:  ${${self:custom.config}:RDS_PORT}
+    RDS_DB:  ${self:custom.dbName}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Sid: "Stmt1418647210000"
+      Action:
+        - "s3:*"
+      Resource: ["arn:aws:s3:::${self:custom.s3BucketName}/*", "arn:aws:s3:::${self:custom.s3BucketName}"]
+
+plugins:
+  - serverless-plugin-typescript
+
+custom:
+  defaultStage: dev
+  currentStage: ${opt:stage, self:custom.defaultStage}
+  userPoolName: crud-app-pool-${self:custom.currentStage}
+  userPoolClientName: crud-app-pool-client-${self:custom.currentStage}
+  s3BucketName: crud-app-bucet-${self:custom.currentStage}
+  dbName: cruddb${self:custom.currentStage}
+  config: file(./${self:custom.currentStage}.json) 
+
+functions:
+  preSignUp:
+    handler: preSignUp.handler
+    events:
+    - cognitoUserPool:
+          pool: ${self:custom.userPoolName}
+          trigger: PreSignUp
+          existing: true
+  signUp:
+    handler: signUp.handler   
+    events:
+      - http:
+          path: signup
+          method: post
+          integration: lambda
+  signIn:
+    handler: signIn.handler   
+    events:
+      - http:
+          path: signin
+          method: post
+          integration: lambda
+  createUrl:
+    handler:   createUrl.handler    
+    events:
+      - http:
+          path: createurl
+          method: post
+          integration: lambda
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+  addToDB:
+    handler:   addToDB.handler    
+    events:
+      - s3:
+          bucket: ${self:custom.s3BucketName}
+          event: s3:ObjectCreated:*
+          existing: true  
+  getUserList:
+    handler: getUserList.handler    
+    events:
+      - http:
+          path: getuserlist
+          method: get
+          integration: lambda
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer  
+  delete:
+    handler: delete.handler    
+    events:
+      - http:
+          path: delete
+          method: post
+          integration: lambda
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer 
+          
+  
+resources:
+  Resources:
+    CognitoUserPool:
+      Type: "AWS::Cognito::UserPool"
+      Properties:
+        MfaConfiguration: OFF
+        UserPoolName: ${self:custom.userPoolName}
+        UsernameAttributes:
+          - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 6
+            RequireLowercase: False
+            RequireNumbers: False
+            RequireSymbols: False
+            RequireUppercase: False
+
+    CognitoUserPoolClient:
+      Type: "AWS::Cognito::UserPoolClient"
+      Properties:
+        ClientName: ${self:custom.userPoolClientName}
+        GenerateSecret: False
+        UserPoolId:
+          Ref: CognitoUserPool
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3BucketName}
+        AccessControl: PublicReadWrite
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+          BlockPublicPolicy: false
+          IgnorePublicAcls: false
+          RestrictPublicBuckets: false
+        CorsConfiguration:
+          CorsRules:
+          - AllowedMethods:
+            - GET
+            - PUT
+            - POST
+            - HEAD
+            AllowedOrigins:
+            - "*"
+            AllowedHeaders:
+            - "*"
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: cognito-authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [CognitoUserPool, Arn]
+    cruddata:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        AllocatedStorage: 100
+        AutoMinorVersionUpgrade: true
+        DBInstanceClass: db.t2.micro
+        DBName: ${self:custom.dbName}
+        Engine: postgres
+        MasterUsername: ${${self:custom.config}:RDS_USERNAME}
+        MasterUserPassword: ${${self:custom.config}:RDS_PASSWORD}
+        PubliclyAccessible: false
+
+    
+
+
+
+

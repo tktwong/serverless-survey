@@ -1,0 +1,102 @@
+service: posify-customer
+app: commercejs
+org: shopdevco
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region,'us-east-1'}
+  logRetentionInDays: 3
+  memorySize: ${self:custom.memorySize.${self:provider.stage}, '1024'}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'sns:Publish'
+      Resource:
+        - ${env:snsCustomerCreatedTopic}
+    - Effect: 'Allow'
+      Action:
+        - 'sqs:SendMessage'
+      Resource: ${env:sqsposifyEmailQueueTopic}
+
+plugins:
+  - serverless-webpack
+  - serverless-dotenv-plugin
+  - serverless-offline
+  - serverless-offline-sns
+
+package:
+  include:
+    - app/**
+  exclude:
+    - aws-mock/**
+
+custom:
+  serverless-offline-sns:
+    port: 4002
+    debug: false
+    accountId: ${env:awsAccountId}
+  cors:
+    default:
+      origin: '*'
+      headers:
+        - Content-Type
+        - X-Amz-Date
+        - Authorization
+        - X-Api-Key
+        - X-Amz-Security-Token
+        - X-Amz-User-Agent
+        - x-site-context
+      allowCredentials: false
+  webpack:
+    webpackConfig: /webpack.config.js
+    includeModules: true
+    packager: npm
+  environment:
+    mongodb: ${env:mongodb}
+    awsAccessKeyId: ${env:awsAccessKeyId}
+    awsSecretKey: ${env:awsSecretKey}
+    awsAccountId: ${env:awsAccountId}
+    snsCustomerCreatedTopic: ${env:snsCustomerCreatedTopic}
+    sqsposifyEmailQueueTopic: ${env:sqsposifyEmailQueueTopic}
+
+functions:
+  count:
+    handler: handler.count
+    events:
+      - http:
+          path: customers/count
+          method: get
+  all:
+    handler: handler.all
+    events:
+      - http:
+          path: customers/
+          method: get
+  getCustomer:
+    handler: handler.getCustomer
+    events:
+      - http:
+          path: customers/{_id}
+          method: get
+  create:
+    handler: handler.create
+    events:
+      - http:
+          path: customers/create
+          method: post
+      - sns:
+          arn: ${env:snsCustomerCreatedTopic}
+  delete:
+    handler: handler.delete
+    events:
+      - http:
+          path: customers/{_id}
+          method: delete
+  update:
+    handler: handler.update
+    events:
+      - http:
+          path: customers/{_id}
+          method: put

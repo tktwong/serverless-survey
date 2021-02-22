@@ -1,0 +1,96 @@
+service: pagespeed-speed-analyzer
+frameworkVersion: '2'
+plugins:
+  - serverless-dotenv-plugin
+
+provider:
+  name: aws
+  region: us-east-1
+  runtime: nodejs12.x
+  timeout: 30
+  lambdaHashingVersion: 20201221
+  stage: dev
+  apiKeys:
+    - pagespeed-analyzer-api-key
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/PageSpeedReport"
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+        - "sqs:GetQueueUrl"
+      Resource: "arn:aws:sqs:${self:provider.region}:*:PagespeedAnalyzerQueue"
+    - Effect: "Allow"
+      Action:
+        - "sqs:ListQueues"
+      Resource: "arn:aws:sqs:${self:provider.region}:*:*"
+
+package:
+  exclude:
+    - layer/**
+    - node_modules/chrome-aws-lambda
+    - node_modules/**/chrome-aws-lambda/**
+    - layer.zip
+
+layers:
+  browser:
+    path: ./layer/aws-chrome-puppeteer
+    compatibleRuntimes:
+      - nodejs12.x
+
+functions:
+
+  pageAnalyzer:
+    handler: ./build/analyzer/handler.handle
+    environment:
+      PAGESPEED_ANALYZER_QUEUE: { Ref: PagespeedAnalyzerQueue }
+      PAGESPEED_INSIGHT_API_KEY: ${env:PAGESPEED_INSIGHT_API_KEY}
+    layers:
+      - { Ref: BrowserLambdaLayer }
+    events:
+      - http:
+          path: /analyze
+          method: get
+          private: true
+          request:
+            parameters:
+              querystrings:
+                targetPath: true
+
+  reportCollector:
+    handler: ./build/collector/handler.handle
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - PagespeedAnalyzerQueue
+              - Arn
+
+resources:
+  Resources:
+    PagespeedAnalyzerQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "PagespeedAnalyzerQueue"
+    PageSpeedReports:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -   AttributeName: id
+              AttributeType: S
+        KeySchema:
+          -   AttributeName: id
+              KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: PageSpeedReport

@@ -1,0 +1,128 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service:  lexy
+app:      lexy
+org:      mrflip
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-webpack
+  - serverless-dotenv-plugin
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  stage:                ${opt:stage, self:provider.stage}
+  stage_reg:           "${self:custom.stage}-${self:provider.region}"
+  beesTable:            bees-${self:custom.stage}
+  guessesTable:         guesses-${self:custom.stage}
+  #
+  serverless-offline:
+    port:               4000
+  webpack:
+    includeModules:     true
+    excludeFiles:       "*.test.*"
+    keepOutputDirectory: true
+    config:             'webpack.config.cjs'
+  dynamodb:
+    stages:
+      - local
+      - dev
+    start:
+      port:             8000
+      inMemory:         true
+      migrate:          true
+      seed:             false
+    # seed:
+    #   test:
+    #     sources:
+    #       - table: ${self:custom.productsTable}
+    #         sources: [seed-data/Products.json]
+
+  # https://www.npmjs.com/package/serverless-domain-manager
+  #
+  # Need to move to Route53 management of one of our domains, parking
+  # this for now
+  #
+  # customDomain:
+  #   domainName: serverless.foo.com
+  #   stage: ci
+  #   basePath: api
+  #   certificateName: '*.foo.com'
+  #   createRoute53Record: true
+  #   endpointType: 'regional'
+  #   securityPolicy: tls_1_2
+
+provider:
+  name:                 aws
+  runtime:              nodejs12.x
+  stage:                dev
+  region:               us-east-1
+  deployBucket:        "sls-lexy-${self:custom.stage_reg}"
+  environment:
+    beesTable:          ${self:custom.beesTable}
+    guessesTable:       ${self:custom.guessesTable}
+    NODE_ENV:           development
+    GRAPHQL_ENDPOINT:   "${self:custom.stage}/graphql"
+
+    # stripeSecretKey: ${env:STRIPE_SECRET_KEY}
+
+functions:
+  graphql:
+    handler:    handler.graphqlHandler
+    role:       LexyDynamoReader
+    events:
+    - http:
+        path:   graphql
+        method: post
+        cors:   true
+    - http:
+        path:   graphql
+        method: get
+        cors:   true
+    environment:
+      foo:      bar
+
+    # iamRoleStatements:
+    #   - Effect: Allow
+    #     Action:
+    #       - dynamodb:Query
+    #       - dynamodb:Scan
+    #       - dynamodb:GetItem
+    #       - dynamodb:PutItem
+    #       - dynamodb:UpdateItem
+    #       - dynamodb:DeleteItem
+    #     Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:custom.beesTable}"
+
+resources:
+  # IAM
+  - ${file(cloud/iam-roles.yml)}
+  # Cognito
+  - ${file(cloud/cognito-user-pool.yml)}
+  - ${file(cloud/cognito-identity-pool.yml)}
+  # API Gateway
+  - ${file(cloud/api-gateway-errors.yml)}
+  # DynamoDB
+  - ${file(cloud/dynamodb-lexy.yml)}
+  # S3
+  - ${file(cloud/s3-bucket.yml)}
+
+
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"

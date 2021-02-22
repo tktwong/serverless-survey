@@ -1,0 +1,59 @@
+service: serverless-provisioning-dbonly
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  stage: ${opt:stage, 'dev'} # default to stage 'dev', allow override from CLI
+  profile: ${opt:stage, 'default'} # Allow override of AWS profile. This could also be used to deploy to diff AWS accounts per stage.
+  environment:
+    DYNAMODB_TABLE_MBOX: mailbox-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_MBOX}"
+      
+resources:
+  Resources:
+        
+    MailboxesDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Delete #delete table between deployments. Can use "Retain" to retain table and data between deployments. Wouldn't make sense here.
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_MBOX}
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+  Outputs:
+    #define an output with the dynamo db table arn so that another serverless project can reference it
+    mailboxesDynamoDbTableArn:
+      Value: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_MBOX}"
+      Export:
+        Name: mailboxesDynamoDbTableArn
+    #also give it the table name
+    mailboxesDynamoDbTableName:
+      Value: "mailbox-${self:provider.stage}"
+      Export:
+        Name: mailboxesDynamoDbTableName
+    #and, most importantly, the stream for the table! This is critical so we can use it in another project to tie the stream to a lambda
+    mailboxesDynamoDbTableStreamArn:
+      Description: The ARN of the DynamoDB stream of the mailboxes table
+      Value:
+        Fn::GetAtt: [ MailboxesDynamoDbTable, StreamArn ]
+      Export:
+        Name: mailboxesDynamoDbTableStreamArn

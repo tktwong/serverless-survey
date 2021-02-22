@@ -1,0 +1,104 @@
+service: monitorUserActivityApi
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: eu-central-1
+  environment:
+    CLIENT_ID:
+      Ref: RmnCognitoPoolClient
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: !GetAtt MonitorUA.Arn
+  endpointType: REGIONAL
+  apiName: monitorUAApi-${self:provider.stage}
+  apiKeys:
+    - apeKeyMonitorUA-${self:provider.stage}
+  usagePlan:
+    quota:
+      limit: 1000
+      offset: 0
+      period: DAY
+    throttle:
+      burstLimit: 200
+      rateLimit: 100
+
+functions:
+  read:
+    handler: backend/user-activity/read.handler
+    events:
+      - http:
+          path: monitorua
+          method: get
+          private: true
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref RmnAuthorizer
+      - http:
+          path: monitorua/{id}
+          method: get
+          private: true
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref RmnAuthorizer
+  create:
+    handler: backend/user-activity/create.handler
+    events:
+      - http:
+          path: monitorua
+          method: post
+          private: true
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref RmnAuthorizer
+  delete:
+    handler: backend/user-activity/delete.handler
+    events:
+      - http:
+          path: monitorua
+          method: delete
+          private: true
+          cors: true
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId: !Ref RmnAuthorizer
+  login:
+    handler: backend/users/login.handler
+    events:
+      - http:
+          path: login
+          method: post
+          private: true
+          cors: true
+  signup:
+    handler: backend/users/signup.handler
+    events:
+      - http:
+          path: signup
+          method: post
+          private: true
+          cors: true
+  confirmsignup:
+    handler: backend/users/confirmsignup.handler
+    events:
+      - http:
+          path: confirmsignup
+          method: post
+          private: true
+          cors: true
+
+resources:
+  - ${file(resources/dynamodb_serverless.yml)}
+  - ${file(resources/cognito_serverless.yml)}
+  - ${file(resources/api_gateway_serverless.yml)}

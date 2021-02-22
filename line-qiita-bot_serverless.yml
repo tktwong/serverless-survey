@@ -1,0 +1,195 @@
+service:
+  name: line-qiita-bot
+custom:
+  defaultStage: dev
+  serverless-offline:
+    httpPort: 8083
+  schedule:
+    saveQiitaInfo:
+      dev:
+      production: cron(0 15 * * ? *) # 毎日0時
+    pushDailyLikeCount:
+      dev:
+      production: cron(0 23 * * ? *) # 毎日8時
+    pushWeeklyLikeCount:
+      dev:
+      production: cron(0 23 ? * SAT *) # 日曜8時
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-dotenv-plugin
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-northeast-1
+  profile: aa
+  stage: ${opt:stage, self:custom.defaultStage}
+  apiGateway:
+    minimumCompressionSize: 1024 # Enable gzip compression for responses > 1 KB
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    TZ: Asia/Tokyo
+    LAYER_NAME: ${self:service.name}-${self:provider.stage}
+    LAMBDA_NAME: ${self:service.name}-${self:provider.stage}
+    S3_BUCKET: ${self:service.name}-${self:provider.stage}
+    DYNAMODB_TABLE: ${self:service.name}-${self:provider.stage}
+    USER_TABLE: ${self:provider.environment.DYNAMODB_TABLE}-User
+    QIITA_HISTORY_TABLE: ${self:provider.environment.DYNAMODB_TABLE}-QiitaHistory
+    CHANNEL_ACCESS_TOKEN: ${env:CHANNEL_ACCESS_TOKEN}
+    QIITA_ACCESS_TOKEN: ${env:QIITA_ACCESS_TOKEN}
+    GET_CAPTURE_FUNCTION: ${self:service.name}-${self:provider.stage}-getCapture
+    CAPTURE_PAGE_URL: ${env:CAPTURE_PAGE_URL}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - 'dynamodb:Query'
+        - 'dynamodb:Scan'
+        - 'dynamodb:GetItem'
+        - 'dynamodb:PutItem'
+        - 'dynamodb:UpdateItem'
+        - 'dynamodb:DeleteItem'
+        - 'dynamodb:ListStreams'
+        - 'dynamodb:DescribeTable'
+      Resource: 'arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}*'
+    - Effect: Allow
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource: 'arn:aws:lambda:${self:provider.region}:*:function:${self:provider.environment.LAMBDA_NAME}*'
+    - Effect: Allow
+      Action:
+        - 's3:PutObject'
+        - 's3:PutObjectAcl'
+        - 's3:GetObject'
+      Resource: 'arn:aws:s3:::${self:provider.environment.S3_BUCKET}*'
+functions:
+  addUser:
+    handler: handler.addUser
+    events:
+      - http:
+          method: post
+          path: users
+          cors: true
+    layers:
+      - { Ref: LineQiitaBotLambdaLayer }
+  getUser:
+    handler: handler.getUser
+    events:
+      - http:
+          method: get
+          path: users/{lineId}
+          cors: true
+          request:
+            parameters:
+              paths:
+                lineId: true
+    layers:
+      - { Ref: LineQiitaBotLambdaLayer }
+  getUsers:
+    handler: handler.getUsers
+    events:
+      - http:
+          method: get
+          path: users
+          cors: true
+    layers:
+      - { Ref: LineQiitaBotLambdaLayer }
+  getLikeCount:
+    handler: handler.getLikeCount
+    events:
+      - http:
+          method: get
+          path: users/{lineId}/likes
+          cors: true
+          request:
+            parameters:
+              paths:
+                lineId: true
+              querystrings:
+                start: true # yyyy-mm-dd
+                end: true # yyyy-mm-dd
+    layers:
+      - { Ref: LineQiitaBotLambdaLayer }
+  saveQiitaInfo:
+    handler: handler.saveQiitaInfo
+    events:
+      - schedule: ${self:custom.schedule.saveQiitaInfo.${self:provider.stage}}
+    layers:
+      - { Ref: LineQiitaBotLambdaLayer }
+  pushDailyLikeCount:
+    handler: handler.pushDailyLikeCount
+    events:
+      - schedule: ${self:custom.schedule.pushDailyLikeCount.${self:provider.stage}}
+    layers:
+      - { Ref: LineQiitaBotLambdaLayer }
+  pushWeeklyLikeCount:
+    handler: handler.pushWeeklyLikeCount
+    timeout: 60
+    events:
+      - schedule: ${self:custom.schedule.pushWeeklyLikeCount.${self:provider.stage}}
+    layers:
+      - { Ref: LineQiitaBotLambdaLayer }
+  getCapture:
+    handler: handler.getCapture
+    timeout: 20
+    layers:
+      - { Ref: LineQiitaBotLambdaLayer }
+  triggerGitHubActions:
+    handler: handler.triggerGitHubActions
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          maximumRetryAttempts: 1
+          enabled: true
+          arn:
+            Fn::GetAtt:
+              - QiitaHistory
+              - StreamArn
+    environment:
+      GITHUB_ACTIONS_URL: ${env:GITHUB_ACTIONS_URL}
+      GITHUB_TOKEN: ${env:GITHUB_TOKEN}
+    layers:
+      - { Ref: LineQiitaBotLambdaLayer }
+layers:
+  lineQiitaBot:
+    path: src/layers
+    name: ${self:provider.environment.LAYER_NAME}
+resources:
+  Resources:
+    User:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.USER_TABLE}
+        AttributeDefinitions:
+          - AttributeName: lineId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: lineId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    QiitaHistory:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.QIITA_HISTORY_TABLE}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: date
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: date
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    Capture:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.S3_BUCKET}

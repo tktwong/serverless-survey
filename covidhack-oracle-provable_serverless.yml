@@ -1,0 +1,183 @@
+
+# This file is the main config file for the oracle service.
+
+service: oracle-pandemic
+
+provider:
+  name: aws
+  runtime: python3.7
+
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'lambda:InvokeFunction'
+      Resource:
+        - 'arn:aws:lambda:eu-west-2:519411350235:function:dev-save_to_ipfs'
+
+  stage: dev
+  region: eu-west-2
+
+# you can add statements to the Lambda function's IAM Role here
+#  iamRoleStatements:
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:ListBucket"
+#      Resource: { "Fn::Join" : ["", ["arn:aws:s3:::", { "Ref" : "ServerlessDeploymentBucket" } ] ]  }
+#    - Effect: "Allow"
+#      Action:
+#        - "s3:PutObject"
+#      Resource:
+#        Fn::Join:
+#          - ""
+#          - - "arn:aws:s3:::"
+#            - "Ref" : "ServerlessDeploymentBucket"
+#            - "/*"
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+#  TODO load from AWS Secrets eventually
+  environment:
+    PINATA_API_KEY: ${file(./secrets_${self:provider.stage}.json):PINATA_API_KEY}
+    PINATA_SECRET_API_KEY: ${file(./secrets_${self:provider.stage}.json):PINATA_SECRET_API_KEY}
+
+# you can add packaging information here
+#package:
+#  include:
+#    - include-me.py
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.py
+#    - exclude-me-dir/**
+
+functions:
+
+  check_pandemic:
+    handler: handler.check_pandemic
+
+    events:
+      - http:
+          path: /check_pandemic
+          method: get
+
+  get_uk_alert_level:
+    handler: handler.get_uk_alert_level
+
+    events:
+      - http:
+          path: /get_uk_alert_level
+          method: get
+
+  check_corona_cases_uk:
+    handler: handler.check_corona_cases_uk
+
+    events:
+      - http:
+          path: /check_corona_cases_uk
+          method: get
+
+  get_uk_infection_rate_level:
+    handler: handler.get_uk_infection_rate_level
+
+    events:
+      - http:
+          path: /get_uk_infection_rate_level
+          method: get
+
+  save_to_ipfs:
+    handler: handler.saveToIPFS # required, handler set in AWS Lambda
+    name: ${self:provider.stage}-save_to_ipfs # optional, Deployed Lambda name
+    description: utility to forward data to IPFS
+    runtime: nodejs12.x # optional overwrite, default is provider runtime
+    memorySize: 512 # optional, in MB, default is 1024
+    timeout: 10 # optional, in seconds, default is 6
+#    provisionedConcurrency: 3 # optional, Count of provisioned lambda instances
+#    reservedConcurrency: 5 # optional, reserved concurrency limit for this function. By default, AWS uses account concurrency limit
+    tracing: PassThrough # optional, overwrite, can be 'Active' or 'PassThrough'
+
+  #useful for testing, but removed for production to avoid misuse
+#    events:
+#      - http:
+#          path: /putipfs
+#          method: post
+
+  load_from_ipfs:
+    handler: handler.load_from_ipfs
+    name: ${self:provider.stage}-load_from_ipfs # optional, Deployed Lambda name
+    runtime: nodejs12.x # optional overwrite, default is provider runtime
+
+#    events:
+#      - http:
+#          path: /getipfs
+#          method: get
+
+  hello:
+    handler: handler.hello
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+    events:
+      - http:
+          path: /hello
+          method: get
+      - http:
+          path: /hello1
+          method: get
+#      - websocket: $connect
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+#      - alb:
+#          listenerArn: arn:aws:elasticloadbalancing:us-east-1:XXXXXX:listener/app/my-load-balancer/50dc6c495c0c9188/
+#          priority: 1
+#          conditions:
+#            host: example.com
+#            path: /hello
+
+#    Define function environment variables here
+#    environment:
+#      variable2: value2
+
+# you can add CloudFormation resource templates here
+#resources:
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"
+
+plugins:
+  - serverless-python-requirements
+
+#this is needed as the lxml libs need to be packaged
+custom:
+  pythonRequirements:
+#    pythonBin: /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.7/bin/python3.7
+#    dockerizePip: false
+    dockerizePip: true
+#    fileName: requirements.txt
+#    dockerizePip: non-linux
+#    dockerFile: prod_env_dockerfile/Dockerfile
+    dockerFile: Dockerfile

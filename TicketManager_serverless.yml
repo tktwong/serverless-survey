@@ -1,0 +1,216 @@
+service:
+  name: TicketManager
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-plugin-tracing
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'ca-central-1'}
+  tracing:
+    lambda: true
+    apiGateway: true
+    
+  
+  environment:
+   
+    SERVICE_TABLE: Tickets-${self:provider.stage}
+    ATOMIC_TABLE: AtomicCounter
+    SUB_INDEX: userID-${self:provider.stage}
+    REGION: ${self:provider.region}
+    BUCKET: ticket-manager-${self:provider.stage}
+    
+
+
+  
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+          - "xray:PutTraceSegments"
+          - "xray:PutTelemetryRecords"
+      Resource:
+          - "*"
+ 
+
+functions:
+  
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+    
+  AddUploadUrl:
+    handler: src/lambda/http/adduploadurl.handler
+    events:
+      - http:
+          method: post
+          path: ticket/{ticket}/attachment
+          cors: true    
+    iamRoleStatementsInherit: true
+    iamRoleStatementsName: ${self:service.name}-AddUploadUrl-Role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:Query
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SERVICE_TABLE}
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+        Resource: arn:aws:s3:::${self:provider.environment.BUCKET}/*
+  
+  Gettickets:
+    handler: src/lambda/http/getTickets.handler
+    events:
+      - http:
+          method: get 
+          path: ticket
+          cors: true 
+    iamRoleStatementsInherit: true 
+    iamRoleStatementsName: ${self:service.name}-gettickets-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow 
+        Action: 
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SERVICE_TABLE}/index/*
+
+
+  UpdateStatus:
+    handler: src/lambda/http/updateStatus.handler
+    events:
+      - http:
+          method: patch
+          path: ticket/state/{ticket}
+          cors: true
+    iamRoleStatementsInherit: true
+    iamRoleStatementsName: ${self:service.name}-updatestatus-Role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SERVICE_TABLE}       
+      
+
+  CreateTicket:
+    handler: src/lambda/http/createTicket.handler
+    events:
+      - http:
+          method: post
+          path: ticket
+          cors: true     
+    iamRoleStatementsInherit: true
+    iamRoleStatementsName: ${self:service.name}-ticket-Role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SERVICE_TABLE} 
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ATOMIC_TABLE}
+  
+  AddComment:
+    handler: src/lambda/http/addComment.handler
+    events:
+      - http:
+          method: post
+          path: ticket/{ticket}/comment
+          cors: true      
+    iamRoleStatementsInherit: true
+    iamRoleStatementsName: ${self:service.name}-addComment-Role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SERVICE_TABLE} 
+
+
+resources:
+  Resources:
+    TicketManagertable:
+      Type: AWS::DynamoDB::Table 
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userID
+            AttributeType: S
+          - AttributeName: ticket
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S  
+        KeySchema:
+          - AttributeName: userID
+            KeyType: HASH
+          - AttributeName: ticket
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.SERVICE_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.SUB_INDEX}
+            KeySchema:
+              - AttributeName: userID
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL 
+
+    AtomicCounters:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userID
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.ATOMIC_TABLE}
+    
+     
+    
+    AttachementBucket:
+      Type: AWS::S3::Bucket 
+      Properties: 
+        BucketName: ${self:provider.environment.BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET 
+                - PUT 
+                - POST 
+                - DELETE 
+                - HEAD 
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy 
+      Properties:
+        PolicyDocument:
+          Id: MyPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: "*"
+              Action: "s3:GetObject"
+              Resource: "arn:aws:s3:::${self:provider.environment.BUCKET}/*"
+        Bucket: !Ref AttachementBucket
+
+

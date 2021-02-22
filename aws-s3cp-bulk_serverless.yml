@@ -1,0 +1,64 @@
+service: aws-s3cp-bulk
+frameworkVersion: "=1.25.0"
+custom:
+    operationalBucketPrefix: ${opt:bucket-name, 'aws-s3cp-bulk'}
+
+provider:
+  name: aws
+  # by default AWS variables like ${AWS:Region} use same format as Serverless
+  # variables like ${self:custom.var} this pattern only allows Serverless
+  # variables to start self or opt, otherwise treat them as AWS variables.
+  # https://forum.serverless.com/t/getting-handle-accountid-in-serverless-config/946/7
+  variableSyntax: '\${((self|opt):((?!\${).)+?)}'
+  runtime: nodejs6.10
+  stage: ${opt:stage, 'development'}
+  region: ${opt:region, 'eu-west-1'}
+  memorySize: 128
+  timeout: 30
+  environment:
+    OPERATIONAL_BUCKET_PREFIX: ${self:custom.operationalBucketPrefix}
+    STAGE: ${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource:
+        Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aws-s3cp-bulk-${self:provider.stage}-copy
+    - Effect: Allow
+      Action:
+        - s3:ListBucket
+      Resource:
+        - Fn::Sub: arn:aws:s3:::${self:custom.operationalBucketPrefix}-${AWS::Region}-${AWS::AccountId}-${self:provider.stage}
+        - Fn::Sub: arn:aws:s3:::aws-s3cp-bulk-${AWS::AccountId}-testfixturesbucket
+    - Effect: Allow
+      Action:
+        - s3:*
+      Resource:
+        - Fn::Sub: arn:aws:s3:::${self:custom.operationalBucketPrefix}-${AWS::Region}-${AWS::AccountId}-${self:provider.stage}/*
+        - Fn::Sub: arn:aws:s3:::aws-s3cp-bulk-${AWS::AccountId}-testfixturesbucket/*
+
+package:
+  exclude:
+    - tests/**
+    - coverage/**
+    - .nyc_output/**
+    - .serverless/**
+    - .circleci/**
+
+functions:
+  copy:
+    handler: handler.cp
+  bulk-copy:
+    handler: handler.bulk_cp
+  integration_test:
+    handler: handler.integration_test
+    environment:
+      CONCURRENCY: ${opt:concurrency, '500'}
+
+resources:
+  Resources:
+    Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName:
+          Fn::Sub: ${self:custom.operationalBucketPrefix}-${AWS::Region}-${AWS::AccountId}-${self:provider.stage}

@@ -1,0 +1,120 @@
+service: lambda-cwlogs-to-logsene
+
+plugins:
+  - serverless-iam-roles-per-function
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  secrets: ${file(secrets.json)}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ${self:custom.secrets.AWS_REGION, "us-east-1"}
+  versionFunctions: false
+
+functions:
+  shipper:
+    handler: shipper.handler
+    description: Sends CloudWatch logs from Kinesis to Sematext Elastic Search API
+    memorySize: 128
+    timeout: 3
+    events:
+      - stream:
+          type: kinesis
+          arn:
+            Fn::GetAtt:
+              - LogsKinesisStream
+              - Arn
+          batchSize: ${self:custom.secrets.BATCH_SIZE}
+          startingPosition: LATEST
+          enabled: true
+    environment:
+      LOGS_TOKEN: ${self:custom.secrets.LOGS_TOKEN}
+      LOGS_RECEIVER_URL: ${self:custom.secrets.LOGS_RECEIVER_URL}
+      LOGS_BULK_SIZE: 100
+      LOG_INTERVAL: 2000
+  
+  subscriber:
+    handler: subscriber.handler
+    description: Subscribe all CloudWatch log groups to Kinesis
+    memorySize: 128
+    timeout: 30
+    events:
+      - http:
+          path: subscribe
+          method: get
+      - cloudwatchEvent:
+          event:
+            source:
+              - aws.logs
+            detail-type:
+              - AWS API Call via CloudTrail
+            detail:
+              eventSource:
+                - logs.amazonaws.com
+              eventName:
+                - CreateLogGroup
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - "iam:PassRole"
+          - "sts:AssumeRole"
+          - "logs:PutSubscriptionFilter"
+          - "logs:DeleteSubscriptionFilter"
+          - "logs:DescribeSubscriptionFilters"
+          - "logs:DescribeLogGroups"
+          - "logs:PutRetentionPolicy"
+        Resource: "*"
+    environment:
+      filterName: ${self:custom.stage}-${self:provider.region}
+      region: ${self:provider.region}
+      shipperFunctionName: "shipper"
+      subscriberFunctionName: "subscriber"
+      prefix: ${self:custom.secrets.PREFIX, "/aws/lambda"}
+      retentionDays: ${self:custom.secrets.LOG_GROUP_RETENTION_IN_DAYS}
+      kinesisArn: 
+        Fn::GetAtt:
+          - LogsKinesisStream
+          - Arn
+      roleArn: 
+        Fn::GetAtt:
+          - CloudWatchLogsRole
+          - Arn
+
+resources:
+  Resources:
+    LogsKinesisStream:
+      Type: AWS::Kinesis::Stream
+      Properties: 
+        Name: ${self:service}-${self:custom.stage}-logs
+        ShardCount: ${self:custom.secrets.KINESIS_SHARD_COUNT}
+        RetentionPeriodHours: ${self:custom.secrets.KINESIS_RETENTION_IN_HOURS}
+
+    CloudWatchLogsRole:
+      Type: AWS::IAM::Role
+      Properties: 
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement: 
+            - Effect: Allow
+              Principal: 
+                Service: 
+                  - logs.amazonaws.com
+              Action: 
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: root
+            PolicyDocument: 
+              Version: "2012-10-17"
+              Statement: 
+                - Effect: Allow
+                  Action: 
+                    - kinesis:PutRecords
+                    - kinesis:PutRecord
+                  Resource:
+                    Fn::GetAtt:
+                      - LogsKinesisStream
+                      - Arn
+        RoleName: ${self:service}-${self:custom.stage}-cloudwatchrole

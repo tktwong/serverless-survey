@@ -1,0 +1,114 @@
+service: google-music
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-dynamodb-local
+  - serverless-offline-scheduler
+  - serverless-offline
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  region: ${opt:region, self:provider.region}
+  config: ${file(./config/parameters_${self:custom.stage}.yml)}
+  dynamodb:
+    start:
+      port: 8000
+      inMemory: true
+      migrate: true
+  endpoints:
+    frontendHtml: ''
+    player: 'player.js'
+    spotify:
+      search_all: 'spotify/search-all'
+    google_music:
+      get_stream: 'googlemusic/stream'
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  timeout: 300
+  stage: dev
+  region: eu-central-1
+  environment:
+    AWS_ACCESS_KEY_ID: ${self:custom.config.credentials.aws.access_key_id}
+    AWS_SECRET_ACCESS_KEY: ${self:custom.config.credentials.aws.access_key_secret}
+
+resources:
+  Resources:
+    spotifyAccessTokenTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        TableName: spotifyAccessToken
+        AttributeDefinitions:
+          - AttributeName: primaryKey
+            AttributeType: S
+        KeySchema:
+          - AttributeName: primaryKey
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+functions:
+  frontendHtml:
+      name: html
+      handler: handler.frontendHtml
+      events:
+        - http:
+            path: ${self:custom.endpoints.frontendHtml}
+            method: get
+            cors: true
+
+  player:
+    name: player
+    handler: handler.player
+    environment:
+      domain_url:
+        Fn::Join:
+          - ""
+          - - "https://"
+            - Ref: "ApiGatewayRestApi"
+            - ".execute-api."
+            - ${self:custom.region}
+            - ".amazonaws.com/"
+            - ${self:custom.stage}
+      url_spotify_search_all: ${self:custom.endpoints.spotify.search_all}
+      url_google_music_get_stream: ${self:custom.endpoints.google_music.get_stream}
+    events:
+      - http:
+          path: ${self:custom.endpoints.player}
+          method: get
+          cors: true
+
+  spotifyRefreshToken:
+    name: spotify-refresh-token
+    handler: handler.spotifyRefreshToken
+    environment:
+      spotify_client_id: ${self:custom.config.credentials.spotify.client_id}
+      spotify_client_secret: ${self:custom.config.credentials.spotify.client_secret}
+    events:
+      - schedule: rate(50 minutes)
+  spotifySearchAll:
+    name: spotify-search-all
+    handler: handler.spotifySearchAll
+    environment:
+      spotify_client_id: ${self:custom.config.credentials.spotify.client_id}
+      spotify_client_secret: ${self:custom.config.credentials.spotify.client_secret}
+    events:
+      - http:
+          path: ${self:custom.endpoints.spotify.search_all}
+          method: get
+          cors: true
+
+  googleMusicGetStream:
+    name: google-music-get-stream
+    handler: handler.googleMusicGetStream
+    environment:
+      google_android_id: ${self:custom.config.credentials.google_music.android_id}
+      google_master_token: ${self:custom.config.credentials.google_music.master_token}
+    events:
+      - http:
+          path: ${self:custom.endpoints.google_music.get_stream}
+          method: get
+          cors: true

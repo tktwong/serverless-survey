@@ -1,0 +1,54 @@
+service: geoip-serverless
+frameworkVersion: ">=2.0.0 <3.0.0"
+
+custom:
+  stage: ${file(stages/${opt:stage, self:provider.stage}.yml)}
+  apiCloudFront:
+    domain: ${self:custom.stage.domainName}
+    certificate: ${self:custom.stage.certificateArn}
+    compress: true
+    querystring: none
+    cookies: none
+    headers:
+      - x-api-key
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+
+plugins:
+  - serverless-webpack
+  - serverless-api-cloudfront
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: ${opt:region, self:custom.stage.region}
+  profile: ${self:custom.stage.profile}
+  memorySize: ${self:custom.stage.lambda.memorySize}
+  timeout: ${self:custom.stage.lambda.timeout}
+  iamRoleStatements: ${file(config/iamRoleStatements.yml)}
+  deploymentBucket:
+    name: com.serverless.${self:custom.stage.profile}.${self:provider.region}.deploys
+  environment:
+    ssmMaxmindToken: ${self:custom.stage.ssmMaxmindTokenName}
+    locale: ${self:custom.stage.locale}
+    dataBucket: ${self:custom.stage.dataBucket}
+    dataPath: ${self:custom.stage.dataPath}
+    dbCity: ${self:custom.stage.dbMapping.city}
+    dbCountry: ${self:custom.stage.dbMapping.country}
+    dbAsn: ${self:custom.stage.dbMapping.asn}
+  apiName: ${self:service}
+  endpointType: regional
+  apiKeys: ${file(config/apiusage.yml):apiKeys}
+  usagePlan: ${file(config/apiusage.yml):usagePlan}
+  apiGateway:
+    description: "Query IP info from s3-select. Managed by Serverless"
+    apiKeySourceType: HEADER
+
+functions: ${file(lib/config.js):functions}
+resources:
+  Resources: ${file(lib/config.js):resources}

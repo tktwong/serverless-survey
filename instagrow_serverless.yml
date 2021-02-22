@@ -1,0 +1,106 @@
+service: instagrow
+
+frameworkVersion: ">=1.0.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  profile: instagrow
+  timeout: 290
+  versionFunctions: false
+  region: ca-central-1
+  vpc:
+    securityGroupIds:
+      - ${file(./serverless.env.yml):${opt:stage}.SECURITY_GROUP}
+    subnetIds:
+      - ${file(./serverless.env.yml):${opt:stage}.SUBNET_01}
+      - ${file(./serverless.env.yml):${opt:stage}.SUBNET_02}
+  environment:
+    ACCOUNT: ${file(./serverless.env.yml):${opt:stage}['ACCOUNT']}
+    PASSWORD: ${file(./serverless.env.yml):${opt:stage}['PASSWORD']}
+    FOLLOWING_INTERACTION_DELTA_IN_DAYS: ${file(./serverless.env.yml):${opt:stage}.FOLLOWING_INTERACTION_DELTA_IN_DAYS}
+    FOLLOWER_INTERACTION_DELTA_IN_DAYS: ${file(./serverless.env.yml):${opt:stage}.FOLLOWER_INTERACTION_DELTA_IN_DAYS}
+  iamRoleStatements: # permissions for all of your functions can be set here
+    - Effect: Allow
+      Action: # Gives permission to DynamoDB tables in a specific region
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:ca-central-1:*:*"
+
+functions:
+  setUpNewApplication:
+    handler: handler.setUpNewApplication
+  setUpNewUser:
+    handler: handler.setUpNewUserConfig
+  setUpScalingPolicy:
+    handler: handler.setUpScalingPolicy
+  functionHandler:
+    handler: handler.functionHandler
+  getFollowing:
+    handler: handler.getFollowing
+    events:
+      - schedule:
+          enabled: true
+          rate: cron(10,40 10 ? * * *)
+  getFollowers:
+    handler: handler.getFollowers
+    events:
+      - schedule:
+          enabled: true
+          rate: cron(15,45 10 ? * * *)
+  getLatestMediaOfAccounts:
+    handler: handler.getLatestMediaOfAccounts
+    events:
+      - schedule:
+          enabled: true
+          rate: cron(*/5 10,11,12,13 ? * * *)
+  updateInteractionActivity:
+    handler: handler.updateInteractionActivity
+    events:
+      - schedule:
+          enabled: false
+          rate: cron(0,20,40 11,1,3,5 ? * * *)
+  queuePendingLikeMedia:
+    handler: handler.queuePendingLikeMedia
+    events:
+      - schedule:
+          enabled: true
+          rate: cron(0,20,40 11-4 ? * * *)
+  updateLikedMedia:
+    handler: handler.updateLikedMedia
+    events:
+      - schedule:
+          enabled: true
+          rate: cron(*/5 11-4 ? * * *)
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-offline
+  - serverless-webpack
+  - serverless-plugin-aws-alerts
+
+custom:
+  webpackIncludeModules: true
+  dynamodb:
+    start:
+      port: 8000
+      migrate: true
+      noStart: true
+  alerts:
+    stages:
+      - dev
+      - prod
+    topics:
+      alarm:
+        topic: ${self:service}-${opt:stage}-alerts-alarm
+        notifications:
+          - protocol: email
+            endpoint: instagrow@aaronromeo.com # Change this to your email address
+    alarms:
+      - functionErrors
+      - functionThrottles

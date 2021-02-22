@@ -1,0 +1,98 @@
+service: budget-flow
+frameworkVersion: ">=1.1.0 <2.0.0"
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-dynamodb-local
+  - serverless-offline
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${env:STAGE}
+  region: ${env:REGION}
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+functions:
+  create:
+    handler: api/transactions/create.create
+    events:
+      - http:
+          path: transactions
+          method: post
+          cors: true
+
+  list:
+    handler: api/transactions/list.list
+    events:
+      - http:
+          path: transactions
+          method: get
+          cors: true
+
+  get:
+    handler: api/transactions/get.get
+    events:
+      - http:
+          path: transactions/{id}
+          method: get
+          cors: true
+  # update:
+  #   handler: api/transactions/update.update
+  #   events:
+  #     - http:
+  #         path: transactions/{id}
+  #         method: put
+  #         cors: true
+
+  delete:
+    handler: api/transactions/delete.delete
+    events:
+      - http:
+          path: transactions/{id}
+          method: delete
+          cors: true
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+custom:
+  dotenv:
+    exclude:
+      - IS_OFFLINE
+  dynamodb:
+  # If you only want to use DynamoDB Local in some stages, declare them here
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+    # Uncomment only if you already have a DynamoDB running locally
+    # noStart: true

@@ -1,0 +1,57 @@
+service: sls-with-graphql
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  environment:
+    DYNAMODB_TABLE: ${self:service}-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - "arn:aws:dynamodb:*:*"
+
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle
+  - serverless-dynamodb-local
+  - serverless-offline
+
+custom:
+  dynamodb:
+    stages:
+      - dev
+    start:
+      port: 4000
+      seed: true
+      inMemory: true
+      migrate: true
+
+    seed:
+      domain:
+        sources:
+          - table: todos
+            sources: [./offline/migrations/todo-seed.json]
+
+  serverless-offline:
+    port: 8080
+
+functions:
+  api:
+    handler: graphql/handler.graphqlHandler
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+      - http:
+          path: graphql
+          method: get
+          cors: true
+
+resources:
+  Resources: ${file(offline/migrations/todo.yml)}

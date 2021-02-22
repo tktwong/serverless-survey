@@ -1,0 +1,43 @@
+service: git-feed-api
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  timeout: 10
+  region: eu-central-1
+  iamRoleStatements: ${file(./templates/iam.yml)}
+
+custom:
+  dev:
+    LOG_LEVEL: debug
+    GITHUB_CLIENT_SECRET: ${ssm:github-client-secret-dev~true}
+    GITHUB_CLIENT_ID: b9c15e8cbcaa663ed1f7
+    GITHUB_REDIRECT_URI: "https://git-repos-dev.bunchofnothing.com/repos"
+    ALLOW_ORIGIN_URI: "https://git-repos-dev.bunchofnothing.com"
+  prod:
+    LOG_LEVEL: debug
+    GITHUB_CLIENT_SECRET: ${ssm:github-client-secret-prod~true}
+    GITHUB_CLIENT_ID: de35513896095c9a5ad6
+    GITHUB_REDIRECT_URI: "https://git-repos.bunchofnothing.com/repos"
+    ALLOW_ORIGIN_URI: "https://git-repos.bunchofnothing.com"
+  webpack:
+    packager: yarn
+
+package:
+  individually: true
+
+functions:
+  github-auth:
+    handler: functions/github-auth/src/index.handler
+    environment:
+      SERVICE_NAME: ${self:service}-${opt:stage, self:provider.stage}-github-auth
+      LOG_LEVEL: ${self:custom.${opt:stage, self:provider.stage}.LOG_LEVEL}
+      GITHUB_CLIENT_SECRET: ${self:custom.${opt:stage, self:provider.stage}.GITHUB_CLIENT_SECRET}
+      GITHUB_CLIENT_ID: ${self:custom.${opt:stage, self:provider.stage}.GITHUB_CLIENT_ID}
+      GITHUB_REDIRECT_URI: ${self:custom.${opt:stage, self:provider.stage}.GITHUB_REDIRECT_URI}
+      ALLOW_ORIGIN_URI: ${self:custom.${opt:stage, self:provider.stage}.ALLOW_ORIGIN_URI}
+
+plugins:
+  - serverless-webpack
+  - serverless-pseudo-parameters
+  - serverless-step-functions

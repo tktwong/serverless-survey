@@ -1,0 +1,59 @@
+service: aws-lambda-cms
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  runtime: nodejs4.3
+  stage: dev
+  region: eu-central-1
+  environment:
+    SESSIONS_TABLE: sessions-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.SESSIONS_TABLE}"
+
+functions:
+  index:
+    handler: handler.index
+    events:
+      - http:
+          path: /
+          method: any
+          cors: true
+  dispatcher:
+    handler: handler.index
+    events:
+      - http:
+          path: /{proxy+}
+          method: any
+          cors: true
+
+
+resources:
+  Resources:
+    SessionsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: sid
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: sid
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.SESSIONS_TABLE}

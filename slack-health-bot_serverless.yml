@@ -1,0 +1,92 @@
+service: drgutbot
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: dev
+  region: ap-southeast-2
+  environment:
+    VERIFICATION_TOKEN: ${env:VERIFICATION_TOKEN}
+    BOT_TOKEN: ${env:DRGUT_BOT_TOKEN}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*"
+      Resource:
+        - "Fn::GetAtt": [UsersTable, Arn]
+        - "Fn::GetAtt": [QuestionsTable, Arn]
+
+package:
+  exclude:
+    - '**/*'
+  include:
+    - src/handlers.py
+
+functions:
+  EventHandler:
+    handler: src/handlers.message_handler
+    events:
+      - http:
+          path: msg
+          method: post
+          cors: true
+  QuestionResp:
+    handler: src/handlers.question_resp
+    events:
+      - http:
+          path: question/resp
+          method: post
+          cors: true
+          integration: lambda
+          request:
+            template:
+              application/x-www-form-urlencoded: ${file(src/blobs/req_template.vtl)}
+          response:
+            headers:
+              Content-Type: "'text/plain'"
+            template: $input.path('$')
+  SetName:
+    handler: src/handlers.set_name
+    events:
+      - http:
+          path: name/set
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: DrGutUsers
+        AttributeDefinitions:
+          - AttributeName: UserId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: UserId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    QuestionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: DrGutQuestions
+        AttributeDefinitions:
+          - AttributeName: QuestionNum
+            AttributeType: N
+        KeySchema:
+          - AttributeName: QuestionNum
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+plugins:
+  - serverless-python-requirements
+custom:
+  pythonRequirements:
+    zip: false
+    cleanupZipHelper: true
+    dockerizePip: false
+    pythonBin: python

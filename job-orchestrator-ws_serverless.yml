@@ -1,0 +1,117 @@
+service: job-orchestrator-ws
+
+plugins:
+  - serverless-offline
+
+package:
+  individually: true
+  exclude:
+    - node_modules/aws-sdk/**
+    - src/__mocks__/**
+    - src/__tests__/**
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-east-1
+  websocketApiRouteSelectionExpression: $request.body.action
+  versionLambda: false
+  prodDeletionPolicy: Retain
+  logs:
+    websocket: true
+
+  environment:
+    SERVICE: ${self:service}-${opt:stage, self:provider.stage}
+    REGION: ${self:provider.region}
+    JOB_STORAGE: job-storage-${opt:stage, self:provider.stage}
+    CONNECTIONS_STORAGE: connections-storage-${opt:stage, self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+          - "execute-api:ManageConnections"
+      Resource:
+          - "arn:aws:execute-api:*:*:**/@connections/*"
+    - Effect: Allow
+      Action:
+      - dynamodb:GetItem
+      - dynamodb:Query
+      - dynamodb:DeleteItem 
+      - dynamodb:UpdateItem
+      - dynamodb:PutItem
+      Resource: ['*']
+    - Effect: Allow
+      Action:
+      - lambda:InvokeFunction
+      Resource: ["*"]
+
+functions:
+  connect:
+    handler: src/interface/routes.connect
+    events:
+      - websocket:
+          route: $connect
+  defaultHandler:
+    handler: src/interface/routes.defaultHandler
+    events:
+      - websocket:
+          route: $default
+  disconnect:
+    handler: src/interface/routes.disconnect
+    events:
+      - websocket:
+          route: $disconnect
+  requestJob:
+    handler: src/interface/job.request
+    events:
+      - websocket:
+          route: requestJob
+  storeJob:
+    handler: src/interface/job.store
+    events:
+      - http:
+          method: POST
+          path: storeJob
+          cors: false
+
+resources:
+  Resources:
+    connectionsStorage:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: ${self:provider.prodDeletionPolicy}
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "connection_id"
+            AttributeType: "S"            
+        KeySchema:
+          -
+            AttributeName: "connection_id"
+            KeyType: "HASH"        
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.CONNECTIONS_STORAGE} 
+        TimeToLiveSpecification:
+          AttributeName: "expires_on"
+          Enabled: true
+    jobStorage:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: ${self:provider.prodDeletionPolicy}
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "job_id"
+            AttributeType: "S"            
+        KeySchema:
+          -
+            AttributeName: "job_id"
+            KeyType: "HASH"        
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.JOB_STORAGE} 
+        TimeToLiveSpecification:
+          AttributeName: "expires_on"
+          Enabled: true

@@ -1,0 +1,110 @@
+service: imguploader-frontend
+plugins:
+  - serverless-s3-sync
+
+custom:
+  defaultStage: dev
+  hostedZoneName:
+    dev: d.imguploader.zeroclock.dev
+    release: imguploader.zeroclock.dev
+  aliasHostedZoneId: Z2FDTNDATAQYW2
+  s3Sync:
+    - bucketName: ${self:custom.hostedZoneName.${self:provider.stage}}
+      localDir: build
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: ap-northeast-1
+  stage: ${opt:stage, self:custom.defaultStage}
+
+resources:
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.hostedZoneName.${self:provider.stage}}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - S3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "StaticSite"
+                    },
+                    "/*"
+                  ]
+                ]
+    StaticSiteCloudFront:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          PriceClass: PriceClass_200
+          DefaultRootObject: index.html
+          Origins:
+            - Id: S3Origin
+              DomainName:
+                Fn::GetAtt:
+                  - StaticSite
+                  - DomainName
+              S3OriginConfig:
+                OriginAccessIdentity:
+                  Fn::Join:
+                    - "/"
+                    - - origin-access-identity/cloudfront
+                      - Ref: StaticCloudFrontOriginAccessIdentity
+          DefaultCacheBehavior:
+            AllowedMethods:
+              - HEAD
+              - GET
+            CachedMethods:
+              - HEAD
+              - GET
+            Compress: true
+            DefaultTTL: 900
+            MaxTTL: 1200
+            MinTTL: 600
+            ForwardedValues:
+              QueryString: true
+            SmoothStreaming: false
+            TargetOriginId: S3Origin
+            ViewerProtocolPolicy: https-only
+          ViewerCertificate:
+            SslSupportMethod: sni-only
+            AcmCertificateArn: arn:aws:acm:us-east-1:936630031871:certificate/989ab9a2-bfeb-4aeb-b9c4-a2cf7a90a5f8
+          Aliases:
+            - ${self:custom.hostedZoneName.${self:provider.stage}}
+    StaticCloudFrontOriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment:
+            Ref: AWS::StackName
+    DnsRecord:
+      Type: "AWS::Route53::RecordSet"
+      Properties:
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt:
+              - StaticSiteCloudFront
+              - DomainName
+          HostedZoneId: ${self:custom.aliasHostedZoneId}
+        HostedZoneId: Z06777662C3AP1QO1ZEPP
+        Name:
+          Ref: StaticSite
+        Type: 'A'

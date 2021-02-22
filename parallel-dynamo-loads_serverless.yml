@@ -1,0 +1,41 @@
+service: data-loader
+
+package:
+  individually: true
+  exclude:
+    - "**"
+
+plugins:
+  - serverless-python-requirements
+  - serverless-prune-plugin
+
+provider:
+  region: eu-west-1
+  name: aws
+  runtime: python3.8
+  deploymentBucket:
+    name: ${ssm:/serverless/deployment-bucket-id}
+    serverSideEncryption: AES256
+
+functions:
+  dynamo_parallel_loader:
+    role: ${ssm:/data-loader/dynamo-parallel-loader/lambda_iam_role/arn}
+    events:
+      - sqs:
+          arn: ${ssm:/parallel-dynamo-loads/dynamo-parallel-loader/sqs_queue/arn}
+          batchSize: 1
+    handler: src.dynamo_loader.handler.handler
+    package:
+      include:
+        - "src/dynamo_loader/**"
+        - "src/shared/table_models.py"
+        - "src/__init__.py"
+    timeout: 300
+
+custom:
+  pythonRequirements:
+    dockerizePip: non-linux
+    usePoetry: false
+  prune:
+    automatic: true
+    number: 3

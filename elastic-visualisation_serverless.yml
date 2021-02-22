@@ -1,0 +1,43 @@
+service: operam-interview
+provider:
+  name: aws
+  runtime: nodejs8.10
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "es:*"
+      Resource: "*"
+functions:
+  fetchAndStoreLambda:
+    handler: handler.fetchAndStoreLambda
+    environment:
+      DatasetURL: "https://s3.amazonaws.com/static.operam.com/assignment/structure_released.xml"
+      #elasticURL:
+        #Fn::GetAtt: [ ElasticSearchInstance, DomainEndpoint ]
+    timeout: 100 # 100 seconds to fetch s3 xml and push it to elasticsearch
+  api:
+    handler: handler.api
+    environment:
+      elasticURL:
+        Fn::GetAtt: [ ElasticSearchInstance, DomainEndpoint ]
+    events:
+      - http:
+          path: api
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    ElasticSearchInstance:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        EBSOptions:
+          EBSEnabled: true
+          VolumeType: gp2
+          VolumeSize: 10
+        ElasticsearchClusterConfig:
+          InstanceType: t2.small.elasticsearch
+          InstanceCount: 1
+          DedicatedMasterEnabled: false
+          ZoneAwarenessEnabled: false
+        ElasticsearchVersion: 6.2

@@ -1,0 +1,120 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: login
+#app: your-app-name
+#tenant: your-tenant-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+frameworkVersion: '>=1.28.0 <2.0.0'
+
+provider:
+  name: aws
+  runtime: go1.x
+  websocketsApiRouteSelectionExpression: $request.body.type
+
+
+#  stage: dev
+  region: us-east-2
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "execute-api:Invoke"
+        #todo make this more specific
+      Resource: "arn:aws:execute-api:*:*:*/*/*/*/*"
+    - Effect: "Allow"
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+ 
+        #todo make this more specific
+      Resource: "arn:aws:dynamodb:${self:provider.region}:*:*/*"
+
+# you can define service wide environment variables here
+  environment:
+    WSAPI: {Ref: WebsocketsApi }
+    # TODO can I grab these directly in the lambdas?
+    REGION: ${self:provider.region}
+    STAGE: ${self:provider.stage}
+
+package:
+  exclude:
+    - ./**
+  include:
+    - ./bin/**
+
+functions:
+  hello:
+    handler: bin/hello
+    events:
+      - http:
+          path: hello
+          method: post
+  world:
+    handler: bin/world
+    events:
+      - http:
+          path: world
+          method: get
+          authorizer:
+            name: auth
+            type: token
+            identitySource: method.request.header.Authorization
+  login:
+    handler: bin/login
+    events:
+      - http:
+          path: login
+          method: get
+  auth:
+    handler: bin/auth
+  websocket-default:
+    handler: bin/ws
+    events:
+      - websocket:
+          route: $default
+  websocket-disconnect:
+    handler: bin/wsdisconnect
+    events:
+      - websocket:
+          route: $disconnect
+  websocket-authenticate:
+    handler: bin/wsauthenticate
+    role: DefaultRole
+    events:
+      - websocket:
+          route: wsAuthenticate
+  websocket-handle-action:
+    handler: "bin/wsactionhandler"
+    role: DefaultRole
+    events:
+      - websocket:
+          route: wsWatchGame
+      - websocket:
+          route: wsJoinGame
+      - websocket:
+          route: wsChangeName
+      - websocket:
+          route: wsInitialRoll
+resources:
+  - ${file(resources/dynamo-table.yml)}
+  - ${file(resources/roles.yml)}
+

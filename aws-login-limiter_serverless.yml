@@ -1,0 +1,79 @@
+service: APIAuth
+frameworkVersion: '>=1.2.1 <2.0.0'
+provider:
+  name: aws
+  runtime: nodejs12.x
+  region: eu-central-1
+  versionFunctions: false
+  logRetentionInDays: 90
+  stage: ${opt:stage, self:custom.defaultStage}
+  deploymentBucket: ${self:custom.env.${opt:stage}.SLS_BUCKET}
+  vpc:
+    securityGroupIds:
+      - sg-24b26d47
+  environment:
+    NODE_ENV: ${opt:stage}
+    REDIS_HOST: ${self:custom.env.${opt:stage}.REDIS_HOST}
+    REDIS_PORT: ${self:custom.env.${opt:stage}.REDIS_PORT}
+    REDIS_PASSWORD: ${self:custom.env.${opt:stage}.REDIS_PASSWORD}
+    SECRET: ${self:custom.env.${opt:stage}.SECRET}
+
+custom:
+  defaultStage: dev
+  env:
+    dev:
+      REDIS_HOST: ${env:REDIS_HOST_DEV}
+      REDIS_PORT: ${env:REDIS_PORT_DEV}
+      REDIS_PASSWORD: ${env:REDIS_PASSWORD_DEV}
+      SLS_BUCKET: ${env:SLS_BUCKET_DEV}
+      SECRET: ${env:SECRET_DEV}
+    prod:
+      REDIS_HOST: ${env:REDIS_HOST_PROD}
+      REDIS_PORT: ${env:REDIS_PORT_PROD}
+      REDIS_PASSWORD: ${env:REDIS_PASSWORD_PROD}
+      SLS_BUCKET: ${env:SLS_BUCKET_PROD}
+      SECRET: ${env:SECRET_PROD}
+
+plugins:
+  - serverless-offline
+
+package:
+  individually: true
+
+functions:
+  authenticate:
+    handler: handler.authenticate
+    events:
+      - http:
+          path: /authenticate
+          method: post
+          cors: true
+  login:
+    handler: handler.login
+    events:
+      - http:
+          path: /login
+          method: post
+          cors: true
+  logout:
+    handler: handler.logout
+    events:
+      - http:
+          path: /logout
+          method: post
+          cors: true
+
+# For semplicity and cost reduction sake the redis intance has been deployed manually at https://redislabs.com/
+# In an actual dev/prod environment we would uncomment the following code
+# making the redis instance part of the same cloudformation stack
+# resources:
+#   Resources:
+#     ElasticCacheCluster:
+#       Type: AWS::ElastiCache::CacheCluster
+#       Properties:
+#         AutoMinorVersionUpgrade: true
+#         Engine: redis
+#         CacheNodeType: cache.t2.micro
+#         NumCacheNodes: 1
+#         VpcSecurityGroupIds:
+#         - sg-24b26d47

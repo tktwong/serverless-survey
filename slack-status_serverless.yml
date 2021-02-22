@@ -1,0 +1,49 @@
+service: slack-status # NOTE: update this with your service name
+
+provider:
+  name: aws
+  runtime: dotnetcore2.1
+  environment:
+    personaltoken: ${opt:token, ''}
+    bucketname: ${opt:bucketname, 'dantaylorpro-slack-status-logs'}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ssm:GetParametersByPath"
+        - "s3:GetObject"
+        - "s3:ListBucket"
+        - "s3:PutObject"
+      Resource: '*'
+
+package:
+  artifact: bin/release/netcoreapp2.1/deploy-package.zip
+plugins:
+  - serverless-domain-manager
+custom:
+  customDomain:
+    domainName: slack-status.dancountability.com
+    basePath: 'api'
+    stage: ${opt:stage}
+    createRoute53Record: true
+    certificateName: "*.dancountability.com"
+    endpointType: 'regional'
+    
+resources:
+  Resources:
+    SlackStatusLogs:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${opt:bucketname, '${self:service}-slack-status-logs'}
+
+functions:
+  updatestatus:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::UpdateStatus
+    events:
+      - http:
+          path: update-status/{status}/{emoji}
+          method: post
+          request:
+            parameters:
+              paths:
+                status: true
+                emoji: true

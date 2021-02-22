@@ -1,0 +1,68 @@
+service: netauto-config-drift-api
+
+provider:
+  name: aws
+  runtime: python3.8
+  memorySize: 128
+  versionFunctions: false
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-west-2'}
+  logRetentionInDays: 30
+  iamRoleStatements: ${file(serverless/iam_policies.yml):iamRoleStatements}
+  environment:
+    config_worker: "https://sqs.${opt:region, self:provider.region}.amazonaws.com/${file(config.yml):account_name}/ConfigWorkerSQS"
+    command_worker: "https://sqs.${opt:region, self:provider.region}.amazonaws.com/${file(config.yml):account_name}/CommandWorkerSQS"
+    secret_name: ${file(config.yml):secret_name}
+    region_name: ${opt:region, 'us-west-2'}
+
+functions:
+  api_v1_command:
+    timeout: 25
+    handler: api/v1/command/create.app
+    events:
+      - http:
+          path: api/v1/command
+          method: post
+          cors: true
+
+  api_v1_config:
+    timeout: 25
+    handler: api/v1/config/create.app
+    events:
+      - http:
+          path: api/v1/config
+          method: post
+          cors: true
+
+  api_v1_tasks_list:
+    timeout: 25
+    handler: api/v1/tasks/list.app
+    events:
+      - http:
+          path: api/v1/tasks
+          method: get
+          cors: true
+
+  config-worker:
+    handler: workers/config.app
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - ConfigWorkerSQS
+              - Arn
+
+  command-worker:
+    handler: workers/command.app
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - CommandWorkerSQS
+              - Arn
+
+resources:
+  Resources: ${file(serverless/resources.yml):Resources}
+
+plugins:
+  - serverless-python-requirements

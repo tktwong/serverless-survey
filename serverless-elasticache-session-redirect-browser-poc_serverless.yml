@@ -1,0 +1,48 @@
+service: poc
+
+provider:
+  name: aws
+  runtime: java8
+  environment:
+    REDIS_HOST:
+      "Fn::GetAtt": [ElasticCacheCluster, RedisEndpoint.Address]
+
+package:
+  artifact: target/${self:service}-0.0.1-SNAPSHOT.jar
+
+functions:
+  create-user-session:
+    handler: com.serverless.Handler
+    events:
+      - http:
+          path: /
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    ElasticacheSecurityGroup:
+      Type: 'AWS::EC2::SecurityGroup'
+      Properties:
+        GroupDescription: Elasticache Security Group
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: '11211'
+            ToPort: '11211'
+            CidrIp: '0.0.0.0/0'
+
+    ElasticCacheCluster:
+      Type: AWS::ElastiCache::CacheCluster
+      Properties:
+        AutoMinorVersionUpgrade: true
+        Engine: redis
+        CacheNodeType: ${self:custom.config.CACHE_INSTANCE_SIZE}
+        NumCacheNodes: 1
+        VpcSecurityGroupIds:
+          - !GetAtt
+            - ElasticacheSecurityGroup
+            - GroupId
+
+custom:
+  config:
+    CACHE_INSTANCE_SIZE: cache.t2.micro

@@ -1,0 +1,82 @@
+service: cosmos-api
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+    - serverless-webpack
+    - serverless-offline
+
+custom:
+    # Our stage is based on what is passed in when running serverless
+    # commands. Or fallsback to what we have set in the provider section.
+    stage: ${opt:stage, self:provider.stage}
+    # Set the table name here so we can use it while testing locally
+    attemptsTableName: ${self:custom.stage}-cosmos-attempts
+    projectsTableName: ${self:custom.stage}-cosmos-projects2
+    projectAdminTableName: ${self:custom.stage}-cosmos-project-admin
+    usersTableName: ${self:custom.stage}-cosmos-users
+    challengesTableName: ${self:custom.stage}-cosmos-challenges
+    # Set our DynamoDB throughput for prod and all other non-prod stages.
+    tableThroughputs:
+        prod: 5
+        default: 1
+    tableThroughput: ${self:custom.tableThroughputs.${self:custom.stage}, self:custom.tableThroughputs.default}
+    # Load our webpack config
+    webpack:
+        webpackConfig: ./webpack.config.js
+        includeModules: true
+
+provider:
+    name: aws
+    runtime: nodejs8.10
+    stage: dev
+    region: us-east-1
+
+    # These environment variables are made available to our functions
+    # under process.env.
+    environment:
+        attemptsTableName: ${self:custom.attemptsTableName}
+        projectsTableName: ${self:custom.projectsTableName}
+        challengesTableName: ${self:custom.challengesTableName}
+        projectAdminTableName: ${self:custom.projectAdminTableName}
+        usersTableName: ${self:custom.usersTableName}
+
+    iamRoleStatements:
+        - Effect: Allow
+          Action:
+              - dynamodb:DescribeTable
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+              # Restrict our IAM role permissions to
+              # the specific table for the stage
+          Resource:
+              - 'Fn::GetAtt': [AttemptsTable, Arn]
+              - 'Fn::GetAtt': [ProjectsTable, Arn]
+              - 'Fn::GetAtt': [UsersTable, Arn]
+              - 'Fn::GetAtt': [ChallengesTable, Arn]
+              - 'Fn::GetAtt': [ProjectAdminTable, Arn]
+
+functions:
+    # Attempts Endpoints
+    - ${file(lambdas/attempt/attempts-handlers.yml)}
+    # Users Endpoints
+    - ${file(lambdas/users/users-handlers.yml)}
+    - ${file(lambdas/projects/project-handlers.yml)}
+    - ${file(lambdas/challenges/challenge-handlers.yml)}
+    - ${file(lambdas/judge/judge-handlers.yml)}
+    - ${file(lambdas/score/score-handlers.yml)}
+    - ${file(lambdas/lessons/lessons-handlers.yml)}
+
+resources:
+    # API Gateway Errors
+    - ${file(resources/api-gateway-errors.yml)}
+    # DynamoDB
+    - ${file(resources/dynamodb-table.yml)}
+    # S3
+    - ${file(resources/s3-bucket.yml)}
+    # Cognito
+    - ${file(resources/cognito-user-pool.yml)}
+    - ${file(resources/cognito-identity-pool.yml)}

@@ -1,0 +1,91 @@
+service: lambda-form
+
+# Use the serverless-webpack plugin to transpile ES6
+plugins:
+  - serverless-webpack
+  - serverless-apigw-binary
+  - serverless-offline
+
+# serverless-webpack configuration
+# Enable auto-packing of external modules
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
+  serverless-offline:
+    host: 0.0.0.0
+    port: 5000
+    corsAllowOrigin: "*"
+    corsAllowHeaders: "Origin, X-Requested-With, Content-Type, Accept"
+  apigwBinary:
+    types:
+      - 'application/x-www-form-urlencoded'
+      - 'multipart/form-data'
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        - "*"
+  # To load environment variables externally
+  # rename env.example to env.yml and uncomment
+  # the following line. Also, make sure to not
+  # commit your env.yml.
+  #
+  environment: ${file(env.yml):${self:provider.stage}}
+
+package:
+  exclude:
+    - demo/**
+    - node_modules/**
+    - tests/**
+    - .babelrc
+    - .d*
+    - .e*
+    - .g*
+    - .git/**
+    - .DS_*
+    - docker*.yml
+    - run-*.sh
+
+functions:
+  formPostHandler:
+    handler: handler.formPostHandler
+    events:
+      - http:
+            method: post
+            path: form/{id}
+            cors: true
+            request:
+              parameters:
+                paths:
+                  id: true
+
+  submissionHandler:
+    handler: handler.submissionHandler
+    events:
+      - s3:
+          bucket: ${file(env.yml):${self:provider.stage}.FORMBUCKET}
+          event: s3:ObjectCreated:*
+          rules:
+            - suffix: .submit
+          existing: true
+
+  authHandler:
+    handler: handler.authHandler
+    events:
+      - http:
+            method: post
+            path: auth/{id}/{type}
+            cors: true
+            request:
+              parameters:
+                paths:
+                  id: true
+                  type: true

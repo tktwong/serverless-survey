@@ -1,0 +1,323 @@
+service: damage-report-plots-server-back
+
+custom:
+  arnRegionAccount:
+    Fn::Join:
+      - ':'
+      - - ${self:provider.region}
+        - Ref: 'AWS::AccountId'
+  webpack:
+    includeModules: true
+  defaultStage: dev
+  awsProfiles:
+    dev: drp
+    prod: drp
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: us-west-2
+  profile: ${self:custom.awsProfiles.${self:provider.stage}}
+  timeout: 10
+
+# TODO 一部commonに移す
+  environment: 
+    ARN_REGION_ACCOUNT: ${self:custom.arnRegionAccount}
+    SNS_NOP: ${file(env.${self:provider.stage}.yml):snsNop}
+    CLIENT_ORIGIN: ${file(env.${self:provider.stage}.yml):clientOrigin}
+    SESSION_TTL: ${file(env.${self:provider.stage}.yml):sessionTtl}
+    SAME_SITE: ${file(env.${self:provider.stage}.yml):sameSite}
+    
+    GOOGLE_CLIENT_ID: ${file(.cred.${self:provider.stage}.yml):googleClientId}
+    GOOGLE_CLIENT_SECRET: ${file(.cred.${self:provider.stage}.yml):googleClientSecret}
+    GOOGLE_CALLBACK_URL: ${file(env.${self:provider.stage}.yml):googleCallbackUrl}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "dynamodb:*Item"
+        - "dynamodb:Query"
+      Resource:
+        - Fn::Join:
+          - ':'
+          - - 'arn:aws:dynamodb'
+            - ${self:custom.arnRegionAccount}
+            - '*'
+    - Effect: "Allow"
+      Action:
+        - "sqs:*"
+      Resource:
+        - Fn::Join:
+          - ':'
+          - - 'arn:aws:sqs'
+            - ${self:custom.arnRegionAccount}
+            - '*'
+    - Effect: "Allow"
+      Action:
+        - "sns:Publish"
+      Resource:
+        - Fn::Join:
+          - ':'
+          - - 'arn:aws:sns'
+            - ${self:custom.arnRegionAccount}
+            - '*'
+
+plugins:
+  - serverless-webpack
+
+package:
+  individually: false
+
+functions:
+
+  generateTicket:
+    handler: handler.generateTicket
+    events:
+      - schedule:
+          rate: rate(10 minutes)
+          enabled: false
+    environment:
+      TICKET_GENERATE_UNIT: 1200
+    memorySize: 128
+
+  preExecuteJob:
+    handler: handler.preExecuteJob
+    events:
+      - sns: drp-pre-execute-job
+    timeout: 30
+
+  queueThreads:
+    handler: handler.queueThreads
+    events:
+      - sns: drp-queue-threads
+    environment:
+      THREAD_FETCH_COUNT: 500  # max thread count get from gmail once
+      THREAD_QUEUE_ARRAY_SIZE: 50  # max thread count in 1 sqs message
+    memorySize: 512
+
+  queueReports:
+    handler: handler.queueReports
+    events:
+      - sns: drp-queue-reports
+    environment:
+      THREAD_ARRAY_DEQUEUE_COUNT: 10 # max thread array count dequeue for sqs once
+      THREAD_FETCH_COUNT: 100 # max thread count get from 1 gmail batch
+    memorySize: 768
+    timeout: 60
+
+  appendReportsToSheets:
+    handler: handler.appendReportsToSheets
+    events:
+      - sns: drp-append-reports-to-sheets
+    environment:
+      REPORTS_ARRAY_DEQUEUE_COUNT: 100 # max report count dequeue for sqs once
+    memorySize: 512
+    timeout: 20
+
+  postExecuteJob:
+    handler: handler.postExecuteJob
+    events:
+      - sns: drp-post-execute-job
+
+  putJob:
+    handler: handler.putJob
+    events:
+      - sns: drp-put-job
+
+  putAgent:
+    handler: handler.putAgent
+    events:
+      - sns: drp-put-agent
+
+  getAgent:
+    handler: handler.getAgent
+    events:
+      - http:
+          path: api/me
+          method: get
+          authorizer:
+            name: authorize
+            type: request
+          cors:
+            origin: ${file(env.${self:provider.stage}.yml):clientOrigin}
+            allowCredentials: true
+
+  signin:
+    handler: handler.signin
+    events:
+      - http:
+          path: api/signin
+          method: post
+          cors:
+            origin: ${file(env.${self:provider.stage}.yml):clientOrigin}
+            allowCredentials: true
+
+  signup:
+    handler: handler.signup
+    events:
+      - http:
+          path: api/signup
+          method: post
+          cors:
+            origin: ${file(env.${self:provider.stage}.yml):clientOrigin}
+            allowCredentials: true
+
+  signout:
+    handler: handler.signout
+    events:
+      - http:
+          path: api/signout
+          method: post
+          cors:
+            origin: ${file(env.${self:provider.stage}.yml):clientOrigin}
+            allowCredentials: true
+
+  createJob:
+    handler: handler.createJob
+    events:
+      - http:
+          path: api/job
+          method: post
+          authorizer:
+            name: authorize
+            type: request
+          cors:
+            origin: ${file(env.${self:provider.stage}.yml):clientOrigin}
+            allowCredentials: true
+
+  listJob:
+    handler: handler.listJob
+    events:
+      - http:
+          path: api/jobs
+          method: get
+          cors: true
+
+  canCreateJob:
+    handler: handler.canCreateJob
+    events:
+      - http:
+          path: api/system
+          method: get
+          cors: true
+
+  getStatus: # system & user
+    handler: handler.getStatus
+    events:
+      - http:
+          path: api/status
+          method: get
+          cors: true
+
+  authorize: # custom authorizer
+    handler: handler.authorize
+    memorySize: 256
+
+    
+
+
+resources:
+  Resources:
+    JobQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: JobQueue.fifo
+        FifoQueue: true
+        ContentBasedDeduplication: true
+
+    JobTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: job
+        AttributeDefinitions:
+          - AttributeName: openId
+            AttributeType: S
+          - AttributeName: createTime
+            AttributeType: N
+        KeySchema:
+          - AttributeName: openId
+            KeyType: HASH
+          - AttributeName: createTime
+            KeyType: RANGE
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    AgentTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: agent
+        AttributeDefinitions:
+          - AttributeName: openId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: openId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    TicketTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ticket
+        AttributeDefinitions:
+          - AttributeName: name
+            AttributeType: S
+        KeySchema:
+          - AttributeName: name
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    SessionTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: session
+        AttributeDefinitions:
+          - AttributeName: sessionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: sessionId
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+
+    StaticResource:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: damage-report-plots-static
+        WebsiteConfiguration:
+          IndexDocument: index.html
+
+
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'${file(env.${self:provider.stage}.yml):clientOrigin}'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
+
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+
+    GatewayResponse500:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'${file(env.${self:provider.stage}.yml):clientOrigin}'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Credentials: "'true'"
+        ResponseType: AUTHORIZER_FAILURE
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '500'

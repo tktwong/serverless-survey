@@ -1,0 +1,297 @@
+service: gamemastery
+
+provider:
+  name: aws
+  versionFunctions: false
+  region: eu-central-1
+  runtime: python2.7
+  environment:
+    GMA_AWS_DB_TABLE_NAME: ${env:GMA_AWS_DB_TABLE_NAME}
+    GMA_AWS_DOWNLOAD_QUEUE_NAME: ${env:GMA_AWS_DOWNLOAD_QUEUE_NAME}
+    GMA_AWS_BUCKET_NAME: ${env:GMA_AWS_BUCKET_NAME}
+    GMA_AWS_ANALYZER_QUEUE_NAME: ${env:GMA_AWS_ANALYZER_QUEUE_NAME}
+    GMA_MIXER_API_CLIENT_ID: ${env:GMA_MIXER_API_CLIENT_ID}
+    GMA_MIXER_API_CHANNEL_ID: ${env:GMA_MIXER_API_CHANNEL_ID}
+  iamRoleStatements:
+    -
+      Effect: Allow
+      Action:
+        - sqs:GetQueueUrl
+        - sqs:ReceiveMessage
+        - sqs:SendMessage
+        - sqs:DeleteMessage
+      Resource:
+        Fn::GetAtt:
+          - RecordingDownloadQueue
+          - Arn
+    -
+      Effect: Allow
+      Action:
+        - sqs:GetQueueUrl
+        - sqs:SendMessage
+      Resource:
+        Fn::GetAtt:
+          - RecordingAnalyzerQueue
+          - Arn
+    -
+      Effect: Allow
+      Action:
+        - dynamodb:BatchGetItem
+        - dynamodb:BatchWriteItem
+      Resource:
+        Fn::GetAtt:
+          - GameRecordings
+          - Arn
+    -
+      Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:AbortMultipartUpload
+      Resource:
+        Fn::Join: ['', [Fn::GetAtt: [ RecordingBucket, Arn ], '/*'] ]
+functions:
+  mixer:
+    handler: mixer.handler
+    events:
+      - schedule: rate(1 day)
+  sfn_poll_queue:
+    handler: step_fns.poll_queue
+  sfn_get_recording_size:
+    handler: step_fns.get_recording_size
+  sfn_initiate_multipart_upload:
+    handler: step_fns.initiate_multipart_upload
+  sfn_upload_part:
+    handler: step_fns.upload_part
+    timeout: 600
+  sfn_merge_partial_uploads:
+    handler: step_fns.merge_partial_uploads
+  sfn_complete_upload:
+    handler: step_fns.complete_upload
+  sfn_abort_upload:
+    handler: step_fns.abort_upload
+  sfn_finalize_recording:
+    handler: step_fns.finalize_recording
+  sfn_ignore_recording:
+    handler: step_fns.ignore_recording
+
+stepFunctions:
+  stateMachines:
+    MixerRecording:
+      name: MixerRecordingStateMachine
+      events:
+        - schedule: rate(12 hours)
+      definition:
+        StartAt: PollQueue
+        States:
+          PollQueue:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_poll_queue
+            Next: CheckForWork
+          CheckForWork:
+            Type: Choice
+            Choices:
+              -
+                Variable: $.id
+                NumericGreaterThan: -1
+                Next: GetRecordingSize
+            Default: EndWithSuccess
+          GetRecordingSize:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_get_recording_size
+            Next: CheckMaximumFileSize
+          CheckMaximumFileSize:
+            Type: Choice
+            Choices:
+              - And:
+                - Variable: "$.size"
+                  NumericGreaterThan: 0
+                - Variable: "$.size"
+                  NumericLessThanEquals: 8589934592
+                Next: InitiateMultipartUpload
+              - Variable: $.size
+                NumericLessThanEquals: -1
+                Next: IgnoreRecording
+            Default: EndWithFailure
+          InitiateMultipartUpload:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_initiate_multipart_upload
+            Next: IsUploadFinished
+          IsUploadFinished:
+            Type: Choice
+            Choices:
+              -
+                Variable: $.is_completed
+                BooleanEquals: false
+                Next: UploadLoop
+            Default: CompleteMultipartUpload
+          UploadLoop:
+            Type: Parallel
+            Next: MergePartialUploads
+            Branches:
+              -
+                StartAt: First
+                States:
+                  First:
+                    Type: Task
+                    Parameters:
+                      number: 1
+                      url.$: $.url
+                      id.$: $.id
+                      part_base_no.$: $.part_base_no
+                      upload_id.$: $.upload_id
+                      size.$: $.size
+                      is_completed.$: $.is_completed
+                      completed_parts.$: $.completed_parts
+                      message_id.$: $.message_id
+                      message_receipt_handle.$: $.message_receipt_handle
+                      key.$: $.key
+                    Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_upload_part
+                    End: true
+              -
+                StartAt: Second
+                States:
+                  Second:
+                    Type: Task
+                    Parameters:
+                      number: 2
+                      url.$: $.url
+                      id.$: $.id
+                      part_base_no.$: $.part_base_no
+                      upload_id.$: $.upload_id
+                      size.$: $.size
+                      is_completed.$: $.is_completed
+                      completed_parts.$: $.completed_parts
+                      message_id.$: $.message_id
+                      message_receipt_handle.$: $.message_receipt_handle
+                      key.$: $.key
+                    Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_upload_part
+                    End: true
+              -
+                StartAt: Third
+                States:
+                    Third:
+                      Type: Task
+                      Parameters:
+                        number: 3
+                        url.$: $.url
+                        id.$: $.id
+                        part_base_no.$: $.part_base_no
+                        upload_id.$: $.upload_id
+                        size.$: $.size
+                        is_completed.$: $.is_completed
+                        completed_parts.$: $.completed_parts
+                        message_id.$: $.message_id
+                        message_receipt_handle.$: $.message_receipt_handle
+                        key.$: $.key
+                      Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_upload_part
+                      End: true
+            Catch:
+              -
+                ErrorEquals:
+                  - States.ALL
+                Next: AbortMultipartUpload
+                ResultPath: $.error
+          MergePartialUploads:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_merge_partial_uploads
+            Next: IsUploadFinished
+          CompleteMultipartUpload:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_complete_upload
+            Next: FinalizeRecording
+          FinalizeRecording:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_finalize_recording
+            Next: EndWithSuccess
+          IgnoreRecording:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_ignore_recording
+            Next: EndWithSuccess
+          AbortMultipartUpload:
+            Type: Task
+            Resource: arn:aws:lambda:#{AWS::Region}:#{AWS::AccountId}:function:${self:service}-${opt:stage}-sfn_abort_upload
+            Next: EndWithFailure
+          EndWithFailure:
+            Type: Fail
+          EndWithSuccess:
+            Type: Succeed
+
+plugins:
+  - serverless-dynamodb-local
+  - serverless-step-functions
+  - serverless-pseudo-parameters
+
+custom:
+  dynamodb:
+    start:
+      migrate: true
+
+resources:
+  Resources:
+    GameRecordings:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: GameRecordings
+        AttributeDefinitions:
+          - AttributeName: "Channel"
+            AttributeType: "S"
+          - AttributeName: "Recording"
+            AttributeType: "N"
+        KeySchema:
+          - AttributeName: "Channel"
+            KeyType: "HASH"
+          - AttributeName: "Recording"
+            KeyType: "RANGE"
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    RecordingDownloadDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "RecordingDownloadDeadLetterQueue"
+    RecordingDownloadQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "RecordingDownloadQueue"
+        VisibilityTimeout: 3600
+        RedrivePolicy:
+          deadLetterTargetArn: ${self:resources.Outputs.RecordingDownloadDeadLetterQueue.Value}
+          maxReceiveCount: 4
+    RecordingAnalyzerDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "RecordingAnalyzerDeadLetterQueue"
+    RecordingAnalyzerQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "RecordingAnalyzerQueue"
+        VisibilityTimeout: 43200
+        RedrivePolicy:
+          deadLetterTargetArn: ${self:resources.Outputs.RecordingAnalyzerDeadLetterQueue.Value}
+          maxReceiveCount: 4
+    RecordingBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${env:GMA_AWS_BUCKET_NAME}
+        VersioningConfiguration:
+          Status: Suspended
+        LifecycleConfiguration:
+          Rules:
+            -
+              AbortIncompleteMultipartUpload:
+                DaysAfterInitiation: 1
+              Status: Enabled
+
+  Outputs:
+    RecordingDownloadQueue:
+      Description: "The ARN of the recording download queue"
+      Value:
+        "Fn::GetAtt": [ RecordingDownloadQueue, Arn ]
+    RecordingDownloadDeadLetterQueue:
+      Description: "The ARN of the recording dead letter queue"
+      Value:
+        "Fn::GetAtt": [ RecordingDownloadDeadLetterQueue, Arn ]
+    RecordingAnalyzerDeadLetterQueue:
+      Description: "The ARN of the anaylzer dead letter queue"
+      Value:
+        "Fn::GetAtt": [ RecordingAnalyzerDeadLetterQueue, Arn ]

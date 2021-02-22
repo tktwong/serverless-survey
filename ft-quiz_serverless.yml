@@ -1,0 +1,49 @@
+service: ftlabs-quiz
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: dev
+  region: eu-west-1
+  timeout: 30
+  environment:
+    LANTERN_API_KEY: "${file(./serverless.env.yml):dev.LANTERN_API_KEY}"
+    CAPI_KEY: "${file(./serverless.env.yml):dev.CAPI_KEY}"
+    FT_LOGO: "${file(./serverless.env.yml):dev.FT_LOGO}"
+    IMAGE_SERVICE_URL: "${file(./serverless.env.yml):dev.IMAGE_SERVICE_URL}"
+    REPLACE_IMG_URL: "${file(./serverless.env.yml):dev.REPLACE_IMG_URL}"
+    CELEB_IMAGE_STORE: "${self:service}-${opt:stage, self:provider.stage}-celeb-image-store"
+  stackTags:
+    environment: p
+    teamDL: ftlabs@ft.com
+    systemCode: ftlabs-quiz
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - rekognition:DetectFaces
+        - rekognition:RecognizeCelebrities
+        - comprehend:DetectKeyPhrases
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+      Resource: "arn:aws:s3:::${self:provider.environment.CELEB_IMAGE_STORE}/*"
+
+functions:
+  ftlabs-quiz:
+    handler: handler.ftlabsQuiz
+    events:
+      - http:
+          path: ftlabsQuiz
+          method: get
+          cors:
+            origin: "*"
+            headers:
+              - Access-Control-Allow-Origin
+
+resources:
+  Resources:
+    S3TranscriptionBucket:
+      Type: "AWS::S3::Bucket"
+      Properties:
+        BucketName: ${self:provider.environment.CELEB_IMAGE_STORE}

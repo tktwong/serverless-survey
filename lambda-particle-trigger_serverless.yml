@@ -1,0 +1,106 @@
+service: lambda-particle-trigger
+
+provider:
+  region: eu-west-2
+  name: aws
+  runtime: nodejs8.10
+  memorySize: 128
+  timeout: 10
+  tracing: true
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource:
+        - "*"
+  stage: ${opt:stage, 'staging'}
+  environment:
+    CONFIG: ${env:CONFIG}
+    STAGE: ${self:provider.stage}
+
+functions:
+  set:
+    handler: src/index.handler
+    events:
+      - schedule:
+          rate: cron(0 15 * * ? *)
+          input:
+            data: true
+      - schedule:
+          rate: cron(30 20 * * ? *)
+          input:
+            data: false
+  # toggle:
+  #   handler: src/index.handler
+  #   events:
+  #     - iot:
+  #         sql: "SELECT * FROM 'iotbutton/${self:custom.iotThingDSN}'"
+
+resources:
+  Resources:
+    IotButtonGardenLights:
+      Type: "AWS::SSM::Parameter"
+      Properties:
+        Description: IotButtonGardenLights
+        Name: ${self:service}-${self:provider.stage}-garden-lights
+        Type: String
+        Value: "0"
+
+    # IoTThing:
+    #   Type: AWS::IoT::Thing
+    #   Properties:
+    #     ThingName:
+    #       Fn::Join:
+    #         - ''
+    #         - - iotbutton_
+    #           - ${self:custom.iotThingDSN}
+
+    # IoTPolicy:
+    #   Type: AWS::IoT::Policy
+    #   Properties:
+    #     PolicyDocument:
+    #       Version: '2012-10-17'
+    #       Statement:
+    #       - Action: iot:Publish
+    #         Effect: Allow
+    #         Resource:
+    #           Fn::Join:
+    #             - ''
+    #             - - 'arn:aws:iot:'
+    #               - Ref: AWS::Region
+    #               - ":"
+    #               - Ref: AWS::AccountId
+    #               - ":topic/iotbutton/"
+    #               - ${self:custom.iotThingDSN}
+
+    # IoTPolicyPrincipalAttachment:
+    #   Type: AWS::IoT::PolicyPrincipalAttachment
+    #   Properties:
+    #     PolicyName:
+    #       Ref: IoTPolicy
+    #     Principal: ${self:custom.iotThingCertARN}
+
+    # IoTThingPrincipalAttachment:
+    #   Type: AWS::IoT::ThingPrincipalAttachment
+    #   Properties:
+    #     Principal: ${self:custom.iotThingCertARN}
+    #     ThingName:
+    #       Ref: IoTThing
+
+
+
+plugins:
+  - serverless-webpack
+
+custom:
+#   iotThingDSN: ${file(./iot-dash-certs/iot-thing-dsn.txt)}
+#   iotThingCertARN: ${file(./iot-dash-certs/iot-thing-cert-arn.txt)}
+
+  webpack:
+    includeModules:
+      forceExclude:
+        - aws-sdk
+
+  serverless-offline:
+    port: 4000

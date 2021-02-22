@@ -1,0 +1,308 @@
+service: SMSPMock
+
+# Files we don't need to deploy to AWS
+package:
+  individually: true
+  exclude:
+    - Requirements_Pack.tar.gz
+    - readme.md
+    - SMSP-StubTester-soapui-project.xml
+    - license.txt
+    - LICENSE
+
+plugins:
+  - serverless-plugin-optimize
+  - serverless-domain-manager
+custom:
+  accountID: ${env:AWS_ACCOUNT_ID}
+  regionName: ${self:provider.region}
+  stageName: ${self:provider.stage}
+  customDomain:
+    domainName: ${env:DOMAIN_NAME}
+    basePath: ''
+    stage: ${self:provider.stage}
+    createRoute53Record: true
+
+provider:
+  name: aws
+  stage: prod
+  runtime: nodejs8.10
+  role: arn:aws:iam::${self:custom.accountID}:role/service-role/LambdaRole
+  region: eu-west-2 # London
+  versionFunctions: false # We don't want to retain older versions when we update a function.
+  stackTags:
+    STACK: "${self:service}"
+    REGION: "${self:custom.regionName}"
+    SERVICE: "${self:service}"
+  environment:
+    accountID: ${self:custom.accountID}
+    regionName: ${self:provider.region}
+    stageName: ${self:provider.stage}
+
+functions:
+  Homepage:
+    handler: Homepage.entrypoint
+    description: Generates a default Homepage
+    memorySize: 128
+    timeout: 2
+    events:
+      - http:
+          method: get
+          path: /
+          integration: lambda-proxy
+
+  LoadData:
+    handler: LoadData.entrypoint
+    description: Loads data into DynamoDB to play (test) with
+    memorySize: 2048
+    timeout: 30
+    events:
+      - sns: arn:aws:sns:${self:custom.regionName}:${self:custom.accountID}:${self:provider.stage}-awaken
+      - http:
+          method: get
+          path: /LoadData
+          integration: lambda-proxy
+
+  Patient:
+    handler: Patient.entrypoint
+    description: Shows a list of all loaded patients
+    memorySize: 128
+    timeout: 2
+    events:
+      - sns: arn:aws:sns:${self:custom.regionName}:${self:custom.accountID}:${self:provider.stage}-awaken
+      - http:
+          method: get
+          path: /Patient
+          integration: lambda-proxy
+
+  Logs:
+    handler: Logs.entrypoint
+    description: Shows the message logs
+    memorySize: 128
+    timeout: 2
+    events:
+      - sns: arn:aws:sns:${self:custom.regionName}:${self:custom.accountID}:${self:provider.stage}-awaken
+      - http:
+          method: get
+          path: /Logs
+          integration: lambda-proxy
+
+  Test:
+    handler: Test.entrypoint
+    description: Shows the Test form, allowing us to exercide the SOAP service
+    memorySize: 128
+    timeout: 2
+    events:
+      - sns: arn:aws:sns:${self:custom.regionName}:${self:custom.accountID}:${self:provider.stage}-awaken
+      - http:
+          method: get
+          path: /Test
+          integration: lambda-proxy
+
+  logdata:
+    handler: logdata.entrypoint
+    description: Returns items from ${self:provider.stage}-pds-messages table, and details of one log entry
+    memorySize: 128
+    timeout: 5
+    events:
+      - sns: arn:aws:sns:${self:custom.regionName}:${self:custom.accountID}:${self:provider.stage}-awaken
+      - http:
+          method: get
+          path: /logdata
+          integration: lambda-proxy
+
+  pdsdata:
+    handler: pdsdata.entrypoint
+    description: Returns items from ${self:provider.stage}-pds-data table, and details of one using the URL pattern /pdsdata/1234554321
+    memorySize: 128
+    timeout: 5
+    events:
+      - sns: arn:aws:sns:${self:custom.regionName}:${self:custom.accountID}:${self:provider.stage}-awaken
+      - http:
+          method: get
+          path: /pdsdata
+          integration: lambda-proxy
+
+  Service:
+    handler: service.entrypoint
+    description: Code that implements a mock SMSP service
+    memorySize: 128
+    timeout: 4
+    events:
+      - sns: arn:aws:sns:${self:custom.regionName}:${self:custom.accountID}:${self:provider.stage}-awaken
+      - http:
+          method: post
+          path: service
+          integration: lambda-proxy
+
+  FHIRGET:
+    handler: fhirget.entrypoint
+    description: Code that implements a FHIR Instance Read service
+    memorySize: 128
+    timeout: 4
+    events:
+      - sns: arn:aws:sns:${self:custom.regionName}:${self:custom.accountID}:${self:provider.stage}-awaken
+      - http:
+          method: get
+          path: /fhir/Patient/{patID}
+          integration: lambda-proxy
+
+  FHIRSEARCH:
+    handler: fhirsearch.entrypoint
+    description: Code that implements a mock SMSP service
+    memorySize: 128
+    timeout: 4
+    events:
+      - sns: arn:aws:sns:${self:custom.regionName}:${self:custom.accountID}:${self:provider.stage}-awaken
+      - http:
+          method: get
+          path: /fhir/Patient
+          integration: lambda-proxy
+
+  FHIRCAP:
+    handler: fhircap.entrypoint
+    description: Returns a capability statement.
+    memorySize: 128
+    timeout: 2
+    events:
+      - http:
+          method: get
+          path: /fhir/metadata
+
+  FHIRBASE:
+    handler: fhircap.entrypoint
+    description: Returns a capability statement.
+    memorySize: 128
+    timeout: 2
+    events:
+      - http:
+          method: options
+          path: /fhir
+
+resources:
+  Resources:
+    PdsdataLogGroup:  # Log group for the pdsdata function
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+    FHIRSEARCHLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+    FHIRGETLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+
+    LogdataLogGroup: # Log group for the logdata function
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+    ServiceLogGroup: # Log group for the service function
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "3"
+
+    PatientLogGroup: # Log group for the Patient function
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+    LoadDataLogGroup: # Log group for the LoadData function
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+    HomepageLogGroup: # Log group for the Homepage function
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+    LogsLogGroup: # Log group for the Logs function
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+    TestLogGroup:  # Log group for the pdsdata function
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+    FHIRCAPLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+    FHIRCAP2LogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        RetentionInDays: "1"
+
+    AwakenQ:  # SNS Topic, where we send wakey wakey messages to other lambdas when homepage is run.
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: "Messages to wake other lambdas"
+        TopicName: ${self:provider.stage}-awaken
+
+    MessageTable:  # DynamoDB table in which we'll log requests and responses...
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.stage}-pds-messages
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: expires
+          Enabled: true
+
+    PDSTable:  # DynamoDB table in which we'll log requests and responses...
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.stage}-pds-data
+        AttributeDefinitions:
+          - AttributeName: nhs_number
+            AttributeType: S
+          - AttributeName: family_name
+            AttributeType: S
+          - AttributeName: dob
+            AttributeType: S
+          - AttributeName: traceindex
+            AttributeType: S
+        KeySchema:
+          - AttributeName: nhs_number
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 10
+        GlobalSecondaryIndexes:
+          - IndexName: name
+            KeySchema:
+            - AttributeName: family_name
+              KeyType: HASH
+            - AttributeName: dob
+              KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 2
+              WriteCapacityUnits: 10
+          - IndexName: traceindex
+            KeySchema:
+            - AttributeName: traceindex
+              KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 2
+              WriteCapacityUnits: 10
+

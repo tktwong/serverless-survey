@@ -1,0 +1,115 @@
+# Serverless Framework creates your stack on AWS using this as the name.
+service: ps-desafio-api
+
+# Create an optimized package for our functions 
+package:
+  individually: true
+
+plugins:
+  - serverless-bundle # Package our functions with Webpack
+  - serverless-offline
+  - serverless-dotenv-plugin # Load .env as environment variables
+
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: ${env:NODE_ENV}
+  region: us-east-1 # TODO: verificar se posso alterar pra us-east-2, 
+  # pois é a região do dynamo e c9
+
+  # These environment variables are made available to our functions
+  # under process.env.
+  environment:
+    tableName: ${env:DYNAMO_TABLE_NAME}
+    NODE_ENV: ${env:NODE_ENV}
+    EMAIL: ${env:FROM_EMAIL}
+    DOMAIN: ${env:DOMAIN}
+
+  # 'iamRoleStatements' defines the permission policy for the Lambda function.
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:us-east-2:420758696810:*/*"
+    - Effect: "Allow"
+      Action:
+        - "ses:SendEmail"
+      Resource: "*"
+      
+functions:
+  # Defines an HTTP API endpoint that calls the main function in create.js
+  # - path: url path is /purchases
+  # - authorizer: authenticate using the AWS IAM role
+  create:
+    handler: create.main
+    events:
+      - http:
+          path: purchases
+          method: post
+          cors: true
+          authorizer: aws_iam
+
+  get:
+    # Defines an HTTP API endpoint that calls the main function in get.js
+    # - path: url path is /purchases/{id}
+    handler: get.main
+    events:
+      - http:
+          path: purchases/{id}
+          method: get
+          cors: true
+          authorizer: aws_iam
+  
+  list:
+    # Define um endpoint na api que retorna a lista de compras na api em list.js
+    # no caso: retorna a lista de um certo usuario, nao é um getall
+    # path: /purchases
+    handler: list.main
+    events:
+      - http:
+          path: purchases
+          method: get
+          cors: true
+          authorizer: aws_iam
+        
+  
+  update:
+    # Define um endpoint pra atualizar a compra (reserva) em update.js
+    # path: /purchases/{id}
+    handler: update.main
+    events:
+      - http:
+          path: purchases/{id}
+          method: put
+          cors: true
+          authorizer: aws_iam
+  
+  delete:
+    # Defines an HTTP API endpoint that calls the main function in delete.js
+    # - path: url path is /purchases/{id}
+    handler: delete.main
+    events:
+      - http:
+          path: purchases/{id}
+          method: delete
+          cors: true
+          authorizer: aws_iam
+  
+  mail:
+    handler: mail.main
+    events:
+      - http:
+          path: mail
+          method: post
+          cors: true
+          
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}

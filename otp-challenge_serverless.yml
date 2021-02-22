@@ -1,0 +1,68 @@
+service: otp-service
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-finch
+  - serverless-build-client
+package:
+  exclude:
+    - build/**
+    - node_modules/**
+    - public/**
+    - src/**
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+        - ses:SendEmail
+      Resource: "*"
+# Un-comment to create table on deploy:
+# resources:
+#   Resources:
+#     OtpTable:
+#       Type: "AWS::DynamoDB::Table"
+#       DeletionPolicy: Retain
+#       Properties:
+#         TableName: ${env:DYNAMO_TABLE_NAME}
+#         AttributeDefinitions:
+#           - AttributeName: "email"
+#             AttributeType: "S"
+#         KeySchema:
+#           - AttributeName: "email"
+#             KeyType: "HASH"
+#         ProvisionedThroughput:
+#           ReadCapacityUnits: 1
+#           WriteCapacityUnits: 1
+functions:
+  requestOtp:
+    handler: api/OtpService.request
+    memorySize: 128
+    description: Request a one time password
+    events:
+      - http:
+          path: otp/request
+          method: post
+          cors: true
+  verifyOtp:
+    handler: api/OtpService.verify
+    memorySize: 128
+    description: Verify a one time password
+    events:
+      - http:
+          path: otp/verify
+          method: post
+          cors: true
+custom:
+  client:
+    bucketName: ${env:S3_BUCKET_NAME}
+    distributionFolder: build
+  buildClient:
+    environment:
+      REACT_APP_API_URL: ${cf:otp-service-dev.ServiceEndpoint}

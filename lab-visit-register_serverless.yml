@@ -1,0 +1,93 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: visits
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  profile:
+    prod: ucr-production
+    dev: default
+
+provider:
+  name: aws
+  runtime: nodejs6.10
+  region: us-west-1
+  profile: ${self:custom.profile.${self:custom.stage}}
+
+  environment:
+    VISITS_TABLE: visits-${opt:stage, self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["VisitsDynamoDbTable", "Arn"] }
+
+functions:
+  visits:
+    handler: visits.handler
+    events:
+      - http:
+          path: /visits
+          method: get
+          cors: true
+      - http:
+          path: /visits
+          method: post
+          cors: true
+      - http:
+          path: /visit/{visit}
+          method: any
+          cors: true
+          request:
+            parameters:
+              paths:
+                visit: true
+
+resources:
+  Resources:
+    VisitsDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+        TableName: ${self:provider.environment.VISITS_TABLE}
+    ServerErrorGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_5XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'

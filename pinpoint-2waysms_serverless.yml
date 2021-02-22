@@ -1,0 +1,65 @@
+service: pinpoint-2way
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+# frameworkVersion: "=X.X.X"
+
+provider:
+  name: aws
+  memorySize: 512
+  timeout: 10
+  runtime: dotnetcore2.1
+  region: us-west-2
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "mobiletargeting:SendMessages"
+      Resource:
+        - "arn:aws:mobiletargeting:${self:provider.region}:012345678912:apps/${self:provider.environment.projectId}/*"
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:DescribeTable
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.dynamodbTable}"  
+  environment:
+    region: ${self:provider.region}
+    originationNumber: "+17148675309"
+    projectId: "14f0aecacb69421a88a0de8a56946417"
+    dynamodbTable: "Report"
+
+package:
+  individually: true
+
+functions:
+  processsms:
+    handler: CsharpHandlers::AwsDotnetCsharp.Handler::ProcessSms
+    package:
+      artifact: bin/release/netcoreapp2.1/processsms.zip
+    events:
+      - sns: sms-received
+
+resources:
+ Resources:
+   Report:
+     Type: AWS::DynamoDB::Table
+     Properties:
+       TableName: ${self:provider.environment.dynamodbTable}
+       AttributeDefinitions:
+         -
+           AttributeName: Id
+           AttributeType: S
+       KeySchema:
+         -
+           AttributeName: Id
+           KeyType: HASH
+       ProvisionedThroughput:
+         ReadCapacityUnits: 1
+         WriteCapacityUnits: 1

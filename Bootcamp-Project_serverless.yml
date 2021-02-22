@@ -1,0 +1,91 @@
+service: employees-api # NOTE: update this with your service name
+
+custom:
+  employeesTableName: 'Employees_Table'
+
+
+provider:
+
+  name: aws
+  runtime: java8
+  defaultStage: featuredev
+  defaultAppCode: ebm
+  appCode: ${opt:appCode, self:provider.defaultAppCode}
+  stage: ${opt:stage, self:provider.defaultStage}
+  region: ${opt:region,'ap-southeast-1'}
+  functionNamePrefix: ${self:provider.appCode}-${self:provider.stage}
+  stackName: ${self:provider.functionNamePrefix}-${self:service}
+  role:
+    Fn::ImportValue: ${self:provider.appCode}-${self:provider.stage}-LambdaExecutionDynamoDBRole
+ # iamRoleStatements:
+ #   - Effect: Allow
+ #     Action:
+ #       - ebm-${self:provider.stage}-LambdaExecutionDynamoDBRole
+ #     Resource:
+ #       - {"Fn::GetAtt": ["EmployeesDynamoDBTable", "Arn" ] }
+ # environment:
+ #   EMPLOYEES_TABLE_NAME: ${self:custom.employeesTableName}
+
+
+
+package:
+  artifact: 'target/${self:service}-${self:provider.stage}.jar'
+
+functions:
+  getEmployee:
+    name: ${self:provider.functionNamePrefix}-get-employee
+    handler: com.serverless.GetEmployeeHandler
+    events:
+      - http :
+          path : /employees/{id}
+          method : get
+          cors: true
+  createEmployee:
+    name: ${self:provider.functionNamePrefix}-create-employee
+    handler: com.serverless.CreateEmployeeHandler
+    events:
+      - http :
+          path : /employees
+          method : post
+          cors: true
+  deleteEmployee:
+    name: ${self:provider.functionNamePrefix}-delete-employee
+    handler: com.serverless.DeleteEmployeeHandler
+    events:
+      - http :
+          path : /employees/{id}
+          method : delete
+          cors: true
+  updateEmployee:
+    name: ${self:provider.functionNamePrefix}-update-employee
+    handler: com.serverless.UpdateEmployeeHandler
+    events:
+      - http :
+          path : /employees/{id}
+          method : put
+          cors: true
+  listEmployee:
+    name: ${self:provider.functionNamePrefix}-list-employee
+    handler: com.serverless.ListEmployeeHandler
+    events:
+      - http :
+          path : /employees
+          method: get
+          cors: true
+
+
+resources:
+  Resources:
+    EmployeesDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.functionNamePrefix}-${self:custom.employeesTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1

@@ -1,0 +1,66 @@
+service: product-customer-action
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-pseudo-parameters
+  - serverless-iam-roles-per-function
+  - serverless-offline
+  - serverless-prune-plugin
+  - serverless-stack-output
+
+custom:
+  serverless-offline:
+    port: 4000
+  # inherits iamRoleStatements from top level
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+  productQueueArn:
+    integration-test: '#{ProductQueue.Arn}'
+    test: ${ssm:/common/sqs/product-customer-action/arn}
+    qa: ${ssm:/common/sqs/product-customer-action/arn}
+    prod: ${ssm:/common/sqs/product-customer-action/arn}
+  output:
+    file: __tests__/__helpers__/generated.integration-test.output.json # serverless-stack-output
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  # queue visibility timeout is set to 930 in terraform. timeout <= visibility timeout
+  timeout: ${opt:timeout, '900'}
+  region: eu-west-1
+  stage: ${opt:stage}
+  environment:
+    SSM_PRODUCTS_TABLE: /dynamodb/productsTable
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - xray:PutTraceSegments
+        - xray:PutTelemetryRecords
+      Resource: '*'
+
+functions:
+  dynamo-updater:
+    handler: src/functions/customer-action.handler
+    iamRoleStatementsName: product-customer-action-${self:provider.stage}-#{AWS::Region}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:#{AWS::Region}:#{AWS::AccountId}:table/Products*
+      - Effect: Allow
+        Action:
+          - ssm:GetParameters
+        Resource: arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter${self:provider.environment.SSM_PRODUCTS_TABLE}
+      - Effect: Allow
+        Action:
+          - sqs:DeleteMessage
+          - sqs:GetQueueAttributes
+          - sqs:ReceiveMessage
+          - sqs:SendMessage
+        Resource: ${self:custom.productQueueArn.${self:provider.stage}}
+    events:
+      - sqs: ${self:custom.productQueueArn.${self:provider.stage}}
+
+resources:
+  # resources for integration test, other stage resources are created by terraform
+  - ${file(resources/integration-test-cf.yml)}

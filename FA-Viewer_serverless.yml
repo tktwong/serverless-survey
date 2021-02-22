@@ -1,0 +1,88 @@
+service: faviewer
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - s3:ListBucket
+        - s3:PutObject
+        - s3:GetObject
+        - s3:AbortMultipartUpload
+        - s3:ListMultipartUploadParts
+        - lambda:InvokeFunction
+        - logs:PutLogEvent
+        - logs:CreateLogStream
+        - logs:CreateLogGroup
+      Resource:
+        - '*'
+
+    - Effect: 'Allow'
+      Action:
+        - athena:GetWorkGroup
+        - athena:StartQueryExecution
+        - athena:StopQueryExecution
+        - athena:GetQueryExecution
+        - athena:GetQueryResults
+        - glue:GetTable
+      Resource:
+        - '*'
+
+package:
+  exclude:
+    - ./**
+  include:
+    - web/dist/**
+    - backend/**
+
+functions:
+  graphql:
+    handler: backend/graphql.graphqlHandler
+    access: public
+    timeout: 30
+    events:
+      - http:
+          path: graphql
+          method: post
+          cors: true
+      - http:
+          path: graphql
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        BucketName: ${self:custom.siteName}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: '*'
+              Action:
+                - s3:GetObject
+              Resource:
+                Fn::Join: ['', ['arn:aws:s3:::', { 'Ref': 'StaticSite' }, '/*']]
+
+plugins:
+  - serverless-s3-sync
+  - serverless-offline
+
+custom:
+  siteName: fa-viewer-web-bucket.com
+  s3Sync:
+    - bucketName: ${self:custom.siteName}
+      localDir: web/dist

@@ -1,0 +1,52 @@
+service: rental
+provider:
+  name: aws
+  runtime: nodejs12.x
+  cfnRole: arn:aws:iam::718523126320:role/serverless
+  stage: prod
+  environment:
+    locationIQKey: ${ssm:/rental-manager/locationIQKey~true}
+
+functions:
+  onward:
+    handler: handler.private
+    events:
+      - http:
+          path: /home
+          method: ANY
+          authorizer:
+            type: COGNITO_USER_POOLS
+            authorizerId:
+              Ref: ApiGatewayAuthorizer
+
+resources:
+  Resources:
+    ApiGatewayAuthorizer:
+      DependsOn:
+        - ApiGatewayRestApi
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: cognito-authorizer
+        IdentitySource: method.request.header.Authorization
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        Type: COGNITO_USER_POOLS
+        ProviderARNs:
+          - Fn::GetAtt: [CognitoUserPool, Arn]
+
+plugins:
+  - serverless-offline
+  - serverless-s3-deploy
+
+custom:
+  assets:
+    targets:
+     - bucket:
+         Ref: OnwardRentalBucket
+       empty: true
+       files:
+        - source: assets/
+          globs: '*'
+        - source: node_modules/amazon-cognito-identity-js/dist/
+          globs: 'amazon-cognito-identity.min.js'
+    auto: true

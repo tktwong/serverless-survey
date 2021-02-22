@@ -1,0 +1,86 @@
+service: email-forwarding
+
+frameworkVersion: "2"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  memorySize: 512 # optional, in MB, default is 1024
+  timeout: 10 # optional, in seconds, default is 6
+  environment: #Shared Environments
+    NODE_ENV: ${opt:stage}
+    DESTINATION: ${file(./config/${opt:stage}.json):DESTINATION}
+    SENDER: ${file(./config/${opt:stage}.json):SENDER}
+    BUCKET_NAME: ${file(./config/${opt:stage}.json):BUCKET_NAME}-${opt:stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject
+      Resource:
+        - Fn::Join:
+            - ""
+            - - Fn::GetAtt: [EmailsBucket, Arn]
+              - "/*"
+    - Effect: Allow
+      Action: ses:SendRawEmail
+      Resource:
+        - "*"
+
+functions:
+  processEmails:
+    handler: handler.processEmails
+
+resources:
+  Resources:
+    GiveSESPermissionToInvokeProcessEmailLambdaFunction:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: { "Fn::GetAtt": ["ProcessEmailsLambdaFunction", "Arn"] }
+        Principal: ses.amazonaws.com
+        Action: "lambda:InvokeFunction"
+        SourceAccount: { Ref: AWS::AccountId }
+
+    EmailsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${file(./config/${opt:stage}.json):BUCKET_NAME}-${opt:stage}
+    EmailsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: { Ref: EmailsBucket }
+        PolicyDocument:
+          Statement:
+            - Action:
+                - s3:PutObject
+              Effect: Allow
+              Resource:
+                Fn::Join:
+                  - ""
+                  - - { "Fn::GetAtt": ["EmailsBucket", "Arn"] }
+                    - "/*"
+              Principal:
+                Service: ses.amazonaws.com
+              Condition:
+                StringEquals:
+                  aws:Referer: { Ref: AWS::AccountId }
+
+    SesLambdaRule:
+      Type: AWS::SES::ReceiptRule
+      DependsOn:
+        - GiveSESPermissionToInvokeProcessEmailLambdaFunction
+        - EmailsBucketPolicy
+      Properties:
+        Rule:
+          Enabled: true
+          ScanEnabled: true
+          Name: fowarder-email-rule-${opt:stage}
+          Recipients: ${file(./config/${opt:stage}.json):EMAIL_RECIPIENTS}
+          Actions:
+            - LambdaAction:
+                FunctionArn:
+                  { "Fn::GetAtt": ["ProcessEmailsLambdaFunction", "Arn"] }
+            - S3Action:
+                BucketName: ${file(./config/${opt:stage}.json):BUCKET_NAME}-${opt:stage}
+        RuleSetName: default-rule-set
